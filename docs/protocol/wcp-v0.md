@@ -172,7 +172,7 @@ present (possibly empty).
 | `edit` | agent | — (`writes` required, non-empty) | R0–R3 |
 | `checkpoint` | agent, system | `{sha, ref?}` (a push of the change's fork; the system appends it when the Artifacts `pushed` event arrives, attributed to the change) | R0 (agent only) |
 | `claim` | agent | `{firm, source: explicit\|predicted, ttl_ms?}`; keys in `writes` | R0, R3 |
-| `release` | agent, system | `{keys?, reason?}`; no keys = all of the change's claims | no |
+| `release` | agent, system | `{keys?, reason?}`; no keys = all of the change's claims; system reasons `expired`, `session_ended`, `session_expired` (§7.5) | no |
 | `negotiate.propose` | agent | `{to: {agent?\|change?}, keys[], terms: {kind, text}}` | refs (§7.4) |
 | `negotiate.counter` | agent | `{reply_to, terms}` | refs |
 | `negotiate.accept` | agent | `{reply_to}` | refs |
@@ -327,15 +327,16 @@ Applied atomically with the append, in this order:
 
 1. The change's `birth` is set to this seq if unset (excluding `join`/`leave`). Reads and
    writes of `edit`/`intent` are added to the change.
-2. The submitting session's open errors for every key E reads or writes are cleared
-   (§6.5).
+2. If E is an `edit`: the submitting change's open errors for every key E reads or
+   writes are cleared (§6.5).
 3. Arbitration effects (§7.3): wounds revoke holders' claims and push `claim_wounded`;
    wait/die push `claim_contended` (info) to the holder.
-4. Claims: each `edit` write key becomes (or refreshes) a **soft** claim of `c`
-   (`expires_at = now + claim_ttl_ms`); `claim` events create explicit or predicted
-   claims (`firm` from payload, TTL from `ttl_ms` or the default); `release` removes the
-   listed (or all) claims of `c` and clears matching open errors; `land` removes all
-   claims of the change and clears its sessions' open errors.
+4. Claims (§7.5): each `edit` write key becomes (or refreshes) a **soft** claim of `c`
+   whose lease ends at `now + lease` (a firm claim the change already holds on the key
+   keeps its hard deadline); `claim` events create explicit or predicted claims (`firm`
+   from payload; deadline per §7.5); `release` removes the listed (or all) claims of `c`
+   and clears only the open errors §6.5 allows a release to clear; `land` removes all
+   claims of the change and clears its open errors.
 5. Routing: `negotiate.*` and `message` go to the addressee's sessions (§7.4, §7.6);
    `control` to the target agent's sessions (`merge`: every session of the merged group).
 6. Broadcast, for `edit`, `land`, `revert`, to every other live, unlanded change whose
@@ -363,11 +364,39 @@ rejected records, and MUST NOT include secrets from the diff.
 
 ### 6.5 Open errors
 
-Each session keeps a set of **open errors** keyed by symbol key: errors from its
-rejected records (except `agent_paused`) and `claim_wounded` pushes. An entry is
-cleared when the same session's change has an accepted event that reads or writes the
-key, releases it, lands, or when a negotiated `transfer`/`share` on the key is accepted
-(§7.4). Open errors drive the L3 gates (§8.4).
+Each **change** keeps a set of **open errors** keyed by symbol key: errors from the
+rejected records of its sessions (except `agent_paused`) and `claim_wounded` pushes to
+it. Every entry remembers its **origin**: `check` (a rejected `mode:"check"` record — the
+edit was denied before it reached the workspace), `commit` (a rejected `mode:"commit"`
+record — the edit is in the workspace but not in the log) or `push` (`claim_wounded`).
+
+Open errors belong to the change, not to a session. A `bye`, a session expiry, a new
+`hello` (with or without `resume_session`) and a session's own `release` never make them
+disappear, so an agent cannot reset its gate by reconnecting. A `claim_wounded` push is
+recorded on the change even when it has no live session. An entry is cleared only when:
+
+1. the change has an accepted `edit` that reads or writes the key (§6.3 step 2) — the
+   agent redid the work against the current log. Other accepted kinds that carry keys
+   (`intent`, `claim`) do not clear anything: they say nothing about the workspace;
+2. the change lands;
+3. a negotiated `transfer`/`share` on the key is accepted (§7.4), or a merge forgives it
+   (§7.6);
+4. the change's agent `release`s the key (or releases everything) **and** the entry's
+   origin is `check` or `push`: the agent retreats from an area it never wrote (a denied
+   edit) or lost (wounded). A release never clears a `commit`-origin entry, because that
+   edit exists in the workspace and is unknown to the log; the agent must redo it so that
+   it is accepted (rule 1) or have it resolved by rules 2–3.
+
+System `release` records (expiry, session end; §7.5) never clear open errors.
+
+A **new** session (not `resume_session`) of a change with open errors receives one
+`kind:"diagnostic"` inbox item per entry (`seq` = the record that opened it), after any
+redelivered negotiations (§8.2), so a restarted agent sees why its gates are closed.
+
+Open errors drive the L3 gates (§8.4). Why per change: the change is what lands and what
+the workspace's edits belong to; a session is only a connection. (Before 2026-10-09
+open errors were per session, and `release`, `bye` + `hello`, or letting the session
+expire cleared them — see the changelog.)
 
 ## 7. Arbitration (normative)
 
@@ -433,11 +462,40 @@ two tasks — §7.6).
 
 - Sources: `edit` (implicit, soft), `explicit` (`claim` with `source:"explicit"`, may be
   `firm`), `predicted` (planner, never firm).
-- TTL: `claim.ttl_ms` or `welcome.claim_ttl_ms` (default 30 min). Any accepted event or
-  heartbeat from the change extends its non-predicted claims to `now + claim_ttl_ms`.
-- Expiry: the coordinator MUST release expired claims by appending a `release` record
+- **Claims policy** (repo configuration, `welcome.policy.claims`):
+  `claims: {lease_ms, firm_max_ms}`, defaults `{lease_ms: 120000, firm_max_ms: 600000}`
+  (2 min, 10 min). It is part of the repo's stored configuration (like `arbitration`),
+  never read from the environment, so journal replay is exact (§5.1).
+- **Soft claims** (`edit` claims and explicit claims with `firm:false`) are **leases**:
+  created with `expires_at = now + lease_ms`; any accepted event or heartbeat from the
+  change renews every soft, non-predicted claim of the change to `now + lease_ms`. An
+  agent that dies stops renewing, and its soft claims are released after at most
+  `lease_ms`. `ttl_ms` is ignored for soft claims. `welcome.claim_ttl_ms` = `lease_ms`.
+- **Firm claims** have a **hard, non-renewable deadline** counted from the accepted
+  `claim` event: `expires_at = now + min(ttl_ms ?? firm_max_ms, firm_max_ms)`.
+  Heartbeats, accepted events and the holder's own edits of the key do **not** extend
+  it; only a new explicit `claim` event (visible in the log) sets a new deadline
+  (`max(old, new)`). A firm hold therefore never outlives `firm_max_ms` without the
+  holder saying so again in the log.
+- **Predicted claims**: `expires_at = now + (ttl_ms ?? claim_ttl_ms)`, never renewed
+  (unchanged).
+- **Expiry**: the coordinator MUST release expired claims by appending a `release` record
   (`actor.type:"system"`, `reason:"expired"`, one record per change) — claims never
   vanish silently. (Weft: DO alarm.)
+- **Release on exit**: when a session ends — `bye` or session expiry (§8.2) — and no
+  other live session of the same change remains, the coordinator appends, right after
+  the `leave`, one system `release` of all the change's remaining non-predicted claims
+  (`reason:"session_ended"` or `"session_expired"`). Nothing is appended when it holds
+  none.
+- **Repos created before the claims policy** (stored configuration without `claims`)
+  keep the old rules until an operator applies the policy: one TTL `claim_ttl_ms`
+  (default 30 min) for every claim, renewed by any accepted event or heartbeat
+  (firm claims included), `ttl_ms` honoured as given, no release on exit. The operator
+  applies the policy with one explicit, journaled operation (Weft:
+  `POST /v1/admin/repos/{repo}/policy {"claims": {...}}`, journal op `policy`); from that
+  instant the rules above apply (existing claims keep their current `expires_at` and are
+  renewed by the new rules from then on). Old journals contain no such operation and so
+  replay unchanged; new repos are created with the defaults.
 - Predicted claims never cause arbitration in either direction: an overlap with a
   predicted claim, or a predicted claim overlapping real work, yields
   `claim_predicted_overlap` (info) only.
@@ -464,7 +522,7 @@ The fourth loser option (`escalate`, §7.2) is a protocol action, not only a fee
   of the two groups' leads, §7.1): every change whose group lead is `joining` joins `lead`'s
   group. Within a group: W (§6.1) excludes all members' records (no R1/R2 between members),
   active claims of members never arbitrate against each other (R3), and a member's seniority
-  is its lead's (§7.1). Open errors of members' sessions caused by records of other members
+  is its lead's (§7.1). Open errors of members caused by records of other members
   are cleared. Every session of the group receives a `kind:"control"` inbox item with the
   record. Contract/trunk broadcasts (§6.3) still reach members, and each member still lands
   on its own (a landing workflow SHOULD land a group together).
@@ -531,9 +589,12 @@ required output field is rejected.
   coordinator appends `leave` (system actor) and later calls get `410 session_expired`.
   Adapters SHOULD heartbeat every `heartbeat_interval_ms` (default 30 s) while the
   harness is alive, and re-`hello` with `resume_session` after a restart.
+- Ending a session (`bye` or expiry) releases the change's claims when it was the
+  change's last live session (§7.5). It never clears the change's open errors (§6.5).
 - A **new** session (not `resume_session`) starts with one `kind:"negotiation"` inbox item per
   negotiation its change still owes (§8.4), so an agent restarted after a proposal was sent
-  to it still sees the proposal (or the agreement it has to fulfil).
+  to it still sees the proposal (or the agreement it has to fulfil), followed by one
+  `kind:"diagnostic"` item per open error of its change (§6.5).
 
 ### 8.3 What adapters do at each hook point
 
@@ -566,7 +627,7 @@ Adapters SHOULD inject it verbatim so squiggles look the same in every harness.
 
 ### 8.4 Gates
 
-`gate.result.allow` is false iff the session has open errors (§6.5), or — for
+`gate.result.allow` is false iff the session's change has open errors (§6.5), or — for
 `gate:"stop"` only — negotiations are **due**. `reason` renders both, and
 `gate.result.negotiations` lists the dues `{seq, due, record, keys}`:
 
@@ -634,7 +695,7 @@ HTTP only; the socket serves long-lived adapters and delayed-L1 injection.
 ### 9.2 `GET /v1/repos`
 
 Repos visible to the token with live counts: `head_seq`, `active_agents` (agents with a
-live session), `active_changes`, `open_conflicts` (total open errors across sessions),
+live session), `active_changes`, `open_conflicts` (total open errors across changes, §6.5),
 `last_event_at`, `policy`.
 
 ### 9.3 Paged events
@@ -764,8 +825,11 @@ redelivery (`negotiation-overload-dues`), escalation and merged groups (`escalat
 `escalation-human`, `merge-by-agreement`), inbox redelivery/ack + base
 rule + check logging (`inbox-and-base`), human actions (`human-actions`), claim TTL and
 session expiry (`claim-ttl-and-session-expiry`), trunk notification + predicted claims
-(`trunk-advanced-and-predicted`). The reference coordinator passes all of them and its
-log replays deterministically.
+(`trunk-advanced-and-predicted`), claim leases and the hard firm limit
+(`lease-soft-claim`, `lease-firm-hard-limit`), release on exit (`release-on-exit`), open
+errors that survive release/bye/hello/expiry (`open-errors-persist`), and repos created
+before the claims policy plus the policy migration (`claims-legacy-and-migration`). The
+reference coordinator passes all of them and its log replays deterministically.
 
 ## 13. Security considerations
 
@@ -778,6 +842,11 @@ log replays deterministically.
   recent interactive login (Cloudflare Access) for `human` tokens.
 - Rate-limit `check` submissions per session; they are cheap to send and expensive to
   evaluate on large W sets.
+- One agent's state must not be resettable by that agent alone. Open errors live on the
+  change (§6.5) so that reconnecting, `bye`, expiry or a blanket `release` cannot open a
+  gate; claims are leases (§7.5) so a crashed agent cannot block others for long, and a
+  firm hold is bounded by `firm_max_ms` unless it is re-asserted in the log, where humans
+  see it. The claims policy is repo configuration (journaled), never environment.
 
 ---
 
@@ -843,3 +912,26 @@ Proposed for `docs/design.md` (rule 7 of agent-rules):
 - 0.1 editorial (2026-10-09): hook-level semantics split out into [Agent Hooks Core
   v0.1](hooks-core-v0.md); this document is now its coordination extension. §8.1/§8.3/§8.5
   reference the core (event names, decisions, host mappings); no wire or behaviour change.
+- 0.1 changes (2026-10-09, L1; behaviour change, listed per §10):
+  - Claims are leases (§7.5): repo policy `claims {lease_ms: 120000, firm_max_ms: 600000}`
+    (`welcome.policy.claims`, optional in the schema). Soft claims last `lease_ms` and are
+    renewed by activity; firm claims get a hard deadline `min(ttl_ms, firm_max_ms)` from the
+    claim event that only a new `claim` extends; ending a change's last session releases
+    its claims (system `release`, `reason` `session_ended`/`session_expired`, two new values of
+    the `ReleasePayload.reason` enum). New repos get
+    the defaults; repos created earlier keep the old 30-min renewable TTL until the
+    journaled `policy` operation is applied, so old journals replay unchanged.
+  - Open errors are per change, not per session (§6.5), with an origin; `release` only
+    clears `check`/`push`-origin entries on the released keys; `bye`, expiry and a new
+    `hello` no longer clear anything, and new sessions get the open errors redelivered.
+    Only an accepted `edit` clears by touching a key (before: any accepted event, so an
+    `intent` or `claim` listing the key cleared it).
+    Audit of "can an agent clear its open errors by release, bye or reconnect": before this
+    change, yes — `release` with no keys cleared every open error of the session, a
+    `release` of any key cleared its error whatever its cause, and `bye` (or letting the
+    session expire) followed by a new `hello` started with no open errors. A
+    `claim_wounded` pushed while the change had no live session was lost. Open errors
+    never enter the log, so this fix changes gates, not logged verdicts (except a
+    `negotiate.escalate` whose only conflict evidence was such an error). Scenarios
+    `lease-soft-claim`, `lease-firm-hard-limit`, `release-on-exit`, `open-errors-persist`,
+    `claims-legacy-and-migration`.

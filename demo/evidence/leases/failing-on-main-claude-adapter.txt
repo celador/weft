@@ -1,0 +1,200 @@
+
+ RUN  v3.2.7 /Users/john/github/weft/.worktrees/leases/packages/adapters/claude-code
+
+ × test/hardening.test.ts > (a) reads never follow symlinks or leave the checkout > a Write through a symlinked file does not put the outside file's text on the log 110ms
+   → expected [ { seq: 2, repo: 'demo', …(18) } ] to deeply equal []
+ × test/hardening.test.ts > (a) reads never follow symlinks or leave the checkout > an Edit inside a symlinked directory that points outside reads nothing 90ms
+   → expected [ { seq: 2, repo: 'demo', …(18) } ] to deeply equal []
+ ✓ test/hardening.test.ts > (a) reads never follow symlinks or leave the checkout > regular files in the checkout are still coordinated 88ms
+ × test/hardening.test.ts > (b) edits made by Bash are reconciled, also when the command fails partway > PostToolUse: the files the command changed are submitted as one edit 105ms
+   → expected [] to have a length of 1 but got +0
+ × test/hardening.test.ts > (b) edits made by Bash are reconciled, also when the command fails partway > PostToolUseFailure: the files the command changed are submitted as one edit 94ms
+   → expected [] to have a length of 1 but got +0
+ ✓ test/hardening.test.ts > (b) edits made by Bash are reconciled, also when the command fails partway > a Bash command that changed nothing submits nothing 89ms
+ × test/hardening.test.ts > (b) edits made by Bash are reconciled, also when the command fails partway > the installer registers PostToolUseFailure for Bash and the edit tools 0ms
+   → expected undefined to be 'Bash|Edit|Write|MultiEdit' // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/hardening.test.ts > (a) reads never follow symlinks or leave the checkout > a Write through a symlinked file does not put the outside file's text on the log
+AssertionError: expected [ { seq: 2, repo: 'demo', …(18) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "actor": {
++       "harness": "claude-code",
++       "id": "claude-a",
++       "type": "agent",
++     },
++     "agent": "claude-a",
++     "base_seq": 1,
++     "change": "I-claude-a",
++     "diagnostics": [],
++     "diff": "diff --git a/src/secret.ts b/src/secret.ts
++ --- a/src/secret.ts
++ +++ b/src/secret.ts
++ @@ -1,4 +1,4 @@
++ -export const apiKey = \"TOP-SECRET-7f3a\";
++ +export const apiKey = \"rotated\";
++  export function leak(): string {
++ -  return apiKey;
++ +  return \"\";
++  }
++ ",
++     "files": [
++       "src/secret.ts",
++     ],
++     "intent": "T-1: work",
++     "kind": "edit",
++     "mode": "commit",
++     "reads": [],
++     "repo": "demo",
++     "seq": 2,
++     "session": "s1",
++     "status": "accepted",
++     "summary": "claude-a changed signature of apiKey, edited leak in src/secret.ts — work",
++     "task": "T-1",
++     "tool": {
++       "call_id": "w1",
++       "harness_event": "PostToolUse",
++       "name": "Write",
++     },
++     "ts": "2026-10-10T01:22:52.328Z",
++     "writes": [
++       {
++         "key": "src/secret.ts#apiKey",
++         "kind": "signature",
++       },
++       {
++         "key": "src/secret.ts#leak",
++         "kind": "body",
++       },
++     ],
++   },
++ ]
+
+ ❯ test/hardening.test.ts:52:23
+     50|     writeFileSync(join(root, "src/secret.ts"), input.content); // Clau…
+     51|     await a.handle(hook(root, { hook_event_name: "PostToolUse", tool_n…
+     52|     expect(leaked(c)).toEqual([]);
+       |                       ^
+     53|   });
+     54| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  test/hardening.test.ts > (a) reads never follow symlinks or leave the checkout > an Edit inside a symlinked directory that points outside reads nothing
+AssertionError: expected [ { seq: 2, repo: 'demo', …(18) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "actor": {
++       "harness": "claude-code",
++       "id": "claude-a",
++       "type": "agent",
++     },
++     "agent": "claude-a",
++     "base_seq": 1,
++     "change": "I-claude-a",
++     "diagnostics": [],
++     "diff": "diff --git a/src/vendor/secret.ts b/src/vendor/secret.ts
++ --- a/src/vendor/secret.ts
++ +++ b/src/vendor/secret.ts
++ @@ -1,4 +1,4 @@
++  export const apiKey = \"TOP-SECRET-7f3a\";
++  export function leak(): string {
++ -  return apiKey;
++ +  return apiKey.trim();
++  }
++ ",
++     "files": [
++       "src/vendor/secret.ts",
++     ],
++     "intent": "T-1: work",
++     "kind": "edit",
++     "mode": "commit",
++     "reads": [],
++     "repo": "demo",
++     "seq": 2,
++     "session": "s1",
++     "status": "accepted",
++     "summary": "claude-a edited leak in src/vendor/secret.ts — work",
++     "task": "T-1",
++     "tool": {
++       "call_id": "e1",
++       "harness_event": "PostToolUse",
++       "name": "Edit",
++     },
++     "ts": "2026-10-10T01:22:52.422Z",
++     "writes": [
++       {
++         "key": "src/vendor/secret.ts#leak",
++         "kind": "body",
++       },
++     ],
++   },
++ ]
+
+ ❯ test/hardening.test.ts:67:23
+     65|     writeFileSync(p, readFileSync(p, "utf8").replace(input.old_string,…
+     66|     await a.handle(hook(root, { hook_event_name: "PostToolUse", tool_n…
+     67|     expect(leaked(c)).toEqual([]);
+       |                       ^
+     68|   });
+     69| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  test/hardening.test.ts > (b) edits made by Bash are reconciled, also when the command fails partway > PostToolUse: the files the command changed are submitted as one edit
+ FAIL  test/hardening.test.ts > (b) edits made by Bash are reconciled, also when the command fails partway > PostToolUseFailure: the files the command changed are submitted as one edit
+AssertionError: expected [] to have a length of 1 but got +0
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ test/hardening.test.ts:112:21
+    110|       const { c } = await bash(event);
+    111|       const edits = c.log.filter((r) => r.kind === "edit");
+    112|       expect(edits).toHaveLength(1);
+       |                     ^
+    113|       expect(edits[0]).toMatchObject({ status: "accepted", mode: "comm…
+    114|       expect(edits[0]!.files.sort()).toEqual(["src/pricing.ts", "src/u…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  test/hardening.test.ts > (b) edits made by Bash are reconciled, also when the command fails partway > the installer registers PostToolUseFailure for Bash and the edit tools
+AssertionError: expected undefined to be 'Bash|Edit|Write|MultiEdit' // Object.is equality
+
+- Expected: 
+"Bash|Edit|Write|MultiEdit"
+
++ Received: 
+undefined
+
+ ❯ test/hardening.test.ts:137:59
+    135|   it("the installer registers PostToolUseFailure for Bash and the edit…
+    136|     const merged = mergeSettings({}, "node /x/weft-claude.mjs hook") a…
+    137|     expect(merged.hooks.PostToolUseFailure?.[0]?.matcher).toBe("Bash|E…
+       |                                                           ^
+    138|   });
+    139| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 2 passed (7)
+   Start at  22:22:51
+   Duration  1.10s (transform 146ms, setup 0ms, collect 340ms, tests 577ms, environment 0ms, prepare 49ms)
+

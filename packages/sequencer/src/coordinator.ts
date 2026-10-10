@@ -26,6 +26,10 @@ import {
   type Arbitration,
   type ArbitrationPolicy,
   type Capabilities,
+  type ClaimsPolicy,
+  claimsPolicyError,
+  DEFAULT_CLAIMS_POLICY,
+  type RepoPolicy,
   type Diagnostic,
   type EscalationPolicy,
   type EventDraft,
@@ -57,6 +61,11 @@ export type CoordinatorConfig = {
   /** Absent in configs written before B11: treated as `auto`. */
   escalation?: EscalationPolicy;
   claim_ttl_ms: number;
+  /**
+   * Claims policy (spec §7.5). Absent in configs written before L1: legacy rules (one
+   * renewable claim_ttl_ms, no release on exit) until the journaled `policy` op sets it.
+   */
+  claims?: ClaimsPolicy;
   session_ttl_ms: number;
   heartbeat_interval_ms: number;
   limits: { max_diff_bytes: number; max_keys: number; max_page: number };
@@ -67,6 +76,8 @@ export type CoordinatorInit = {
   policy?: ArbitrationPolicy;
   escalation?: EscalationPolicy;
   claim_ttl_ms?: number;
+  /** Default: DEFAULT_CLAIMS_POLICY. `null`: create a legacy repo (tests, migrations). */
+  claims?: ClaimsPolicy | null;
   session_ttl_ms?: number;
   heartbeat_interval_ms?: number;
   max_diff_bytes?: number;
@@ -74,17 +85,27 @@ export type CoordinatorInit = {
   max_page?: number;
 };
 
-export function configFrom(o: CoordinatorInit): CoordinatorConfig {
+export function configFrom(o: CoordinatorInit | CoordinatorConfig): CoordinatorConfig {
+  // A stored configuration (it has `limits`) is taken as-is: replaying a journal against
+  // the repo's own config is what makes replay exact for legacy repos too (spec §5.1).
+  if ("limits" in o && o.limits) return JSON.parse(JSON.stringify(o)) as CoordinatorConfig;
+  const i = o as CoordinatorInit;
+  if (i.claims !== null && i.claims !== undefined && claimsPolicyError(i.claims))
+    throw new WcpProtocolError("invalid_message", claimsPolicyError(i.claims)!, { issues: [{ path: "/claims", message: claimsPolicyError(i.claims)! }] });
   return {
     repo: o.repo,
     policy: o.policy ?? "wound-wait",
     escalation: o.escalation ?? "auto",
     claim_ttl_ms: o.claim_ttl_ms ?? 30 * 60_000,
+    ...(i.claims === null ? {} : { claims: { ...(i.claims ?? DEFAULT_CLAIMS_POLICY) } }),
     session_ttl_ms: o.session_ttl_ms ?? 5 * 60_000,
     heartbeat_interval_ms: o.heartbeat_interval_ms ?? 30_000,
-    limits: { max_diff_bytes: o.max_diff_bytes ?? 1_048_576, max_keys: o.max_keys ?? 2000, max_page: o.max_page ?? 500 },
+    limits: { max_diff_bytes: i.max_diff_bytes ?? 1_048_576, max_keys: i.max_keys ?? 2000, max_page: i.max_page ?? 500 },
   };
 }
+
+/** `check`/`commit`: a rejected record of that mode; `push`: a claim_wounded (spec §6.5). */
+type OpenOrigin = "check" | "commit" | "push";
 
 /** Server-side filters for GET /events (spec §9.3); comma-separated values are OR-ed. */
 export type EventFilters = { kind?: string[]; agent?: string[]; task?: string[]; change?: string[]; status?: string[] };
@@ -189,7 +210,7 @@ const uniq = <T>(xs: Iterable<T>) => [...new Set(xs)];
 const opt = <K extends string, V>(k: K, v: V | null | undefined) => (v === null || v === undefined ? {} : ({ [k]: v } as { [P in K]: V }));
 
 export class SqlCoordinator {
-  readonly config: CoordinatorConfig;
+  private cfg: CoordinatorConfig;
   /** Sessions whose inbox gained items since the last takeDirty() (for WebSocket pushes). */
   private dirty = new Set<string>();
 
@@ -200,11 +221,15 @@ export class SqlCoordinator {
     migrate(sql);
     const c = one<{ v: string }>(sql, `SELECT v FROM meta WHERE k = 'config'`);
     if (!c) throw new WcpProtocolError("repo_not_found", "repository is not initialized");
-    this.config = JSON.parse(c.v) as CoordinatorConfig;
+    this.cfg = JSON.parse(c.v) as CoordinatorConfig;
+  }
+
+  get config(): CoordinatorConfig {
+    return this.cfg;
   }
 
   /** Create (or keep) the repo's configuration. Returns true when it was newly created. */
-  static init(sql: Sql, o: CoordinatorInit): boolean {
+  static init(sql: Sql, o: CoordinatorInit | CoordinatorConfig): boolean {
     migrate(sql);
     if (one(sql, `SELECT v FROM meta WHERE k = 'config'`)) return false;
     run(sql, `INSERT INTO meta (k, v) VALUES ('config', ?)`, JSON.stringify(configFrom(o)));
@@ -227,6 +252,66 @@ export class SqlCoordinator {
   }
   private get claimTtl(): number {
     return this.config.claim_ttl_ms;
+  }
+  private get claimsPolicy(): ClaimsPolicy | undefined {
+    return this.config.claims;
+  }
+  /** Default lease/TTL of a soft claim: lease_ms under the claims policy, else claim_ttl_ms. */
+  private get softTtl(): number {
+    return this.claimsPolicy?.lease_ms ?? this.claimTtl;
+  }
+
+  /** Current repo policy (spec §7.2, §7.6, §7.5). */
+  repoPolicy(): RepoPolicy {
+    return { arbitration: this.policy, escalation: this.escalation, ...(this.claimsPolicy ? { claims: { ...this.claimsPolicy } } : {}) };
+  }
+
+  /**
+   * Operator: apply the claims policy (spec §7.5; journal op `policy`). This is how a repo
+   * created before the policy switches to leases; existing claims keep their expiry.
+   */
+  setPolicy(p: { claims: ClaimsPolicy }): RepoPolicy {
+    const err = claimsPolicyError(p?.claims);
+    if (err) throw new WcpProtocolError("invalid_message", err, { issues: [{ path: "/claims", message: err }] });
+    this.cfg = { ...this.cfg, claims: { lease_ms: p.claims.lease_ms, firm_max_ms: p.claims.firm_max_ms } };
+    run(this.sql, `UPDATE meta SET v = ? WHERE k = 'config'`, JSON.stringify(this.cfg));
+    return this.repoPolicy();
+  }
+
+  /** Renew the change's claims after activity (spec §7.5): soft leases only, under the policy. */
+  private renew(changeId: string, now: number): void {
+    const firm = this.claimsPolicy ? ` AND firm = 0` : ``;
+    run(this.sql, `UPDATE claims SET expires_at = MAX(expires_at, ?) WHERE change_id = ? AND source != 'predicted'${firm}`, now + this.softTtl, changeId);
+  }
+
+  /** Expiry for a new claim (spec §7.5). */
+  private claimExpiry(kind: "edit" | "claim", p: Record<string, unknown>, now: number): number {
+    const ttl = typeof p.ttl_ms === "number" ? p.ttl_ms : undefined;
+    const cp = this.claimsPolicy;
+    if (!cp) return now + (kind === "claim" && ttl !== undefined ? ttl : this.claimTtl);
+    if (kind === "edit") return now + cp.lease_ms;
+    if (p.source === "predicted") return now + (ttl ?? this.claimTtl);
+    if (p.firm) return now + Math.min(ttl ?? cp.firm_max_ms, cp.firm_max_ms);
+    return now + cp.lease_ms;
+  }
+
+  /** Release on exit (spec §7.5): the change's last live session ended. */
+  private releaseOnExit(changeId: string, reason: string): EventRecord | undefined {
+    if (!this.claimsPolicy || one(this.sql, `SELECT 1 AS x FROM sessions WHERE change_id = ? LIMIT 1`, changeId)) return undefined;
+    const keys = all<{ key: string }>(this.sql, `SELECT key FROM claims WHERE change_id = ? AND source != 'predicted' ORDER BY ord`, changeId).map((r) => r.key);
+    if (!keys.length) return undefined;
+    run(this.sql, `DELETE FROM claims WHERE change_id = ? AND source != 'predicted'`, changeId);
+    const c = this.getChange(changeId)!;
+    return this.append({
+      kind: "release",
+      actor: { type: "system", id: "coordinator" },
+      draft: { kind: "release", base_seq: this.head, payload: { keys, reason } },
+      diagnostics: [],
+      status: "accepted",
+      agent: c.agent,
+      change: c.id,
+      ...(c.task ? { task: c.task } : {}),
+    });
   }
   private get sessionTtl(): number {
     return this.config.session_ttl_ms;
@@ -311,35 +396,42 @@ export class SqlCoordinator {
     return all<{ item: string }>(this.sql, `SELECT item FROM inbox WHERE session = ? ORDER BY id`, sid).map((r) => JSON.parse(r.item) as InboxItem);
   }
 
-  private openOf(sid: string): Diagnostic[] {
-    return all<{ diagnostic: string }>(this.sql, `SELECT diagnostic FROM open_errors WHERE session = ? ORDER BY ord`, sid).map(
-      (r) => JSON.parse(r.diagnostic) as Diagnostic,
-    );
+  // Open errors belong to the change, not to a session (spec §6.5).
+  private openRows(changeId: string): Array<{ key: string; origin: OpenOrigin; seq: number; diagnostic: Diagnostic }> {
+    return all<{ key: string; origin: OpenOrigin; seq: number; diagnostic: string }>(
+      this.sql,
+      `SELECT key, origin, seq, diagnostic FROM change_errors WHERE change_id = ? ORDER BY ord`,
+      changeId,
+    ).map((r) => ({ ...r, diagnostic: JSON.parse(r.diagnostic) as Diagnostic }));
+  }
+  private openOf(changeId: string): Diagnostic[] {
+    return this.openRows(changeId).map((r) => r.diagnostic);
   }
 
   /** Map.set semantics: an existing key keeps its position, its value is replaced. */
-  private openSet(sid: string, key: string, d: Diagnostic): void {
+  private openSet(changeId: string, d: Diagnostic, origin: OpenOrigin, seq: Seq): void {
     run(
       this.sql,
-      `INSERT INTO open_errors (session, key, ord, diagnostic) VALUES (?, ?, ?, ?)
-       ON CONFLICT(session, key) DO UPDATE SET diagnostic = excluded.diagnostic`,
-      sid,
-      key,
+      `INSERT INTO change_errors (change_id, key, ord, origin, seq, diagnostic) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(change_id, key) DO UPDATE SET origin = excluded.origin, seq = excluded.seq, diagnostic = excluded.diagnostic`,
+      changeId,
+      d.symbol,
       this.ord(),
+      origin,
+      seq,
       JSON.stringify(d),
     );
   }
-  private openDelete(sid: string, key: string): void {
-    run(this.sql, `DELETE FROM open_errors WHERE session = ? AND key = ?`, sid, key);
+  private openDelete(changeId: string, key: string): void {
+    run(this.sql, `DELETE FROM change_errors WHERE change_id = ? AND key = ?`, changeId, key);
   }
-  private openClear(sid: string): void {
-    run(this.sql, `DELETE FROM open_errors WHERE session = ?`, sid);
+  private openClear(changeId: string): void {
+    run(this.sql, `DELETE FROM change_errors WHERE change_id = ?`, changeId);
   }
 
   private dropSession(sid: string): void {
     run(this.sql, `DELETE FROM sessions WHERE id = ?`, sid);
     run(this.sql, `DELETE FROM inbox WHERE session = ?`, sid);
-    run(this.sql, `DELETE FROM open_errors WHERE session = ?`, sid);
     run(this.sql, `DELETE FROM idempotency WHERE session = ?`, sid);
   }
 
@@ -410,6 +502,8 @@ export class SqlCoordinator {
     });
     // A new session of a change inherits what the change still owes (spec §8.4).
     for (const d of this.dues(s)) this.push(s, { seq: d.seq, kind: "negotiation", record: d.record });
+    // ... and its open errors (spec §6.5): a reconnect does not reset them, so say why.
+    for (const r of this.openRows(changeId)) this.push(s, { seq: r.seq, kind: "diagnostic", diagnostic: r.diagnostic });
     this.setDelivered(s, this.head);
     return this.welcome(s);
   }
@@ -424,8 +518,8 @@ export class SqlCoordinator {
       delivered_through: s.delivered_through,
       heartbeat_interval_ms: this.config.heartbeat_interval_ms,
       session_ttl_ms: this.sessionTtl,
-      claim_ttl_ms: this.claimTtl,
-      policy: { arbitration: this.policy, escalation: this.escalation },
+      claim_ttl_ms: this.softTtl,
+      policy: this.repoPolicy(),
       limits: this.limits,
     };
   }
@@ -450,8 +544,7 @@ export class SqlCoordinator {
 
   heartbeat(sid: string, owner?: string): HeartbeatAck {
     const s = this.session(sid, owner);
-    const exp = this.now() + this.claimTtl;
-    run(this.sql, `UPDATE claims SET expires_at = MAX(expires_at, ?) WHERE change_id = ? AND source != 'predicted'`, exp, s.change);
+    this.renew(s.change, this.now());
     const pending = one<{ n: number }>(this.sql, `SELECT COUNT(*) AS n FROM inbox WHERE session = ?`, s.id)!.n;
     return {
       type: "heartbeat.ack",
@@ -472,6 +565,7 @@ export class SqlCoordinator {
       diagnostics: [],
       status: "accepted",
     });
+    this.releaseOnExit(s.change, "session_ended");
   }
 
   // ---------------------------------------------------------------- submit
@@ -511,7 +605,7 @@ export class SqlCoordinator {
     } else {
       const rec = this.append({ kind: e.kind, actor, session: s, draft: e, diagnostics, status: reject ? "rejected" : "accepted", mode: msg.mode });
       if (reject) {
-        for (const d of diagnostics) if (d.severity === "error" && d.code !== "agent_paused") this.openSet(s.id, d.symbol, d);
+        for (const d of diagnostics) if (d.severity === "error" && d.code !== "agent_paused") this.openSet(s.change, d, msg.mode, rec.seq);
       } else {
         this.applyAccepted(rec, s);
       }
@@ -595,7 +689,7 @@ export class SqlCoordinator {
   /** Two groups conflict: an open error of `s` cites the target group, or keys overlap. */
   private groupsConflict(s: Session, target: string): boolean {
     const lead = this.group(target);
-    for (const d of this.openOf(s.id)) {
+    for (const d of this.openOf(s.change)) {
       const c = this.record(d.caused_by_seq)?.change;
       if (c !== undefined && this.group(c) === lead) return true;
     }
@@ -932,7 +1026,6 @@ export class SqlCoordinator {
     const r = one<{ id: number }>(this.sql, `UPDATE sessions SET next_inbox_id = next_inbox_id + 1 WHERE id = ? RETURNING next_inbox_id - 1 AS id`, s.id)!;
     const full: InboxItem = { id: r.id, ...item };
     run(this.sql, `INSERT INTO inbox (session, id, seq, item) VALUES (?, ?, ?, ?)`, s.id, r.id, full.seq, JSON.stringify(full));
-    if (item.diagnostic?.severity === "error") this.openSet(s.id, item.diagnostic.symbol, item.diagnostic);
     this.dirty.add(s.id);
   }
 
@@ -955,11 +1048,13 @@ export class SqlCoordinator {
       return;
     }
     const source = c.source !== "edit" || existing.source === "predicted" ? c.source : existing.source;
+    // Under the claims policy a firm deadline is hard: only another firm claim event moves it.
+    const hard = Boolean(this.claimsPolicy) && existing.firm === 1 && !c.firm;
     run(
       this.sql,
       `UPDATE claims SET seq = ?, expires_at = ?, source = ?, firm = ? WHERE ord = ?`,
       c.seq,
-      Math.max(existing.expires_at, c.expires_at),
+      hard ? existing.expires_at : Math.max(existing.expires_at, c.expires_at),
       source,
       existing.firm === 1 || c.firm,
       existing.ord,
@@ -990,18 +1085,18 @@ export class SqlCoordinator {
         else run(this.sql, `INSERT INTO change_writes (change_id, key, wkind, ord) VALUES (?, ?, ?, ?)`, change.id, w.key, merged, this.ord());
       }
     }
-    // Own open errors on touched keys are resolved by an accepted event.
-    if (s) for (const k of [...rec.reads, ...rec.writes.map((w) => w.key)]) this.openDelete(s.id, k);
-    // Any accepted event from a change keeps its non-predicted claims alive (§7.5).
-    if (change && rec.actor.type === "agent")
-      run(this.sql, `UPDATE claims SET expires_at = MAX(expires_at, ?) WHERE change_id = ? AND source != 'predicted'`, now + this.claimTtl, change.id);
+    // The change's open errors on keys an accepted *edit* touches are resolved (§6.5): the
+    // agent redid the work. Other kinds that name keys (intent, claim) clear nothing.
+    if (change && rec.kind === "edit") for (const k of [...rec.reads, ...rec.writes.map((w) => w.key)]) this.openDelete(change.id, k);
+    // Any accepted event from a change renews its claims (§7.5).
+    if (change && rec.actor.type === "agent") this.renew(change.id, now);
 
     const p = rec.payload ?? {};
     switch (rec.kind) {
       case "edit":
       case "claim": {
         const isClaim = rec.kind === "claim";
-        const ttl = isClaim && typeof p.ttl_ms === "number" ? p.ttl_ms : this.claimTtl;
+        const expires_at = this.claimExpiry(rec.kind, p, now);
         for (const d of rec.diagnostics) {
           const arb = d.arbitration;
           if (!arb) continue;
@@ -1016,23 +1111,21 @@ export class SqlCoordinator {
             for (const loser of wounded) {
               const la = this.getChange(loser)!;
               const larb: Arbitration = { ...arb, loser: { agent: la.agent, change: la.id } };
-              for (const hs of this.sessionsOf({ change: loser }))
-                this.push(hs, {
-                  seq: rec.seq,
-                  kind: "diagnostic",
-                  diagnostic: {
-                    severity: "error",
-                    code: "claim_wounded",
-                    file: d.file,
-                    symbol: d.symbol,
-                    message: `${s?.agent ?? rec.actor.id} (${rec.change}) has precedence on ${d.symbol} and took it over; your claim was revoked.`,
-                    suggestion: `Retreat from ${d.symbol}, wait for ${rec.change} to land, or negotiate.`,
-                    caused_by_seq: rec.seq,
-                    caused_by_agent: rec.agent ?? rec.actor.id,
-                    ...(rec.task ? { caused_by_task: rec.task } : {}),
-                    arbitration: larb,
-                  },
-                });
+              const wound: Diagnostic = {
+                severity: "error",
+                code: "claim_wounded",
+                file: d.file,
+                symbol: d.symbol,
+                message: `${s?.agent ?? rec.actor.id} (${rec.change}) has precedence on ${d.symbol} and took it over; your claim was revoked.`,
+                suggestion: `Retreat from ${d.symbol}, wait for ${rec.change} to land, or negotiate.`,
+                caused_by_seq: rec.seq,
+                caused_by_agent: rec.agent ?? rec.actor.id,
+                ...(rec.task ? { caused_by_task: rec.task } : {}),
+                arbitration: larb,
+              };
+              // Recorded on the change even when none of its sessions is live (§6.5).
+              this.openSet(loser, wound, "push", rec.seq);
+              for (const hs of this.sessionsOf({ change: loser })) this.push(hs, { seq: rec.seq, kind: "diagnostic", diagnostic: wound });
             }
           } else {
             for (const hs of this.sessionsOf({ change: arb.winner.change }))
@@ -1062,7 +1155,7 @@ export class SqlCoordinator {
             firm: isClaim ? Boolean(p.firm) : false,
             source: isClaim ? (p.source === "predicted" ? "predicted" : "explicit") : "edit",
             seq: rec.seq,
-            expires_at: now + ttl,
+            expires_at,
           });
         break;
       }
@@ -1070,8 +1163,10 @@ export class SqlCoordinator {
         const keys = p.keys as SymbolKey[] | undefined;
         if (keys) for (const k of keys) run(this.sql, `DELETE FROM claims WHERE change_id IS ? AND key = ?`, rec.change ?? null, k);
         else run(this.sql, `DELETE FROM claims WHERE change_id IS ?`, rec.change ?? null);
-        if (s && keys) for (const k of keys) this.openDelete(s.id, k);
-        if (s && !keys) this.openClear(s.id);
+        // An agent's release is a retreat: it clears only errors whose edit never reached the
+        // workspace (check) or wounds (push) on the released keys — never commit-mode ones (§6.5).
+        if (s && change)
+          for (const r of this.openRows(change.id)) if ((!keys || keys.includes(r.key)) && r.origin !== "commit") this.openDelete(change.id, r.key);
         break;
       }
       case "land": {
@@ -1081,7 +1176,7 @@ export class SqlCoordinator {
         if (task !== undefined && task !== null) run(this.sql, `DELETE FROM claims WHERE change_id IN (SELECT id FROM changes WHERE task = ? AND id IS NOT ?)`, task, rec.change ?? null);
         if (change) run(this.sql, `UPDATE changes SET landed = 1 WHERE id = ?`, change.id);
         if (change) change.landed = 1;
-        for (const cs of this.sessionsOf({ change: rec.change! })) this.openClear(cs.id);
+        if (change) this.openClear(change.id);
         this.recordOp(rec);
         run(
           this.sql,
@@ -1224,7 +1319,7 @@ export class SqlCoordinator {
           if (shared.length !== c.shared.length) run(this.sql, `UPDATE claims SET shared = ? WHERE ord = ?`, JSON.stringify(shared), c.ord);
         }
     } else return a;
-    for (const ss of [...this.sessionsOf({ change: giver }), ...this.sessionsOf({ change: asker })]) for (const k of keys) this.openDelete(ss.id, k);
+    for (const ch of [giver, asker]) for (const k of keys) this.openDelete(ch, k);
     return a;
   }
 
@@ -1251,14 +1346,13 @@ export class SqlCoordinator {
     const [lead, other] = ((rec.payload?.target as { changes?: string[] })?.changes ?? []) as [string, string];
     run(this.sql, `UPDATE changes SET merged_into = ? WHERE COALESCE(merged_into, id) = ?`, lead, other);
     run(this.sql, `UPDATE changes SET merged_into = NULL WHERE id = ?`, lead);
-    for (const m of this.members(lead))
-      for (const ss of this.sessionsOf({ change: m.id })) {
-        for (const r of all<{ key: string; diagnostic: string }>(this.sql, `SELECT key, diagnostic FROM open_errors WHERE session = ? ORDER BY ord`, ss.id)) {
-          const c = this.record((JSON.parse(r.diagnostic) as Diagnostic).caused_by_seq)?.change;
-          if (c !== undefined && this.group(c) === lead) this.openDelete(ss.id, r.key);
-        }
-        this.push(ss, { seq: rec.seq, kind: "control", record: rec });
+    for (const m of this.members(lead)) {
+      for (const r of this.openRows(m.id)) {
+        const c = this.record(r.diagnostic.caused_by_seq)?.change;
+        if (c !== undefined && this.group(c) === lead) this.openDelete(m.id, r.key);
       }
+      for (const ss of this.sessionsOf({ change: m.id })) this.push(ss, { seq: rec.seq, kind: "control", record: rec });
+    }
   }
 
   // ---------------------------------------------------------------- inbox + gates
@@ -1278,7 +1372,7 @@ export class SqlCoordinator {
       items,
       head_seq: this.head,
       delivered_through: s.delivered_through,
-      open_errors: this.openOf(s.id),
+      open_errors: this.openOf(s.change),
       paused: s.paused_by !== undefined,
       ...(context ? { context } : {}),
     };
@@ -1314,7 +1408,7 @@ export class SqlCoordinator {
 
   gate(sid: string, g: Gate, owner?: string): GateResult {
     const s = this.session(sid, owner);
-    const open = this.openOf(s.id);
+    const open = this.openOf(s.change);
     const dues = g.gate === "stop" ? this.dues(s) : [];
     const extra = dues.length ? { negotiations: dues } : {};
     if (g.gate === "stop" && s.paused_by !== undefined)
@@ -1472,6 +1566,8 @@ export class SqlCoordinator {
           status: "accepted",
         }),
       );
+      const rel = this.releaseOnExit(s.change, "session_expired");
+      if (rel) out.push(rel);
     }
     return out;
   }
@@ -1586,7 +1682,7 @@ export class SqlCoordinator {
   summary(): RepoSummary {
     const sessions = this.allSessions();
     const last = one<{ ts: string }>(this.sql, `SELECT ts FROM events ORDER BY seq DESC LIMIT 1`);
-    const open = one<{ n: number }>(this.sql, `SELECT COUNT(*) AS n FROM open_errors`)!.n;
+    const open = one<{ n: number }>(this.sql, `SELECT COUNT(*) AS n FROM change_errors`)!.n;
     return {
       repo: this.repo,
       head_seq: this.head,
@@ -1594,7 +1690,7 @@ export class SqlCoordinator {
       active_changes: new Set(sessions.map((s) => s.change)).size,
       open_conflicts: open,
       ...(last ? { last_event_at: last.ts } : {}),
-      policy: { arbitration: this.policy, escalation: this.escalation },
+      policy: this.repoPolicy(),
     };
   }
 
@@ -1608,7 +1704,7 @@ export class SqlCoordinator {
 
   /** Complete dump of coordinator state (for replay-determinism checks). */
   dump(): Record<string, unknown[]> {
-    const tables = ["events", "event_writes", "sessions", "changes", "change_reads", "change_writes", "claims", "inbox", "open_errors", "ops", "submit_queue"];
+    const tables = ["events", "event_writes", "sessions", "changes", "change_reads", "change_writes", "claims", "inbox", "change_errors", "ops", "submit_queue"];
     const out: Record<string, unknown[]> = {};
     for (const t of tables) out[t] = all(this.sql, `SELECT * FROM ${t} ORDER BY rowid`);
     out.meta = all(this.sql, `SELECT * FROM meta WHERE k != 'schema_version' ORDER BY k`);

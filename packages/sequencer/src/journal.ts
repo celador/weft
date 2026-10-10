@@ -3,7 +3,7 @@
 // log, every verdict and all derived state byte-for-byte (spec §5.1: replay determinism).
 
 import { WcpProtocolError, type Actor, type EventDraft, type Gate, type Hello, type HumanAction, type Submit } from "@weft/protocol";
-import { SqlCoordinator, type CoordinatorInit, type QueueEntry } from "./coordinator";
+import { SqlCoordinator, type CoordinatorConfig, type CoordinatorInit, type QueueEntry } from "./coordinator";
 import { all, run, type Sql } from "./sql";
 
 export type JournalEntry = { n: number; at: number; op: JournalOp; args: unknown[] };
@@ -19,7 +19,8 @@ export type JournalOp =
   | "system"
   | "tick"
   | "enqueue"
-  | "queue_status";
+  | "queue_status"
+  | "policy";
 
 /** Dispatch one journaled operation (the only entry point for state changes). */
 export function dispatch(c: SqlCoordinator, op: JournalOp, args: unknown[]): unknown {
@@ -47,6 +48,8 @@ export function dispatch(c: SqlCoordinator, op: JournalOp, args: unknown[]): unk
       return c.enqueue(a[0] as string, a[1] as string, (a[2] ?? undefined) as string | undefined);
     case "queue_status":
       return c.setQueueStatus(a[0] as number, a[1] as QueueEntry["status"], (a[2] ?? undefined) as string | undefined);
+    case "policy":
+      return c.setPolicy(a[0] as Parameters<SqlCoordinator["setPolicy"]>[0]);
   }
 }
 
@@ -85,9 +88,11 @@ export class JournaledCoordinator {
 
 /**
  * Replay a journal into an empty database. Returns the rebuilt coordinator and the
- * result (or protocol error) of every entry.
+ * result (or protocol error) of every entry. Pass the repo's stored configuration (meta
+ * `config`) to replay a live repo exactly — including one created before the claims policy,
+ * whose config has no `claims` (spec §7.5); an init is turned into a config as at creation.
  */
-export function replay(sql: Sql, init: CoordinatorInit, entries: JournalEntry[]): { coord: SqlCoordinator; results: unknown[] } {
+export function replay(sql: Sql, init: CoordinatorInit | CoordinatorConfig, entries: JournalEntry[]): { coord: SqlCoordinator; results: unknown[] } {
   let t = 0;
   SqlCoordinator.init(sql, init);
   const coord = new SqlCoordinator(sql, () => t);

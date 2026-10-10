@@ -6,6 +6,7 @@ import {
   ReferenceCoordinator,
   runScenario,
   scenarioClock,
+  scenarioInit,
   WcpProtocolError,
   type ConformanceTarget,
   type Hello,
@@ -22,13 +23,7 @@ const scenarios = readdirSync(scenarioDir)
   .sort()
   .map((f) => ({ name: f.replace(/\.json$/, ""), data: JSON.parse(readFileSync(join(scenarioDir, f), "utf8")) as Scenario }));
 
-const initOf = (sc: Scenario) => ({
-  repo: sc.repo,
-  ...(sc.policy ? { policy: sc.policy } : {}),
-  ...(sc.escalation ? { escalation: sc.escalation } : {}),
-  ...(sc.claim_ttl_ms ? { claim_ttl_ms: sc.claim_ttl_ms } : {}),
-  ...(sc.session_ttl_ms ? { session_ttl_ms: sc.session_ttl_ms } : {}),
-});
+const initOf = (sc: Scenario) => scenarioInit(sc);
 
 /** ConformanceTarget over a journaled SqlCoordinator (what the Durable Object runs). */
 function sqlTarget(j: JournaledCoordinator): ConformanceTarget {
@@ -44,6 +39,7 @@ function sqlTarget(j: JournaledCoordinator): ConformanceTarget {
     tick: () => j.call("tick"),
     events: (after, limit, o) => j.coord.events({ ...(after !== undefined ? { after } : {}), ...(limit !== undefined ? { limit } : {}), ...o }),
     event: (seq) => j.coord.event(seq),
+    setPolicy: (p) => j.call("policy", p),
   };
 }
 
@@ -224,7 +220,7 @@ describe("SqlCoordinator persistence and extras", () => {
   });
 
   it("nextExpiry reports the earliest claim or session expiry", () => {
-    const { clock, j } = fresh({ claim_ttl_ms: 1000, session_ttl_ms: 5000 });
+    const { clock, j } = fresh({ claims: { lease_ms: 1000, firm_max_ms: 2000 }, session_ttl_ms: 5000 });
     expect(j.coord.nextExpiry()).toBeNull();
     const a = j.call<{ session: string }>("hello", hello("a", "A"));
     j.call("submit", a.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: 1, writes: [{ key: "src/x.ts#f", kind: "body" }] } });
@@ -245,9 +241,74 @@ describe("schema migration", () => {
     const cols = sql.exec<{ name: string }>(`PRAGMA table_info(changes)`).toArray().map((r) => r.name);
     expect(cols).toContain("merged_into");
     expect(sql.exec<{ id: string; merged_into: string | null }>(`SELECT id, merged_into FROM changes`).toArray()).toEqual([{ id: "I-old", merged_into: null }]);
-    expect(sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'schema_version'`).toArray()[0]!.v).toBe("2");
+    expect(sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'schema_version'`).toArray()[0]!.v).toBe("3");
     // A config written before B11 has no escalation field: it reads as auto.
     sql.exec(`UPDATE meta SET v = ? WHERE k = 'config'`, JSON.stringify({ repo: "demo", policy: "wound-wait", claim_ttl_ms: 1, session_ttl_ms: 1, heartbeat_interval_ms: 1, limits: { max_diff_bytes: 1, max_keys: 1, max_page: 1 } })).toArray();
     expect(new SqlCoordinator(sql).escalation).toBe("auto");
   });
 });
+
+describe("claims policy (spec §7.5) and per-change open errors (§6.5): storage", () => {
+  const edit = (base: number, key: string) => ({ type: "submit", mode: "commit", event: { kind: "edit", base_seq: base, writes: [{ key, kind: "body" }] } });
+
+  it("pins the defaults of a new repo: 2-minute lease, 10-minute firm limit", () => {
+    const { j } = fresh();
+    expect(j.coord.config.claims).toEqual({ lease_ms: 120_000, firm_max_ms: 600_000 });
+    const w = j.call<{ claim_ttl_ms: number; policy: unknown }>("hello", hello("a", "A"));
+    expect(w.claim_ttl_ms).toBe(120_000);
+    expect(w.policy).toEqual({ arbitration: "wound-wait", escalation: "auto", claims: { lease_ms: 120_000, firm_max_ms: 600_000 } });
+  });
+
+  it("a legacy config (no claims) keeps the 30-minute claim TTL until the journaled policy op", () => {
+    const { sql, j } = fresh({ claims: null });
+    expect(j.coord.config.claims).toBeUndefined();
+    const w = j.call<{ claim_ttl_ms: number; policy: { claims?: unknown } }>("hello", hello("a", "A"));
+    expect(w.claim_ttl_ms).toBe(1_800_000);
+    expect("claims" in w.policy).toBe(false);
+    expect(j.call("policy", { claims: { lease_ms: 60_000, firm_max_ms: 300_000 } })).toEqual({ arbitration: "wound-wait", escalation: "auto", claims: { lease_ms: 60_000, firm_max_ms: 300_000 } });
+    // Persisted in the stored config (survives eviction) and recorded in the journal.
+    expect(new SqlCoordinator(sql).config.claims).toEqual({ lease_ms: 60_000, firm_max_ms: 300_000 });
+    expect(j.journal().map((e) => e.op)).toEqual(["hello", "policy"]);
+  });
+
+  it("rejects an invalid policy without changing anything", () => {
+    const { j } = fresh();
+    for (const bad of [{}, { claims: { lease_ms: 0, firm_max_ms: 1 } }, { claims: { lease_ms: 1.5, firm_max_ms: 1 } }, { claims: { lease_ms: "1", firm_max_ms: 1 } }])
+      expect(() => j.call("policy", bad)).toThrow(WcpProtocolError);
+    expect(j.coord.config.claims).toEqual({ lease_ms: 120_000, firm_max_ms: 600_000 });
+    expect(() => SqlCoordinator.init(nodeSql(), { repo: "r", claims: { lease_ms: -1, firm_max_ms: 1 } })).toThrow(/lease_ms/);
+  });
+
+  it("a legacy repo's journal replays exactly against its stored config, before and after the policy op", () => {
+    const { sql, clock, j } = fresh({ claims: null });
+    const a = j.call<{ session: string }>("hello", hello("a", "A"));
+    j.call("submit", a.session, edit(1, "src/x.ts#f"));
+    j.call("bye", a.session); // legacy: no release on exit
+    clock.advance(31 * 60_000);
+    j.call("tick");
+    j.call("policy", { claims: { lease_ms: 120_000, firm_max_ms: 600_000 } });
+    const b = j.call<{ session: string }>("hello", hello("b", "B"));
+    j.call("submit", b.session, edit(5, "src/y.ts#g"));
+    j.call("bye", b.session); // now: released on exit
+    const kinds = j.coord.events({ limit: 50 }).events.map((e) => `${e.kind}${e.payload?.reason ? `:${String(e.payload.reason)}` : ""}`);
+    expect(kinds).toEqual(["join", "edit", "leave", "release:expired", "join", "edit", "leave", "release:session_ended"]);
+    // The stored config of the repo as it was created (no claims) replays it byte for byte.
+    const re = replay(nodeSql(), { repo: "r", policy: "wound-wait", escalation: "auto", claim_ttl_ms: 1_800_000, session_ttl_ms: 300_000, heartbeat_interval_ms: 30_000, limits: { max_diff_bytes: 1_048_576, max_keys: 2000, max_page: 500 } }, j.journal());
+    expect(JSON.stringify(re.coord.dump())).toBe(JSON.stringify(j.coord.dump()));
+    void sql;
+  });
+
+  it("migrates v2 per-session open errors to per-change ones (strictest origin)", () => {
+    const sql = nodeSql();
+    SqlCoordinator.init(sql, { repo: "r" });
+    sql.exec(`INSERT INTO sessions (id, ord, agent, harness, change_id, task, capabilities, delivered_through, next_inbox_id, paused_by, last_seen) VALUES ('s1', 1, 'a', 'h', 'A', NULL, '{}', 0, 1, NULL, 0)`).toArray();
+    const d = { severity: "error", code: "stale_assumption", file: "src/x.ts", symbol: "src/x.ts#f", message: "m", caused_by_seq: 7, caused_by_agent: "b" };
+    sql.exec(`INSERT INTO open_errors (session, key, ord, diagnostic) VALUES ('s1', 'src/x.ts#f', 3, ?)`, JSON.stringify(d)).toArray();
+    sql.exec(`UPDATE meta SET v = '2' WHERE k = 'schema_version'`).toArray();
+    new SqlCoordinator(sql);
+    expect(sql.exec(`SELECT change_id, key, origin, seq FROM change_errors`).toArray()).toEqual([{ change_id: "A", key: "src/x.ts#f", origin: "commit", seq: 7 }]);
+    expect(sql.exec(`SELECT COUNT(*) AS n FROM open_errors`).toArray()).toEqual([{ n: 0 }]);
+    expect(sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'schema_version'`).toArray()[0]!.v).toBe("3");
+  });
+});
+

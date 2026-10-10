@@ -83,6 +83,8 @@ export type SessionState = {
   head?: string;
   stopRefusals?: { fingerprint: string; count: number };
   lastContact: number;
+  /** Claim limits the coordinator announced in its last welcome (spec §7.5), for `weft claim`. */
+  claimLimits?: { claim_ttl_ms: number; claims?: { lease_ms: number; firm_max_ms: number } };
 };
 
 export function stateDir(root: string): string {

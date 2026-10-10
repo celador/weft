@@ -23,9 +23,11 @@ export {
   runScenario,
   partialMatch,
   scenarioClock,
+  scenarioInit,
   type ConformanceTarget,
   type Scenario,
   type ScenarioStep,
   type ScenarioClock,
   type StepResult,
 } from "./conformance";
+export { parseClaim, claimKeyError, maxClaimTtl, CLAIM_USAGE, type ClaimCommand } from "./claim-cli";

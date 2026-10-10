@@ -9,12 +9,13 @@
 //   status         print config (never the token) and session state
 //   negotiate …    the agent's shell command for WCP negotiation (propose/accept/reject/counter/escalate)
 //   inbox          print what is waiting for this agent (inbox, open errors, negotiations owed)
+//   claim          explicit claim on symbols: claim --keys path#sym[,…] [--firm] [--ttl MS]
 import { spawn, execFileSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NEGOTIATE_USAGE, parseNegotiate } from "@weft/protocol";
+import { CLAIM_USAGE, NEGOTIATE_USAGE, parseClaim, parseNegotiate } from "@weft/protocol";
 import { HttpTransport, type Transport } from "./client";
 import { CONFIG_REL, currentSession, loadConfig, readState, stateDir, type AdapterConfig, type Loaded } from "./config";
 import { ClaudeAdapter, type HookInput } from "./hooks";
@@ -167,6 +168,9 @@ export function mergeSettings(settings: Record<string, unknown>, command: string
     UserPromptSubmit: ours(),
     PreToolUse: ours("Edit|Write|MultiEdit|Bash"),
     PostToolUse: ours("*"),
+    // A tool that fails partway (e.g. a shell command that edits, then errors) fires this
+    // instead of PostToolUse; its edits are reconciled the same way.
+    PostToolUseFailure: ours("Bash|Edit|Write|MultiEdit"),
     Stop: ours(),
     SessionEnd: ours(),
   };
@@ -247,7 +251,7 @@ async function install(args: string[]): Promise<void> {
   // The agent's own Weft command (negotiate / inbox), run through its shell tool.
   const cliPath = join(root, CLI_REL);
   mkdirSync(dirname(cliPath), { recursive: true });
-  writeFileSync(cliPath, `#!/bin/sh\n# ${HOOK_MARK}: Weft CLI for the agent in this checkout (negotiate, inbox)\nexec ${shellQuote(stableNodePath())} ${shellQuote(SELF)} "$@"\n`, { mode: 0o755 });
+  writeFileSync(cliPath, `#!/bin/sh\n# ${HOOK_MARK}: Weft CLI for the agent in this checkout (negotiate, inbox, claim)\nexec ${shellQuote(stableNodePath())} ${shellQuote(SELF)} "$@"\n`, { mode: 0o755 });
   chmodSync(cliPath, 0o755);
   const hasToken = existsSync(resolve(root, config.tokenFile!)) || !!process.env.WEFT_TOKEN;
   process.stdout.write(
@@ -316,6 +320,28 @@ async function negotiateCmd(args: string[]): Promise<number> {
   return r.code;
 }
 
+async function claimCmd(args: string[]): Promise<number> {
+  if (!args.length || args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(`${CLAIM_USAGE}\n`);
+    return args.length ? 0 : 2;
+  }
+  let cmd;
+  try {
+    cmd = parseClaim(args);
+  } catch (err) {
+    process.stderr.write(`weft: ${err instanceof Error ? err.message : String(err)}\n`);
+    return 2;
+  }
+  const loaded = loadConfig(process.cwd());
+  if (!loaded) {
+    process.stderr.write("weft: not configured here (no .weft/claude.json or no token)\n");
+    return 2;
+  }
+  const r = await adapterFor(loaded).claim(currentSession(loaded.root) ?? "cli", cmd);
+  (r.code === 2 ? process.stderr : process.stdout).write(`${r.text}\n`);
+  return r.code;
+}
+
 async function inboxCmd(args: string[]): Promise<number> {
   const loaded = loadConfig(process.cwd());
   if (!loaded) {
@@ -367,9 +393,12 @@ async function main(): Promise<void> {
       return;
     case "inbox":
       process.exitCode = await inboxCmd(args);
+      break;
+    case "claim":
+      process.exitCode = await claimCmd(args);
       return;
     default:
-      process.stderr.write("usage: weft-adapter-claude install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--shared]\n       weft-adapter-claude hook|commit-msg FILE|pre-commit|status\n       weft-adapter-claude negotiate …|inbox (see negotiate --help)\n");
+      process.stderr.write("usage: weft-adapter-claude install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--shared]\n       weft-adapter-claude hook|commit-msg FILE|pre-commit|status\n       weft-adapter-claude negotiate …|inbox (see negotiate --help)\n       weft-adapter-claude claim --keys path#symbol[,…] [--firm] [--ttl MS]\n");
       process.exitCode = cmd ? 2 : 0;
   }
 }

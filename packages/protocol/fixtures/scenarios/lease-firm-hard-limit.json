@@ -1,0 +1,348 @@
+{
+  "name": "lease-firm-hard-limit",
+  "description": "§7.5: a firm claim has a hard deadline min(ttl_ms, firm_max_ms) from its claim event; heartbeats and the holder's own edits do not extend it; only a new explicit claim event does.",
+  "covers": [
+    "7.5",
+    "6.3"
+  ],
+  "repo": "demo",
+  "start": "2026-10-05T14:00:00.000Z",
+  "steps": [
+    {
+      "op": "hello",
+      "as": "A",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "claude-a",
+          "harness": "claude-code"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-1"
+        },
+        "change": "I-a"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s1",
+        "head_seq": 1,
+        "delivered_through": 1
+      }
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "codex-b",
+          "harness": "codex"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s2",
+        "head_seq": 2,
+        "delivered_through": 2
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "claim",
+          "base_seq": 1,
+          "payload": {
+            "firm": true,
+            "source": "explicit",
+            "ttl_ms": 3600000
+          },
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "signature"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 3
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 2,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "reject",
+        "seq": 4,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "claim_wait",
+            "symbol": "src/auth/session.ts#refreshToken",
+            "caused_by_seq": 3,
+            "caused_by_agent": "claude-a"
+          }
+        ]
+      }
+    },
+    {
+      "op": "advance",
+      "ms": 200000
+    },
+    {
+      "op": "heartbeat",
+      "as": "A",
+      "expect": {
+        "type": "heartbeat.ack"
+      }
+    },
+    {
+      "op": "heartbeat",
+      "as": "B"
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 3,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 5
+      }
+    },
+    {
+      "op": "advance",
+      "ms": 200000
+    },
+    {
+      "op": "heartbeat",
+      "as": "A",
+      "expect": {
+        "type": "heartbeat.ack"
+      }
+    },
+    {
+      "op": "heartbeat",
+      "as": "B"
+    },
+    {
+      "op": "advance",
+      "ms": 199980
+    },
+    {
+      "op": "tick",
+      "expect": []
+    },
+    {
+      "op": "heartbeat",
+      "as": "A",
+      "expect": {
+        "type": "heartbeat.ack"
+      }
+    },
+    {
+      "op": "heartbeat",
+      "as": "B"
+    },
+    {
+      "op": "advance",
+      "ms": 7
+    },
+    {
+      "op": "tick",
+      "expect": [
+        {
+          "seq": 6,
+          "kind": "release",
+          "status": "accepted",
+          "actor": {
+            "type": "system"
+          },
+          "agent": "claude-a",
+          "change": "I-a",
+          "payload": {
+            "keys": [
+              "src/auth/session.ts#refreshToken"
+            ],
+            "reason": "expired"
+          }
+        }
+      ]
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 4,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 7,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "stop",
+      "expect": {
+        "allow": true
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "claim",
+          "base_seq": 5,
+          "payload": {
+            "firm": true,
+            "source": "explicit",
+            "ttl_ms": 1000
+          },
+          "writes": [
+            {
+              "key": "src/api/client.ts#fetchWithAuth",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 8
+      }
+    },
+    {
+      "op": "advance",
+      "ms": 500
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "claim",
+          "base_seq": 8,
+          "payload": {
+            "firm": true,
+            "source": "explicit",
+            "ttl_ms": 1000
+          },
+          "writes": [
+            {
+              "key": "src/api/client.ts#fetchWithAuth",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 9
+      }
+    },
+    {
+      "op": "advance",
+      "ms": 700
+    },
+    {
+      "op": "tick",
+      "expect": []
+    },
+    {
+      "op": "advance",
+      "ms": 400
+    },
+    {
+      "op": "tick",
+      "expect": [
+        {
+          "seq": 10,
+          "kind": "release",
+          "status": "accepted",
+          "actor": {
+            "type": "system"
+          },
+          "agent": "claude-a",
+          "change": "I-a",
+          "payload": {
+            "keys": [
+              "src/api/client.ts#fetchWithAuth"
+            ],
+            "reason": "expired"
+          }
+        }
+      ]
+    }
+  ]
+}

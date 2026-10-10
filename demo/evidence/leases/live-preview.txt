@@ -1,0 +1,31 @@
+repo l1-verify-mv1q3t3f on https://weft-gateway-preview.elier.ai
+PASS  create repo (new repo: default claims policy)
+PASS  welcome: claim_ttl_ms=120000 policy.claims={"lease_ms":120000,"firm_max_ms":600000}
+PASS  agent-a edits refreshToken -> #3 accept (soft lease)
+PASS  agent-b check on refreshToken: claim_wait/warning
+PASS  agent-a bye -> #4 agent-a left — done | #5 agent-a released refreshToken (session ended)
+PASS  agent-b check on refreshToken right after: clean
+PASS  agent-a firmly claims cartSummary for 4 s -> #7
+PASS  firm claim released by the DO alarm after 4.4 s despite heartbeats every 1 s: #8 agent-a released cartSummary (expired)
+PASS  agent-b edit of fetchWithAuth (firm claim of agent-a) -> #10 reject claim_wait
+PASS  agent-b stop gate closed
+PASS  agent-b release (all) -> stop gate still closed
+PASS  agent-b bye + new hello -> gate still closed (claim_wait), error redelivered as inbox item for #10
+summary: open_conflicts=1 policy={"arbitration":"wound-wait","escalation":"auto","claims":{"lease_ms":120000,"firm_max_ms":600000}}
+PASS  legacy repo welcome: claim_ttl_ms=1800000, no claims policy
+PASS  admin policy migration -> 200 {"arbitration":"wound-wait","escalation":"auto","claims":{"lease_ms":120000,"firm_max_ms":600000}}; new welcome claim_ttl_ms=120000
+
+log:
+  #1 accepted join     agent-a joined (claude-code, L3)
+  #2 accepted join     agent-b joined (claude-code, L3)
+  #3 accepted edit     agent-a edited refreshToken in src/auth/session.ts
+  #4 accepted leave    agent-a left — done
+  #5 accepted release  agent-a released refreshToken (session ended)
+  #6 accepted join     agent-a joined (claude-code, L3)
+  #7 accepted claim    agent-a firmly claimed cartSummary
+  #8 accepted release  agent-a released cartSummary (expired)
+  #9 accepted claim    agent-a firmly claimed fetchWithAuth
+  #10 rejected edit     Blocked: agent-b edited fetchWithAuth in src/api/client.ts
+  #11 accepted release  agent-b released all claims
+  #12 accepted leave    agent-b left
+  #13 accepted join     agent-b joined (claude-code, L3)

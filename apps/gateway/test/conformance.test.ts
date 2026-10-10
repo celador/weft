@@ -9,6 +9,7 @@ import {
   ReferenceCoordinator,
   runScenario,
   scenarioClock,
+  scenarioInit,
   type ConformanceTarget,
   type EventPage,
   type EventRecord,
@@ -16,7 +17,7 @@ import {
   type Welcome,
 } from "@weft/protocol";
 import type { JournalEntry, RepoCoordinator, Result } from "@weft/sequencer";
-import { agentToken, createRepo, humanToken, observerToken, systemToken, uniqueRepo, wcp } from "./helpers";
+import { ADMIN, agentToken, createRepo, humanToken, observerToken, systemToken, uniqueRepo, wcp } from "./helpers";
 
 const files = (import.meta as unknown as { glob: (p: string, o: object) => Record<string, unknown> }).glob("../../../packages/protocol/fixtures/scenarios/*.json", { eager: true, import: "default" }) as Record<string, Scenario>;
 const scenarios = Object.entries(files)
@@ -80,30 +81,20 @@ async function httpTarget(repo: string): Promise<ConformanceTarget> {
       return wcp<EventPage>("GET", `${base}/events?${q}`, observer);
     },
     event: (seq) => wcp<EventRecord>("GET", `${base}/events/${seq}`, observer),
+    setPolicy: (p) => wcp("POST", `/v1/admin/repos/${repo}/policy`, ADMIN, p),
   };
 }
 
 async function runViaGateway(sc0: Scenario) {
   const repo = uniqueRepo(sc0.name);
   const sc = renamed(sc0, repo);
-  await createRepo(repo, {
-    ...(sc.policy ? { policy: sc.policy } : {}),
-    ...(sc.escalation ? { escalation: sc.escalation } : {}),
-    ...(sc.claim_ttl_ms ? { claim_ttl_ms: sc.claim_ttl_ms } : {}),
-    ...(sc.session_ttl_ms ? { session_ttl_ms: sc.session_ttl_ms } : {}),
-  });
+  const { repo: _r, ...init } = scenarioInit(sc);
+  await createRepo(repo, init);
   const clock = scenarioClock(sc.start);
   await runInDurableObject(stubOf(repo), (inst: RepoCoordinator) => inst.setClock(clock.now));
   const results = await runScenario(sc, await httpTarget(repo), clock);
   const refClock = scenarioClock(sc.start);
-  const ref = new ReferenceCoordinator({
-    repo,
-    ...(sc.policy ? { policy: sc.policy } : {}),
-    ...(sc.escalation ? { escalation: sc.escalation } : {}),
-    ...(sc.claim_ttl_ms ? { claim_ttl_ms: sc.claim_ttl_ms } : {}),
-    ...(sc.session_ttl_ms ? { session_ttl_ms: sc.session_ttl_ms } : {}),
-    now: refClock.now,
-  });
+  const ref = new ReferenceCoordinator({ ...scenarioInit(sc), now: refClock.now });
   const refResults = await runScenario(sc, ref, refClock);
   return { repo, sc, results, refResults, ref };
 }
@@ -127,13 +118,7 @@ describe("WCP conformance through gateway + RepoCoordinator DO", () => {
     const journal = unwrap(await live.journal()) as JournalEntry[];
     expect(journal.length).toBeGreaterThan(0);
     const replica = stubOf(`${repo}-replay`);
-    const init = {
-      repo,
-      ...(sc.policy ? { policy: sc.policy } : {}),
-      ...(sc.escalation ? { escalation: sc.escalation } : {}),
-      ...(sc.claim_ttl_ms ? { claim_ttl_ms: sc.claim_ttl_ms } : {}),
-      ...(sc.session_ttl_ms ? { session_ttl_ms: sc.session_ttl_ms } : {}),
-    };
+    const init = scenarioInit(sc);
     unwrap(await replica.init(init));
     await runInDurableObject(replica, async (inst: RepoCoordinator) => {
       let t = 0;

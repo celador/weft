@@ -5,7 +5,7 @@ import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test"
 import { describe, expect, it } from "vitest";
 import type { ActionResult, Diagnostic, EventPage, EventRecord, InboxBatch, Verdict, Welcome } from "@weft/protocol";
 import type { JournalEntry, RepoCoordinator, Result } from "@weft/sequencer";
-import { agentToken, call, createRepo, hello, humanToken, observerToken, systemToken, uniqueRepo, wcp } from "./helpers";
+import { ADMIN, agentToken, call, createRepo, hello, humanToken, observerToken, systemToken, uniqueRepo, wcp } from "./helpers";
 
 const K = {
   refresh: "src/auth/session.ts#refreshToken",
@@ -200,7 +200,7 @@ describe("sequencer behaviours (HTTP → DO)", () => {
 
   it("claims with TTL expire through the Durable Object alarm (system release record)", async () => {
     const repo = uniqueRepo("ttl");
-    await createRepo(repo, { claim_ttl_ms: 200, session_ttl_ms: 60_000 });
+    await createRepo(repo, { claims: { lease_ms: 200, firm_max_ms: 1000 }, session_ttl_ms: 60_000 });
     const t = await agentToken(repo, "a");
     const s = await wcp<Welcome>("POST", `/v1/repos/${repo}/sessions`, t, hello("a", "C-a"));
     await wcp<Verdict>("POST", `/v1/repos/${repo}/sessions/${s.session}/events`, t, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: 1, writes: [{ key: K.parse, kind: "body" }] } });
@@ -210,6 +210,23 @@ describe("sequencer behaviours (HTTP → DO)", () => {
     expect(await runDurableObjectAlarm(stub)).toBe(true);
     const page = await wcp<EventPage>("GET", `/v1/repos/${repo}/events`, await observerToken([repo]));
     expect(page.events.at(-1)).toMatchObject({ kind: "release", actor: { type: "system", id: "coordinator" }, payload: { keys: [K.parse], reason: "expired" }, summary: "a released parseJson (expired)" });
+  });
+
+  it("admin policy endpoint: applies the claims policy to a legacy repo, refuses bad input and unknown repos", async () => {
+    const repo = uniqueRepo("policy");
+    await createRepo(repo, { claims: null });
+    const t = await agentToken(repo, "a");
+    expect((await wcp<Welcome>("POST", `/v1/repos/${repo}/sessions`, t, hello("a", "C-a"))).policy).toEqual({ arbitration: "wound-wait", escalation: "auto" });
+    const bad = await call("POST", `/v1/admin/repos/${repo}/policy`, ADMIN, { claims: { lease_ms: 0, firm_max_ms: 1 } });
+    expect(bad.status).toBe(400);
+    expect((await call("POST", `/v1/admin/repos/${repo}/policy`, "not-admin", { claims: { lease_ms: 1, firm_max_ms: 1 } })).status).toBe(401);
+    expect((await call("POST", `/v1/admin/repos/${repo}-nope/policy`, ADMIN, { claims: { lease_ms: 1, firm_max_ms: 1 } })).status).toBe(404);
+    const ok = await call("POST", `/v1/admin/repos/${repo}/policy`, ADMIN, { claims: { lease_ms: 120_000, firm_max_ms: 600_000 } });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ arbitration: "wound-wait", escalation: "auto", claims: { lease_ms: 120_000, firm_max_ms: 600_000 } });
+    const w = await wcp<Welcome>("POST", `/v1/repos/${repo}/sessions`, t, hello("a", "C-a"));
+    expect(w).toMatchObject({ claim_ttl_ms: 120_000, policy: { claims: { lease_ms: 120_000, firm_max_ms: 600_000 } } });
+    expect((await call("POST", "/v1/admin/repos", ADMIN, { repo: uniqueRepo("badclaims"), claims: { lease_ms: "x" } })).status).toBe(400);
   });
 
   it("human pause blocks edits (agent_paused) but lets the agent stop; resume restores", async () => {

@@ -1,0 +1,215 @@
+{
+  "name": "lease-soft-claim",
+  "description": "§7.5: a soft claim is a lease of lease_ms (default 2 min) renewed by heartbeats; when its agent dies (no more heartbeats) the claim is released within lease_ms, not after the old 30-minute TTL.",
+  "covers": [
+    "7.5",
+    "8.2"
+  ],
+  "repo": "demo",
+  "start": "2026-10-05T14:00:00.000Z",
+  "steps": [
+    {
+      "op": "hello",
+      "as": "A",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "claude-a",
+          "harness": "claude-code"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-1"
+        },
+        "change": "I-a"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s1",
+        "head_seq": 1,
+        "claim_ttl_ms": 120000,
+        "policy": {
+          "arbitration": "wound-wait",
+          "claims": {
+            "lease_ms": 120000,
+            "firm_max_ms": 600000
+          }
+        }
+      }
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "codex-b",
+          "harness": "codex"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s2",
+        "head_seq": 2,
+        "delivered_through": 2
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 1,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 3
+      }
+    },
+    {
+      "op": "heartbeat",
+      "as": "A",
+      "expect": {
+        "type": "heartbeat.ack"
+      }
+    },
+    {
+      "op": "advance",
+      "ms": 60000
+    },
+    {
+      "op": "heartbeat",
+      "as": "A",
+      "expect": {
+        "type": "heartbeat.ack"
+      }
+    },
+    {
+      "op": "advance",
+      "ms": 60000
+    },
+    {
+      "op": "tick",
+      "expect": []
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "check",
+        "event": {
+          "kind": "edit",
+          "base_seq": 2,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": null,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "claim_wait",
+            "symbol": "src/auth/session.ts#refreshToken",
+            "caused_by_seq": 3,
+            "caused_by_agent": "claude-a"
+          }
+        ]
+      }
+    },
+    {
+      "op": "advance",
+      "ms": 59990
+    },
+    {
+      "op": "tick",
+      "expect": []
+    },
+    {
+      "op": "advance",
+      "ms": 10
+    },
+    {
+      "op": "tick",
+      "expect": [
+        {
+          "seq": 4,
+          "kind": "release",
+          "status": "accepted",
+          "actor": {
+            "type": "system"
+          },
+          "agent": "claude-a",
+          "change": "I-a",
+          "payload": {
+            "keys": [
+              "src/auth/session.ts#refreshToken"
+            ],
+            "reason": "expired"
+          },
+          "summary": "claude-a released refreshToken (expired)"
+        }
+      ]
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "check",
+        "event": {
+          "kind": "edit",
+          "base_seq": 3,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": null,
+        "diagnostics": []
+      }
+    }
+  ]
+}

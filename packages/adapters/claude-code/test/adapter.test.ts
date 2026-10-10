@@ -155,9 +155,9 @@ describe("Claude Code hooks against the reference coordinator", () => {
     // A gets contract news? No: B only read calcTotal after A's change. A's own gate is clean.
     expect(await A.handle(hook("sa", rootA, { hook_event_name: "Stop" }))).toBeUndefined();
 
-    // SessionEnd -> leave
+    // SessionEnd -> leave, then the coordinator releases the change's claims (spec §7.5).
     await B.handle(hook("sb", rootB, { hook_event_name: "SessionEnd", reason: "exit" }));
-    expect(coord.log.at(-1)!.kind).toBe("leave");
+    expect(coord.log.slice(-2).map((r) => `${r.kind}${r.payload?.reason ? `:${String(r.payload.reason)}` : ""}`)).toEqual(["leave", "release:session_ended"]);
   });
 
   it("pushes contract_changed to a change that already uses the symbol (PostToolUse injection)", async () => {
@@ -242,7 +242,7 @@ describe("installer, git hooks and the bundled CLI", () => {
     const out = execFileSync(process.execPath, [BUNDLE, "install", "--url", url, "--repo", "demo", "--agent", "claude-b", "--task", "T-2", "--title", "cart total"], { cwd: root, env, encoding: "utf8" });
     expect(out).toContain("installed Claude Code adapter");
     const settings = JSON.parse(readFileSync(join(root, ".claude/settings.local.json"), "utf8"));
-    expect(Object.keys(settings.hooks).sort()).toEqual(["PostToolUse", "PreToolUse", "SessionEnd", "SessionStart", "Stop", "UserPromptSubmit"]);
+    expect(Object.keys(settings.hooks).sort()).toEqual(["PostToolUse", "PostToolUseFailure", "PreToolUse", "SessionEnd", "SessionStart", "Stop", "UserPromptSubmit"]);
     expect(readFileSync(join(root, ".git/info/exclude"), "utf8")).toContain(".weft/\n.claude/settings.local.json\n");
     const cfg = JSON.parse(readFileSync(join(root, ".weft/claude.json"), "utf8"));
     expect(cfg.change).toMatch(/^I[0-9a-f]{40}$/);

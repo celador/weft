@@ -105,7 +105,8 @@ describe("Cursor adapter end to end (real bundle, real git, local coordinator)",
     expect(c.ok).toBe(true);
     expect(gitLog(root)).toMatch(/Task-Id: T-2\nAgent-Id: cursor-b/);
     await run({ hook_event_name: "sessionEnd", session_id: "conv-1", reason: "completed", duration_ms: 1 });
-    expect(coord.log.at(-1)!.kind).toBe("leave");
+    // The session end is a leave; the coordinator may then release the change's claims (spec §7.5).
+    expect(coord.log.filter((r) => r.kind !== "release").at(-1)!.kind).toBe("leave");
   }, 60_000);
 
   it("afterFileEdit alone (an edit no pre/postToolUse saw) is committed with the reconstructed before-text", async () => {

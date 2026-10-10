@@ -4,7 +4,7 @@
 // so every harness shows identical text. For contract changes the adapter also quotes the
 // causing event's diff: the other agent's edit lives in its own fork, so this agent cannot
 // read the new signature from its checkout.
-import { readFileSync } from "node:fs";
+import { readInsideCheckout } from "./safe-read";
 import { join } from "node:path";
 import { agreementOf, renderDiagnostic, renderDue, renderInboxItem, type Diagnostic, type EventRecord, type InboxItem, type NegotiationDue, type Range } from "@weft/protocol";
 
@@ -71,11 +71,8 @@ export function locateDeclaration(text: string, name: string): Range | undefined
 }
 
 function readCheckout(root: string, rel: string): string | undefined {
-  try {
-    return readFileSync(join(root, rel), "utf8");
-  } catch {
-    return undefined;
-  }
+  // Same rule as every adapter read: no symlinks, nothing outside the checkout.
+  return readInsideCheckout(root, join(root, rel), 1 << 20) ?? undefined;
 }
 
 /** Fill `file`/`range` from the checkout. Never throws. */

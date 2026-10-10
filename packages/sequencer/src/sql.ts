@@ -34,7 +34,7 @@ export function run(sql: Sql, q: string, ...args: Array<string | number | boolea
  * Schema of one repo's coordinator. Every table is owned by exactly one Durable Object
  * (one repo), so no table carries a repo column.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const DDL: string[] = [
   `CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)`,
@@ -78,9 +78,17 @@ export const DDL: string[] = [
   `CREATE TABLE IF NOT EXISTS inbox (
      session TEXT NOT NULL, id INTEGER NOT NULL, seq INTEGER NOT NULL, item TEXT NOT NULL,
      PRIMARY KEY (session, id))`,
+  // v1–v2 kept open errors per session; v3 moves them to change_errors (spec §6.5). The
+  // old table is still created so migrate() can read a v2 database's rows.
   `CREATE TABLE IF NOT EXISTS open_errors (
      session TEXT NOT NULL, key TEXT NOT NULL, ord INTEGER NOT NULL, diagnostic TEXT NOT NULL,
      PRIMARY KEY (session, key))`,
+  // Open errors per change (spec §6.5). origin: check | commit | push; seq: the record
+  // that opened it (redelivered to new sessions with that seq).
+  `CREATE TABLE IF NOT EXISTS change_errors (
+     change_id TEXT NOT NULL, key TEXT NOT NULL, ord INTEGER NOT NULL, origin TEXT NOT NULL,
+     seq INTEGER NOT NULL, diagnostic TEXT NOT NULL,
+     PRIMARY KEY (change_id, key))`,
   `CREATE TABLE IF NOT EXISTS idempotency (
      session TEXT NOT NULL, key TEXT NOT NULL, at INTEGER NOT NULL, verdict TEXT NOT NULL,
      PRIMARY KEY (session, key))`,
@@ -111,6 +119,15 @@ export function migrate(sql: Sql): void {
     const cols = all<{ name: string }>(sql, `PRAGMA table_info(${c.table})`).map((r) => r.name);
     if (!cols.includes(c.column)) run(sql, c.ddl);
   }
+  // v3: per-session open errors become per-change ones. Their origin is unknown, so they
+  // are treated as commit-mode (the strictest: only an accepted edit or land clears them).
+  run(
+    sql,
+    `INSERT OR IGNORE INTO change_errors (change_id, key, ord, origin, seq, diagnostic)
+     SELECT s.change_id, o.key, o.ord, 'commit', COALESCE(json_extract(o.diagnostic, '$.caused_by_seq'), 0), o.diagnostic
+     FROM open_errors o JOIN sessions s ON s.id = o.session ORDER BY o.ord`,
+  );
+  run(sql, `DELETE FROM open_errors`);
   run(sql, `INSERT OR IGNORE INTO meta (k, v) VALUES ('schema_version', ?)`, String(SCHEMA_VERSION));
   run(sql, `UPDATE meta SET v = ? WHERE k = 'schema_version' AND CAST(v AS INTEGER) < ?`, String(SCHEMA_VERSION), SCHEMA_VERSION);
 }
