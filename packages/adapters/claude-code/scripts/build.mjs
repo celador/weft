@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(dirname(fileURLToPath(import.meta.url)));
 await build({
-  entryPoints: { "weft-claude": join(here, "src/cli.ts") },
+  // demo-coordinator is the local coordinator scripts/demo-firm-claim.sh runs (not shipped in the CLI)
+  entryPoints: { "weft-claude": join(here, "src/cli.ts"), "demo-coordinator": join(here, "scripts/demo-coordinator.ts") },
   outdir: join(here, "dist"),
   outExtension: { ".js": ".mjs" },
   chunkNames: "chunks/[name]-[hash]",

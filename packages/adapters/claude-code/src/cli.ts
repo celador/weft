@@ -14,10 +14,10 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFi
 import { createHash, randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NEGOTIATE_USAGE, parseNegotiate } from "@weft/protocol";
+import { NEGOTIATE_USAGE, parseKey, parseNegotiate } from "@weft/protocol";
 import { HttpTransport, type Transport } from "./client";
 import { CONFIG_REL, currentSession, loadConfig, readState, stateDir, type AdapterConfig, type Loaded } from "./config";
-import { ClaudeAdapter, type HookInput } from "./hooks";
+import { ClaudeAdapter, type ClaimCommand, type HookInput } from "./hooks";
 import { stableNodePath } from "./node-path";
 
 const SELF = fileURLToPath(import.meta.url);
@@ -316,6 +316,55 @@ async function negotiateCmd(args: string[]): Promise<number> {
   return r.code;
 }
 
+/** Longest a claim may be held (ten minutes): the planned hard limit for firm claims. A longer hold would block other agents for the rest of a run. */
+export const CLAIM_TTL_MAX_MS = 10 * 60_000;
+
+export const CLAIM_USAGE = `usage: weft claim --keys path#symbol[,path#symbol…] [--firm] [--ttl MS] (1..${CLAIM_TTL_MAX_MS}, default: the deployment claim TTL)
+
+Claim symbols you are about to write. A plain claim is soft: another agent's overlapping edit
+only gets a warning. --firm makes an overlapping edit by a junior change an error (blocked).`;
+
+/**
+ * `claim --keys path#sym[,…] [--firm] [--ttl MS]`. Keys are validated against the protocol's
+ * symbol-key grammar; the claim is soft unless --firm is given (spec §7.5).
+ */
+export function parseClaim(args: string[]): ClaimCommand {
+  const raw = arg(args, "keys");
+  const keys = (raw ?? "").split(",").map((k) => k.trim()).filter(Boolean);
+  if (!keys.length) throw new Error("claim: which symbols? pass --keys path#symbol[,…]");
+  for (const k of keys) parseKey(k);
+  // A present --ttl must carry a value: a bare flag would otherwise fall back to the default
+  // lifetime and report success.
+  const hasTtl = args.includes("--ttl");
+  const ttl = arg(args, "ttl");
+  const ttl_ms = hasTtl ? Number(ttl) : undefined;
+  if (hasTtl && (!Number.isInteger(ttl_ms) || ttl_ms! < 1 || ttl_ms! > CLAIM_TTL_MAX_MS))
+    throw new Error(`claim: --ttl must be a whole number of milliseconds from 1 to ${CLAIM_TTL_MAX_MS} (got ${JSON.stringify(ttl ?? "")})`);
+  return { keys, firm: args.includes("--firm"), ...(ttl_ms !== undefined ? { ttl_ms } : {}) };
+}
+
+async function claimCmd(args: string[]): Promise<number> {
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(`${CLAIM_USAGE}\n`);
+    return 0;
+  }
+  const loaded = loadConfig(process.cwd());
+  if (!loaded) {
+    process.stderr.write("weft: not configured here (no .weft/claude.json or no token)\n");
+    return 2;
+  }
+  let cmd: ClaimCommand;
+  try {
+    cmd = parseClaim(args);
+  } catch (err) {
+    process.stderr.write(`weft: ${err instanceof Error ? err.message : String(err)}\n`);
+    return 2;
+  }
+  const r = await adapterFor(loaded).claim(currentSession(loaded.root) ?? "cli", cmd);
+  process.stdout.write(`${r.text}\n`);
+  return r.code;
+}
+
 async function inboxCmd(args: string[]): Promise<number> {
   const loaded = loadConfig(process.cwd());
   if (!loaded) {
@@ -368,8 +417,11 @@ async function main(): Promise<void> {
     case "inbox":
       process.exitCode = await inboxCmd(args);
       return;
+    case "claim":
+      process.exitCode = await claimCmd(args);
+      return;
     default:
-      process.stderr.write("usage: weft-adapter-claude install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--shared]\n       weft-adapter-claude hook|commit-msg FILE|pre-commit|status\n       weft-adapter-claude negotiate …|inbox (see negotiate --help)\n");
+      process.stderr.write("usage: weft-adapter-claude install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--shared]\n       weft-adapter-claude hook|commit-msg FILE|pre-commit|status\n       weft-adapter-claude negotiate …|inbox|claim --keys K[,K] [--firm] [--ttl MS] (see negotiate --help, claim --help)\n");
       process.exitCode = cmd ? 2 : 0;
   }
 }

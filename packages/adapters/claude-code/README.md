@@ -83,6 +83,7 @@ edit was not coordinated) and is logged. Files outside the checkout, and under `
 it through its shell tool; it uses this checkout's session and token):
 
 ```text
+weft claim --keys path#symbol[,…] [--firm] [--ttl MS]      # soft by default; --firm denies overlapping junior edits (max --ttl 600000)
 weft negotiate propose <overload|transfer|share|sequence|merge_tasks|other> "<terms>" [--to AGENT|--change CHANGE] [--keys k1,k2] [--wait SECONDS]
 weft negotiate accept <seq>
 weft negotiate reject <seq> ["<reason>"]

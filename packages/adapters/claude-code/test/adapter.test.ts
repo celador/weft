@@ -10,7 +10,7 @@ import { analyzeChanges, unifiedDiff, importReads } from "../src/analysis";
 import { ADVISORY_CAPABILITIES, CAPABILITIES, ClaudeAdapter, type HookInput } from "../src/hooks";
 import { proposedText, isGitCommit } from "../src/edits";
 import { locateUse, locateDeclaration, quoteDiff } from "../src/render";
-import { mergeSettings } from "../src/cli";
+import { mergeSettings, parseClaim } from "../src/cli";
 import type { Loaded } from "../src/config";
 import { CART_V1, PRICING_V1, PRICING_V2, checkout, refTransport, serve } from "./helpers";
 import type { Transport } from "../src/client";
@@ -407,5 +407,97 @@ export function calcTotal(items: Item[], opts: PriceOptions = { taxRate: 0 }): n
     });
     expect(() => parseNegotiate(["propose", "bribe", "x"])).toThrow(/terms kind/);
     expect(() => parseNegotiate(["accept", "x"])).toThrow(/event number/);
+  });
+});
+
+describe("explicit claims from the agent's shell (spec §7.5)", () => {
+  async function race(firm: boolean) {
+    const coord = new ReferenceCoordinator({ repo: "demo" });
+    const t = refTransport(coord);
+    const rootA = checkout(firm ? "fa" : "sa");
+    const rootB = checkout(firm ? "fb" : "sb");
+    const A = adapter(rootA, "claude-a", "T-1", t, 1);
+    const B = adapter(rootB, "claude-b", "T-2", t, 0);
+    await A.handle(hook("sa", rootA, { hook_event_name: "SessionStart" }));
+    await B.handle(hook("sb", rootB, { hook_event_name: "SessionStart" }));
+    const claimed = await A.claim("sa", parseClaim(["--keys", "src/pricing.ts#calcTotal", ...(firm ? ["--firm"] : [])]));
+    expect(claimed.code).toBe(0);
+    expect(claimed.text).toContain("claimed");
+    const rec = coord.log.find((r) => r.kind === "claim")!;
+    expect(rec).toBeDefined();
+    writeFileSync(join(rootB, "src/pricing.ts"), PRICING_V1);
+    const b = await edit(B, "sb", rootB, "b1", "src/pricing.ts", PRICING_V1, PRICING_V2);
+    return { b, text: JSON.stringify(b.pre) + JSON.stringify(b.post) };
+  }
+
+  it("a firm claim blocks a junior agent's overlapping edit", async () => {
+    const { b, text } = await race(true);
+    expect(b.applied).toBe(false);
+    expect(text).toContain("firmly claimed");
+  });
+
+  it("a non-firm claim only warns; the overlapping edit goes through", async () => {
+    const { b, text } = await race(false);
+    expect(b.applied).toBe(true);
+    expect(text).toContain("being edited");
+  });
+
+  it("a claim in a prefixed checkout is keyed the way edits are, so a firm claim blocks the overlapping edit", async () => {
+    const coord = new ReferenceCoordinator({ repo: "demo" });
+    const t = refTransport(coord);
+    const rootA = checkout("pfxa");
+    const rootB = checkout("pfxb");
+    const prefixed = (root: string, agent: string, task: string, priority: number): ClaudeAdapter => {
+      const loaded: Loaded = { root, token: "test", config: { url: "http://unused", repo: "demo", agent, prefix: "sub/", task: { id: task, title: task, priority }, change: `I-${agent}` } };
+      return new ClaudeAdapter(loaded, { transport: t, analyze: (c, r, p) => analyzeChanges(c, r, p), diff: (r, b, a) => unifiedDiff(r, b, a), now: (() => { let n = 1_790_000_000_000; return () => (n += 5_000); })() });
+    };
+    const A = prefixed(rootA, "claude-a", "T-1", 1);
+    const B = prefixed(rootB, "claude-b", "T-2", 0);
+    await A.handle(hook("sa", rootA, { hook_event_name: "SessionStart" }));
+    await B.handle(hook("sb", rootB, { hook_event_name: "SessionStart" }));
+    expect((await A.claim("sa", parseClaim(["--keys", "src/pricing.ts#calcTotal", "--firm"]))).code).toBe(0);
+    expect(coord.log.find((r) => r.kind === "claim")!.writes).toContainEqual({ key: "sub/src/pricing.ts#calcTotal", kind: "body" });
+    const b = await edit(B, "sb", rootB, "b1", "src/pricing.ts", PRICING_V1, PRICING_V2);
+    expect(b.applied).toBe(false);
+    expect(JSON.stringify(b.pre)).toContain("firmly claimed");
+  });
+
+  it("a claim outside the checkout is refused", async () => {
+    const coord = new ReferenceCoordinator({ repo: "demo" });
+    const root = checkout("pfxesc");
+    const A = adapter(root, "claude-a", "T-1", refTransport(coord), 1);
+    await A.handle(hook("se", root, { hook_event_name: "SessionStart" }));
+    const refused = await A.claim("se", parseClaim(["--keys", "../other/x.ts#f"]));
+    expect(refused.code).not.toBe(0);
+    expect(refused.text).toMatch(/outside this checkout/);
+  });
+
+  it("parseClaim validates keys and ttl; firm is opt-in", () => {
+    expect(parseClaim(["--keys", "src/a.ts#f,src/b.ts#g"])).toEqual({ keys: ["src/a.ts#f", "src/b.ts#g"], firm: false });
+    expect(parseClaim(["--keys", "src/a.ts#f", "--firm", "--ttl", "60000"])).toEqual({ keys: ["src/a.ts#f"], firm: true, ttl_ms: 60000 });
+    expect(() => parseClaim([])).toThrow(/--keys/);
+    expect(() => parseClaim(["--keys", "src/a.ts#f", "--ttl", "0"])).toThrow(/ttl/);
+    // a bare --ttl must not fall back to the default lifetime and report success
+    expect(() => parseClaim(["--keys", "src/a.ts#f", "--ttl"])).toThrow(/ttl/);
+    expect(() => parseClaim(["--keys", "src/a.ts#f", "--ttl", "--firm"])).toThrow(/ttl/);
+    // a ceiling: ten minutes at most
+    expect(parseClaim(["--keys", "src/a.ts#f", "--ttl", "600000"]).ttl_ms).toBe(600_000);
+    expect(() => parseClaim(["--keys", "src/a.ts#f", "--ttl", "600001"])).toThrow(/ttl/);
+    expect(() => parseClaim(["--keys", "src/a.ts#f", "--ttl", "1e15"])).toThrow(/ttl/);
+  });
+
+  it("a junior claim over a firm holder is refused with exit code 1", async () => {
+    const coord = new ReferenceCoordinator({ repo: "demo" });
+    const t = refTransport(coord);
+    const rootA = checkout("fsenior");
+    const rootB = checkout("fjunior");
+    const A = adapter(rootA, "claude-a", "T-1", t, 1);
+    const B = adapter(rootB, "claude-b", "T-2", t, 0);
+    await A.handle(hook("sa", rootA, { hook_event_name: "SessionStart" }));
+    await B.handle(hook("sb", rootB, { hook_event_name: "SessionStart" }));
+    expect((await A.claim("sa", parseClaim(["--keys", "src/pricing.ts#calcTotal", "--firm"]))).code).toBe(0);
+    const refused = await B.claim("sb", parseClaim(["--keys", "src/pricing.ts#calcTotal"]));
+    expect(refused.code).toBe(1);
+    expect(refused.text).toContain("claim refused");
   });
 });

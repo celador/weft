@@ -151,6 +151,17 @@ when its agent's first session starts, so landing a change whose agent never ran
 
 ### 4d. The same steps by hand
 
+### 4e. Firm claims (optional)
+
+By default an agent's edits only make soft claims: another agent writing the same symbol gets a warning. To reserve symbols so that an overlapping edit by a lower-priority agent is denied, the agent runs (opt-in):
+
+   ```sh
+   .weft/bin/weft claim --keys src/pricing.ts#calcTotal --firm   # omit --firm for a soft claim
+   ```
+
+   A claim's own `--ttl` is capped at ten minutes (600000 ms; the default is the deployment's claim TTL). To see the difference side by side, run `packages/adapters/claude-code/scripts/demo-firm-claim.sh`.
+
+
 What the script does, if you want to script it differently. `U` is the gateway URL; each token
 response contains the secret once, in its `token` field.
 
