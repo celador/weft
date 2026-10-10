@@ -1,0 +1,652 @@
+{
+  "name": "open-errors-persist",
+  "description": "§6.5 (audit of 'can an agent clear its open errors by release, bye or reconnect'): open errors belong to the change; release (all or by key), an intent or claim naming the key, bye + hello and session expiry + hello leave them open (and a new session gets them redelivered). Only an accepted edit, or a release of an error whose edit never reached the workspace (check) or of a wound (push), clears one.",
+  "covers": [
+    "6.5",
+    "8.2",
+    "8.4",
+    "7.5"
+  ],
+  "repo": "demo",
+  "start": "2026-10-05T14:00:00.000Z",
+  "steps": [
+    {
+      "op": "hello",
+      "as": "A",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "claude-a",
+          "harness": "claude-code"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-1"
+        },
+        "change": "I-a"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s1",
+        "head_seq": 1,
+        "delivered_through": 1
+      }
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "codex-b",
+          "harness": "codex"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s2",
+        "head_seq": 2,
+        "delivered_through": 2
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 2,
+          "writes": [
+            {
+              "key": "src/api/client.ts#fetchWithAuth",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "src/auth/session.ts#refreshToken"
+          ]
+        }
+      },
+      "expect": {
+        "seq": 3
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 1,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "signature"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 4
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 3,
+          "writes": [
+            {
+              "key": "src/api/client.ts#fetchWithAuth",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "src/auth/session.ts#refreshToken"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "reject",
+        "seq": 5,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "stale_assumption",
+            "symbol": "src/auth/session.ts#refreshToken",
+            "caused_by_seq": 4,
+            "caused_by_agent": "claude-a"
+          }
+        ]
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "stop",
+      "expect": {
+        "allow": false,
+        "open_errors": [
+          {
+            "code": "stale_assumption",
+            "symbol": "src/auth/session.ts#refreshToken"
+          }
+        ]
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "release",
+          "base_seq": 5,
+          "payload": {}
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 6,
+        "summary": "codex-b released all claims"
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "stop",
+      "expect": {
+        "allow": false,
+        "open_errors": {
+          "$len": 1
+        }
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "release",
+          "base_seq": 6,
+          "payload": {
+            "keys": [
+              "src/auth/session.ts#refreshToken"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 7
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "commit",
+      "expect": {
+        "allow": false,
+        "open_errors": {
+          "$len": 1
+        }
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "intent",
+          "base_seq": 7,
+          "reads": [
+            "src/auth/session.ts#refreshToken"
+          ],
+          "intent": "look at it again"
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 8
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "stop",
+      "expect": {
+        "allow": false,
+        "open_errors": {
+          "$len": 1
+        }
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "claim",
+          "base_seq": 8,
+          "payload": {
+            "firm": false,
+            "source": "explicit"
+          },
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "signature"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 9,
+        "diagnostics": [
+          {
+            "severity": "info",
+            "code": "claim_contended",
+            "symbol": "src/auth/session.ts#refreshToken",
+            "caused_by_seq": 4,
+            "caused_by_agent": "claude-a"
+          }
+        ]
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "stop",
+      "expect": {
+        "allow": false,
+        "open_errors": {
+          "$len": 1
+        }
+      }
+    },
+    {
+      "op": "bye",
+      "as": "B"
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "codex-b",
+          "harness": "codex"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s3",
+        "head_seq": 12,
+        "delivered_through": 12
+      }
+    },
+    {
+      "op": "drain",
+      "as": "B",
+      "expect": {
+        "items": [
+          {
+            "id": 1,
+            "seq": 5,
+            "kind": "diagnostic",
+            "diagnostic": {
+              "severity": "error",
+              "code": "stale_assumption",
+              "symbol": "src/auth/session.ts#refreshToken",
+              "caused_by_seq": 4,
+              "caused_by_agent": "claude-a"
+            }
+          }
+        ],
+        "open_errors": [
+          {
+            "code": "stale_assumption",
+            "symbol": "src/auth/session.ts#refreshToken"
+          }
+        ]
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "stop",
+      "expect": {
+        "allow": false
+      }
+    },
+    {
+      "op": "advance",
+      "ms": 400000
+    },
+    {
+      "op": "tick",
+      "expect": [
+        {
+          "seq": 13,
+          "kind": "leave",
+          "agent": "claude-a"
+        },
+        {
+          "seq": 14,
+          "kind": "leave",
+          "agent": "codex-b"
+        }
+      ]
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "codex-b",
+          "harness": "codex"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s4",
+        "head_seq": 15,
+        "delivered_through": 15
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "stop",
+      "expect": {
+        "allow": false,
+        "open_errors": [
+          {
+            "code": "stale_assumption",
+            "symbol": "src/auth/session.ts#refreshToken"
+          }
+        ]
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 15,
+          "writes": [
+            {
+              "key": "src/api/client.ts#fetchWithAuth",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "src/auth/session.ts#refreshToken"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 16,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "stop",
+      "expect": {
+        "allow": true,
+        "open_errors": []
+      }
+    },
+    {
+      "op": "hello",
+      "as": "A",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "claude-a",
+          "harness": "claude-code"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-1"
+        },
+        "change": "I-a"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s5",
+        "head_seq": 17,
+        "delivered_through": 17
+      }
+    },
+    {
+      "op": "drain",
+      "as": "A",
+      "expect": {
+        "items": [
+          {
+            "id": 1,
+            "seq": 9,
+            "kind": "diagnostic",
+            "diagnostic": {
+              "severity": "error",
+              "code": "claim_wounded",
+              "symbol": "src/auth/session.ts#refreshToken",
+              "caused_by_seq": 9,
+              "caused_by_agent": "codex-b"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "op": "gate",
+      "as": "A",
+      "gate": "stop",
+      "expect": {
+        "allow": false
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "release",
+          "base_seq": 17,
+          "payload": {
+            "keys": [
+              "src/auth/session.ts#refreshToken"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 18
+      }
+    },
+    {
+      "op": "gate",
+      "as": "A",
+      "gate": "stop",
+      "expect": {
+        "allow": true
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 18,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "signature"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 19
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "check",
+        "event": {
+          "kind": "edit",
+          "base_seq": 16,
+          "writes": [
+            {
+              "key": "src/api/client.ts#fetchWithAuth",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "src/auth/session.ts#refreshToken"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "reject",
+        "seq": 20,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "stale_assumption",
+            "symbol": "src/auth/session.ts#refreshToken",
+            "caused_by_seq": 19,
+            "caused_by_agent": "claude-a"
+          }
+        ]
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "stop",
+      "expect": {
+        "allow": false
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "release",
+          "base_seq": 16,
+          "payload": {
+            "keys": [
+              "src/auth/session.ts#refreshToken"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 21
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "stop",
+      "expect": {
+        "allow": true
+      }
+    }
+  ]
+}

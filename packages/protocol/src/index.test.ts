@@ -17,6 +17,7 @@ import {
   renderContext,
   runScenario,
   scenarioClock,
+  scenarioInit,
   schema,
   summarize,
   validate,
@@ -204,14 +205,7 @@ function schemaFor(op: string, actual: unknown): string | undefined {
 
 async function run(sc: Scenario) {
   const clock = scenarioClock(sc.start);
-  const coord = new ReferenceCoordinator({
-    repo: sc.repo,
-    ...(sc.policy ? { policy: sc.policy } : {}),
-    ...(sc.escalation ? { escalation: sc.escalation } : {}),
-    ...(sc.claim_ttl_ms ? { claim_ttl_ms: sc.claim_ttl_ms } : {}),
-    ...(sc.session_ttl_ms ? { session_ttl_ms: sc.session_ttl_ms } : {}),
-    now: clock.now,
-  });
+  const coord = new ReferenceCoordinator({ ...scenarioInit(sc), now: clock.now });
   const results = await runScenario(sc, coord, clock);
   return { coord, results };
 }

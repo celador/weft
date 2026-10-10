@@ -1,0 +1,342 @@
+{
+  "name": "claims-legacy-and-migration",
+  "description": "§7.5: a repo created before the claims policy keeps the old rules (30-min renewable TTL, ttl_ms as given, no release on exit) until the operator applies the policy with one journaled operation; from then on leases, the firm limit and release on exit apply, while claims made before keep their expiry.",
+  "covers": [
+    "7.5",
+    "5.1"
+  ],
+  "repo": "demo",
+  "start": "2026-10-05T14:00:00.000Z",
+  "claims": null,
+  "steps": [
+    {
+      "op": "hello",
+      "as": "A",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "claude-a",
+          "harness": "claude-code"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-1"
+        },
+        "change": "I-a"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s1",
+        "claim_ttl_ms": 1800000,
+        "policy": {
+          "arbitration": "wound-wait",
+          "claims": "$absent"
+        }
+      }
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "codex-b",
+          "harness": "codex"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s2",
+        "head_seq": 2,
+        "delivered_through": 2
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "claim",
+          "base_seq": 1,
+          "payload": {
+            "firm": true,
+            "source": "explicit",
+            "ttl_ms": 3600000
+          },
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "signature"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "seq": 3
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 3,
+          "writes": [
+            {
+              "key": "src/api/client.ts#fetchWithAuth",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "seq": 4
+      }
+    },
+    {
+      "op": "bye",
+      "as": "A"
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 2,
+          "writes": [
+            {
+              "key": "src/api/client.ts#fetchWithAuth",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 6,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "claim_wait",
+            "symbol": "src/api/client.ts#fetchWithAuth",
+            "caused_by_seq": 4,
+            "caused_by_agent": "claude-a"
+          }
+        ]
+      }
+    },
+    {
+      "op": "advance",
+      "ms": 1800000
+    },
+    {
+      "op": "tick",
+      "expect": [
+        {
+          "seq": 7,
+          "kind": "release",
+          "status": "accepted",
+          "actor": {
+            "type": "system"
+          },
+          "agent": "claude-a",
+          "change": "I-a",
+          "payload": {
+            "keys": [
+              "src/api/client.ts#fetchWithAuth"
+            ],
+            "reason": "expired"
+          }
+        },
+        {
+          "seq": 8,
+          "kind": "release",
+          "status": "accepted",
+          "actor": {
+            "type": "system"
+          },
+          "agent": "codex-b",
+          "change": "I-b",
+          "payload": {
+            "keys": [
+              "src/api/client.ts#fetchWithAuth"
+            ],
+            "reason": "expired"
+          }
+        },
+        {
+          "seq": 9,
+          "kind": "leave",
+          "agent": "codex-b"
+        }
+      ]
+    },
+    {
+      "op": "policy",
+      "policy": {
+        "claims": {
+          "lease_ms": 120000,
+          "firm_max_ms": 600000
+        }
+      },
+      "expect": {
+        "arbitration": "wound-wait",
+        "claims": {
+          "lease_ms": 120000,
+          "firm_max_ms": 600000
+        }
+      }
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "codex-b",
+          "harness": "codex"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s3",
+        "head_seq": 10,
+        "claim_ttl_ms": 120000,
+        "policy": {
+          "claims": {
+            "lease_ms": 120000,
+            "firm_max_ms": 600000
+          }
+        }
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 10,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#SessionStore.get",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "seq": 11
+      }
+    },
+    {
+      "op": "bye",
+      "as": "B"
+    },
+    {
+      "op": "events",
+      "after": 11,
+      "expect": {
+        "events": [
+          {
+            "seq": 12,
+            "kind": "leave"
+          },
+          {
+            "seq": 13,
+            "kind": "release",
+            "status": "accepted",
+            "actor": {
+              "type": "system"
+            },
+            "agent": "codex-b",
+            "change": "I-b",
+            "payload": {
+              "keys": [
+                "src/auth/session.ts#SessionStore.get"
+              ],
+              "reason": "session ended"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "op": "advance",
+      "ms": 1700000
+    },
+    {
+      "op": "tick",
+      "expect": []
+    },
+    {
+      "op": "advance",
+      "ms": 100000
+    },
+    {
+      "op": "tick",
+      "expect": [
+        {
+          "seq": 14,
+          "kind": "release",
+          "status": "accepted",
+          "actor": {
+            "type": "system"
+          },
+          "agent": "claude-a",
+          "change": "I-a",
+          "payload": {
+            "keys": [
+              "src/auth/session.ts#refreshToken"
+            ],
+            "reason": "expired"
+          }
+        }
+      ]
+    }
+  ]
+}

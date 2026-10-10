@@ -491,9 +491,216 @@ scenarios.append({
     ],
 })
 
+# ------------------------------------------------------------------ L1 claim leases
+# Defaults are pinned here on purpose: these scenarios run with no `claims` field, so they
+# fail if the default lease (2 min) or firm limit (10 min) ever changes silently.
+DEFAULT_CLAIMS = {"lease_ms": 120000, "firm_max_ms": 600000}
+
+
+def release_rec(seq, agent, change, keys, reason):
+    return {"seq": seq, "kind": "release", "status": "accepted", "actor": {"type": "system"}, "agent": agent, "change": change,
+            "payload": {"keys": keys, "reason": reason}}
+
+
+scenarios.append({
+    "name": "lease-soft-claim",
+    "description": "§7.5: a soft claim is a lease of lease_ms (default 2 min) renewed by heartbeats; when its agent dies (no more heartbeats) the claim is released within lease_ms, not after the old 30-minute TTL.",
+    "covers": ["7.5", "8.2"],
+    "steps": [
+        {"op": "hello", "as": "A", "hello": A(), "expect": {"type": "welcome", "session": "s1", "head_seq": 1, "claim_ttl_ms": 120000,
+                                                             "policy": {"arbitration": "wound-wait", "claims": DEFAULT_CLAIMS}}},
+        step_hello("B", B(), "s2", 2),
+        {"op": "submit", "as": "A", "submit": edit(1, [(X, "body")]), "expect": {"verdict": "accept", "seq": 3}},
+        {"op": "heartbeat", "as": "A", "expect": {"type": "heartbeat.ack"}},
+        {"op": "advance", "ms": 60000},
+        {"op": "heartbeat", "as": "A", "expect": {"type": "heartbeat.ack"}},
+        {"op": "advance", "ms": 60000},
+        # The first lease (from #3) has run out, but the heartbeat renewed it.
+        {"op": "tick", "expect": []},
+        {"op": "submit", "as": "B", "submit": edit(2, [(X, "body")], mode="check"),
+         "expect": {"verdict": "accept", "seq": None, "diagnostics": [diag("warning", "claim_wait", X, 3, "claude-a")]}},
+        # claude-a dies here: no more heartbeats. Its lease ends 120 s after its last one.
+        {"op": "advance", "ms": 59990},
+        {"op": "tick", "expect": []},
+        {"op": "advance", "ms": 10},
+        {"op": "tick", "expect": [{**release_rec(4, "claude-a", "I-a", [X], "expired"), "summary": "claude-a released refreshToken (expired)"}]},
+        {"op": "submit", "as": "B", "submit": edit(3, [(X, "body")], mode="check"), "expect": {"verdict": "accept", "seq": None, "diagnostics": []}},
+    ],
+})
+
+scenarios.append({
+    "name": "lease-firm-hard-limit",
+    "description": "§7.5: a firm claim has a hard deadline min(ttl_ms, firm_max_ms) from its claim event; heartbeats and the holder's own edits do not extend it; only a new explicit claim event does.",
+    "covers": ["7.5", "6.3"],
+    "steps": [
+        step_hello("A", A(), "s1", 1),
+        step_hello("B", B(), "s2", 2),
+        # Asks for an hour; the repo caps firm holds at 10 minutes.
+        {"op": "submit", "as": "A", "submit": submit("claim", 1, {"firm": True, "source": "explicit", "ttl_ms": 3600000}, writes=[(X, "signature")]),
+         "expect": {"verdict": "accept", "seq": 3}},
+        {"op": "submit", "as": "B", "submit": edit(2, [(X, "body")]),
+         "expect": {"verdict": "reject", "seq": 4, "diagnostics": [diag("error", "claim_wait", X, 3, "claude-a")]}},
+        {"op": "advance", "ms": 200000},
+        {"op": "heartbeat", "as": "A", "expect": {"type": "heartbeat.ack"}},
+        {"op": "submit", "as": "A", "submit": edit(3, [(X, "body")]), "expect": {"verdict": "accept", "seq": 5}},
+        {"op": "advance", "ms": 200000},
+        {"op": "heartbeat", "as": "A", "expect": {"type": "heartbeat.ack"}},
+        {"op": "advance", "ms": 199990},
+        {"op": "tick", "expect": []},
+        {"op": "heartbeat", "as": "A", "expect": {"type": "heartbeat.ack"}},
+        {"op": "advance", "ms": 1},
+        # 600 000 ms after the claim event: released although claude-a is alive and heartbeating.
+        {"op": "tick", "expect": [release_rec(6, "claude-a", "I-a", [X], "expired")]},
+        {"op": "submit", "as": "B", "submit": edit(4, [(X, "body")]), "expect": {"verdict": "accept", "seq": 7, "diagnostics": []}},
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": True}},
+        # Re-asserting a firm claim in the log is the only way to extend it.
+        {"op": "submit", "as": "A", "submit": submit("claim", 5, {"firm": True, "source": "explicit", "ttl_ms": 1000}, writes=[(Y, "body")]),
+         "expect": {"verdict": "accept", "seq": 8}},
+        {"op": "advance", "ms": 500},
+        {"op": "submit", "as": "A", "submit": submit("claim", 8, {"firm": True, "source": "explicit", "ttl_ms": 1000}, writes=[(Y, "body")]),
+         "expect": {"verdict": "accept", "seq": 9}},
+        {"op": "advance", "ms": 700},
+        {"op": "tick", "expect": []},
+        {"op": "advance", "ms": 400},
+        {"op": "tick", "expect": [release_rec(10, "claude-a", "I-a", [Y], "expired")]},
+    ],
+})
+
+scenarios.append({
+    "name": "release-on-exit",
+    "description": "§7.5/§8.2: when a change's last live session ends (bye or expiry) its claims are released at once by a system release record; another live session of the same change keeps them.",
+    "covers": ["7.5", "8.2"],
+    "steps": [
+        step_hello("A", A(), "s1", 1),
+        step_hello("B", B(), "s2", 2),
+        {"op": "submit", "as": "A", "submit": edit(1, [(X, "body")]), "expect": {"seq": 3}},
+        {"op": "submit", "as": "A", "submit": submit("claim", 3, {"firm": True, "source": "explicit"}, writes=[(Z, "body")]), "expect": {"seq": 4}},
+        step_hello("A2", A(), "s3", 5),
+        {"op": "bye", "as": "A"},
+        # s3 of the same change is still live: nothing released.
+        {"op": "submit", "as": "B", "submit": edit(2, [(X, "body")], mode="check"),
+         "expect": {"verdict": "accept", "seq": None, "diagnostics": [diag("warning", "claim_wait", X, 3, "claude-a")]}},
+        {"op": "bye", "as": "A2"},
+        {"op": "events", "after": 5, "expect": {"events": [
+            {"seq": 6, "kind": "leave", "agent": "claude-a", "session": "s1"},
+            {"seq": 7, "kind": "leave", "agent": "claude-a", "session": "s3"},
+            {**release_rec(8, "claude-a", "I-a", [X, Z], "session ended"), "summary": "claude-a released refreshToken, SessionStore.get (session ended)"}]}},
+        {"op": "submit", "as": "B", "submit": edit(2, [(X, "body")], mode="check"), "expect": {"verdict": "accept", "seq": None, "diagnostics": []}},
+        {"op": "submit", "as": "B", "submit": edit(2, [(X, "body")]), "expect": {"verdict": "accept", "seq": 9}},
+        {"op": "submit", "as": "B", "submit": submit("claim", 9, {"firm": True, "source": "explicit"}, writes=[(Y, "body")]), "expect": {"seq": 10}},
+        {"op": "advance", "ms": 400000},
+        # The soft lease ran out first (expired); the firm claim outlived the session (session expired).
+        {"op": "tick", "expect": [
+            release_rec(11, "codex-b", "I-b", [X], "expired"),
+            {"seq": 12, "kind": "leave", "agent": "codex-b", "actor": {"type": "system"}},
+            release_rec(13, "codex-b", "I-b", [Y], "session expired")]},
+        {"op": "submit", "as": "B", "submit": edit(10, [(Y, "body")]), "expect": err("session_expired")},
+    ],
+})
+
+
+def intent_reads(base, reads):
+    return {"type": "submit", "mode": "commit", "event": {"kind": "intent", "base_seq": base, "reads": reads, "intent": "look at it again"}}
+
+
+def release(base, keys=None):
+    return submit("release", base, {"keys": keys} if keys is not None else {})
+
+
+scenarios.append({
+    "name": "open-errors-persist",
+    "description": "§6.5 (audit of 'can an agent clear its open errors by release, bye or reconnect'): open errors belong to the change; release (all or by key), an intent or claim naming the key, bye + hello and session expiry + hello leave them open (and a new session gets them redelivered). Only an accepted edit, or a release of an error whose edit never reached the workspace (check) or of a wound (push), clears one.",
+    "covers": ["6.5", "8.2", "8.4", "7.5"],
+    "steps": [
+        step_hello("A", A(), "s1", 1),
+        step_hello("B", B(), "s2", 2),
+        {"op": "submit", "as": "B", "submit": edit(2, [(Y, "body")], reads=[X]), "expect": {"seq": 3}},
+        {"op": "submit", "as": "A", "submit": edit(1, [(X, "signature")]), "expect": {"verdict": "accept", "seq": 4}},
+        # A commit-mode rejection: the edit is in codex-b's workspace but not in the log.
+        {"op": "submit", "as": "B", "submit": edit(3, [(Y, "body")], reads=[X]),
+         "expect": {"verdict": "reject", "seq": 5, "diagnostics": [diag("error", "stale_assumption", X, 4, "claude-a")]}},
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": False, "open_errors": [{"code": "stale_assumption", "symbol": X}]}},
+        # Attempt 1: release everything.
+        {"op": "submit", "as": "B", "submit": release(5), "expect": {"verdict": "accept", "seq": 6, "summary": "codex-b released all claims"}},
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": False, "open_errors": {"$len": 1}}},
+        # Attempt 2: release the key itself.
+        {"op": "submit", "as": "B", "submit": release(6, [X]), "expect": {"verdict": "accept", "seq": 7}},
+        {"op": "gate", "as": "B", "gate": "commit", "expect": {"allow": False, "open_errors": {"$len": 1}}},
+        # Attempt 3: an intent that reads the key.
+        {"op": "submit", "as": "B", "submit": intent_reads(7, [X]), "expect": {"verdict": "accept", "seq": 8}},
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": False, "open_errors": {"$len": 1}}},
+        # Attempt 4: a claim on the key (codex-b is senior, so it even wounds claude-a).
+        {"op": "submit", "as": "B", "submit": submit("claim", 8, {"firm": False, "source": "explicit"}, writes=[(X, "signature")]),
+         "expect": {"verdict": "accept", "seq": 9, "diagnostics": [diag("info", "claim_contended", X, 4, "claude-a")]}},
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": False, "open_errors": {"$len": 1}}},
+        # Attempt 5: bye, then a fresh hello of the same change.
+        {"op": "bye", "as": "B"},
+        step_hello("B", B(), "s3", 12),
+        {"op": "drain", "as": "B", "expect": {"items": [{"id": 1, "seq": 5, "kind": "diagnostic", "diagnostic": diag("error", "stale_assumption", X, 4, "claude-a")}],
+                                              "open_errors": [{"code": "stale_assumption", "symbol": X}]}},
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": False}},
+        # Attempt 6: let the session expire, then hello again.
+        {"op": "advance", "ms": 400000},
+        {"op": "tick", "expect": [{"seq": 13, "kind": "leave", "agent": "claude-a"}, {"seq": 14, "kind": "leave", "agent": "codex-b"}]},
+        step_hello("B", B(), "s4", 15),
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": False, "open_errors": [{"code": "stale_assumption", "symbol": X}]}},
+        # The real fix: redo the edit against the current log.
+        {"op": "submit", "as": "B", "submit": edit(15, [(Y, "body")], reads=[X]), "expect": {"verdict": "accept", "seq": 16, "diagnostics": []}},
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": True, "open_errors": []}},
+        # claude-a was wounded at #9 (push): its new session gets the error redelivered; a release of the key is its retreat.
+        step_hello("A", A(), "s5", 17),
+        {"op": "drain", "as": "A", "expect": {"items": [{"id": 1, "seq": 9, "kind": "diagnostic", "diagnostic": diag("error", "claim_wounded", X, 9, "codex-b")}]}},
+        {"op": "gate", "as": "A", "gate": "stop", "expect": {"allow": False}},
+        {"op": "submit", "as": "A", "submit": release(17, [X]), "expect": {"verdict": "accept", "seq": 18}},
+        {"op": "gate", "as": "A", "gate": "stop", "expect": {"allow": True}},
+        {"op": "submit", "as": "A", "submit": edit(18, [(X, "signature")]), "expect": {"verdict": "accept", "seq": 19}},
+        # A check-mode rejection: the edit was denied, never applied; releasing the key is a valid retreat.
+        {"op": "submit", "as": "B", "submit": edit(16, [(Y, "body")], reads=[X], mode="check"),
+         "expect": {"verdict": "reject", "seq": 20, "diagnostics": [diag("error", "stale_assumption", X, 19, "claude-a")]}},
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": False}},
+        {"op": "submit", "as": "B", "submit": release(16, [X]), "expect": {"verdict": "accept", "seq": 21}},
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": True}},
+    ],
+})
+
+scenarios.append({
+    "name": "claims-legacy-and-migration",
+    "description": "§7.5: a repo created before the claims policy keeps the old rules (30-min renewable TTL, ttl_ms as given, no release on exit) until the operator applies the policy with one journaled operation; from then on leases, the firm limit and release on exit apply, while claims made before keep their expiry.",
+    "covers": ["7.5", "5.1"],
+    "claims": None,
+    "steps": [
+        {"op": "hello", "as": "A", "hello": A(), "expect": {"type": "welcome", "session": "s1", "claim_ttl_ms": 1800000,
+                                                             "policy": {"arbitration": "wound-wait", "claims": "$absent"}}},
+        step_hello("B", B(), "s2", 2),
+        {"op": "submit", "as": "A", "submit": submit("claim", 1, {"firm": True, "source": "explicit", "ttl_ms": 3600000}, writes=[(X, "signature")]),
+         "expect": {"seq": 3}},
+        {"op": "submit", "as": "A", "submit": edit(3, [(Y, "body")]), "expect": {"seq": 4}},
+        {"op": "bye", "as": "A"},
+        # Legacy: leaving releases nothing; the soft claim on Y still holds for 30 minutes.
+        {"op": "submit", "as": "B", "submit": edit(2, [(Y, "body")]),
+         "expect": {"verdict": "accept", "seq": 6, "diagnostics": [diag("warning", "claim_wait", Y, 4, "claude-a")]}},
+        {"op": "advance", "ms": 1800000},
+        {"op": "tick", "expect": [
+            release_rec(7, "claude-a", "I-a", [Y], "expired"),
+            release_rec(8, "codex-b", "I-b", [Y], "expired"),
+            {"seq": 9, "kind": "leave", "agent": "codex-b"}]},
+        {"op": "policy", "policy": {"claims": DEFAULT_CLAIMS}, "expect": {"arbitration": "wound-wait", "claims": DEFAULT_CLAIMS}},
+        {"op": "hello", "as": "B", "hello": B(), "expect": {"type": "welcome", "session": "s3", "head_seq": 10, "claim_ttl_ms": 120000,
+                                                             "policy": {"claims": DEFAULT_CLAIMS}}},
+        {"op": "submit", "as": "B", "submit": edit(10, [(Z, "body")]), "expect": {"seq": 11}},
+        {"op": "bye", "as": "B"},
+        {"op": "events", "after": 11, "expect": {"events": [{"seq": 12, "kind": "leave"}, release_rec(13, "codex-b", "I-b", [Z], "session ended")]}},
+        # The firm claim from before the policy keeps its one-hour expiry.
+        {"op": "advance", "ms": 1700000},
+        {"op": "tick", "expect": []},
+        {"op": "advance", "ms": 100000},
+        {"op": "tick", "expect": [release_rec(14, "claude-a", "I-a", [X], "expired")]},
+    ],
+})
+
 os.makedirs(OUT, exist_ok=True)
-for f in os.listdir(OUT):
-    os.remove(os.path.join(OUT, f))
+# Only (re)write the generated scenarios; hand-written ones (alternatives-best-of-n.json)
+# live in the same directory and must survive a regeneration.
 for sc in scenarios:
     sc = {"name": sc["name"], "description": sc["description"], "covers": sc["covers"], "repo": "demo", "start": START,
           **{k: v for k, v in sc.items() if k not in ("name", "description", "covers")}}

@@ -6,6 +6,7 @@ import {
   ReferenceCoordinator,
   runScenario,
   scenarioClock,
+  scenarioInit,
   WcpProtocolError,
   type ConformanceTarget,
   type Hello,
@@ -22,13 +23,7 @@ const scenarios = readdirSync(scenarioDir)
   .sort()
   .map((f) => ({ name: f.replace(/\.json$/, ""), data: JSON.parse(readFileSync(join(scenarioDir, f), "utf8")) as Scenario }));
 
-const initOf = (sc: Scenario) => ({
-  repo: sc.repo,
-  ...(sc.policy ? { policy: sc.policy } : {}),
-  ...(sc.escalation ? { escalation: sc.escalation } : {}),
-  ...(sc.claim_ttl_ms ? { claim_ttl_ms: sc.claim_ttl_ms } : {}),
-  ...(sc.session_ttl_ms ? { session_ttl_ms: sc.session_ttl_ms } : {}),
-});
+const initOf = (sc: Scenario) => scenarioInit(sc);
 
 /** ConformanceTarget over a journaled SqlCoordinator (what the Durable Object runs). */
 function sqlTarget(j: JournaledCoordinator): ConformanceTarget {
@@ -44,6 +39,7 @@ function sqlTarget(j: JournaledCoordinator): ConformanceTarget {
     tick: () => j.call("tick"),
     events: (after, limit, o) => j.coord.events({ ...(after !== undefined ? { after } : {}), ...(limit !== undefined ? { limit } : {}), ...o }),
     event: (seq) => j.coord.event(seq),
+    policy: (p) => j.call("policy", p),
   };
 }
 

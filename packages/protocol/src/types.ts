@@ -207,7 +207,14 @@ export type Hello = {
 export type ArbitrationPolicy = "wound-wait" | "wait-die";
 /** Who resolves `negotiate.escalate` (spec §7.6): the coordinator merges at once, or a human. */
 export type EscalationPolicy = "auto" | "human";
-export type RepoPolicy = { arbitration: ArbitrationPolicy; escalation?: EscalationPolicy };
+/**
+ * Claims policy (spec §7.5): soft claims are leases of `lease_ms`, renewed by activity;
+ * firm claims end at most `firm_max_ms` after their claim event.
+ */
+export type ClaimsPolicy = { lease_ms: number; firm_max_ms: number };
+export const DEFAULT_CLAIMS_POLICY: ClaimsPolicy = { lease_ms: 120_000, firm_max_ms: 600_000 };
+/** `claims` is absent for repos created before the claims policy (legacy TTL rules). */
+export type RepoPolicy = { arbitration: ArbitrationPolicy; escalation?: EscalationPolicy; claims?: ClaimsPolicy };
 
 export type Welcome = {
   type: "welcome";

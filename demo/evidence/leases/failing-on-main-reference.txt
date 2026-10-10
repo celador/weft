@@ -1,0 +1,522 @@
+
+ RUN  v3.2.7 /Users/john/github/weft/.worktrees/leases/packages/protocol
+
+ ✓ src/index.test.ts > JSON Schema artifact > schema/wcp-v0.schema.json is up to date with src/schema.ts (run `pnpm gen`) 2ms
+ ✓ src/index.test.ts > JSON Schema artifact > compiles under Ajv strict mode (draft 2020-12) 0ms
+ ✓ src/index.test.ts > JSON Schema artifact > has fixtures 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'action-approve' 3ms
+ ✓ src/index.test.ts > message fixtures > valid/'action-message' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'action-pause' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'action-result' 13ms
+ ✓ src/index.test.ts > message fixtures > valid/'action-undo' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'bye' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'error-base-ahead' 1ms
+ ✓ src/index.test.ts > message fixtures > valid/'event-detail' 6ms
+ ✓ src/index.test.ts > message fixtures > valid/'events-page' 1ms
+ ✓ src/index.test.ts > message fixtures > valid/'feed-page' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'gate-result-refuse' 1ms
+ ✓ src/index.test.ts > message fixtures > valid/'gate-stop' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'heartbeat-ack' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'heartbeat' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'hello-claude-code-l3' 2ms
+ ✓ src/index.test.ts > message fixtures > valid/'hello-codex-l1-delayed' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'hello-watcher-l0' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'inbox-batch' 1ms
+ ✓ src/index.test.ts > message fixtures > valid/'inbox-drain' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'record-land' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'record-revert' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'repos' 1ms
+ ✓ src/index.test.ts > message fixtures > valid/'stream-event' 1ms
+ ✓ src/index.test.ts > message fixtures > valid/'stream-ping' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'stream-replay-done' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'submit-checkpoint' 6ms
+ ✓ src/index.test.ts > message fixtures > valid/'submit-claim-firm' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'submit-edit-check' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'submit-edit-commit' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'submit-intent' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'submit-negotiate-accept' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'submit-negotiate-counter' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'submit-negotiate-propose' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'submit-negotiate-reject' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'submit-release-all' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'unknown-fields-ignored' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'verdict-accept-with-warning' 1ms
+ ✓ src/index.test.ts > message fixtures > valid/'verdict-check-accept' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'verdict-check-reject' 0ms
+ ✓ src/index.test.ts > message fixtures > valid/'welcome' 1ms
+ ✓ src/index.test.ts > message fixtures > invalid/'accept-missing-reply-to' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'action-message-no-text' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'action-undo-no-target' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'action-unknown' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'bad-mode' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'checkpoint-bad-sha' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'claim-bad-source' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'claim-missing-payload' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'diagnostic-bad-severity' 1ms
+ ✓ src/index.test.ts > message fixtures > invalid/'diagnostic-missing-cause' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'diagnostic-unknown-code' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'edit-bad-symbol-key' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'edit-bad-write-kind' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'edit-empty-writes' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'edit-without-writes' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'error-unknown-code' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'hello-bad-protocol' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'hello-l1-no-inject' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'hello-l2-async' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'hello-l3-no-stop' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'negative-base-seq' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'propose-empty-keys' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'propose-empty-target' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'record-bad-repo' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'record-bad-ts' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'record-missing-summary' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'record-summary-too-long' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'revert-no-target' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'stream-unknown-frame' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'summary-hint-too-long' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'unknown-kind' 0ms
+ ✓ src/index.test.ts > message fixtures > invalid/'verdict-seq-zero' 0ms
+ ✓ src/index.test.ts > message fixtures > dispatches by type discriminator 0ms
+ ✓ src/index.test.ts > helpers > parses symbol keys 0ms
+ ✓ src/index.test.ts > helpers > summarizes within 140 chars, prefixing rejections 0ms
+ ✓ src/index.test.ts > helpers > merges write kinds per §6.1 0ms
+ ✓ src/index.test.ts > helpers > maps every error code to an HTTP status and WS close code 0ms
+ ✓ src/index.test.ts > helpers > renders deterministic model-visible context 0ms
+ ✓ src/index.test.ts > combined feed (§9.5) > round-trips cursors 0ms
+ ✓ src/index.test.ts > combined feed (§9.5) > merges repos by (ts, repo, seq) and resumes exactly 0ms
+ ✓ src/index.test.ts > combined feed (§9.5) > tail mode returns the newest records and a cursor at every head 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'accept-and-observe' 2ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'alternatives-best-of-n' 2ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'arbitration-wait-die' 1ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'arbitration-wound-wait' 1ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'body-read-warning' 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'claim-ttl-and-session-expiry' 1ms
+ × src/index.test.ts > conformance scenarios (reference coordinator) > 'claims-legacy-and-migration' 3ms
+   → target.policy is not a function
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'escalation-human' 1ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'escalation-merge' 1ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'human-actions' 1ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'inbox-and-base' 0ms
+ × src/index.test.ts > conformance scenarios (reference coordinator) > 'lease-firm-hard-limit' 2ms
+   → expected [ Array(8) ] to deeply equal []
+ × src/index.test.ts > conformance scenarios (reference coordinator) > 'lease-soft-claim' 1ms
+   → expected [ …(3) ] to deeply equal []
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'merge-by-agreement' 1ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'negotiation-overload-dues' 1ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'negotiation' 1ms
+ × src/index.test.ts > conformance scenarios (reference coordinator) > 'open-errors-persist' 1ms
+   → expected [ Array(19) ] to deeply equal []
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'overload-before-accept' 1ms
+ × src/index.test.ts > conformance scenarios (reference coordinator) > 'release-on-exit' 0ms
+   → expected [ …(5) ] to deeply equal []
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'signature-read-error' 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'stale-overwrite' 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'trunk-advanced-and-predicted' 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'accept-and-observe' replays deterministically 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'alternatives-best-of-n' replays deterministically 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'arbitration-wait-die' replays deterministically 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'arbitration-wound-wait' replays deterministically 1ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'body-read-warning' replays deterministically 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'claim-ttl-and-session-expiry' replays deterministically 0ms
+ × src/index.test.ts > conformance scenarios (reference coordinator) > 'claims-legacy-and-migration' replays deterministically 0ms
+   → target.policy is not a function
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'escalation-human' replays deterministically 1ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'escalation-merge' replays deterministically 1ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'human-actions' replays deterministically 1ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'inbox-and-base' replays deterministically 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'lease-firm-hard-limit' replays deterministically 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'lease-soft-claim' replays deterministically 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'merge-by-agreement' replays deterministically 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'negotiation-overload-dues' replays deterministically 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'negotiation' replays deterministically 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'open-errors-persist' replays deterministically 1ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'overload-before-accept' replays deterministically 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'release-on-exit' replays deterministically 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'signature-read-error' replays deterministically 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'stale-overwrite' replays deterministically 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > 'trunk-advanced-and-predicted' replays deterministically 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > covers every diagnostic code that the reference can emit 0ms
+ ✓ src/index.test.ts > conformance scenarios (reference coordinator) > partialMatch semantics 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/index.test.ts > conformance scenarios (reference coordinator) > 'claims-legacy-and-migration'
+TypeError: target.policy is not a function
+ ❯ runScenario src/conformance.ts:215:33
+    213|         case "policy":
+    214|           if (!target.policy) throw new Error(`scenario ${sc.name}: ta…
+    215|           actual = await target.policy(step.policy);
+       |                                 ^
+    216|           break;
+    217|       }
+ ❯ run src/index.test.ts:209:19
+ ❯ src/index.test.ts:215:32
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  src/index.test.ts > conformance scenarios (reference coordinator) > 'lease-firm-hard-limit'
+AssertionError: expected [ Array(8) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "errors": [
++       ": expected 0 items, got 1: [{\"seq\":6,\"repo\":\"demo\",\"status\":\"accepted\",\"kind\":\"leave\",\"ts\":\"2026-10-05T14:10:00.001Z\",\"actor\":{\"type\":\"system\",\"id\":\"coordinator\"},\"agent\":\"codex-b\",\"task\":\"T-2\",\"change\":\"I-b\",\"session\":\"s2\",\"base_seq\":5,\"files\":[],\"reads\":[],\"writes\":[],\"intent\":\"session expired\",\"summary\":\"codex-b left — session expired\",\"diagnostics\":[],\"payload\":{\"harness\":\"codex\",\"level\":3}}]",
++     ],
++     "op": "tick",
++     "step": 10,
++   },
++   {
++     "errors": [
++       ": expected 1 items, got 0: []",
++     ],
++     "op": "tick",
++     "step": 13,
++   },
++   {
++     "errors": [
++       "/verdict: expected \"accept\", got undefined",
++       "/seq: expected 7, got undefined",
++       "/diagnostics: expected array, got undefined",
++     ],
++     "op": "submit",
++     "step": 14,
++   },
++   {
++     "errors": [
++       "/allow: expected true, got undefined",
++     ],
++     "op": "gate",
++     "step": 15,
++   },
++   {
++     "errors": [
++       "/seq: expected 8, got 7",
++     ],
++     "op": "submit",
++     "step": 16,
++   },
++   {
++     "errors": [
++       "/verdict: expected \"accept\", got undefined",
++       "/seq: expected 9, got undefined",
++     ],
++     "op": "submit",
++     "step": 18,
++   },
++   {
++     "errors": [
++       ": expected 0 items, got 1: [{\"seq\":8,\"repo\":\"demo\",\"status\":\"accepted\",\"kind\":\"release\",\"ts\":\"2026-10-05T14:10:01.212Z\",\"actor\":{\"type\":\"system\",\"id\":\"coordinator\"},\"agent\":\"claude-a\",\"task\":\"T-1\",\"change\":\"I-a\",\"base_seq\":7,\"files\":[],\"reads\":[],\"writes\":[],\"summary\":\"claude-a released fetchWithAuth (expired)\",\"diagnostics\":[],\"payload\":{\"keys\":[\"src/api/client.ts#fetchWithAuth\"],\"reason\":\"expired\"}}]",
++     ],
++     "op": "tick",
++     "step": 20,
++   },
++   {
++     "errors": [
++       ": expected 1 items, got 0: []",
++     ],
++     "op": "tick",
++     "step": 22,
++   },
++ ]
+
+ ❯ src/index.test.ts:217:22
+    215|     const { coord, results } = await run(data);
+    216|     const failures = results.filter((r) => !r.ok).map((r) => ({ step: …
+    217|     expect(failures).toEqual([]);
+       |                      ^
+    218| 
+    219|     // Every response the reference emits must itself satisfy the sche…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  src/index.test.ts > conformance scenarios (reference coordinator) > 'lease-soft-claim'
+AssertionError: expected [ …(3) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "errors": [
++       "/claim_ttl_ms: expected 120000, got 1800000",
++       "/policy/claims: expected object, got undefined",
++     ],
++     "op": "hello",
++     "step": 0,
++   },
++   {
++     "errors": [
++       ": expected 1 items, got 0: []",
++     ],
++     "op": "tick",
++     "step": 12,
++   },
++   {
++     "errors": [
++       "/diagnostics: expected 0 items, got 1: [{\"file\":\"src/auth/session.ts\",\"symbol\":\"src/auth/session.ts#refreshToken\",\"caused_by_seq\":3,\"caused_by_agent\":\"claude-a\",\"caused_by_task\":\"T-1\",\"arbitration\":{\"policy\":\"wound-wait\",\"outcome\":\"wait\",\"winner\":{\"agent\":\"claude-a\",\"change\":\"I-a\"},\"loser\":{\"agent\":\"codex-b\",\"change\":\"I-b\"},\"options\":[\"retreat\",\"wait\",\"negotiate\",\"escalate\"]},\"severity\":\"warning\",\"code\":\"claim_wait\",\"message\":\"src/auth",
++     ],
++     "op": "submit",
++     "step": 13,
++   },
++ ]
+
+ ❯ src/index.test.ts:217:22
+    215|     const { coord, results } = await run(data);
+    216|     const failures = results.filter((r) => !r.ok).map((r) => ({ step: …
+    217|     expect(failures).toEqual([]);
+       |                      ^
+    218| 
+    219|     // Every response the reference emits must itself satisfy the sche…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  src/index.test.ts > conformance scenarios (reference coordinator) > 'open-errors-persist'
+AssertionError: expected [ Array(19) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "errors": [
++       "/allow: expected false, got true",
++       "/open_errors: expected length 1, got 0",
++     ],
++     "op": "gate",
++     "step": 7,
++   },
++   {
++     "errors": [
++       "/allow: expected false, got true",
++       "/open_errors: expected length 1, got 0",
++     ],
++     "op": "gate",
++     "step": 9,
++   },
++   {
++     "errors": [
++       "/allow: expected false, got true",
++       "/open_errors: expected length 1, got 0",
++     ],
++     "op": "gate",
++     "step": 11,
++   },
++   {
++     "errors": [
++       "/allow: expected false, got true",
++       "/open_errors: expected length 1, got 0",
++     ],
++     "op": "gate",
++     "step": 13,
++   },
++   {
++     "errors": [
++       "/head_seq: expected 12, got 11",
++       "/delivered_through: expected 12, got 11",
++     ],
++     "op": "hello",
++     "step": 15,
++   },
++   {
++     "errors": [
++       "/items: expected 1 items, got 0: []",
++       "/open_errors: expected 1 items, got 0: []",
++     ],
++     "op": "drain",
++     "step": 16,
++   },
++   {
++     "errors": [
++       "/allow: expected false, got true",
++     ],
++     "op": "gate",
++     "step": 17,
++   },
++   {
++     "errors": [
++       "/0/seq: expected 13, got 12",
++       "/1/seq: expected 14, got 13",
++     ],
++     "op": "tick",
++     "step": 19,
++   },
++   {
++     "errors": [
++       "/head_seq: expected 15, got 14",
++       "/delivered_through: expected 15, got 14",
++     ],
++     "op": "hello",
++     "step": 20,
++   },
++   {
++     "errors": [
++       "/allow: expected false, got true",
++       "/open_errors: expected 1 items, got 0: []",
++     ],
++     "op": "gate",
++     "step": 21,
++   },
++   {
++     "errors": [
++       "/verdict: expected \"accept\", got undefined",
++       "/seq: expected 16, got undefined",
++       "/diagnostics: expected array, got undefined",
++     ],
++     "op": "submit",
++     "step": 22,
++   },
++   {
++     "errors": [
++       "/head_seq: expected 17, got 15",
++       "/delivered_through: expected 17, got 15",
++     ],
++     "op": "hello",
++     "step": 24,
++   },
++   {
++     "errors": [
++       "/items: expected 1 items, got 0: []",
++     ],
++     "op": "drain",
++     "step": 25,
++   },
++   {
++     "errors": [
++       "/allow: expected false, got true",
++     ],
++     "op": "gate",
++     "step": 26,
++   },
++   {
++     "errors": [
++       "/verdict: expected \"accept\", got undefined",
++       "/seq: expected 18, got undefined",
++     ],
++     "op": "submit",
++     "step": 27,
++   },
++   {
++     "errors": [
++       "/verdict: expected \"accept\", got undefined",
++       "/seq: expected 19, got undefined",
++     ],
++     "op": "submit",
++     "step": 29,
++   },
++   {
++     "errors": [
++       "/verdict: expected \"reject\", got undefined",
++       "/seq: expected 20, got undefined",
++       "/diagnostics: expected array, got undefined",
++     ],
++     "op": "submit",
++     "step": 30,
++   },
++   {
++     "errors": [
++       "/allow: expected false, got true",
++     ],
++     "op": "gate",
++     "step": 31,
++   },
++   {
++     "errors": [
++       "/verdict: expected \"accept\", got undefined",
++       "/seq: expected 21, got undefined",
++     ],
++     "op": "submit",
++     "step": 32,
++   },
++ ]
+
+ ❯ src/index.test.ts:217:22
+    215|     const { coord, results } = await run(data);
+    216|     const failures = results.filter((r) => !r.ok).map((r) => ({ step: …
+    217|     expect(failures).toEqual([]);
+       |                      ^
+    218| 
+    219|     // Every response the reference emits must itself satisfy the sche…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  src/index.test.ts > conformance scenarios (reference coordinator) > 'release-on-exit'
+AssertionError: expected [ …(5) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "errors": [
++       "/events: expected 3 items, got 2: [{\"seq\":6,\"repo\":\"demo\",\"status\":\"accepted\",\"kind\":\"leave\",\"ts\":\"2026-10-05T14:00:00.006Z\",\"actor\":{\"type\":\"agent\",\"id\":\"claude-a\",\"harness\":\"claude-code\"},\"agent\":\"claude-a\",\"task\":\"T-1\",\"change\":\"I-a\",\"session\":\"s1\",\"base_seq\":5,\"files\":[],\"reads\":[],\"writes\":[],\"summary\":\"claude-a left\",\"diagnostics\":[],\"payload\":{\"harness\":\"claude-code\",\"level\":3}},{\"seq\":7,\"repo\":\"demo\",\"status\":\"accepted\",\"k",
++     ],
++     "op": "events",
++     "step": 8,
++   },
++   {
++     "errors": [
++       "/diagnostics: expected 0 items, got 1: [{\"file\":\"src/auth/session.ts\",\"symbol\":\"src/auth/session.ts#refreshToken\",\"caused_by_seq\":3,\"caused_by_agent\":\"claude-a\",\"caused_by_task\":\"T-1\",\"arbitration\":{\"policy\":\"wound-wait\",\"outcome\":\"wait\",\"winner\":{\"agent\":\"claude-a\",\"change\":\"I-a\"},\"loser\":{\"agent\":\"codex-b\",\"change\":\"I-b\"},\"options\":[\"retreat\",\"wait\",\"negotiate\",\"escalate\"]},\"severity\":\"warning\",\"code\":\"claim_wait\",\"message\":\"src/auth",
++     ],
++     "op": "submit",
++     "step": 9,
++   },
++   {
++     "errors": [
++       "/seq: expected 9, got 8",
++     ],
++     "op": "submit",
++     "step": 10,
++   },
++   {
++     "errors": [
++       "/seq: expected 10, got undefined",
++     ],
++     "op": "submit",
++     "step": 11,
++   },
++   {
++     "errors": [
++       ": expected 3 items, got 1: [{\"seq\":9,\"repo\":\"demo\",\"status\":\"accepted\",\"kind\":\"leave\",\"ts\":\"2026-10-05T14:06:40.014Z\",\"actor\":{\"type\":\"system\",\"id\":\"coordinator\"},\"agent\":\"codex-b\",\"task\":\"T-2\",\"change\":\"I-b\",\"session\":\"s2\",\"base_seq\":8,\"files\":[],\"reads\":[],\"writes\":[],\"intent\":\"session expired\",\"summary\":\"codex-b left — session expired\",\"diagnostics\":[],\"payload\":{\"harness\":\"codex\",\"level\":3}}]",
++     ],
++     "op": "tick",
++     "step": 13,
++   },
++ ]
+
+ ❯ src/index.test.ts:217:22
+    215|     const { coord, results } = await run(data);
+    216|     const failures = results.filter((r) => !r.ok).map((r) => ({ step: …
+    217|     expect(failures).toEqual([]);
+       |                      ^
+    218| 
+    219|     // Every response the reference emits must itself satisfy the sche…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+ FAIL  src/index.test.ts > conformance scenarios (reference coordinator) > 'claims-legacy-and-migration' replays deterministically
+TypeError: target.policy is not a function
+ ❯ runScenario src/conformance.ts:215:33
+    213|         case "policy":
+    214|           if (!target.policy) throw new Error(`scenario ${sc.name}: ta…
+    215|           actual = await target.policy(step.policy);
+       |                                 ^
+    216|           break;
+    217|       }
+ ❯ run src/index.test.ts:209:19
+ ❯ src/index.test.ts:238:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed | 124 passed (130)
+   Start at  22:12:47
+   Duration  339ms (transform 59ms, setup 0ms, collect 103ms, tests 79ms, environment 0ms, prepare 38ms)
+

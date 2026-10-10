@@ -1,0 +1,264 @@
+
+ RUN  v3.2.7 /Users/john/github/weft/.worktrees/leases/packages/sequencer
+
+ × src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > release with no keys does not clear a commit-mode error 6ms
+   → expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+ × src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > releasing the key itself does not clear a commit-mode error 1ms
+   → expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+ × src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > an accepted intent that reads the key does not clear it 1ms
+   → expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+ × src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > an accepted claim on the key does not clear it 1ms
+   → expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+ × src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > bye followed by a new hello of the same change does not clear it, and the new session is told 0ms
+   → expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+ × src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > a session expiry followed by a new hello does not clear it 1ms
+   → expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+ × src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > two live sessions of one change share the open errors 0ms
+   → expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+ ✓ src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > redoing the edit against the current log clears it (the intended path) 0ms
+ ✓ src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > a check-mode error (edit denied, never applied) is cleared by releasing the key: a retreat 0ms
+ ✓ src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > releasing a different key does not clear a check-mode error 0ms
+ × src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > release with no keys does not clear a commit-mode error 4ms
+   → expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+ × src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > releasing the key itself does not clear a commit-mode error 3ms
+   → expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+ × src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > an accepted intent that reads the key does not clear it 2ms
+   → expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+ × src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > an accepted claim on the key does not clear it 2ms
+   → expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+ × src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > bye followed by a new hello of the same change does not clear it, and the new session is told 2ms
+   → expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+ × src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > a session expiry followed by a new hello does not clear it 2ms
+   → expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+ × src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > two live sessions of one change share the open errors 2ms
+   → expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+ ✓ src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > redoing the edit against the current log clears it (the intended path) 2ms
+ ✓ src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > a check-mode error (edit denied, never applied) is cleared by releasing the key: a retreat 1ms
+ ✓ src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > releasing a different key does not clear a check-mode error 1ms
+ × src/open-errors.test.ts > legacy repos (no claims policy) (reference coordinator) > a claim_wounded while the loser has no live session is kept for its next session 1ms
+   → expected { type: 'gate.result', …(3) } to match object { allow: false, …(1) }
+(2 matching properties omitted from actual)
+ × src/open-errors.test.ts > legacy repos (no claims policy) (sql coordinator) > a claim_wounded while the loser has no live session is kept for its next session 3ms
+   → expected { type: 'gate.result', …(3) } to match object { allow: false, …(1) }
+(2 matching properties omitted from actual)
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 16 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > release with no keys does not clear a commit-mode error
+ FAIL  src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > release with no keys does not clear a commit-mode error
+AssertionError: expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+
+- Expected
++ Received
+
+  {
+-   "allow": false,
+-   "open": [
+-     "stale_assumption src/auth/session.ts#refreshToken",
+-   ],
++   "allow": true,
++   "open": [],
+  }
+
+ ❯ src/open-errors.test.ts:102:39
+    100|     const { b } = setup(c);
+    101|     expect(c.submit(b, ev("release", 5, { payload: {} }))).toMatchObje…
+    102|     expect(closed(c.gate(b, "stop"))).toEqual(STILL_OPEN);
+       |                                       ^
+    103|     expect(closed(c.gate(b, "commit"))).toEqual(STILL_OPEN);
+    104|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/16]⎯
+
+ FAIL  src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > releasing the key itself does not clear a commit-mode error
+ FAIL  src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > releasing the key itself does not clear a commit-mode error
+AssertionError: expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+
+- Expected
++ Received
+
+  {
+-   "allow": false,
+-   "open": [
+-     "stale_assumption src/auth/session.ts#refreshToken",
+-   ],
++   "allow": true,
++   "open": [],
+  }
+
+ ❯ src/open-errors.test.ts:110:39
+    108|     const { b } = setup(c);
+    109|     expect(c.submit(b, ev("release", 5, { payload: { keys: [X] } }))).…
+    110|     expect(closed(c.gate(b, "stop"))).toEqual(STILL_OPEN);
+       |                                       ^
+    111|   });
+    112| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/16]⎯
+
+ FAIL  src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > an accepted intent that reads the key does not clear it
+ FAIL  src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > an accepted intent that reads the key does not clear it
+AssertionError: expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+
+- Expected
++ Received
+
+  {
+-   "allow": false,
+-   "open": [
+-     "stale_assumption src/auth/session.ts#refreshToken",
+-   ],
++   "allow": true,
++   "open": [],
+  }
+
+ ❯ src/open-errors.test.ts:117:39
+    115|     const { b } = setup(c);
+    116|     expect(c.submit(b, ev("intent", 5, { reads: [X], intent: "thinking…
+    117|     expect(closed(c.gate(b, "stop"))).toEqual(STILL_OPEN);
+       |                                       ^
+    118|   });
+    119| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/16]⎯
+
+ FAIL  src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > an accepted claim on the key does not clear it
+ FAIL  src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > an accepted claim on the key does not clear it
+AssertionError: expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+
+- Expected
++ Received
+
+  {
+-   "allow": false,
+-   "open": [
+-     "stale_assumption src/auth/session.ts#refreshToken",
+-   ],
++   "allow": true,
++   "open": [],
+  }
+
+ ❯ src/open-errors.test.ts:124:39
+    122|     const { b } = setup(c);
+    123|     expect(c.submit(b, ev("claim", 5, { writes: [{ key: X, kind: "sign…
+    124|     expect(closed(c.gate(b, "stop"))).toEqual(STILL_OPEN);
+       |                                       ^
+    125|   });
+    126| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/16]⎯
+
+ FAIL  src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > bye followed by a new hello of the same change does not clear it, and the new session is told
+ FAIL  src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > bye followed by a new hello of the same change does not clear it, and the new session is told
+AssertionError: expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+
+- Expected
++ Received
+
+  {
+-   "allow": false,
+-   "open": [
+-     "stale_assumption src/auth/session.ts#refreshToken",
+-   ],
++   "allow": true,
++   "open": [],
+  }
+
+ ❯ src/open-errors.test.ts:132:48
+    130|     c.bye(b);
+    131|     const b2 = c.hello(hello("codex-b", "I-b"));
+    132|     expect(closed(c.gate(b2.session, "stop"))).toEqual(STILL_OPEN);
+       |                                                ^
+    133|     const inbox = c.drain(b2.session);
+    134|     expect(inbox.items).toMatchObject([{ kind: "diagnostic", seq: 5, d…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/16]⎯
+
+ FAIL  src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > a session expiry followed by a new hello does not clear it
+ FAIL  src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > a session expiry followed by a new hello does not clear it
+AssertionError: expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+
+- Expected
++ Received
+
+  {
+-   "allow": false,
+-   "open": [
+-     "stale_assumption src/auth/session.ts#refreshToken",
+-   ],
++   "allow": true,
++   "open": [],
+  }
+
+ ❯ src/open-errors.test.ts:145:48
+    143|     expect(() => c.gate(b, "stop")).toThrow(/expired/);
+    144|     const b2 = c.hello(hello("codex-b", "I-b"));
+    145|     expect(closed(c.gate(b2.session, "stop"))).toEqual(STILL_OPEN);
+       |                                                ^
+    146|   });
+    147| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/16]⎯
+
+ FAIL  src/open-errors.test.ts > open errors cannot be bypassed (reference coordinator) > two live sessions of one change share the open errors
+ FAIL  src/open-errors.test.ts > open errors cannot be bypassed (sql coordinator) > two live sessions of one change share the open errors
+AssertionError: expected { allow: true, open: [] } to deeply equal { allow: false, …(1) }
+
+- Expected
++ Received
+
+  {
+-   "allow": false,
+-   "open": [
+-     "stale_assumption src/auth/session.ts#refreshToken",
+-   ],
++   "allow": true,
++   "open": [],
+  }
+
+ ❯ src/open-errors.test.ts:152:48
+    150|     const { b } = setup(c);
+    151|     const b2 = c.hello(hello("codex-b", "I-b"));
+    152|     expect(closed(c.gate(b2.session, "stop"))).toEqual(STILL_OPEN);
+       |                                                ^
+    153|     expect(closed(c.gate(b, "stop"))).toEqual(STILL_OPEN);
+    154|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/16]⎯
+
+ FAIL  src/open-errors.test.ts > legacy repos (no claims policy) (reference coordinator) > a claim_wounded while the loser has no live session is kept for its next session
+ FAIL  src/open-errors.test.ts > legacy repos (no claims policy) (sql coordinator) > a claim_wounded while the loser has no live session is kept for its next session
+AssertionError: expected { type: 'gate.result', …(3) } to match object { allow: false, …(1) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "allow": false,
+-   "open_errors": [
+-     {
+-       "code": "claim_wounded",
+-       "symbol": "src/auth/session.ts#refreshToken",
+-     },
+-   ],
++   "allow": true,
++   "open_errors": [],
+  }
+
+ ❯ src/open-errors.test.ts:192:42
+    190|     expect(c.submit(senior.session, edit(1, [[X, "body"]]))).toMatchOb…
+    191|     const back = c.hello(hello("codex-b", "I-b"));
+    192|     expect(c.gate(back.session, "stop")).toMatchObject({ allow: false,…
+       |                                          ^
+    193|     expect(c.drain(back.session).items).toMatchObject([{ kind: "diagno…
+    194|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/16]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  16 failed | 6 passed (22)
+   Start at  22:13:40
+   Duration  288ms (transform 71ms, setup 0ms, collect 89ms, tests 35ms, environment 0ms, prepare 42ms)
+

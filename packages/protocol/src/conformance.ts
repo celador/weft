@@ -16,10 +16,12 @@ import type {
   Hello,
   HumanAction,
   InboxBatch,
+  RepoPolicy,
   Submit,
   Verdict,
   Welcome,
 } from "./types";
+import type { ClaimsPolicy } from "./types";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -35,6 +37,8 @@ export interface ConformanceTarget {
   tick(): MaybePromise<EventRecord[]>;
   events(after?: number, limit?: number, opts?: { include_diff?: boolean; tail?: boolean; before?: number }): MaybePromise<EventPage>;
   event(seq: number): MaybePromise<EventRecord>;
+  /** Operator: apply repo policy (spec §7.5 claims policy; Weft journal op `policy`). */
+  policy?(p: { claims: ClaimsPolicy }): MaybePromise<RepoPolicy>;
 }
 
 export type ScenarioStep =
@@ -49,7 +53,8 @@ export type ScenarioStep =
   | { op: "advance"; ms: number }
   | { op: "tick"; expect?: unknown }
   | { op: "events"; after?: number; limit?: number; include_diff?: boolean; tail?: boolean; before?: number; expect?: unknown }
-  | { op: "event"; seq: number; expect?: unknown };
+  | { op: "event"; seq: number; expect?: unknown }
+  | { op: "policy"; policy: { claims: ClaimsPolicy }; expect?: unknown };
 
 export type Scenario = {
   name: string;
@@ -61,10 +66,34 @@ export type Scenario = {
   escalation?: "auto" | "human";
   claim_ttl_ms?: number;
   session_ttl_ms?: number;
+  /**
+   * Claims policy (spec §7.5). Absent: the defaults of a new repo. `null`: a repo created
+   * before the claims policy existed (legacy rules until a `policy` step applies one).
+   */
+  claims?: ClaimsPolicy | null;
   /** Clock start (ISO). Each step advances 1 ms unless `advance` is used. */
   start: string;
   steps: ScenarioStep[];
 };
+
+/** Coordinator options a scenario asks for (shared by every test harness). */
+export function scenarioInit(sc: Scenario): {
+  repo: string;
+  policy?: "wound-wait" | "wait-die";
+  escalation?: "auto" | "human";
+  claim_ttl_ms?: number;
+  session_ttl_ms?: number;
+  claims?: ClaimsPolicy | null;
+} {
+  return {
+    repo: sc.repo,
+    ...(sc.policy ? { policy: sc.policy } : {}),
+    ...(sc.escalation ? { escalation: sc.escalation } : {}),
+    ...(sc.claim_ttl_ms ? { claim_ttl_ms: sc.claim_ttl_ms } : {}),
+    ...(sc.session_ttl_ms ? { session_ttl_ms: sc.session_ttl_ms } : {}),
+    ...(sc.claims !== undefined ? { claims: sc.claims } : {}),
+  };
+}
 
 export type ScenarioClock = { now: () => number; advance: (ms: number) => void };
 
@@ -180,6 +209,10 @@ export async function runScenario(sc: Scenario, target: ConformanceTarget, clock
           break;
         case "event":
           actual = await target.event(step.seq);
+          break;
+        case "policy":
+          if (!target.policy) throw new Error(`scenario ${sc.name}: target cannot apply policy`);
+          actual = await target.policy(step.policy);
           break;
       }
     } catch (e) {

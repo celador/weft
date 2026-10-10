@@ -23,6 +23,7 @@ export {
   runScenario,
   partialMatch,
   scenarioClock,
+  scenarioInit,
   type ConformanceTarget,
   type Scenario,
   type ScenarioStep,
