@@ -2,7 +2,12 @@
 //
 //   install        configure a checkout: .weft/claude.json (+ token file), .claude/settings.json
 //                  hooks, git commit-msg (Change-Id/Task-Id/Agent-Id trailers) + pre-commit gate
-//   hook           Claude Code hook entry: JSON on stdin -> JSON on stdout (always exit 0)
+//   hook           Claude Code hook entry: JSON on stdin -> JSON on stdout (always exit 0);
+//                  --by-path --url U --repo R: find the checkout from the edited file first
+//                  (weft-worker subagents). Only a checkout whose config has exactly that url and
+//                  repo is trusted; a Bash command with no accepted cd/git -C target is denied.
+//   install-agent  write .claude/agents/weft-worker.md: a subagent whose own hooks run
+//                  `hook --by-path --url U --repo R`, pinned to the parent session's config
 //   commit-msg F   git commit-msg hook
 //   pre-commit     git pre-commit hook (last gate: refuses while the session has open errors)
 //   heartbeat-loop keep a WCP session alive between hooks (spawned detached by SessionStart)
@@ -16,7 +21,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NEGOTIATE_USAGE, parseNegotiate } from "@weft/protocol";
 import { HttpTransport, type Transport } from "./client";
-import { CONFIG_REL, currentSession, loadConfig, readState, stateDir, type AdapterConfig, type Loaded } from "./config";
+import { BASH_TARGET_FORMS, CONFIG_REL, appendAdapterLog, bashTargetDir, configStarts, currentSession, findRoot, loadConfig, pinMatches, readConfigFile, readState, stateDir, type AdapterConfig, type Loaded, type Pin } from "./config";
 import { ClaudeAdapter, type HookInput } from "./hooks";
 import { stableNodePath } from "./node-path";
 
@@ -45,10 +50,22 @@ function adapterFor(loaded: Loaded, calls?: Call[]): ClaudeAdapter {
     diff: async (rel, before, after) => (await import("./analysis")).unifiedDiff(rel, before, after),
     cli: cliFor(loaded.root),
     startHeartbeat: (claudeSession) => {
+      // Best-effort (sessions re-hello on expiry), but not silent: the outcome goes to the log.
+      const note = (msg: string) => {
+        try {
+          mkdirSync(join(loaded.root, ".weft", "log"), { recursive: true });
+          appendFileSync(join(loaded.root, ".weft", "log", "heartbeat.log"), `${new Date().toISOString()} ${msg}\n`);
+        } catch {
+          /* logging is best-effort */
+        }
+      };
       try {
-        spawn(process.execPath, [SELF, "heartbeat-loop", claudeSession, "--root", loaded.root], { detached: true, stdio: "ignore" }).unref();
-      } catch {
-        /* heartbeat is best-effort; sessions re-hello on expiry */
+        const child = spawn(process.execPath, [SELF, "heartbeat-loop", claudeSession, "--root", loaded.root], { detached: true, stdio: "ignore" });
+        child.on("error", (err) => note(`spawn error for ${claudeSession}: ${err.message}`));
+        child.unref();
+        note(`spawned heartbeat for ${claudeSession} pid ${child.pid}`);
+      } catch (err) {
+        note(`spawn threw for ${claudeSession}: ${String(err)}`);
       }
     },
   });
@@ -80,16 +97,37 @@ export function injectedText(out: unknown): string {
   return [o.reason, o.hookSpecificOutput?.additionalContext, o.hookSpecificOutput?.permissionDecisionReason].filter((x): x is string => typeof x === "string").join("\n");
 }
 
-async function hook(): Promise<void> {
+/** The one denial `--by-path` gives a Bash command that names no accepted target. */
+export const BASH_NEEDS_TARGET =
+  `[weft] This Bash command names no checkout Weft can coordinate. Start the command with \`cd <worktree> &&\` (or \`git -C <worktree> ...\`), using the absolute worktree path. Accepted forms: ${BASH_TARGET_FORMS}.`;
+
+async function hook(byPath: boolean, args: string[] = []): Promise<void> {
   let out: unknown;
   let input: HookInput | undefined;
   let loaded: Loaded | undefined;
   const calls: Call[] = [];
   const handleStart = performance.now();
+  const pin: Pin | undefined = arg(args, "url") && arg(args, "repo") ? { url: arg(args, "url")!, repo: arg(args, "repo")! } : undefined;
   try {
     input = JSON.parse(await readStdin()) as HookInput;
-    loaded = loadConfig(input.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd());
-    if (loaded) out = await adapterFor(loaded, calls).handle(input);
+    const denyBash = byPath && input.hook_event_name === "PreToolUse" && input.tool_name === "Bash" && !bashTargetDir(typeof input.tool_input?.command === "string" ? input.tool_input.command : "", input.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd());
+    if (denyBash) {
+      // Fail closed: a command with no accepted target is not run, and no checkout is coordinated for it.
+      out = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: BASH_NEEDS_TARGET } };
+    } else {
+      for (const start of configStarts(input, byPath)) {
+        const found = loadConfig(start);
+        if (!found) continue;
+        if (byPath && !pinMatches(found.root, pin)) {
+          // A checkout whose config does not match the pinned coordinator is not coordinated.
+          appendAdapterLog(found.root, `hook --by-path refused: ${found.root}/${CONFIG_REL} url/repo do not match the pinned coordinator`);
+          break;
+        }
+        loaded = found;
+        break;
+      }
+    }
+    if (loaded && input) out = await adapterFor(loaded, calls).handle(input);
   } catch {
     out = undefined; // fail open: malformed input or a bug must not block the harness
   }
@@ -167,6 +205,8 @@ export function mergeSettings(settings: Record<string, unknown>, command: string
     UserPromptSubmit: ours(),
     PreToolUse: ours("Edit|Write|MultiEdit|Bash"),
     PostToolUse: ours("*"),
+    // A failed Bash call can still have written files: reconcile it like a successful one.
+    PostToolUseFailure: ours("Bash"),
     Stop: ours(),
     SessionEnd: ours(),
   };
@@ -258,6 +298,73 @@ async function install(args: string[]): Promise<void> {
   );
 }
 
+/** `weft-worker` subagent: its frontmatter hooks run only while that subagent runs, and route by edited path. */
+export function workerAgent(command: string, name = "weft-worker"): string {
+  const q = JSON.stringify(command);
+  // Bash too: a shell edit (sed, heredoc, redirect) is reconciled against the worktree after it runs.
+  const edits = "Edit|Write|MultiEdit|Bash";
+  return `---
+name: ${name}
+description: Implements one task inside its own Weft-joined git worktree. Give it the absolute worktree path and the task; its edits are checked by the Weft coordinator as that worktree's agent.
+hooks:
+  PreToolUse:
+    - matcher: "${edits}"
+      hooks:
+        - type: command
+          command: ${q}
+          timeout: 30
+  PostToolUse:
+    - matcher: "${edits}"
+      hooks:
+        - type: command
+          command: ${q}
+          timeout: 30
+  PostToolUseFailure:
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          command: ${q}
+          timeout: 30
+---
+
+You work on one task inside one git worktree that is joined to Weft (it has \`.weft/claude.json\`).
+The task message gives you its absolute path.
+
+- Edit only files under that worktree, always by absolute path. Weft checks each edit as that
+  worktree's agent; edits elsewhere are not coordinated.
+- Start every Bash command with \`cd <worktree> && …\` (or use \`git -C <worktree> …\`). Weft finds
+  the worktree from that; a command without it is attributed to the session's own checkout. Its
+  git \`pre-commit\` hook refuses commits while Weft has open errors.
+- If an edit is denied with \`[weft error]\`, do not retry it. When the cause is another agent's
+  change, stop and report it (the diagnostic names the agent and event) instead of adopting their work.
+- \`<worktree>/.weft/bin/weft inbox\` shows what is waiting for you.
+`;
+}
+
+function installAgent(args: string[]): void {
+  const dir = resolve(arg(args, "dir") ?? process.cwd());
+  const root = git(dir, ["rev-parse", "--show-toplevel"]);
+  const name = arg(args, "name") ?? "weft-worker";
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name)) throw new Error(`install-agent: --name must be letters, digits, - or _ (got ${JSON.stringify(name)})`);
+  // The coordinator the subagent may act for: the parent session's own config when it has one,
+  // else --url and --repo. Every by-path hook must match it (config.ts pinMatches).
+  const parentRoot = findRoot(dir);
+  const parent = parentRoot ? readConfigFile(parentRoot) : undefined;
+  const pin: Pin | undefined = parent?.url && parent.repo ? { url: parent.url, repo: parent.repo } : arg(args, "url") && arg(args, "repo") ? { url: arg(args, "url")!, repo: arg(args, "repo")! } : undefined;
+  if (!pin) throw new Error("install-agent: no coordinator to pin: the parent session has no .weft/claude.json; pass --url and --repo");
+  const path = join(root, ".claude", "agents", `${name}.md`);
+  mkdirSync(dirname(path), { recursive: true });
+  const pinned = `--url ${shellQuote(pin.url)} --repo ${shellQuote(pin.repo)}`;
+  writeFileSync(path, workerAgent(`${shellQuote(process.execPath)} ${shellQuote(SELF)} hook --by-path ${pinned}`, name));
+  // absolute machine paths: keep it out of git, like settings.local.json
+  const exclude = resolve(root, git(root, ["rev-parse", "--git-path", "info/exclude"]));
+  const rel = `.claude/agents/${name}.md`;
+  mkdirSync(dirname(exclude), { recursive: true });
+  const ex = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
+  if (!ex.split("\n").includes(rel)) writeFileSync(exclude, `${ex}${ex && !ex.endsWith("\n") ? "\n" : ""}${rel}\n`);
+  process.stdout.write(`weft: wrote subagent ${path}\n  run \`weft-adapter-claude install\` in each worktree, then start a ${name} subagent per worktree\n`);
+}
+
 function commitMsg(file: string): void {
   const loaded = loadConfig(process.cwd());
   if (!loaded) return;
@@ -288,9 +395,22 @@ async function heartbeatLoop(claudeSession: string, rootArg?: string): Promise<v
   const adapter = adapterFor(loaded);
   const intervalMs = 30_000;
   const idleLimitMs = 30 * 60_000;
+  const note = (msg: string) => {
+    try {
+      appendFileSync(join(loaded.root, ".weft", "log", "heartbeat.log"), `${new Date().toISOString()} [pid ${process.pid}] ${msg}\n`);
+    } catch {
+      /* logging is best-effort */
+    }
+  };
+  note(`loop start for ${claudeSession}`);
   for (;;) {
     await new Promise((r) => setTimeout(r, intervalMs));
-    if (!(await adapter.beat(claudeSession, idleLimitMs).catch(() => false))) return;
+    const ok = await adapter.beat(claudeSession, idleLimitMs).catch((err) => {
+      note(`beat threw: ${String(err)}`);
+      return false;
+    });
+    note(ok ? "beat ok" : "beat stopped (no session or idle limit)");
+    if (!ok) return;
   }
 }
 
@@ -350,9 +470,11 @@ async function main(): Promise<void> {
   const [cmd, ...args] = process.argv.slice(2);
   switch (cmd) {
     case "hook":
-      return hook();
+      return hook(args.includes("--by-path"), args);
     case "install":
       return install(args);
+    case "install-agent":
+      return installAgent(args);
     case "commit-msg":
       return commitMsg(args[0]);
     case "pre-commit":
@@ -369,7 +491,7 @@ async function main(): Promise<void> {
       process.exitCode = await inboxCmd(args);
       return;
     default:
-      process.stderr.write("usage: weft-adapter-claude install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--shared]\n       weft-adapter-claude hook|commit-msg FILE|pre-commit|status\n       weft-adapter-claude negotiate …|inbox (see negotiate --help)\n");
+      process.stderr.write("usage: weft-adapter-claude install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--shared]\n       weft-adapter-claude hook [--by-path]|install-agent [--dir D] [--name N]|commit-msg FILE|pre-commit|status\n       weft-adapter-claude negotiate …|inbox (see negotiate --help)\n");
       process.exitCode = cmd ? 2 : 0;
   }
 }

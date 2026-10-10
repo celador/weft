@@ -22,11 +22,11 @@
 // Fail open: any coordinator/transport failure lets the tool run (logged, and noted to the
 // model) — an unreachable coordinator must never wedge the agent.
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, renameSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, renameSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { AgentRef, Capabilities, Diagnostic, EventDraft, EventRecord, InboxItem, NegotiateCommand, NegotiationDue, Verdict } from "@weft/protocol";
 import { WcpError, PROTOCOL, type Transport } from "./client";
-import { readState, withLock, writeState, type Loaded, type SessionState } from "./config";
+import { appendAdapterLog, readState, withLock, writeState, type Loaded, type SessionState } from "./config";
 import { EDIT_TOOLS, editPath, isGitCommit, proposedText } from "./edits";
 import { renderDues, renderForModel, type EditedFile, type RenderCtx } from "./render";
 import type { Sets, FileChange } from "./analysis";
@@ -120,15 +120,7 @@ export class ClaudeAdapter {
   // ------------------------------------------------------------------ infra
 
   log(message: string): void {
-    try {
-      const dir = join(this.root, ".weft", "log");
-      mkdirSync(dir, { recursive: true });
-      const path = join(dir, "adapter.log");
-      if (existsSync(path) && statSync(path).size > 2_000_000) renameSync(path, `${path}.1`);
-      appendFileSync(path, `${new Date(this.now()).toISOString()} ${message}\n`);
-    } catch {
-      /* logging must never break a hook */
-    }
+    appendAdapterLog(this.root, message, this.now());
   }
 
   git(args: string[]): string | undefined {
@@ -150,6 +142,11 @@ export class ClaudeAdapter {
 
   private readText(abs: string): string | null {
     try {
+      // Never follow a link: a symlink inside the checkout can point at a file outside it.
+      if (lstatSync(abs).isSymbolicLink()) return null;
+      const real = realpathSync(abs);
+      const root = realpathSync(this.root);
+      if (real !== root && !real.startsWith(root + sep)) return null;
       if (statSync(abs).size > MAX_FILE_BYTES) return null;
       return readFileSync(abs, "utf8");
     } catch {
@@ -205,7 +202,12 @@ export class ClaudeAdapter {
   }
 
   private async ensure(st: SessionState): Promise<string> {
-    return st.wcpSession ?? (await this.hello(st));
+    if (st.wcpSession) return st.wcpSession;
+    const session = await this.hello(st);
+    // First hello of this conversation in this checkout. Usually SessionStart, but a subagent
+    // (`hook --by-path`) has none, and without a heartbeat its session expires while it is idle.
+    this.deps.startHeartbeat?.(st.claudeSession);
+    return session;
   }
 
   /** Run a session call; re-hello once if the coordinator forgot the session (410). */
@@ -320,6 +322,8 @@ export class ClaudeAdapter {
       case "PostToolUse":
         if (EDIT_TOOLS.has(input.tool_name ?? "")) return this.postEdit(input, st);
         return this.postOther(input, st);
+      case "PostToolUseFailure":
+        return input.tool_name === "Bash" ? this.postOther(input, st) : undefined;
       case "Stop":
       case "SubagentStop":
         return this.stop(input, st);
@@ -334,8 +338,7 @@ export class ClaudeAdapter {
 
   private async sessionStart(input: HookInput, st: SessionState): Promise<HookOutput> {
     const { config } = this.loaded;
-    const fresh = !st.wcpSession;
-    await this.ensure(st);
+    await this.ensure(st); // starts the heartbeat on a fresh session
     st.head = this.git(["rev-parse", "HEAD"])?.trim();
     const batch = await this.call(st, (s) => this.deps.transport.drain(s, this.ack(st)));
     const inbox = await renderForModel([], batch.items, this.ctx());
@@ -351,7 +354,6 @@ export class ClaudeAdapter {
       ...(inbox ? [inbox] : []),
     ];
     this.delivered(st, inbox || open, batch.delivered_through, batch.items);
-    if (fresh) this.deps.startHeartbeat?.(input.session_id);
     return { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join("\n") } };
   }
 
@@ -403,6 +405,8 @@ export class ClaudeAdapter {
   private async preBash(input: HookInput, st: SessionState): Promise<HookOutput> {
     const command = typeof input.tool_input?.command === "string" ? input.tool_input.command : "";
     st.head = this.git(["rev-parse", "HEAD"])?.trim() ?? st.head;
+    // What the checkout looked like before this command ran; PostToolUse(Bash) diffs against it.
+    if (input.tool_use_id) st.pending[input.tool_use_id] = { tool: "Bash", before: this.dirtySnapshot(), shown: [], head: st.head, at: this.now() };
     if (!isGitCommit(command) || !st.wcpSession || !this.enforce) return undefined;
     const result = await this.call(st, (s) => this.deps.transport.gate(s, "commit"));
     if (result.allow) return undefined;
@@ -432,35 +436,102 @@ export class ClaudeAdapter {
       before = typeof original === "string" ? original : this.git(["show", `HEAD:${t.rel}`]) ?? null;
     }
     const after = existsSync(t.abs) ? this.readText(t.abs) : null;
-    if (before === after) return this.postOther(input, st);
-    const sets = await this.deps.analyze([{ rel: t.rel, before, after }], this.root, this.prefix);
-    if (!sets.writes.length) return this.postOther(input, st);
-    let diff = await this.deps.diff(this.prefix + t.rel, before, after);
+    const res = await this.commitChange(st, t.rel, before, after, tool, callId, pend?.shown ?? []);
+    if (!res) return this.postOther(input, st);
+    return res.text ? { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: res.text } } : undefined;
+  }
+
+  /**
+   * Submit one file's applied change (before -> after) as a commit event and render what the
+   * coordinator says. Undefined when there is nothing to coordinate (no change, or a comment or
+   * import-only change). Shared by Edit/Write (postEdit) and Bash (reconcileBash).
+   */
+  private async commitChange(
+    st: SessionState,
+    rel: string,
+    before: string | null,
+    after: string | null,
+    tool: string,
+    callId: string,
+    shown: string[],
+  ): Promise<{ text: string } | undefined> {
+    if (before === after) return undefined;
+    const sets = await this.deps.analyze([{ rel, before, after }], this.root, this.prefix);
+    if (!sets.writes.length) return undefined;
+    let diff = await this.deps.diff(this.prefix + rel, before, after);
     if (Buffer.byteLength(diff) > 900_000) diff = "";
     const event = this.draft(st, "edit", {
-      files: [this.prefix + t.rel],
+      files: [this.prefix + rel],
       reads: sets.reads,
       writes: sets.writes,
       ...(diff ? { diff } : {}),
       tool: { name: tool, call_id: (callId || `anon-${this.now()}`).slice(0, 200), harness_event: "PostToolUse" },
     });
-    const verdict = await this.submit(st, "commit", event, callId || `anon-${this.now()}`);
+    // One Bash call can change several files: each file needs its own key, or the coordinator
+    // answers the second file with the first file's verdict and appends nothing.
+    const verdict = await this.submit(st, "commit", event, callId ? `${callId}:${rel}` : `anon-${this.now()}`);
     st.lastContact = this.now();
-    this.log(`commit ${t.rel} base #${event.base_seq} -> ${verdict.verdict} #${verdict.seq} (${verdict.diagnostics.map((d) => d.code).join(",") || "clean"})`);
-    const full = await renderForModel(verdict.diagnostics, verdict.inbox, this.ctx({ rel: t.rel, before, after }));
-    const shown = new Set(pend?.shown ?? []);
-    const fresh = full.split("\n").filter((l) => l && !shown.has(l)).join("\n");
+    this.log(`commit ${rel} base #${event.base_seq} -> ${verdict.verdict} #${verdict.seq} (${verdict.diagnostics.map((d) => d.code).join(",") || "clean"})`);
+    const full = await renderForModel(verdict.diagnostics, verdict.inbox, this.ctx({ rel, before, after }));
+    const seen = new Set(shown);
+    const fresh = full.split("\n").filter((l) => l && !seen.has(l)).join("\n");
     const header =
       verdict.verdict === "reject"
-        ? `[weft] Your edit to ${this.prefix + t.rel} was applied in your checkout but REJECTED by the coordinator (log #${verdict.seq}); it stays an open error until you rework it:\n`
+        ? `[weft] Your edit to ${this.prefix + rel} was applied in your checkout but REJECTED by the coordinator (log #${verdict.seq}); it stays an open error until you rework it:\n`
         : "[weft diagnostics]\n";
-    const text = this.delivered(st, fresh ? header + fresh : "", verdict.delivered_through, verdict.inbox);
-    return text ? { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: text } } : undefined;
+    return { text: this.delivered(st, fresh ? header + fresh : "", verdict.delivered_through, verdict.inbox) };
+  }
+
+  /** Checkout-relative paths git reports as changed (modified, added, deleted, untracked). */
+  private dirtyFiles(): string[] {
+    const out = this.git(["status", "--porcelain", "-z", "--no-renames", "--untracked-files=all"]) ?? "";
+    return out
+      .split("\0")
+      .filter((e) => e.length > 3)
+      .map((e) => e.slice(3))
+      .filter((rel) => this.target(rel)?.rel === rel);
+  }
+
+  /** Text of every dirty file right now (null = absent), taken before a Bash call runs. */
+  private dirtySnapshot(): Record<string, string | null> {
+    const snap: Record<string, string | null> = {};
+    for (const rel of this.dirtyFiles()) snap[rel] = this.readText(join(this.root, rel));
+    return snap;
+  }
+
+  /**
+   * A Bash call can change files without any Edit/Write hook (sed, heredocs, redirects). Compare
+   * the checkout with what it looked like before the call and submit each change, so the
+   * coordinator sees it and the commit and stop gates apply to it. Files that were clean before
+   * the call are compared with HEAD. Detection is after the fact: the change is already on disk.
+   */
+  private async reconcileBash(input: HookInput, st: SessionState): Promise<string> {
+    const callId = input.tool_use_id ?? "";
+    const pend = st.pending[callId];
+    delete st.pending[callId];
+    const before0 = pend?.before ?? {};
+    const baseHead = pend?.head;
+    const head = this.git(["rev-parse", "HEAD"])?.trim();
+    // Files the call committed are clean now, so they are found through the commits it made.
+    const committed = baseHead && head && baseHead !== head ? (this.git(["diff", "--name-only", "-z", baseHead, head]) ?? "").split("\0").filter(Boolean) : [];
+    const rels = new Set([...Object.keys(before0), ...this.dirtyFiles(), ...committed]);
+    let text = "";
+    for (const rel of rels) {
+      const t = this.target(rel);
+      if (!t) continue;
+      const beforeRef = baseHead ?? "HEAD";
+      const before: string | null = rel in before0 ? (before0[rel] as string | null) : (this.git(["show", `${beforeRef}:${rel}`]) ?? null);
+      const after = existsSync(t.abs) ? this.readText(t.abs) : null;
+      const res = await this.commitChange(st, rel, before, after, "Bash", callId, []);
+      if (res?.text) text += (text ? "\n" : "") + res.text;
+    }
+    return text;
   }
 
   private async postOther(input: HookInput, st: SessionState): Promise<HookOutput> {
-    if (!st.wcpSession) return undefined; // nothing coordinated yet in this conversation
-    let checkpointText = "";
+    const bashText = input.tool_name === "Bash" ? await this.reconcileBash(input, st) : "";
+    if (!st.wcpSession && !bashText) return undefined; // nothing coordinated yet in this conversation
+    let checkpointText = bashText;
     if (input.tool_name === "Bash") {
       const head = this.git(["rev-parse", "HEAD"])?.trim();
       if (head && st.head && head !== st.head) {
@@ -468,7 +539,8 @@ export class ClaudeAdapter {
         const verdict = await this.submit(st, "commit", this.draft(st, "checkpoint", { payload: { sha: head }, tool: { name: "Bash", harness_event: "PostToolUse" } }), `checkpoint-${head}`);
         this.log(`checkpoint ${head.slice(0, 10)} -> #${verdict.seq}`);
         if (st.rebaseFloor && !st.rebaseFloor.sha) st.rebaseFloor = undefined; // assume the new commit is rebased
-        checkpointText = this.delivered(st, await renderForModel(verdict.diagnostics, verdict.inbox, this.ctx()), verdict.delivered_through, verdict.inbox);
+        const cp = this.delivered(st, await renderForModel(verdict.diagnostics, verdict.inbox, this.ctx()), verdict.delivered_through, verdict.inbox);
+        checkpointText = [bashText, cp].filter(Boolean).join("\n");
       } else if (head) st.head = head;
     }
     if (!checkpointText && this.now() - st.lastContact < DRAIN_MIN_INTERVAL_MS) return undefined;

@@ -26,6 +26,47 @@ WEFT_TOKEN=... node /abs/path/to/weft/packages/adapters/claude-code/dist/weft-cl
 | git `pre-commit` hook | last gate: refuses the commit while the checkout's WCP session has open errors |
 | `.git/info/exclude` | `.weft/`, `.claude/settings.local.json` |
 
+### Subagents (`install-agent`, `hook --by-path`)
+
+A subagent runs with its parent session's working directory, so the plain `hook` would look for
+`.weft/claude.json` in the parent's checkout and ignore the subagent's edits in another worktree.
+To let one orchestrating session hand each worktree to its own subagent:
+
+```sh
+# in each worktree the subagents will work in
+WEFT_TOKEN=... npx weft-adapter-claude install --url … --repo my-repo --agent worker-1 --task T-1
+# once, in the orchestrating session's project (then start a new session so it loads)
+npx weft-adapter-claude install-agent [--name weft-worker]
+```
+
+`install-agent` writes `.claude/agents/weft-worker.md` (added to `.git/info/exclude`: it holds
+absolute paths), a subagent whose own frontmatter hooks run `hook --by-path` on Edit, Write and
+MultiEdit. `--by-path` looks for the config in the edited file's own checkout first (stopping at
+the first directory holding `.git`), then in the cwd, so each subagent acts as the agent of the
+worktree it edits. Give each subagent the absolute worktree path. Plain `hook` is unchanged.
+
+**Pinned coordinator.** A checkout can ship its own `.weft/claude.json`, so `--by-path` does not
+trust one by location alone. `install-agent` pins the coordinator URL and repo of the parent
+session's own config (or `--url` and `--repo` when the parent has none) into the worker definition
+as `hook --by-path --url U --repo R`. A `--by-path` hook coordinates only a checkout whose config
+has exactly that url and repo. Any other checkout is logged (`hook --by-path refused`) and not
+coordinated, and an unpinned `--by-path` hook trusts nothing. Re-run `install-agent` after changing
+the coordinator. Plain `hook` does not read the pin.
+
+**Bash target.** Under `--by-path`, a Bash command is attributed only through a target it names in
+one of these forms, and is otherwise denied before it runs:
+
+- a leading `cd <dir> && ...`, where `<dir>` is an absolute path or `~` / `~/...` (bare, `"…"` or `'…'`);
+- a leading `git -C <dir> ...`, with the same `<dir>` forms.
+
+Relative paths (`cd src && ...`), `$VAR` or `${VAR}`, a `cd` that is not the first command, and a
+bare `cd <dir>` without `&&` are refused. The deny tells the agent to start the command with
+`cd <worktree> &&`. Plain `hook` does not deny Bash.
+
+Not covered yet (#10): a subagent's Bash commands and Stop are not routed by path, so the
+in-session commit and stop gates use the parent's checkout; the worktree's git `pre-commit` hook
+still refuses commits while that worktree has open errors.
+
 Runtime state lives in `.weft/state/<claude-session>.json` (WCP session, base, acked inbox id,
 pending edits; guarded by a lock dir because Claude runs parallel tool calls' hooks
 concurrently); the adapter log is `.weft/log/adapter.log`.
@@ -73,8 +114,9 @@ flags the call. Trunk items (`requires_rebase`) floor the base below the landing
 ### Failure behaviour
 
 Fail open: a transport/coordinator error lets the tool run (`additionalContext` notes that the
-edit was not coordinated) and is logged. Files outside the checkout, and under `.git`, `.weft`,
-`.claude`, `node_modules`, `dist`, are ignored. Edits whose analysis yields no writes
+edit was not coordinated) and is logged. Files outside the checkout (with `--by-path`: outside
+the edited file's own joined checkout), and under `.git`, `.weft`, `.claude`, `node_modules`,
+`dist`, are ignored. Edits whose analysis yields no writes
 (comment/import-only) are not submitted.
 
 ## Negotiation from the shell (spec §7.4, §7.6, §8.4)
