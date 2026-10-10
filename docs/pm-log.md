@@ -94,3 +94,6 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-10-09 20:55 — landed O1 onboarding, A1 AAIF prep, advise-L1
 - Merged wt/onboard (t_af6d0f84: local-quickstart.mjs, try-it rewrite, docs/integrate.md) and wt/advise-l1 (t_da863ede, stacked on wt/aaif t_20ec2a5f: Agent Hooks Core v0.1, @weft/hook-conformance, AAIF one-pager; advisory adapters declare L1). One conflict in docs/protocol/wcp-v0.md §2.1: kept main's line (adds the localhost URL). Rationale: superset of both.
 - Gate on main green (typecheck 0, all suites pass incl. conformance 8/8, protocol 120/120); GitHub Gate green on 8fb27f3. weft_land #752–#754. Worktrees aaif/advise-l1/onboard removed. Board: 39/39 done, nothing queued.
+
+## 2026-10-09 23:05 — landed L1 leases
+- Merged wt/leases (t_199b55fb: 2 min soft claim leases, 10 min hard firm cap, release on session end, per-change open errors closing the #17-audit gate bypasses, claude-code symlink guard + Bash reconciliation, `weft claim` CLI). All 6 commits worker-authored (no outside-contributor code). Clean merge; gate on main green (protocol 151, sequencer 104, gateway 84, claude-code 42). Worktree removed. Board 40/40 done.
