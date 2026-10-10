@@ -1,0 +1,28 @@
+### BEFORE (main 5d8da26): node lease-before.mjs firm
+repo policy: claim_ttl_ms=1800000 claims="(none: one 30-min renewable TTL)"
+[+00:00] claude-a firmly claims refreshToken for 1 h -> #3: claude-a firmly claimed refreshToken
+[+00:00] claude-a stays alive: heartbeat every 30 s, and edits refreshToken itself at +04:00
+[+01:00] codex-b edit of refreshToken: REJECTED (claim_wait, firm claim of claude-a)
+[+04:00] claude-a edits refreshToken -> #7 accept
+[+05:00] codex-b edit of refreshToken: REJECTED (claim_wait, firm claim of claude-a)
+[+10:00] codex-b edit of refreshToken: REJECTED (claim_wait, firm claim of claude-a)
+[+15:00] codex-b edit of refreshToken: REJECTED (claim_wait, firm claim of claude-a)
+[+20:00] codex-b edit of refreshToken: REJECTED (claim_wait, firm claim of claude-a)
+[+25:00] codex-b edit of refreshToken: REJECTED (claim_wait, firm claim of claude-a)
+[+30:00] codex-b edit of refreshToken: REJECTED (claim_wait, firm claim of claude-a)
+[+35:00] codex-b edit of refreshToken: REJECTED (claim_wait, firm claim of claude-a)
+[+40:00] codex-b edit of refreshToken: REJECTED (claim_wait, firm claim of claude-a)
+
+=> still firmly held after 40 min: heartbeats keep renewing it
+
+### AFTER (wt/leases): node lease-after.mjs firm
+repo policy: claim_ttl_ms=120000 claims={"lease_ms":120000,"firm_max_ms":600000}
+[+00:00] claude-a firmly claims refreshToken for 1 h -> #3: claude-a firmly claimed refreshToken
+[+00:00] claude-a stays alive: heartbeat every 30 s, and edits refreshToken itself at +04:00
+[+01:00] codex-b edit of refreshToken: REJECTED (claim_wait, firm claim of claude-a)
+[+04:00] claude-a edits refreshToken -> #7 accept
+[+05:00] codex-b edit of refreshToken: REJECTED (claim_wait, firm claim of claude-a)
+[+10:00] coordinator #14: claude-a released refreshToken (expired)
+[+10:00] codex-b edit of refreshToken: accepted
+
+=> the firm claim ended at +10:00 although claude-a kept heartbeating

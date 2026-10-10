@@ -1,0 +1,23 @@
+### BEFORE (main 5d8da26): node lease-before.mjs audit
+setup: codex-b's commit-mode edit is rejected: #5 stale_assumption; its stop gate: allow=false (stale_assumption)
+
+release (no keys)                              stop gate allow=true                         BYPASS: the open error is gone
+release of the key                             stop gate allow=true                         BYPASS: the open error is gone
+intent naming the key                          stop gate allow=true                         BYPASS: the open error is gone
+claim on the key                               stop gate allow=true                         BYPASS: the open error is gone
+bye + new hello                                stop gate allow=true                         BYPASS: the open error is gone
+session expiry + new hello                     stop gate allow=true                         BYPASS: the open error is gone
+(intended) redo the edit on the current log    stop gate allow=true                         ok: resolved
+(retreat) release after a check-mode denial    stop gate allow=true                         the edit never reached the workspace
+
+### AFTER (wt/leases): node lease-after.mjs audit
+setup: codex-b's commit-mode edit is rejected: #5 stale_assumption; its stop gate: allow=false (stale_assumption)
+
+release (no keys)                              stop gate allow=false (stale_assumption)     kept: the open error persists
+release of the key                             stop gate allow=false (stale_assumption)     kept: the open error persists
+intent naming the key                          stop gate allow=false (stale_assumption)     kept: the open error persists
+claim on the key                               stop gate allow=false (stale_assumption)     kept: the open error persists
+bye + new hello                                stop gate allow=false (stale_assumption)     kept: the open error persists
+session expiry + new hello                     stop gate allow=false (stale_assumption)     kept: the open error persists
+(intended) redo the edit on the current log    stop gate allow=true                         ok: resolved
+(retreat) release after a check-mode denial    stop gate allow=true                         the edit never reached the workspace

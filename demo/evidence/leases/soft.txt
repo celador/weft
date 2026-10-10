@@ -1,0 +1,28 @@
+### BEFORE (main 5d8da26): node lease-before.mjs soft
+repo policy: claim_ttl_ms=1800000 claims="(none: one 30-min renewable TTL)"
+[+00:00] claude-a edits refreshToken -> #3 accept (soft claim)
+[+00:00] claude-a's process is killed: no more heartbeats, no bye
+[+00:00] codex-b wants refreshToken: claim_wait (warning), claimed by claude-a — told to wait
+[+01:00] codex-b wants refreshToken: claim_wait (warning), claimed by claude-a — told to wait
+[+02:00] codex-b wants refreshToken: claim_wait (warning), claimed by claude-a — told to wait
+[+05:00] coordinator #4: claude-a left — session expired
+[+05:00] codex-b wants refreshToken: claim_wait (warning), claimed by claude-a — told to wait
+[+10:00] codex-b wants refreshToken: claim_wait (warning), claimed by claude-a — told to wait
+[+15:00] codex-b wants refreshToken: claim_wait (warning), claimed by claude-a — told to wait
+[+20:00] codex-b wants refreshToken: claim_wait (warning), claimed by claude-a — told to wait
+[+25:00] codex-b wants refreshToken: claim_wait (warning), claimed by claude-a — told to wait
+[+30:00] coordinator #5: claude-a released refreshToken (expired)
+[+30:00] codex-b wants refreshToken: free, no claim in the way
+
+=> a dead agent's soft claim blocked others for 30 min
+
+### AFTER (wt/leases): node lease-after.mjs soft
+repo policy: claim_ttl_ms=120000 claims={"lease_ms":120000,"firm_max_ms":600000}
+[+00:00] claude-a edits refreshToken -> #3 accept (soft claim)
+[+00:00] claude-a's process is killed: no more heartbeats, no bye
+[+00:00] codex-b wants refreshToken: claim_wait (warning), claimed by claude-a — told to wait
+[+01:00] codex-b wants refreshToken: claim_wait (warning), claimed by claude-a — told to wait
+[+02:00] coordinator #4: claude-a released refreshToken (expired)
+[+02:00] codex-b wants refreshToken: free, no claim in the way
+
+=> a dead agent's soft claim blocked others for 2 min
