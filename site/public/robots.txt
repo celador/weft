@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://weft-site.elier.ai/sitemap.xml

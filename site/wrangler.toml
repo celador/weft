@@ -1,0 +1,11 @@
+# Weft marketing site: static assets only, no Worker code.
+# Deploy: unset CLOUDFLARE_API_TOKEN; npx wrangler@latest deploy  (Node >= 22, OAuth)
+name = "weft-site"
+compatibility_date = "2026-10-01"
+workers_dev = false   # never expose *.workers.dev (see AGENTS.md)
+routes = [{ pattern = "weft-site.elier.ai", custom_domain = true }]
+
+[assets]
+directory = "./public"
+not_found_handling = "404-page"
+html_handling = "auto-trailing-slash"
