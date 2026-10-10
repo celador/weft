@@ -87,6 +87,6 @@ binding = "GATEWAY"
 service = "weft-gateway-preview"
 
 [env.public.vars]
-# Privacy incident containment: public feed disabled until its data isolation is audited.
-WEFT_PUBLIC_DEMO = "0"
-WEFT_PUBLIC_REPOS = "weft-demo,demo-b11-20261004-144005-r6,demo-m1-20261004-064201-r1"
+# Public site stays live; only John's weft repository may be exposed.
+WEFT_PUBLIC_DEMO = "1"
+WEFT_PUBLIC_REPOS = "weft"

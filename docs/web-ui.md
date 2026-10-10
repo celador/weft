@@ -87,14 +87,11 @@ Zero Trust organization endpoint returns an auth error), so this is a dashboard 
 
 ## Public read-only demo (weft.elier.ai)
 
-Privacy containment: the public feed is disabled (`WEFT_PUBLIC_DEMO = "0"`) and its
-observe token is revoked. Do not re-enable it or mint a replacement token without
-John's explicit approval after a data-isolation audit. Never publish live personal
-or customer development logs; use separately isolated, reviewed demo data only.
-Missing or empty `WEFT_PUBLIC_REPOS` now exposes no repositories (fail closed).
+John's requirement: keep the public site up and working, showing changes to his
+`weft` repository ONLY. `WEFT_PUBLIC_REPOS = "weft"` and the dedicated observe-only
+gateway token is scoped to `["weft"]`. No other repo, including demo repos, is public.
+Missing or empty `WEFT_PUBLIC_REPOS` exposes no repositories (fail closed).
 The authenticated operator UI remains available at weft-web-preview.elier.ai.
-
-The following describes the previous demo configuration, not the current deployment:
 
 Wrangler env `public` deploys the same Worker as `weft-web-public` at
 [https://weft.elier.ai](https://weft.elier.ai) with `WEFT_PUBLIC_DEMO = "1"`:
@@ -106,9 +103,8 @@ Wrangler env `public` deploys the same Worker as `weft-web-public` at
   evaluation and shows a "Public read-only demo of Weft" strip.
 - Gateway token: `WEFT_PUBLIC_TOKEN` only (scopes `["observe"]`, no human/system), never
   `WEFT_WEB_TOKEN`; the env has no web/email/operator secrets at all. The email handler rejects.
-- Repos: `WEFT_PUBLIC_REPOS` (var) is enforced by the Worker on top of the token's own repo list:
-  `weft` (dogfood), `weft-demo` (M2 runs + video), `demo-b11-20261004-144005-r6`,
-  `demo-m1-20261004-064201-r1` (the runs shown in the video). Other repos 404.
+- Repos: `WEFT_PUBLIC_REPOS = "weft"` is enforced by the Worker on top of the
+  observe token's `repos: ["weft"]`. Every other repo, including demo repos, returns 404.
 - Scrubbing (`src/scrub.ts`): old diffs in the append-only log still name the account's
   workers.dev hosts, so every relayed body and every stream frame (the stream is proxied frame by
   frame in public mode) maps `<worker>.<sub>.workers.dev` to `<worker>.elier.ai`, redacts any
@@ -126,8 +122,8 @@ pnpm exec wrangler secret put WEFT_REDACT --env public
 pnpm deploy:public
 ```
 
-To add a repo: inspect its events for secrets/customer data, re-mint the token with the new repo
-list, update `WEFT_PUBLIC_REPOS`, redeploy.
+Do not add repositories to this public site: John's explicit requirement is `weft` only.
+Keep both the Worker allow-list and the gateway token scope restricted to that repo.
 
 ## Deploy / operate
 
