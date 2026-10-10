@@ -16,6 +16,7 @@ import type {
   ArbitrationPolicy,
   Capabilities,
   Diagnostic,
+  EnforcementMode,
   EscalationPolicy,
   EventDraft,
   EventKind,
@@ -45,6 +46,8 @@ export type CoordinatorOptions = {
   policy?: ArbitrationPolicy;
   /** Who resolves `negotiate.escalate` (spec §7.6). Default `auto`: the coordinator merges. */
   escalation?: EscalationPolicy;
+  /** Deployment-wide: `block` makes a same-symbol overlap with a neighbor's in-flight change an error. Default `advise`. */
+  enforcement?: EnforcementMode;
   claim_ttl_ms?: number;
   session_ttl_ms?: number;
   heartbeat_interval_ms?: number;
@@ -121,6 +124,7 @@ export class ReferenceCoordinator {
   readonly repo: string;
   readonly policy: ArbitrationPolicy;
   readonly escalation: EscalationPolicy;
+  readonly enforcement: EnforcementMode;
   readonly claimTtl: number;
   readonly sessionTtl: number;
   readonly heartbeatInterval: number;
@@ -137,6 +141,7 @@ export class ReferenceCoordinator {
     this.repo = o.repo;
     this.policy = o.policy ?? "wound-wait";
     this.escalation = o.escalation ?? "auto";
+    this.enforcement = o.enforcement ?? "advise";
     this.claimTtl = o.claim_ttl_ms ?? 30 * 60_000;
     this.sessionTtl = o.session_ttl_ms ?? 5 * 60_000;
     this.heartbeatInterval = o.heartbeat_interval_ms ?? 30_000;
@@ -582,7 +587,7 @@ export class ReferenceCoordinator {
       } else if (outcome === "wait") {
         out.push({
           ...base,
-          severity: h.firm ? "error" : "warning",
+          severity: h.firm || this.enforcement === "block" ? "error" : "warning",
           code: "claim_wait",
           message: `${w.key} is ${h.firm ? "firmly claimed" : "being edited"} by ${h.agent} (${h.change}), which has precedence.`,
           suggestion: `Wait for ${h.agent} to land or release ${w.key}, work elsewhere, or negotiate (negotiate.propose to ${h.agent}).`,

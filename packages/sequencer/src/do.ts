@@ -422,3 +422,4 @@ export class RepoCoordinator extends DurableObject<SequencerEnv> {
 export function errorCodeOf(r: Result<unknown>): ErrorCode | undefined {
   return r.ok ? undefined : r.error.error.code;
 }
+

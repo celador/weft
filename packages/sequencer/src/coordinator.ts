@@ -48,6 +48,7 @@ import {
   type Welcome,
   type Write,
   type WriteKind,
+  type EnforcementMode,
 } from "@weft/protocol";
 import { all, migrate, one, run, type Sql } from "./sql";
 
@@ -60,12 +61,15 @@ export type CoordinatorConfig = {
   session_ttl_ms: number;
   heartbeat_interval_ms: number;
   limits: { max_diff_bytes: number; max_keys: number; max_page: number };
+  /** Absent = advise. `block` turns a same-symbol `claim_wait` into an error. Part of the journal's config, so replay is exact. */
+  enforcement?: EnforcementMode;
 };
 
 export type CoordinatorInit = {
   repo: string;
   policy?: ArbitrationPolicy;
   escalation?: EscalationPolicy;
+  enforcement?: EnforcementMode;
   claim_ttl_ms?: number;
   session_ttl_ms?: number;
   heartbeat_interval_ms?: number;
@@ -83,6 +87,7 @@ export function configFrom(o: CoordinatorInit): CoordinatorConfig {
     session_ttl_ms: o.session_ttl_ms ?? 5 * 60_000,
     heartbeat_interval_ms: o.heartbeat_interval_ms ?? 30_000,
     limits: { max_diff_bytes: o.max_diff_bytes ?? 1_048_576, max_keys: o.max_keys ?? 2000, max_page: o.max_page ?? 500 },
+    ...(o.enforcement ? { enforcement: o.enforcement } : {}),
   };
 }
 
@@ -224,6 +229,10 @@ export class SqlCoordinator {
   }
   get escalation(): EscalationPolicy {
     return this.config.escalation ?? "auto";
+  }
+  /** Repo enforcement from the journaled config; absent means advise. */
+  get enforcement(): EnforcementMode {
+    return this.config.enforcement ?? "advise";
   }
   private get claimTtl(): number {
     return this.config.claim_ttl_ms;
@@ -817,7 +826,7 @@ export class SqlCoordinator {
       } else if (outcome === "wait") {
         out.push({
           ...base,
-          severity: h.firm ? "error" : "warning",
+          severity: h.firm || this.enforcement === "block" ? "error" : "warning",
           code: "claim_wait",
           message: `${w.key} is ${h.firm ? "firmly claimed" : "being edited"} by ${h.agent} (${h.change}), which has precedence.`,
           suggestion: `Wait for ${h.agent} to land or release ${w.key}, work elsewhere, or negotiate (negotiate.propose to ${h.agent}).`,

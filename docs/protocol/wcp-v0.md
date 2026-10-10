@@ -389,6 +389,13 @@ claims on k, R the requester.
 | `wound-wait` (default) | **wound**: R proceeds (info `claim_contended` to R); every non-predicted holder of k is wounded | **wait**: R gets `claim_wait` — warning, or error if H's claim is firm |
 | `wait-die` | **wait**: R gets `claim_wait` — warning, or error if H's claim is firm | **die**: R gets `claim_die` (error) |
 
+**Enforcement** is a repo config field, `enforcement` (`advise` | `block`; absent = `advise`), set
+at repo creation and recorded in the journaled config like `policy`. Under `advise`, `claim_wait`
+is a warning (error only if the holder's claim is firm). Under `block`, every `claim_wait` is an
+error and the edit is rejected. Nothing else changes: the same arbitration, claims and TTLs apply.
+Replay reads the mode from the journal's config, so a replayed verdict matches the live one. No
+environment variable selects the mode.
+
 Asymmetry guarantee: for one conflict exactly one party receives a warning/error; the
 other receives at most an info. If R loses, H's inbox gets only `claim_contended`
 (info) — and only if E was accepted. If R wins (wound), R gets only info and each

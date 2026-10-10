@@ -125,7 +125,7 @@ MacBook; never print it.
 
 ```sh
 ADMIN=$(cat ~/.config/weft/preview-admin-token); U=https://weft-gateway-preview.elier.ai
-# create a repo (policy wound-wait|wait-die; optional claim_ttl_ms, session_ttl_ms)
+# create a repo (policy wound-wait|wait-die; enforcement advise|block, default advise; optional claim_ttl_ms, session_ttl_ms)
 curl -sX POST $U/v1/admin/repos -H "authorization: Bearer $ADMIN" -d '{"repo":"weft"}'
 # agent token: exactly one repo, bound agent id (optionally change)
 curl -sX POST $U/v1/admin/tokens -H "authorization: Bearer $ADMIN" \

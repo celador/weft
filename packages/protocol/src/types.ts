@@ -207,6 +207,8 @@ export type Hello = {
 export type ArbitrationPolicy = "wound-wait" | "wait-die";
 /** Who resolves `negotiate.escalate` (spec §7.6): the coordinator merges at once, or a human. */
 export type EscalationPolicy = "auto" | "human";
+/** `advise` (default): a same-symbol overlap with a neighbor's in-flight change is a warning. `block`: it is an error (the edit is denied). Set per deployment. */
+export type EnforcementMode = "advise" | "block";
 export type RepoPolicy = { arbitration: ArbitrationPolicy; escalation?: EscalationPolicy };
 
 export type Welcome = {

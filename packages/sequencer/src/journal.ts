@@ -85,7 +85,8 @@ export class JournaledCoordinator {
 
 /**
  * Replay a journal into an empty database. Returns the rebuilt coordinator and the
- * result (or protocol error) of every entry.
+ * result (or protocol error) of every entry. `init` must be the config the journal was written
+ * under; enforcement (like every other setting) is read from it, so replay is exact.
  */
 export function replay(sql: Sql, init: CoordinatorInit, entries: JournalEntry[]): { coord: SqlCoordinator; results: unknown[] } {
   let t = 0;

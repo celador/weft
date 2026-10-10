@@ -281,3 +281,28 @@ describe("conformance scenarios (reference coordinator)", () => {
     expect(partialMatch([1], [1, 2])).toHaveLength(1);
   });
 });
+
+describe("enforcement mode (deployment-wide)", () => {
+  const caps = { level: 3, observe: "sync", inject: "immediate", deny_edit: true, refuse_stop: true, commit_gate: "tool_interception" } as const;
+  const key = "src/auth/session.ts#refreshToken";
+  async function overlap(enforcement?: "advise" | "block") {
+    const clock = scenarioClock("2026-10-05T14:00:00.000Z");
+    const c = new ReferenceCoordinator({ repo: "demo", now: clock.now, ...(enforcement ? { enforcement } : {}) });
+    const a = await c.hello({ type: "hello", protocol: "wcp/0.1", agent: { id: "claude-a", harness: "claude-code" }, capabilities: caps, task: { id: "T-1" }, change: "I-a" } as never);
+    const b = await c.hello({ type: "hello", protocol: "wcp/0.1", agent: { id: "codex-b", harness: "codex" }, capabilities: caps, task: { id: "T-2" }, change: "I-b" } as never);
+    const edit = { type: "submit", mode: "commit", event: { kind: "edit", base_seq: 1, writes: [{ key, kind: "body" }] } } as never;
+    await c.submit((a as { session: string }).session, edit);
+    return (await c.submit((b as { session: string }).session, edit)) as { verdict: string; diagnostics: Array<{ code: string; severity: string }> };
+  }
+  it("defaults to advise: a same-symbol overlap is a claim_wait warning and the edit is accepted", async () => {
+    const r = await overlap();
+    expect(r.verdict).toBe("accept");
+    expect(r.diagnostics).toMatchObject([{ code: "claim_wait", severity: "warning" }]);
+    expect((await overlap("advise")).diagnostics).toMatchObject([{ code: "claim_wait", severity: "warning" }]);
+  });
+  it("block: the same overlap is a claim_wait error and the edit is rejected", async () => {
+    const r = await overlap("block");
+    expect(r.verdict).toBe("reject");
+    expect(r.diagnostics).toMatchObject([{ code: "claim_wait", severity: "error" }]);
+  });
+});
