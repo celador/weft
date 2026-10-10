@@ -87,6 +87,15 @@ Zero Trust organization endpoint returns an auth error), so this is a dashboard 
 
 ## Public read-only demo (weft.elier.ai)
 
+Privacy containment: the public feed is disabled (`WEFT_PUBLIC_DEMO = "0"`) and its
+observe token is revoked. Do not re-enable it or mint a replacement token without
+John's explicit approval after a data-isolation audit. Never publish live personal
+or customer development logs; use separately isolated, reviewed demo data only.
+Missing or empty `WEFT_PUBLIC_REPOS` now exposes no repositories (fail closed).
+The authenticated operator UI remains available at weft-web-preview.elier.ai.
+
+The following describes the previous demo configuration, not the current deployment:
+
 Wrangler env `public` deploys the same Worker as `weft-web-public` at
 [https://weft.elier.ai](https://weft.elier.ai) with `WEFT_PUBLIC_DEMO = "1"`:
 

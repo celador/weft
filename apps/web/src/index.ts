@@ -98,11 +98,10 @@ function publicRepos(env: Env): string[] {
   return (env.WEFT_PUBLIC_REPOS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 }
 
-/** Public demo: is this repo exposed? (empty allow-list = whatever the observe token allows) */
+/** Public demo: explicit opt-in only; missing or empty allow-list exposes nothing. */
 function repoAllowed(env: Env, repo: string): boolean {
   if (!publicDemo(env)) return true;
-  const list = publicRepos(env);
-  return !list.length || list.includes(repo);
+  return publicRepos(env).includes(repo);
 }
 
 /** Call weft-gateway with the Worker's token. */
@@ -214,7 +213,8 @@ async function api(req: Request, env: Env, who: Identity, path: string, u: URL):
   }
   if (!webToken(env)) return apiError(503, "unavailable", `${tokenName(env)} is not configured`);
   if (path === "/api/repos" && m === "GET") {
-    if (!pub || !publicRepos(env).length) return relay(await gateway(env, "/v1/repos"), env);
+    if (!pub) return relay(await gateway(env, "/v1/repos"), env);
+    if (!publicRepos(env).length) return json({ type: "repos", repos: [] });
     return relay(await gateway(env, "/v1/repos"), env, (text) => {
       const body = JSON.parse(text) as { repos?: { repo: string }[] };
       return JSON.stringify({ ...body, repos: (body.repos ?? []).filter((r) => repoAllowed(env, r.repo)) });

@@ -350,6 +350,20 @@ describe("public read-only demo (WEFT_PUBLIC_DEMO=1)", () => {
     expect(gw.calls.some((c) => c.url.includes("secret-repo"))).toBe(false);
   });
 
+  it("fails closed when the public repo allow-list is missing or empty", async () => {
+    for (const list of [undefined, "", " , "]) {
+      const gw = fakeGateway(responder);
+      const env = pubEnv(gw.fetcher, { WEFT_PUBLIC_REPOS: list });
+      const response = await handle(new Request(`${ORIGIN}/api/repos`), env);
+      expect(response.status).toBe(200);
+      expect(((await response.json()) as { repos: unknown[] }).repos).toEqual([]);
+      for (const path of ["/api/repos/secret-repo/events", "/api/repos/weft/events", "/api/repos/weft/stream"]) {
+        expect((await handle(new Request(`${ORIGIN}${path}`, { headers: { upgrade: "websocket" } }), env)).status).toBe(404);
+      }
+      expect(gw.calls).toHaveLength(0);
+    }
+  });
+
   it("refuses every POST with 403 read_only and never reaches the gateway", async () => {
     const gw = fakeGateway(responder);
     const env = pubEnv(gw.fetcher);
