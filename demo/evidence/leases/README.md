@@ -29,3 +29,12 @@ vhs demo/evidence/leases/soft.tape                # recordings (tapes expect the
 
 `lease-clock.ts` is the whole scenario; `build.mjs` bundles it with esbuild against the given
 tree's own `@weft/sequencer` and `@weft/protocol`.
+
+## Live check against the preview gateway
+
+`live-preview.txt`: a scripted two-agent run against `weft-gateway-preview.elier.ai` after
+deploying this branch (new repo with the default policy; bye releases claims at once; a firm
+4 s claim released by the Durable Object alarm while its holder heartbeats every second; a
+commit-mode rejection that survives `release` and bye + hello and is redelivered; a legacy repo
+migrated with the admin policy call). The script is `live-preview.mjs` (reads the admin token
+from `~/.config/weft/preview-admin-token`, prints no token).
