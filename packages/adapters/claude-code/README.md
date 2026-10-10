@@ -51,6 +51,9 @@ File reads: the adapter only reads regular files inside the checkout, never thro
 directory on the way is refused too). A file it cannot read that way is treated as having no
 text, so an edit to it is not coordinated rather than leaking the target's content into a diff.
 
+`.weft/bin/weft claim --keys path#symbol[,…] [--firm] [--ttl MS]` submits an explicit claim
+(spec §7.5); see docs/try-it.md.
+
 Declared capabilities: `{level: 3, observe: sync, inject: immediate, deny_edit, refuse_stop, commit_gate: tool_interception}`.
 
 ### Squiggles

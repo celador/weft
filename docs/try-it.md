@@ -134,6 +134,36 @@ curl -s -H "authorization: Bearer $(cat apps/gateway/.wrangler/weft-local/<repo>
   http://localhost:8787/v1/repos/<repo>/events | jq -c '.events[] | [.seq, .status, .kind, .agent, .summary]'
 ```
 
+### Claiming symbols before you start
+
+An agent (or you, in its checkout) can claim the symbols it is about to change, so other agents
+are told before they collide:
+
+```sh
+cd <checkout>
+.weft/bin/weft claim --keys src/auth/session.ts#SessionStore.get,src/api/client.ts#fetchWithAuth
+.weft/bin/weft claim --keys src/auth/session.ts#refreshToken --firm --ttl 300000
+```
+
+- Keys are `path#symbol` exactly as they appear in Weft diagnostics: a repo-relative POSIX path
+  (no leading `/`, no `.` or `..` segments, no spaces), `#`, then a dotted declaration name
+  (`SessionStore.get`) or `*` for the whole file. Anything else is refused before it is sent.
+- A plain claim is a **lease** (2 minutes by default): it stays while the agent keeps working
+  (every edit and the adapter's 30 s heartbeat renew it) and is released within 2 minutes after
+  the agent dies, or at once when its session ends.
+- `--firm` makes others' overlapping edits fail instead of warn. A firm claim has a hard limit
+  counted from the claim: `--ttl MS` (firm claims only), at most the repo's firm limit (10 minutes
+  by default; the CLI refuses more). Heartbeats do not extend it; run `weft claim` again to extend
+  it, which shows up in the log.
+
+Repos created before claim leases existed keep the old 30-minute claim TTL until the operator
+switches them over (this is recorded in the repo's journal, so its history replays unchanged):
+
+```sh
+curl -sX POST $U/v1/admin/repos/<repo>/policy -H "$AD" \
+  -d '{"claims":{"lease_ms":120000,"firm_max_ms":600000}}'
+```
+
 ### 4c. Landing
 
 `stale_overwrite` protects *landed* (merged) code. The local gateway has no merge queue, so after

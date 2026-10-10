@@ -28,7 +28,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, statSync, renameSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { AgentRef, Capabilities, Diagnostic, EventDraft, EventRecord, InboxItem, NegotiateCommand, NegotiationDue, Verdict } from "@weft/protocol";
+import { maxClaimTtl, type AgentRef, type Capabilities, type ClaimCommand, type Diagnostic, type EventDraft, type EventRecord, type InboxItem, type NegotiateCommand, type NegotiationDue, type Verdict, type Welcome } from "@weft/protocol";
 import { WcpError, PROTOCOL, type Transport } from "./client";
 import { readState, withLock, writeState, type Loaded, type SessionState } from "./config";
 import { EDIT_TOOLS, editPath, isGitCommit, proposedText } from "./edits";
@@ -237,10 +237,15 @@ export class ClaudeAdapter {
     // Claude conversation actually saw) is kept so stale knowledge stays visible to R1/R2.
     st.base = st.wcpSession === undefined && st.base === 0 ? welcome.delivered_through : Math.min(st.base || welcome.delivered_through, welcome.delivered_through);
     st.wcpSession = welcome.session;
+    this.noteLimits(st, welcome);
     st.acked = 0;
     st.lastContact = this.now();
     this.log(`hello ${config.agent} change ${config.change} -> ${welcome.session} head #${welcome.head_seq} base #${st.base}`);
     return welcome.session;
+  }
+
+  private noteLimits(st: SessionState, w: Welcome): void {
+    st.claimLimits = { claim_ttl_ms: w.claim_ttl_ms, ...(w.policy.claims ? { claims: { ...w.policy.claims } } : {}) };
   }
 
   private async ensure(st: SessionState): Promise<string> {
@@ -730,6 +735,68 @@ export class ClaudeAdapter {
     if (out.code !== 0 || !wait || sent === null) return out;
     const reply = await this.waitFor(claudeSession, wait, (i) => i.kind === "negotiation" && Number(i.record?.payload?.reply_to) === sent);
     return { text: `${out.text}\n${reply.text}`, code: reply.code };
+  }
+
+  /**
+   * `weft claim --keys … [--firm] [--ttl MS]` run by the model (or a human) in the checkout:
+   * an explicit claim (spec §7.5). The ttl is checked against the repo policy announced in
+   * the welcome before anything is sent. Never throws; exit code 1 when the claim is refused.
+   */
+  async claim(claudeSession: string, cmd: ClaimCommand): Promise<CliResult> {
+    try {
+      return await withLock(this.root, claudeSession, async () => {
+        const st = readState(this.root, claudeSession);
+        try {
+          await this.ensure(st);
+          if (!st.claimLimits && st.wcpSession) {
+            // State written by an older adapter: ask for the welcome again without a new session.
+            const { config } = this.loaded;
+            const w = await this.deps.transport.hello({
+              type: "hello",
+              protocol: PROTOCOL,
+              agent: { id: config.agent, harness: this.deps.identity?.harness ?? "claude-code" },
+              capabilities: this.enforce ? (this.deps.identity?.capabilities ?? CAPABILITIES) : ADVISORY_CAPABILITIES,
+              resume_session: st.wcpSession,
+            });
+            this.noteLimits(st, w);
+          }
+          const limits = st.claimLimits!;
+          const max = maxClaimTtl({ claim_ttl_ms: limits.claim_ttl_ms, policy: limits.claims ? { claims: limits.claims } : {} });
+          if (cmd.ttl_ms !== undefined && cmd.ttl_ms > max)
+            return { text: `weft: --ttl ${cmd.ttl_ms} exceeds this repo's limit for firm claims (${max} ms)`, code: 2 };
+          const batch = await this.call(st, (s) => this.deps.transport.drain(s, this.ack(st)));
+          const pre = this.delivered(st, await renderForModel([], batch.items, this.ctx()), batch.delivered_through, batch.items);
+          const event: EventDraft = {
+            kind: "claim",
+            base_seq: this.effectiveBase(st),
+            writes: cmd.keys.map((key) => ({ key, kind: "body" as const })),
+            payload: { firm: cmd.firm, source: "explicit", ...(cmd.ttl_ms !== undefined ? { ttl_ms: cmd.ttl_ms } : {}) },
+            tool: { name: "weft-cli", harness_event: "Bash" },
+          };
+          const verdict = await this.submit(st, "commit", event, `claim-${this.now()}`);
+          this.log(`claim ${cmd.keys.join(",")}${cmd.firm ? " firm" : ""} -> #${verdict.seq} ${verdict.verdict}`);
+          const after = this.delivered(st, await renderForModel(verdict.diagnostics, verdict.inbox, this.ctx()), verdict.delivered_through, verdict.inbox);
+          const lease = limits.claims
+            ? cmd.firm
+              ? `held until ${Math.min(cmd.ttl_ms ?? limits.claims.firm_max_ms, limits.claims.firm_max_ms) / 1000}s after #${verdict.seq}; heartbeats do not extend it, claim again to extend`
+              : `a ${limits.claims.lease_ms / 1000}s lease, renewed while you keep working`
+            : "";
+          const head =
+            verdict.verdict === "accept"
+              ? `[weft] sent #${verdict.seq}: ${verdict.summary ?? "claim"}${lease ? ` (${lease})` : ""}`
+              : `[weft] claim refused (#${verdict.seq}):`;
+          return { text: [pre, head, after].filter(Boolean).join("\n"), code: verdict.verdict === "accept" ? 0 : 1 };
+        } catch (err) {
+          if (err instanceof WcpError) return { text: `weft: ${err.code}: ${err.message}`, code: 1 };
+          throw err;
+        } finally {
+          writeState(this.root, st);
+        }
+      });
+    } catch (err) {
+      this.log(`claim failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+      return { text: `weft: coordinator unavailable (${err instanceof Error ? err.message : String(err)})`, code: 1 };
+    }
   }
 
   /** Poll the inbox (lock released between polls) until `match` or the deadline. */
