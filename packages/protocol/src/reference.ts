@@ -4,6 +4,7 @@
 // scenarios in fixtures/scenarios are executable; packages/sequencer (the Durable Object)
 // MUST produce the same verdicts, diagnostics and inbox items for those scenarios.
 
+import { ownedElsewhere, ownerNotice, type ConflictMode } from "./ownership";
 import { renderContext, renderDue } from "./context";
 import { addresseeOf, agreementOf, negotiationDues } from "./negotiation";
 import { WcpProtocolError } from "./errors";
@@ -42,6 +43,8 @@ import { validate } from "./validate";
 
 export type CoordinatorOptions = {
   repo: string;
+  /** Cross-agent conflicts (default `hold`, today's behaviour). See ownership.ts. */
+  conflicts?: ConflictMode;
   policy?: ArbitrationPolicy;
   /** Who resolves `negotiate.escalate` (spec §7.6). Default `auto`: the coordinator merges. */
   escalation?: EscalationPolicy;
@@ -126,6 +129,7 @@ export class ReferenceCoordinator {
   readonly heartbeatInterval: number;
   readonly limits: { max_diff_bytes: number; max_keys: number; max_page: number };
   private readonly now: () => number;
+  private readonly continueMode: boolean;
 
   readonly log: EventRecord[] = [];
   private readonly sessions = new Map<string, Session>();
@@ -139,6 +143,7 @@ export class ReferenceCoordinator {
     this.escalation = o.escalation ?? "auto";
     this.claimTtl = o.claim_ttl_ms ?? 30 * 60_000;
     this.sessionTtl = o.session_ttl_ms ?? 5 * 60_000;
+    this.continueMode = o.conflicts === "continue";
     this.heartbeatInterval = o.heartbeat_interval_ms ?? 30_000;
     this.limits = { max_diff_bytes: o.max_diff_bytes ?? 1_048_576, max_keys: o.max_keys ?? 2000, max_page: o.max_page ?? 500 };
     this.now = o.now ?? (() => Date.now());
@@ -288,6 +293,7 @@ export class ReferenceCoordinator {
     const rec = this.append({ kind: e.kind, actor, session: s, draft: e, diagnostics, status: reject ? "rejected" : "accepted", mode: msg.mode });
     if (reject) {
       for (const d of diagnostics) if (d.severity === "error" && d.code !== "agent_paused") s.open.set(d.symbol, d);
+      if (this.continueMode) for (const d of diagnostics) if (ownedElsewhere(d, s.agent)) this.notifyOwner(d, s.agent);
     } else {
       this.applyAccepted(rec, s);
     }
@@ -496,7 +502,9 @@ export class ReferenceCoordinator {
           file: fileOf(w.key),
           symbol: w.key,
           message: `${w.key} changed on trunk (#${hit.r.seq}, ${hit.r.kind} by ${hit.r.agent ?? hit.r.actor.id}) after your base #${e.base_seq}; this edit would overwrite it.`,
-          suggestion: `Rebase onto trunk at or after #${hit.r.seq}, then redo the edit.`,
+          suggestion: this.continueMode
+            ? `Keep working on your other tasks. Do not rebase onto trunk, redo this edit on top of ${hit.r.agent ?? hit.r.actor.id}'s work, or widen your change to absorb it: ${hit.r.agent ?? hit.r.actor.id} owns the conflict and is told about it.`
+            : `Rebase onto trunk at or after #${hit.r.seq}, then redo the edit.`,
           ...cause(hit.r),
         });
       }
@@ -511,7 +519,9 @@ export class ReferenceCoordinator {
             file: fileOf(key),
             symbol: key,
             message: `You use ${key}, whose ${strong.w.kind === "deleted" ? "declaration was removed" : "signature changed"} in #${strong.r.seq} by ${strong.r.agent ?? strong.r.actor.id} after your base #${e.base_seq}.`,
-            suggestion: `Read the new ${key} (event #${strong.r.seq}) and update this call site, or negotiate with ${strong.r.agent ?? strong.r.actor.id}.`,
+            suggestion: this.continueMode
+              ? `Keep working on your other tasks. Do not adapt this call site to ${strong.r.agent ?? strong.r.actor.id}'s new ${key} (event #${strong.r.seq}) or adopt their partial work: ${strong.r.agent ?? strong.r.actor.id} owns the conflict; you may finish with this open.`
+              : `Read the new ${key} (event #${strong.r.seq}) and update this call site, or negotiate with ${strong.r.agent ?? strong.r.actor.id}.`,
             ...cause(strong.r),
           });
           continue;
@@ -658,6 +668,13 @@ export class ReferenceCoordinator {
     };
     this.log.push(rec);
     return rec;
+  }
+
+  /** Tell the owner of the change that caused a conflict (informational; never blocks the owner). */
+  private notifyOwner(d: Diagnostic, editor: string): void {
+    const cause = this.record(d.caused_by_seq);
+    if (!cause?.change) return;
+    for (const os of this.sessionsOf({ change: cause.change })) this.push(os, { seq: d.caused_by_seq, kind: "diagnostic", diagnostic: ownerNotice(d, editor) });
   }
 
   private sessionsOf(t: { agent?: string; change?: string }): Session[] {
@@ -865,7 +882,9 @@ export class ReferenceCoordinator {
                 file: fileOf(w.key),
                 symbol: w.key,
                 message: `${rec.agent ?? rec.actor.id} ${w.kind === "deleted" ? "removed" : "changed the signature of"} ${w.key} (#${rec.seq}), which your change uses.`,
-                suggestion: `Re-read ${w.key} and adapt your call sites before your next edit, or negotiate (e.g. keep the old signature as an overload).`,
+                suggestion: this.continueMode
+                  ? `Keep working on your other tasks instead of adapting your call sites to ${rec.agent ?? rec.actor.id}'s change; do not adopt their partial work. ${rec.agent ?? rec.actor.id} owns the change and is told about it.`
+                  : `Re-read ${w.key} and adapt your call sites before your next edit, or negotiate (e.g. keep the old signature as an overload).`,
                 caused_by_seq: rec.seq,
                 caused_by_agent: rec.agent ?? rec.actor.id,
                 ...(rec.task ? { caused_by_task: rec.task } : {}),
@@ -977,13 +996,16 @@ export class ReferenceCoordinator {
   gate(sid: string, g: Gate): GateResult {
     const s = this.session(sid);
     const open = [...s.open.values()];
+    // Stopping does not wait on conflicts caused by other agents: their owners are told (see ownership.ts).
+    const block = g.gate === "stop" && this.continueMode ? open.filter((d) => !ownedElsewhere(d, s.agent)) : open;
     const dues = g.gate === "stop" ? this.dues(s) : [];
     const extra = dues.length ? { negotiations: dues } : {};
     if (g.gate === "stop" && s.paused_by !== undefined)
       return { type: "gate.result", gate: g.gate, allow: true, reason: "paused by a human; stopping is allowed", open_errors: open, ...extra };
-    if (!open.length && !dues.length) return { type: "gate.result", gate: g.gate, allow: true, open_errors: [] };
+    if (!block.length && !dues.length)
+      return { type: "gate.result", gate: g.gate, allow: true, ...(open.length ? { reason: `${open.length} conflict(s) caused by other agents stay open; their owners are told` } : {}), open_errors: open };
     const parts = [
-      ...(open.length ? [`${open.length} open Weft error(s) must be resolved first:\n${renderContext(open)}`] : []),
+      ...(block.length ? [`${block.length} open Weft error(s) must be resolved first:\n${renderContext(block)}`] : []),
       ...(dues.length ? [`${dues.length} negotiation(s) still due:\n${dues.map(renderDue).join("\n")}`] : []),
     ];
     return { type: "gate.result", gate: g.gate, allow: false, reason: parts.join("\n"), open_errors: open, ...extra };
@@ -1057,7 +1079,7 @@ export class ReferenceCoordinator {
             code: "stale_overwrite",
             file: fileOf(w.key),
             symbol: w.key,
-            message: `Trunk changed ${w.key} in #${hit.seq} after the landing base #${d.base_seq}; rebase and retry the landing.`,
+            message: `Trunk changed ${w.key} in #${hit.seq} after the landing base #${d.base_seq}; ${this.continueMode ? "the owner of the change is told; do not rebase and retry the landing to clear it." : "rebase and retry the landing."}`,
             caused_by_seq: hit.seq,
             caused_by_agent: hit.agent ?? hit.actor.id,
             ...(hit.task ? { caused_by_task: hit.task } : {}),
@@ -1073,6 +1095,8 @@ export class ReferenceCoordinator {
       status,
       ...(change ? { agent: change.agent, change: change.id, ...(change.task ? { task: change.task } : {}) } : {}),
     });
+    // A landing blocked by another agent's change tells that change's owner (continue mode only).
+    if (status === "rejected" && this.continueMode && change) for (const x of diagnostics) if (ownedElsewhere(x, change.agent)) this.notifyOwner(x, change.agent);
     if (status === "accepted") this.applyAccepted(rec);
     return rec;
   }

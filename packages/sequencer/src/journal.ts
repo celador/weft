@@ -87,7 +87,11 @@ export class JournaledCoordinator {
  * Replay a journal into an empty database. Returns the rebuilt coordinator and the
  * result (or protocol error) of every entry.
  */
-export function replay(sql: Sql, init: CoordinatorInit, entries: JournalEntry[]): { coord: SqlCoordinator; results: unknown[] } {
+export function replay(
+  sql: Sql,
+  init: CoordinatorInit,
+  entries: JournalEntry[],
+): { coord: SqlCoordinator; results: unknown[] } {
   let t = 0;
   SqlCoordinator.init(sql, init);
   const coord = new SqlCoordinator(sql, () => t);
