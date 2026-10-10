@@ -10,6 +10,10 @@
 //   PostToolUse Edit|Write|MultiEdit
 //                      real before/after -> submit mode:"commit" with diff,
 //                      inject verdict + inbox as additionalContext           (L1)
+//   PreToolUse  Bash   snapshot the checkout's dirty files (for the reconcile below)
+//   PostToolUse / PostToolUseFailure  Bash
+//                      files the command changed (vs. the snapshot) -> one edit, mode:"commit";
+//                      also when the command failed partway: its edits are on disk all the same
 //   PostToolUse (other) drain inbox (throttled); Bash HEAD move -> checkpoint
 //   Stop               gate stop -> decision "block" while errors are open   (L3)
 //   SessionEnd         bye (unless errors are open: then the session stays for the git gate)
@@ -22,7 +26,7 @@
 // Fail open: any coordinator/transport failure lets the tool run (logged, and noted to the
 // model) — an unreachable coordinator must never wedge the agent.
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, renameSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, statSync, renameSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { AgentRef, Capabilities, Diagnostic, EventDraft, EventRecord, InboxItem, NegotiateCommand, NegotiationDue, Verdict } from "@weft/protocol";
 import { WcpError, PROTOCOL, type Transport } from "./client";
@@ -30,6 +34,7 @@ import { readState, withLock, writeState, type Loaded, type SessionState } from 
 import { EDIT_TOOLS, editPath, isGitCommit, proposedText } from "./edits";
 import { renderDues, renderForModel, type EditedFile, type RenderCtx } from "./render";
 import type { Sets, FileChange } from "./analysis";
+import { readInsideCheckout } from "./safe-read";
 
 export const ADAPTER_VERSION = "0.1.0";
 export const CAPABILITIES: Capabilities = {
@@ -56,6 +61,9 @@ export const ADVISORY_CAPABILITIES: Capabilities = {
 const SKIP_PARTS = new Set([".git", ".weft", ".claude", ".cursor", ".opencode", ".gemini", "node_modules", ".wrangler", "dist", ".turbo"]);
 const DRAIN_MIN_INTERVAL_MS = 2000;
 const MAX_FILE_BYTES = 1 << 20;
+/** A Bash call in a checkout with more dirty files than this is not reconciled (logged). */
+const MAX_BASH_SNAPSHOT_FILES = 500;
+const MAX_BASH_SNAPSHOT_BYTES = 4 << 20;
 
 export type HookInput = {
   hook_event_name: string;
@@ -70,6 +78,8 @@ export type HookInput = {
   stop_hook_active?: boolean;
   transcript_path?: string;
   reason?: string;
+  /** PostToolUseFailure: the tool's error text. */
+  error?: unknown;
 };
 export type HookOutput = Record<string, unknown> | undefined;
 
@@ -148,13 +158,42 @@ export class ClaudeAdapter {
     return { abs, rel: parts.join("/") };
   }
 
+  /** A checkout file's text; never through a symlink, never outside the checkout. */
   private readText(abs: string): string | null {
-    try {
-      if (statSync(abs).size > MAX_FILE_BYTES) return null;
-      return readFileSync(abs, "utf8");
-    } catch {
-      return null;
+    return readInsideCheckout(this.root, abs, MAX_FILE_BYTES);
+  }
+
+  /** Repo-relative paths git reports as changed or untracked in the working tree. */
+  private dirtyFiles(): string[] | undefined {
+    const out = this.git(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"]);
+    if (out === undefined) return undefined;
+    const files: string[] = [];
+    for (const entry of out.split("\0")) if (entry.length > 3) files.push(entry.slice(3));
+    return files;
+  }
+
+  /** Snapshot (text) of the checkout's dirty files before a Bash call; undefined = do not reconcile. */
+  private snapshotDirty(): Record<string, string | null> | undefined {
+    const files = this.dirtyFiles();
+    if (!files) return undefined;
+    if (files.length > MAX_BASH_SNAPSHOT_FILES) {
+      this.log(`bash snapshot skipped: ${files.length} dirty files`);
+      return undefined;
     }
+    const snap: Record<string, string | null> = {};
+    let bytes = 0;
+    for (const rel of files) {
+      const t = this.target(rel, this.root);
+      if (!t) continue;
+      const text = existsSync(t.abs) ? this.readText(t.abs) : null;
+      bytes += text?.length ?? 0;
+      if (bytes > MAX_BASH_SNAPSHOT_BYTES) {
+        this.log(`bash snapshot skipped: dirty files exceed ${MAX_BASH_SNAPSHOT_BYTES} bytes`);
+        return undefined;
+      }
+      snap[t.rel] = text;
+    }
+    return snap;
   }
 
   private async fetchEvent(seq: number): Promise<EventRecord | undefined> {
@@ -318,7 +357,11 @@ export class ClaudeAdapter {
         if (input.tool_name === "Bash") return this.preBash(input, st);
         return undefined;
       case "PostToolUse":
+      case "PostToolUseFailure":
+        // A tool that failed partway may still have changed files: reconcile both alike.
         if (EDIT_TOOLS.has(input.tool_name ?? "")) return this.postEdit(input, st);
+        if (input.tool_name === "Bash") return this.postBash(input, st);
+        if (input.hook_event_name === "PostToolUseFailure") return undefined;
         return this.postOther(input, st);
       case "Stop":
       case "SubagentStop":
@@ -403,9 +446,15 @@ export class ClaudeAdapter {
   private async preBash(input: HookInput, st: SessionState): Promise<HookOutput> {
     const command = typeof input.tool_input?.command === "string" ? input.tool_input.command : "";
     st.head = this.git(["rev-parse", "HEAD"])?.trim() ?? st.head;
+    const callId = input.tool_use_id;
+    if (callId) {
+      const snap = this.snapshotDirty();
+      if (snap) st.pending[callId] = { tool: "Bash", before: snap, shown: [], at: this.now() };
+    }
     if (!isGitCommit(command) || !st.wcpSession || !this.enforce) return undefined;
     const result = await this.call(st, (s) => this.deps.transport.gate(s, "commit"));
     if (result.allow) return undefined;
+    if (callId) delete st.pending[callId];
     const errors = await renderForModel(result.open_errors, [], this.ctx());
     this.log(`commit gate refused (${result.open_errors.length} open errors)`);
     return {
@@ -455,6 +504,59 @@ export class ClaudeAdapter {
         ? `[weft] Your edit to ${this.prefix + t.rel} was applied in your checkout but REJECTED by the coordinator (log #${verdict.seq}); it stays an open error until you rework it:\n`
         : "[weft diagnostics]\n";
     const text = this.delivered(st, fresh ? header + fresh : "", verdict.delivered_through, verdict.inbox);
+    return text ? { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: text } } : undefined;
+  }
+
+  /**
+   * After a Bash call (succeeded or failed): submit the files it changed as one edit. A file
+   * counts when its text differs from the pre-call snapshot (dirty then) or from HEAD (clean
+   * then). Edits that the same command also committed show up as the checkpoint instead.
+   */
+  private async postBash(input: HookInput, st: SessionState): Promise<HookOutput> {
+    const callId = input.tool_use_id ?? "";
+    const pend = callId ? st.pending[callId] : undefined;
+    if (callId) delete st.pending[callId];
+    let editText = "";
+    const now = pend?.tool === "Bash" ? this.dirtyFiles() : undefined;
+    if (pend && now) {
+      const rels = [...new Set([...Object.keys(pend.before), ...now])].sort();
+      const changes: FileChange[] = [];
+      for (const r of rels) {
+        const t = this.target(r, this.root);
+        if (!t) continue;
+        const before = t.rel in pend.before ? pend.before[t.rel]! : (this.git(["show", `HEAD:${t.rel}`]) ?? null);
+        const after = existsSync(t.abs) ? this.readText(t.abs) : null;
+        if (before !== after) changes.push({ rel: t.rel, before, after });
+      }
+      const sets = changes.length ? await this.deps.analyze(changes, this.root, this.prefix) : undefined;
+      if (sets?.writes.length) {
+        const diffs: string[] = [];
+        for (const ch of changes) diffs.push(await this.deps.diff(this.prefix + ch.rel, ch.before, ch.after));
+        let diff = diffs.join("");
+        if (Buffer.byteLength(diff) > 900_000) diff = "";
+        const event = this.draft(st, "edit", {
+          files: changes.map((ch) => this.prefix + ch.rel),
+          reads: sets.reads,
+          writes: sets.writes,
+          ...(diff ? { diff } : {}),
+          tool: { name: "Bash", call_id: callId.slice(0, 200), harness_event: input.hook_event_name },
+        });
+        const verdict = await this.submit(st, "commit", event, callId);
+        this.log(`bash commit ${changes.map((c) => c.rel).join(",")} base #${event.base_seq} -> ${verdict.verdict} #${verdict.seq} (${verdict.diagnostics.map((d) => d.code).join(",") || "clean"})`);
+        const full = await renderForModel(verdict.diagnostics, verdict.inbox, this.ctx());
+        const header =
+          verdict.verdict === "reject"
+            ? `[weft] Files your shell command changed (${changes.map((c) => this.prefix + c.rel).join(", ")}) were REJECTED by the coordinator (log #${verdict.seq}); they stay open errors until you rework them:\n`
+            : "[weft diagnostics]\n";
+        editText = this.delivered(st, full ? header + full : "", verdict.delivered_through, verdict.inbox);
+      }
+    }
+    if (input.hook_event_name === "PostToolUseFailure") {
+      return editText ? { hookSpecificOutput: { hookEventName: "PostToolUseFailure", additionalContext: editText } } : undefined;
+    }
+    const other = await this.postOther(input, st);
+    const otherText = (other?.hookSpecificOutput as { additionalContext?: string } | undefined)?.additionalContext ?? "";
+    const text = [editText, otherText].filter(Boolean).join("\n");
     return text ? { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: text } } : undefined;
   }
 
@@ -517,9 +619,9 @@ export class ClaudeAdapter {
 
   private async sessionEnd(input: HookInput, st: SessionState): Promise<HookOutput> {
     if (!st.wcpSession) return undefined;
-    // Open errors live on the WCP session (spec §6.5). Closing it would silently forgive
-    // them, so a session with open errors stays alive (heartbeat loop, 30 min idle limit):
-    // the git pre-commit gate and a resumed conversation still see them.
+    // Open errors live on the change (spec §6.5), so a bye forgives nothing. A session with
+    // open errors still stays alive (heartbeat loop, 30 min idle limit) because the git
+    // pre-commit gate asks through this checkout's live session.
     try {
       const g = await this.call(st, (s) => this.deps.transport.gate(s, "commit"));
       if (!g.allow) {

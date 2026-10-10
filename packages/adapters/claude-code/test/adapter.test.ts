@@ -242,7 +242,7 @@ describe("installer, git hooks and the bundled CLI", () => {
     const out = execFileSync(process.execPath, [BUNDLE, "install", "--url", url, "--repo", "demo", "--agent", "claude-b", "--task", "T-2", "--title", "cart total"], { cwd: root, env, encoding: "utf8" });
     expect(out).toContain("installed Claude Code adapter");
     const settings = JSON.parse(readFileSync(join(root, ".claude/settings.local.json"), "utf8"));
-    expect(Object.keys(settings.hooks).sort()).toEqual(["PostToolUse", "PreToolUse", "SessionEnd", "SessionStart", "Stop", "UserPromptSubmit"]);
+    expect(Object.keys(settings.hooks).sort()).toEqual(["PostToolUse", "PostToolUseFailure", "PreToolUse", "SessionEnd", "SessionStart", "Stop", "UserPromptSubmit"]);
     expect(readFileSync(join(root, ".git/info/exclude"), "utf8")).toContain(".weft/\n.claude/settings.local.json\n");
     const cfg = JSON.parse(readFileSync(join(root, ".weft/claude.json"), "utf8"));
     expect(cfg.change).toMatch(/^I[0-9a-f]{40}$/);

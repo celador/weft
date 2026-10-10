@@ -39,9 +39,17 @@ concurrently); the adapter log is `.weft/log/adapter.log`.
 | `PreToolUse` Edit / Write / MultiEdit | derive the proposed file text from `tool_input`, analyze before/after (`@weft/analyzer` + cross-file import reads), `submit mode:"check"`. **reject → `permissionDecision:"deny"`** with the rendered diagnostics; accept with warnings → `additionalContext` | L2 |
 | `PreToolUse` Bash `git commit …` | `gate commit` → deny while errors are open (`commit_gate: tool_interception`) | L3 |
 | `PostToolUse` Edit / Write / MultiEdit | real before (stashed at PreToolUse) / after (disk) → `submit mode:"commit"` with a unified diff; inject verdict + inbox (minus what PreToolUse already showed) | L0/L1 |
+| `PreToolUse` Bash (any command) | snapshot the text of the checkout's dirty files (`git status`; skipped above 500 files / 4 MB) for the reconcile below | |
+| `PostToolUse` / `PostToolUseFailure` Bash | files whose text differs from the snapshot (or from `HEAD` if they were clean) → one `edit`, `mode:"commit"`, with their diff; **also when the command failed partway**, since its edits are on disk all the same. Files the same command also committed show up as the checkpoint instead | L0/L1 |
+| `PostToolUseFailure` Edit / Write / MultiEdit | same as `PostToolUse` (an unchanged file submits nothing) | L0/L1 |
 | `PostToolUse` other tools | drain (throttled to one per 2 s); Bash that moved `HEAD` → `checkpoint {sha}` | L1 |
 | `Stop` | `gate stop` → `decision:"block"` with the open errors; after 5 refusals for the same errors Claude may stop (runaway guard; errors stay in the feed) | L3 |
-| `SessionEnd` | `bye` — unless errors are open: then the session stays alive (detached heartbeat loop, 30 min idle limit) so the pre-commit gate and a resumed conversation still see them | |
+| `SessionEnd` | `bye` (the coordinator then releases the change's claims; open errors stay on the change) — unless errors are open: then the session stays alive (detached heartbeat loop, 30 min idle limit) so the git pre-commit gate, which asks through the live session, still sees them | |
+
+File reads: the adapter only reads regular files inside the checkout, never through a symlink
+(`O_NOFOLLOW`, and the file's real path must be `<real checkout>/<path>`, so a symlinked
+directory on the way is refused too). A file it cannot read that way is treated as having no
+text, so an edit to it is not coordinated rather than leaking the target's content into a diff.
 
 Declared capabilities: `{level: 3, observe: sync, inject: immediate, deny_edit, refuse_stop, commit_gate: tool_interception}`.
 

@@ -167,6 +167,9 @@ export function mergeSettings(settings: Record<string, unknown>, command: string
     UserPromptSubmit: ours(),
     PreToolUse: ours("Edit|Write|MultiEdit|Bash"),
     PostToolUse: ours("*"),
+    // A tool that fails partway (e.g. a shell command that edits, then errors) fires this
+    // instead of PostToolUse; its edits are reconciled the same way.
+    PostToolUseFailure: ours("Bash|Edit|Write|MultiEdit"),
     Stop: ours(),
     SessionEnd: ours(),
   };
@@ -367,6 +370,7 @@ async function main(): Promise<void> {
       return;
     case "inbox":
       process.exitCode = await inboxCmd(args);
+
       return;
     default:
       process.stderr.write("usage: weft-adapter-claude install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--shared]\n       weft-adapter-claude hook|commit-msg FILE|pre-commit|status\n       weft-adapter-claude negotiate …|inbox (see negotiate --help)\n");
