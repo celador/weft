@@ -115,6 +115,23 @@
             "auto",
             "human"
           ]
+        },
+        "claims": {
+          "type": "object",
+          "properties": {
+            "lease_ms": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "firm_max_ms": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "lease_ms",
+            "firm_max_ms"
+          ]
         }
       },
       "required": [
@@ -379,7 +396,9 @@
             "expired",
             "abandoned",
             "negotiated",
-            "landed"
+            "landed",
+            "session_ended",
+            "session_expired"
           ]
         }
       },

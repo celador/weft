@@ -3,7 +3,7 @@
 // are stored as SHA-256 hashes; the plaintext is returned exactly once at issuance.
 
 import { DurableObject } from "cloudflare:workers";
-import type { Scope } from "@weft/protocol";
+import { claimsPolicyError, type Scope } from "@weft/protocol";
 import type { CoordinatorConfig, CoordinatorInit, Grant, RepoCoordinator, Result } from "@weft/sequencer";
 
 export interface RegistryEnv {
@@ -45,6 +45,8 @@ export class Registry extends DurableObject<RegistryEnv> {
     if (!REPO_NAME.test(init.repo)) return { error: "repo must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" };
     if (init.policy && init.policy !== "wound-wait" && init.policy !== "wait-die") return { error: "policy must be wound-wait or wait-die" };
     if (init.escalation && init.escalation !== "auto" && init.escalation !== "human") return { error: "escalation must be auto or human" };
+    // claims: omitted = the defaults (spec §7.5); null = a legacy repo (tests and migrations).
+    if (init.claims !== undefined && init.claims !== null && claimsPolicyError(init.claims)) return { error: claimsPolicyError(init.claims)! };
     const stub = this.env.WEFT_REPO.get(this.env.WEFT_REPO.idFromName(init.repo));
     const r = (await stub.init(init)) as unknown as Result<{ created: boolean; config: CoordinatorConfig }>;
     if (!r.ok) return { error: r.error.error.message };

@@ -214,7 +214,7 @@
                 "src/auth/session.ts#refreshToken",
                 "src/auth/session.ts#SessionStore.get"
               ],
-              "reason": "session ended"
+              "reason": "session_ended"
             },
             "summary": "claude-a released refreshToken, SessionStore.get (session ended)"
           }
@@ -335,7 +335,7 @@
             "keys": [
               "src/api/client.ts#fetchWithAuth"
             ],
-            "reason": "session expired"
+            "reason": "session_expired"
           }
         }
       ]

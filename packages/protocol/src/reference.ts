@@ -15,6 +15,7 @@ import type {
   Arbitration,
   ArbitrationPolicy,
   Capabilities,
+  ClaimsPolicy,
   Diagnostic,
   EscalationPolicy,
   EventDraft,
@@ -33,11 +34,12 @@ import type {
   Submit,
   SymbolKey,
   Verdict,
+  RepoPolicy,
   Welcome,
   Write,
   WriteKind,
 } from "./types";
-import { WCP_VERSION } from "./types";
+import { claimsPolicyError, DEFAULT_CLAIMS_POLICY, WCP_VERSION } from "./types";
 import { validate } from "./validate";
 
 export type CoordinatorOptions = {
@@ -46,6 +48,11 @@ export type CoordinatorOptions = {
   /** Who resolves `negotiate.escalate` (spec §7.6). Default `auto`: the coordinator merges. */
   escalation?: EscalationPolicy;
   claim_ttl_ms?: number;
+  /**
+   * Claims policy (spec §7.5). Default: {lease_ms: 120000, firm_max_ms: 600000}. `null`
+   * models a repo created before the policy existed (legacy: one renewable claim_ttl_ms).
+   */
+  claims?: ClaimsPolicy | null;
   session_ttl_ms?: number;
   heartbeat_interval_ms?: number;
   max_diff_bytes?: number;
@@ -67,7 +74,15 @@ type ChangeState = {
   approved: boolean;
   /** Lead change of the merged group this change joined (spec §7.6). */
   merged_into?: string;
+  /** Open errors by key (spec §6.5): they belong to the change, not to a session. */
+  open: Map<string, Diagnostic>;
+  /** Where each open error came from and the record that opened it. */
+  openMeta: Map<string, OpenMeta>;
 };
+
+/** `check`/`commit`: a rejected record of that mode; `push`: a claim_wounded (spec §6.5). */
+type OpenOrigin = "check" | "commit" | "push";
+type OpenMeta = { origin: OpenOrigin; seq: Seq };
 
 type Claim = {
   change: string;
@@ -91,7 +106,6 @@ type Session = {
   delivered_through: Seq;
   inbox: InboxItem[];
   next_inbox_id: number;
-  open: Map<string, Diagnostic>;
   paused_by?: Seq;
   last_seen: number;
 };
@@ -122,6 +136,8 @@ export class ReferenceCoordinator {
   readonly policy: ArbitrationPolicy;
   readonly escalation: EscalationPolicy;
   readonly claimTtl: number;
+  /** Undefined for a legacy repo until an operator applies a policy (spec §7.5). */
+  private claimsPolicy: ClaimsPolicy | undefined;
   readonly sessionTtl: number;
   readonly heartbeatInterval: number;
   readonly limits: { max_diff_bytes: number; max_keys: number; max_page: number };
@@ -138,6 +154,8 @@ export class ReferenceCoordinator {
     this.policy = o.policy ?? "wound-wait";
     this.escalation = o.escalation ?? "auto";
     this.claimTtl = o.claim_ttl_ms ?? 30 * 60_000;
+    if (o.claims !== null && o.claims !== undefined && claimsPolicyError(o.claims)) throw new Error(claimsPolicyError(o.claims));
+    this.claimsPolicy = o.claims === null ? undefined : { ...(o.claims ?? DEFAULT_CLAIMS_POLICY) };
     this.sessionTtl = o.session_ttl_ms ?? 5 * 60_000;
     this.heartbeatInterval = o.heartbeat_interval_ms ?? 30_000;
     this.limits = { max_diff_bytes: o.max_diff_bytes ?? 1_048_576, max_keys: o.max_keys ?? 2000, max_page: o.max_page ?? 500 };
@@ -177,6 +195,8 @@ export class ReferenceCoordinator {
         writes: new Map(),
         landed: false,
         approved: false,
+        open: new Map(),
+        openMeta: new Map(),
         ...(h.task ? { task: h.task.id } : {}),
       };
       this.changes.set(changeId, change);
@@ -190,7 +210,6 @@ export class ReferenceCoordinator {
       delivered_through: 0,
       inbox: [],
       next_inbox_id: 1,
-      open: new Map(),
       last_seen: now,
       ...(change.task ? { task: change.task } : {}),
     };
@@ -206,8 +225,90 @@ export class ReferenceCoordinator {
     // A new session of a change inherits what the change still owes (spec §8.4): pending
     // proposals addressed to it and unfulfilled agreements, so a restarted agent sees them.
     for (const d of this.dues(s)) this.push(s, { seq: d.seq, kind: "negotiation", record: d.record });
+    // ... and its open errors (spec §6.5): a reconnect does not reset them, so say why.
+    for (const [k, d] of change.open) this.push(s, { seq: change.openMeta.get(k)!.seq, kind: "diagnostic", diagnostic: d });
     s.delivered_through = this.head;
     return this.welcome(s);
+  }
+
+  /** Current repo policy (spec §7.2, §7.6, §7.5). */
+  repoPolicy(): RepoPolicy {
+    return { arbitration: this.policy, escalation: this.escalation, ...(this.claimsPolicy ? { claims: { ...this.claimsPolicy } } : {}) };
+  }
+
+  /**
+   * Operator: apply the claims policy (spec §7.5) — how a repo created before the policy
+   * switches to leases. Existing claims keep their expiry; the new rules apply from now.
+   */
+  setPolicy(p: { claims: ClaimsPolicy }): RepoPolicy {
+    const err = claimsPolicyError(p?.claims);
+    if (err) throw new WcpProtocolError("invalid_message", err, { issues: [{ path: "/claims", message: err }] });
+    this.claimsPolicy = { lease_ms: p.claims.lease_ms, firm_max_ms: p.claims.firm_max_ms };
+    return this.repoPolicy();
+  }
+
+  /** Default lease/TTL of a soft claim: lease_ms under the claims policy, else claim_ttl_ms. */
+  private get softTtl(): number {
+    return this.claimsPolicy?.lease_ms ?? this.claimTtl;
+  }
+
+  /** Renew the change's claims after activity (spec §7.5): soft leases only, under the policy. */
+  private renew(changeId: string, now: number): void {
+    const exp = now + this.softTtl;
+    for (const c of this.claims)
+      if (c.change === changeId && c.source !== "predicted" && !(this.claimsPolicy && c.firm)) c.expires_at = Math.max(c.expires_at, exp);
+  }
+
+  /** Expiry for a new claim (spec §7.5). */
+  private claimExpiry(kind: "edit" | "claim", p: Record<string, unknown>, now: number): number {
+    const ttl = typeof p.ttl_ms === "number" ? p.ttl_ms : undefined;
+    if (!this.claimsPolicy) return now + (kind === "claim" && ttl !== undefined ? ttl : this.claimTtl);
+    if (kind === "edit") return now + this.claimsPolicy.lease_ms;
+    if (p.source === "predicted") return now + (ttl ?? this.claimTtl);
+    if (p.firm) return now + Math.min(ttl ?? this.claimsPolicy.firm_max_ms, this.claimsPolicy.firm_max_ms);
+    return now + this.claimsPolicy.lease_ms;
+  }
+
+  /**
+   * Release on exit (spec §7.5): when a change's last live session ends, its claims go at
+   * once, recorded as a system release. Legacy repos keep them until they expire.
+   */
+  private releaseOnExit(changeId: string, reason: string): EventRecord | undefined {
+    if (!this.claimsPolicy || this.sessionsOf({ change: changeId }).length) return undefined;
+    const mine = this.claims.filter((c) => c.change === changeId && c.source !== "predicted");
+    if (!mine.length) return undefined;
+    this.claims = this.claims.filter((c) => !mine.includes(c));
+    const c = this.changes.get(changeId)!;
+    return this.append({
+      kind: "release",
+      actor: { type: "system", id: "coordinator" },
+      draft: { kind: "release", base_seq: this.head, payload: { keys: mine.map((x) => x.key), reason } },
+      diagnostics: [],
+      status: "accepted",
+      agent: c.agent,
+      change: c.id,
+      ...(c.task ? { task: c.task } : {}),
+    });
+  }
+
+  // ---------------------------------------------------------------- open errors (§6.5)
+
+  private openSet(changeId: string, d: Diagnostic, origin: OpenOrigin, seq: Seq): void {
+    const c = this.changes.get(changeId);
+    if (!c) return;
+    c.open.set(d.symbol, d);
+    c.openMeta.set(d.symbol, { origin, seq });
+  }
+
+  private openDelete(changeId: string | undefined, key: string): void {
+    const c = changeId === undefined ? undefined : this.changes.get(changeId);
+    if (!c) return;
+    c.open.delete(key);
+    c.openMeta.delete(key);
+  }
+
+  private openOf(changeId: string): Diagnostic[] {
+    return [...(this.changes.get(changeId)?.open.values() ?? [])];
   }
 
   private welcome(s: Session): Welcome {
@@ -220,8 +321,8 @@ export class ReferenceCoordinator {
       delivered_through: s.delivered_through,
       heartbeat_interval_ms: this.heartbeatInterval,
       session_ttl_ms: this.sessionTtl,
-      claim_ttl_ms: this.claimTtl,
-      policy: { arbitration: this.policy, escalation: this.escalation },
+      claim_ttl_ms: this.softTtl,
+      policy: this.repoPolicy(),
       limits: this.limits,
     };
   }
@@ -235,8 +336,7 @@ export class ReferenceCoordinator {
 
   heartbeat(sid: string): HeartbeatAck {
     const s = this.session(sid);
-    const exp = this.now() + this.claimTtl;
-    for (const c of this.claims) if (c.change === s.change && c.source !== "predicted") c.expires_at = Math.max(c.expires_at, exp);
+    this.renew(s.change, this.now());
     return {
       type: "heartbeat.ack",
       head_seq: this.head,
@@ -256,6 +356,7 @@ export class ReferenceCoordinator {
       diagnostics: [],
       status: "accepted",
     });
+    this.releaseOnExit(s.change, "session_ended");
   }
 
   // ---------------------------------------------------------------- submit
@@ -287,7 +388,7 @@ export class ReferenceCoordinator {
     }
     const rec = this.append({ kind: e.kind, actor, session: s, draft: e, diagnostics, status: reject ? "rejected" : "accepted", mode: msg.mode });
     if (reject) {
-      for (const d of diagnostics) if (d.severity === "error" && d.code !== "agent_paused") s.open.set(d.symbol, d);
+      for (const d of diagnostics) if (d.severity === "error" && d.code !== "agent_paused") this.openSet(s.change, d, msg.mode, rec.seq);
     } else {
       this.applyAccepted(rec, s);
     }
@@ -371,7 +472,7 @@ export class ReferenceCoordinator {
   /** Two groups conflict: an open error of `s` cites the target group, or keys overlap. */
   private groupsConflict(s: Session, target: string): boolean {
     const lead = this.group(target);
-    for (const d of s.open.values()) {
+    for (const d of this.openOf(s.change)) {
       const c = this.record(d.caused_by_seq)?.change;
       if (c !== undefined && this.group(c) === lead) return true;
     }
@@ -664,9 +765,9 @@ export class ReferenceCoordinator {
     return [...this.sessions.values()].filter((s) => (t.change ? s.change === t.change : s.agent === t.agent));
   }
 
+  /** Add an inbox item. Open errors are recorded on the change by the caller (§6.5). */
   private push(s: Session, item: Omit<InboxItem, "id">): void {
     s.inbox.push({ id: s.next_inbox_id++, ...item });
-    if (item.diagnostic?.severity === "error") s.open.set(item.diagnostic.symbol, item.diagnostic);
   }
 
   private upsertClaim(c: Omit<Claim, "shared">): void {
@@ -676,7 +777,8 @@ export class ReferenceCoordinator {
       return;
     }
     existing.seq = c.seq;
-    existing.expires_at = Math.max(existing.expires_at, c.expires_at);
+    // Under the claims policy a firm deadline is hard: only another firm claim event moves it.
+    if (!(this.claimsPolicy && existing.firm && !c.firm)) existing.expires_at = Math.max(existing.expires_at, c.expires_at);
     if (c.source !== "edit" || existing.source === "predicted") existing.source = c.source;
     existing.firm = existing.firm || c.firm;
   }
@@ -693,18 +795,18 @@ export class ReferenceCoordinator {
       for (const k of rec.reads) change.reads.add(k);
       for (const w of rec.writes) change.writes.set(w.key, mergeWriteKind(change.writes.get(w.key), w.kind));
     }
-    // Own open errors on touched keys are resolved by an accepted event.
-    if (s) for (const k of [...rec.reads, ...rec.writes.map((w) => w.key)]) s.open.delete(k);
-    // Any accepted event from a change keeps its non-predicted claims alive (§7.5).
-    if (change && rec.actor.type === "agent")
-      for (const c of this.claims) if (c.change === change.id && c.source !== "predicted") c.expires_at = Math.max(c.expires_at, now + this.claimTtl);
+    // The change's open errors on keys an accepted *edit* touches are resolved (§6.5): the
+    // agent redid the work. Other kinds that name keys (intent, claim) clear nothing.
+    if (change && rec.kind === "edit") for (const k of [...rec.reads, ...rec.writes.map((w) => w.key)]) this.openDelete(change.id, k);
+    // Any accepted event from a change renews its claims (§7.5).
+    if (change && rec.actor.type === "agent") this.renew(change.id, now);
 
     const p = rec.payload ?? {};
     switch (rec.kind) {
       case "edit":
       case "claim": {
         const isClaim = rec.kind === "claim";
-        const ttl = isClaim && typeof p.ttl_ms === "number" ? p.ttl_ms : this.claimTtl;
+        const expires_at = this.claimExpiry(rec.kind, p, now);
         for (const d of rec.diagnostics) {
           const arb = d.arbitration;
           if (!arb) continue;
@@ -719,23 +821,21 @@ export class ReferenceCoordinator {
             for (const loser of wounded) {
               const la = this.changes.get(loser)!;
               const larb: Arbitration = { ...arb, loser: { agent: la.agent, change: la.id } };
-              for (const hs of this.sessionsOf({ change: loser }))
-              this.push(hs, {
-                seq: rec.seq,
-                kind: "diagnostic",
-                diagnostic: {
-                  severity: "error",
-                  code: "claim_wounded",
-                  file: d.file,
-                  symbol: d.symbol,
-                  message: `${s?.agent ?? rec.actor.id} (${rec.change}) has precedence on ${d.symbol} and took it over; your claim was revoked.`,
-                  suggestion: `Retreat from ${d.symbol}, wait for ${rec.change} to land, or negotiate.`,
-                  caused_by_seq: rec.seq,
-                  caused_by_agent: rec.agent ?? rec.actor.id,
-                  ...(rec.task ? { caused_by_task: rec.task } : {}),
-                  arbitration: larb,
-                },
-              });
+              const wound: Diagnostic = {
+                severity: "error",
+                code: "claim_wounded",
+                file: d.file,
+                symbol: d.symbol,
+                message: `${s?.agent ?? rec.actor.id} (${rec.change}) has precedence on ${d.symbol} and took it over; your claim was revoked.`,
+                suggestion: `Retreat from ${d.symbol}, wait for ${rec.change} to land, or negotiate.`,
+                caused_by_seq: rec.seq,
+                caused_by_agent: rec.agent ?? rec.actor.id,
+                ...(rec.task ? { caused_by_task: rec.task } : {}),
+                arbitration: larb,
+              };
+              // Recorded on the change even when none of its sessions is live (§6.5).
+              this.openSet(loser, wound, "push", rec.seq);
+              for (const hs of this.sessionsOf({ change: loser })) this.push(hs, { seq: rec.seq, kind: "diagnostic", diagnostic: wound });
             }
           } else {
             for (const hs of this.sessionsOf({ change: arb.winner.change }))
@@ -765,22 +865,27 @@ export class ReferenceCoordinator {
             firm: isClaim ? Boolean(p.firm) : false,
             source: isClaim ? (p.source === "predicted" ? "predicted" : "explicit") : "edit",
             seq: rec.seq,
-            expires_at: now + ttl,
+            expires_at,
           });
         break;
       }
       case "release": {
         const keys = p.keys as SymbolKey[] | undefined;
         this.claims = this.claims.filter((c) => !(c.change === rec.change && (!keys || keys.includes(c.key))));
-        if (s && keys) for (const k of keys) s.open.delete(k);
-        if (s && !keys) s.open.clear();
+        // An agent's release is a retreat: it clears only errors whose edit never reached the
+        // workspace (check) or wounds (push) on the released keys — never commit-mode ones (§6.5).
+        if (s && change)
+          for (const [k, m] of [...change.openMeta]) if ((!keys || keys.includes(k)) && m.origin !== "commit") this.openDelete(change.id, k);
         break;
       }
       case "land": {
         // The landed change's claims go, and so do its alternatives' (§7.7): they lost.
         this.claims = this.claims.filter((c) => c.change !== rec.change && !this.alternatives(c.change, rec.change));
-        if (change) change.landed = true;
-        for (const cs of this.sessionsOf({ change: rec.change! })) cs.open.clear();
+        if (change) {
+          change.landed = true;
+          change.open.clear();
+          change.openMeta.clear();
+        }
         break;
       }
       case "negotiate.propose":
@@ -896,8 +1001,7 @@ export class ReferenceCoordinator {
         if (c.change === asker) c.shared.add(giver);
       }
     } else return a;
-    for (const ss of [...this.sessionsOf({ change: giver }), ...this.sessionsOf({ change: asker })])
-      for (const k of keys) ss.open.delete(k);
+    for (const ch of [giver, asker]) for (const k of keys) this.openDelete(ch, k);
     return a;
   }
 
@@ -930,14 +1034,13 @@ export class ReferenceCoordinator {
     const leadChange = this.changes.get(lead);
     if (leadChange) delete leadChange.merged_into;
     const members = this.members(lead);
-    for (const m of members)
-      for (const ss of this.sessionsOf({ change: m.id })) {
-        for (const [k, d] of [...ss.open]) {
-          const c = this.record(d.caused_by_seq)?.change;
-          if (c !== undefined && this.group(c) === lead) ss.open.delete(k);
-        }
-        this.push(ss, { seq: rec.seq, kind: "control", record: rec });
+    for (const m of members) {
+      for (const [k, d] of [...m.open]) {
+        const c = this.record(d.caused_by_seq)?.change;
+        if (c !== undefined && this.group(c) === lead) this.openDelete(m.id, k);
       }
+      for (const ss of this.sessionsOf({ change: m.id })) this.push(ss, { seq: rec.seq, kind: "control", record: rec });
+    }
   }
 
   // ---------------------------------------------------------------- inbox + gates
@@ -957,7 +1060,7 @@ export class ReferenceCoordinator {
       items,
       head_seq: this.head,
       delivered_through: s.delivered_through,
-      open_errors: [...s.open.values()],
+      open_errors: this.openOf(s.change),
       paused: s.paused_by !== undefined,
       ...(context ? { context } : {}),
     };
@@ -976,7 +1079,7 @@ export class ReferenceCoordinator {
 
   gate(sid: string, g: Gate): GateResult {
     const s = this.session(sid);
-    const open = [...s.open.values()];
+    const open = this.openOf(s.change);
     const dues = g.gate === "stop" ? this.dues(s) : [];
     const extra = dues.length ? { negotiations: dues } : {};
     if (g.gate === "stop" && s.paused_by !== undefined)
@@ -1113,6 +1216,8 @@ export class ReferenceCoordinator {
           status: "accepted",
         }),
       );
+      const rel = this.releaseOnExit(s.change, "session_expired");
+      if (rel) out.push(rel);
     }
     return out;
   }
@@ -1146,9 +1251,9 @@ export class ReferenceCoordinator {
       head_seq: this.head,
       active_agents: new Set([...this.sessions.values()].map((s) => s.agent)).size,
       active_changes: new Set([...this.sessions.values()].map((s) => s.change)).size,
-      open_conflicts: [...this.sessions.values()].reduce((n, s) => n + s.open.size, 0),
+      open_conflicts: [...this.changes.values()].reduce((n, c) => n + c.open.size, 0),
       ...(this.log.length ? { last_event_at: this.log[this.log.length - 1]!.ts } : {}),
-      policy: { arbitration: this.policy, escalation: this.escalation },
+      policy: this.repoPolicy(),
     };
   }
 

@@ -38,7 +38,7 @@ export interface ConformanceTarget {
   events(after?: number, limit?: number, opts?: { include_diff?: boolean; tail?: boolean; before?: number }): MaybePromise<EventPage>;
   event(seq: number): MaybePromise<EventRecord>;
   /** Operator: apply repo policy (spec §7.5 claims policy; Weft journal op `policy`). */
-  policy?(p: { claims: ClaimsPolicy }): MaybePromise<RepoPolicy>;
+  setPolicy?(p: { claims: ClaimsPolicy }): MaybePromise<RepoPolicy>;
 }
 
 export type ScenarioStep =
@@ -211,8 +211,8 @@ export async function runScenario(sc: Scenario, target: ConformanceTarget, clock
           actual = await target.event(step.seq);
           break;
         case "policy":
-          if (!target.policy) throw new Error(`scenario ${sc.name}: target cannot apply policy`);
-          actual = await target.policy(step.policy);
+          if (!target.setPolicy) throw new Error(`scenario ${sc.name}: target cannot apply policy`);
+          actual = await target.setPolicy(step.policy);
           break;
       }
     } catch (e) {

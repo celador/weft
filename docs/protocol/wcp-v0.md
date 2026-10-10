@@ -172,7 +172,7 @@ present (possibly empty).
 | `edit` | agent | — (`writes` required, non-empty) | R0–R3 |
 | `checkpoint` | agent, system | `{sha, ref?}` (a push of the change's fork; the system appends it when the Artifacts `pushed` event arrives, attributed to the change) | R0 (agent only) |
 | `claim` | agent | `{firm, source: explicit\|predicted, ttl_ms?}`; keys in `writes` | R0, R3 |
-| `release` | agent, system | `{keys?, reason?}`; no keys = all of the change's claims | no |
+| `release` | agent, system | `{keys?, reason?}`; no keys = all of the change's claims; system reasons `expired`, `session_ended`, `session_expired` (§7.5) | no |
 | `negotiate.propose` | agent | `{to: {agent?\|change?}, keys[], terms: {kind, text}}` | refs (§7.4) |
 | `negotiate.counter` | agent | `{reply_to, terms}` | refs |
 | `negotiate.accept` | agent | `{reply_to}` | refs |
@@ -485,7 +485,7 @@ two tasks — §7.6).
 - **Release on exit**: when a session ends — `bye` or session expiry (§8.2) — and no
   other live session of the same change remains, the coordinator appends, right after
   the `leave`, one system `release` of all the change's remaining non-predicted claims
-  (`reason:"session ended"` or `"session expired"`). Nothing is appended when it holds
+  (`reason:"session_ended"` or `"session_expired"`). Nothing is appended when it holds
   none.
 - **Repos created before the claims policy** (stored configuration without `claims`)
   keep the old rules until an operator applies the policy: one TTL `claim_ttl_ms`
@@ -917,7 +917,8 @@ Proposed for `docs/design.md` (rule 7 of agent-rules):
     (`welcome.policy.claims`, optional in the schema). Soft claims last `lease_ms` and are
     renewed by activity; firm claims get a hard deadline `min(ttl_ms, firm_max_ms)` from the
     claim event that only a new `claim` extends; ending a change's last session releases
-    its claims (system `release`, `reason` `session ended`/`session expired`). New repos get
+    its claims (system `release`, `reason` `session_ended`/`session_expired`, two new values of
+    the `ReleasePayload.reason` enum). New repos get
     the defaults; repos created earlier keep the old 30-min renewable TTL until the
     journaled `policy` operation is applied, so old journals replay unchanged.
   - Open errors are per change, not per session (§6.5), with an origin; `release` only

@@ -81,7 +81,7 @@ async function httpTarget(repo: string): Promise<ConformanceTarget> {
       return wcp<EventPage>("GET", `${base}/events?${q}`, observer);
     },
     event: (seq) => wcp<EventRecord>("GET", `${base}/events/${seq}`, observer),
-    policy: (p) => wcp("POST", `/v1/admin/repos/${repo}/policy`, ADMIN, p),
+    setPolicy: (p) => wcp("POST", `/v1/admin/repos/${repo}/policy`, ADMIN, p),
   };
 }
 

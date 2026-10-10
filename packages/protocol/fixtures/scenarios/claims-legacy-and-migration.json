@@ -299,7 +299,7 @@
               "keys": [
                 "src/auth/session.ts#SessionStore.get"
               ],
-              "reason": "session ended"
+              "reason": "session_ended"
             }
           }
         ]

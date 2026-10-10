@@ -155,9 +155,9 @@ describe("Claude Code hooks against the reference coordinator", () => {
     // A gets contract news? No: B only read calcTotal after A's change. A's own gate is clean.
     expect(await A.handle(hook("sa", rootA, { hook_event_name: "Stop" }))).toBeUndefined();
 
-    // SessionEnd -> leave
+    // SessionEnd -> leave, then the coordinator releases the change's claims (spec §7.5).
     await B.handle(hook("sb", rootB, { hook_event_name: "SessionEnd", reason: "exit" }));
-    expect(coord.log.at(-1)!.kind).toBe("leave");
+    expect(coord.log.slice(-2).map((r) => `${r.kind}${r.payload?.reason ? `:${String(r.payload.reason)}` : ""}`)).toEqual(["leave", "release:session_ended"]);
   });
 
   it("pushes contract_changed to a change that already uses the symbol (PostToolUse injection)", async () => {

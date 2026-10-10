@@ -199,6 +199,7 @@ describe("combined feed (§9.5)", () => {
 
 function schemaFor(op: string, actual: unknown): string | undefined {
   if (actual === null || actual === undefined) return undefined;
+  if (op === "policy") return "RepoPolicy";
   if (op === "system" || op === "event") return (actual as { type?: string }).type === "error" ? "WcpError" : "EventRecord";
   return undefined;
 }

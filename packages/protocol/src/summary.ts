@@ -88,7 +88,7 @@ export function summarize(r: Summarizable): string {
       break;
     case "release": {
       const keys = (p?.keys as string[] | undefined) ?? [];
-      head = `${a} released ${keys.length ? names(keys) : "all claims"}${p?.reason ? ` (${p.reason})` : ""}`;
+      head = `${a} released ${keys.length ? names(keys) : "all claims"}${p?.reason ? ` (${String(p.reason).replace(/_/g, " ")})` : ""}`;
       break;
     }
     case "negotiate.propose": {

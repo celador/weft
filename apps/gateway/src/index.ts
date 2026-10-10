@@ -382,6 +382,15 @@ async function admin(req: Request, env: Env, path: string, m: string): Promise<R
     if ("error" in r) throw new HttpError("invalid_message", r.error, { issues: [{ path: "", message: r.error }] });
     return json(r, r.created ? 201 : 200);
   }
+  // Operator: apply the claims policy (spec §7.5) — the one journaled step that moves a repo
+  // created before the policy onto claim leases. Body: {"claims": {"lease_ms", "firm_max_ms"}}.
+  const pm = /^\/v1\/admin\/repos\/([^/]+)\/policy$/.exec(path);
+  if (pm && m === "POST") {
+    const repo = decodeURIComponent(pm[1]!);
+    if (!REPO_NAME.test(repo) || !(await reg.listRepos()).some((r) => r.repo === repo)) throw new HttpError("repo_not_found", `unknown repo ${repo}`);
+    const body = (await readJson(req)) as { claims?: unknown };
+    return json(unwrap(await repoStub(env, repo).op("policy", [{ claims: body?.claims }])));
+  }
   if (path === "/v1/admin/tokens" && m === "GET") return json({ tokens: await reg.listTokens() });
   if (path === "/v1/admin/tokens" && m === "POST") {
     const r = await reg.issueToken((await readJson(req)) as TokenSpec);

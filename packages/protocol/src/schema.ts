@@ -105,7 +105,15 @@ export const schema: JsonSchema = {
     Position: obj({ line: seq, character: seq }, ["line", "character"]),
     Range: obj({ start: ref("Position"), end: ref("Position") }, ["start", "end"]),
     AgentRef: agentRef,
-    RepoPolicy: obj({ arbitration: enumOf("wound-wait", "wait-die"), escalation: enumOf("auto", "human") }, ["arbitration"]),
+    RepoPolicy: obj(
+      {
+        arbitration: enumOf("wound-wait", "wait-die"),
+        escalation: enumOf("auto", "human"),
+        // Spec §7.5. Absent on repos created before the claims policy (legacy TTL rules).
+        claims: obj({ lease_ms: { type: "integer", minimum: 1 }, firm_max_ms: { type: "integer", minimum: 1 } }, ["lease_ms", "firm_max_ms"]),
+      },
+      ["arbitration"],
+    ),
     Arbitration: obj(
       {
         policy: enumOf("wound-wait", "wait-die"),
@@ -157,7 +165,7 @@ export const schema: JsonSchema = {
     ),
     ReleasePayload: obj({
       keys: arr(ref("SymbolKey")),
-      reason: enumOf("done", "expired", "abandoned", "negotiated", "landed"),
+      reason: enumOf("done", "expired", "abandoned", "negotiated", "landed", "session_ended", "session_expired"),
     }),
     CheckpointPayload: obj({ sha: { type: "string", pattern: "^[0-9a-f]{7,64}$" }, ref: str }, ["sha"]),
     LandPayload: obj(

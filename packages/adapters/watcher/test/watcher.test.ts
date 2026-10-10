@@ -63,7 +63,8 @@ describe("file watcher (L0)", () => {
     await w.tick();
     expect(coord.log.some((r) => r.kind === "checkpoint" && r.agent === "human-w")).toBe(true);
     await w.stop();
-    expect(coord.log.at(-1)!.kind).toBe("leave");
+    // The session end is a leave; the coordinator may then release the change's claims (spec §7.5).
+    expect(coord.log.filter((r) => r.kind !== "release").at(-1)!.kind).toBe("leave");
   }, 60_000);
 
   it("`run` (real bundle, fs.watch) reports an edit made while it watches; `scan` reports the dirty tree", async () => {

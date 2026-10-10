@@ -138,6 +138,10 @@
       }
     },
     {
+      "op": "heartbeat",
+      "as": "B"
+    },
+    {
       "op": "submit",
       "as": "A",
       "submit": {
@@ -171,8 +175,12 @@
       }
     },
     {
+      "op": "heartbeat",
+      "as": "B"
+    },
+    {
       "op": "advance",
-      "ms": 199990
+      "ms": 199980
     },
     {
       "op": "tick",
@@ -186,8 +194,12 @@
       }
     },
     {
+      "op": "heartbeat",
+      "as": "B"
+    },
+    {
       "op": "advance",
-      "ms": 1
+      "ms": 7
     },
     {
       "op": "tick",

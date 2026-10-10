@@ -90,7 +90,7 @@ export type NegotiationTerms = {
 export type ClaimPayload = { firm: boolean; source: "explicit" | "predicted"; ttl_ms?: number };
 export type ReleasePayload = {
   keys?: SymbolKey[];
-  reason?: "done" | "expired" | "abandoned" | "negotiated" | "landed";
+  reason?: "done" | "expired" | "abandoned" | "negotiated" | "landed" | "session_ended" | "session_expired";
 };
 export type CheckpointPayload = { sha: string; ref?: string };
 export type LandPayload = { sha: string; op_id: string; trunk_ref?: string };
@@ -213,6 +213,16 @@ export type EscalationPolicy = "auto" | "human";
  */
 export type ClaimsPolicy = { lease_ms: number; firm_max_ms: number };
 export const DEFAULT_CLAIMS_POLICY: ClaimsPolicy = { lease_ms: 120_000, firm_max_ms: 600_000 };
+/** Why `p` is not a valid claims policy, or undefined when it is. */
+export function claimsPolicyError(p: unknown): string | undefined {
+  if (!p || typeof p !== "object") return "claims must be an object {lease_ms, firm_max_ms}";
+  const o = p as Record<string, unknown>;
+  for (const k of ["lease_ms", "firm_max_ms"] as const) {
+    const v = o[k];
+    if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 1) return `claims.${k} must be a positive integer (ms)`;
+  }
+  return undefined;
+}
 /** `claims` is absent for repos created before the claims policy (legacy TTL rules). */
 export type RepoPolicy = { arbitration: ArbitrationPolicy; escalation?: EscalationPolicy; claims?: ClaimsPolicy };
 

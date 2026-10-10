@@ -96,7 +96,8 @@ describe("OpenCode plugin end to end (generated plugin loaded as OpenCode would,
     expect(c.ok).toBe(true);
     expect(gitLog(root)).toMatch(/Task-Id: T-2\nAgent-Id: opencode-c/);
     await hooks.event!({ event: { type: "session.deleted", properties: { info: { id: "ses_1" } } } });
-    expect(coord.log.at(-1)!.kind).toBe("leave");
+    // The session end is a leave; the coordinator may then release the change's claims (spec §7.5).
+    expect(coord.log.filter((r) => r.kind !== "release").at(-1)!.kind).toBe("leave");
   }, 60_000);
 
   it("apply_patch is accounted after the fact against the stashed before-text", async () => {

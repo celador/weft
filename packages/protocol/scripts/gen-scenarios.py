@@ -542,13 +542,16 @@ scenarios.append({
          "expect": {"verdict": "reject", "seq": 4, "diagnostics": [diag("error", "claim_wait", X, 3, "claude-a")]}},
         {"op": "advance", "ms": 200000},
         {"op": "heartbeat", "as": "A", "expect": {"type": "heartbeat.ack"}},
+        {"op": "heartbeat", "as": "B"},
         {"op": "submit", "as": "A", "submit": edit(3, [(X, "body")]), "expect": {"verdict": "accept", "seq": 5}},
         {"op": "advance", "ms": 200000},
         {"op": "heartbeat", "as": "A", "expect": {"type": "heartbeat.ack"}},
-        {"op": "advance", "ms": 199990},
+        {"op": "heartbeat", "as": "B"},
+        {"op": "advance", "ms": 199980},
         {"op": "tick", "expect": []},
         {"op": "heartbeat", "as": "A", "expect": {"type": "heartbeat.ack"}},
-        {"op": "advance", "ms": 1},
+        {"op": "heartbeat", "as": "B"},
+        {"op": "advance", "ms": 7},
         # 600 000 ms after the claim event: released although claude-a is alive and heartbeating.
         {"op": "tick", "expect": [release_rec(6, "claude-a", "I-a", [X], "expired")]},
         {"op": "submit", "as": "B", "submit": edit(4, [(X, "body")]), "expect": {"verdict": "accept", "seq": 7, "diagnostics": []}},
@@ -584,7 +587,7 @@ scenarios.append({
         {"op": "events", "after": 5, "expect": {"events": [
             {"seq": 6, "kind": "leave", "agent": "claude-a", "session": "s1"},
             {"seq": 7, "kind": "leave", "agent": "claude-a", "session": "s3"},
-            {**release_rec(8, "claude-a", "I-a", [X, Z], "session ended"), "summary": "claude-a released refreshToken, SessionStore.get (session ended)"}]}},
+            {**release_rec(8, "claude-a", "I-a", [X, Z], "session_ended"), "summary": "claude-a released refreshToken, SessionStore.get (session ended)"}]}},
         {"op": "submit", "as": "B", "submit": edit(2, [(X, "body")], mode="check"), "expect": {"verdict": "accept", "seq": None, "diagnostics": []}},
         {"op": "submit", "as": "B", "submit": edit(2, [(X, "body")]), "expect": {"verdict": "accept", "seq": 9}},
         {"op": "submit", "as": "B", "submit": submit("claim", 9, {"firm": True, "source": "explicit"}, writes=[(Y, "body")]), "expect": {"seq": 10}},
@@ -593,7 +596,7 @@ scenarios.append({
         {"op": "tick", "expect": [
             release_rec(11, "codex-b", "I-b", [X], "expired"),
             {"seq": 12, "kind": "leave", "agent": "codex-b", "actor": {"type": "system"}},
-            release_rec(13, "codex-b", "I-b", [Y], "session expired")]},
+            release_rec(13, "codex-b", "I-b", [Y], "session_expired")]},
         {"op": "submit", "as": "B", "submit": edit(10, [(Y, "body")]), "expect": err("session_expired")},
     ],
 })
@@ -689,7 +692,7 @@ scenarios.append({
                                                              "policy": {"claims": DEFAULT_CLAIMS}}},
         {"op": "submit", "as": "B", "submit": edit(10, [(Z, "body")]), "expect": {"seq": 11}},
         {"op": "bye", "as": "B"},
-        {"op": "events", "after": 11, "expect": {"events": [{"seq": 12, "kind": "leave"}, release_rec(13, "codex-b", "I-b", [Z], "session ended")]}},
+        {"op": "events", "after": 11, "expect": {"events": [{"seq": 12, "kind": "leave"}, release_rec(13, "codex-b", "I-b", [Z], "session_ended")]}},
         # The firm claim from before the policy keeps its one-hour expiry.
         {"op": "advance", "ms": 1700000},
         {"op": "tick", "expect": []},
