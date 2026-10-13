@@ -242,6 +242,20 @@ describe("sequencer behaviours (HTTP → DO)", () => {
   });
 });
 
+describe("enforcement mode on an existing repo", () => {
+  it("re-creating a repo with a different enforcement mode fails, like conflicts; the same mode is accepted", async () => {
+    const repo = uniqueRepo("enforcement-existing");
+    await createRepo(repo, { enforcement: "block" });
+    const other = await call("POST", "/v1/admin/repos", ADMIN, { repo, enforcement: "advise" });
+    expect(other.status).toBe(400);
+    expect(await other.text()).toMatch(/already exists with enforcement=block/);
+    const omitted = await call("POST", "/v1/admin/repos", ADMIN, { repo });
+    expect(omitted.status).toBe(400); // omitted means advise
+    const same = await call("POST", "/v1/admin/repos", ADMIN, { repo, enforcement: "block" });
+    expect(same.status).toBe(200);
+  });
+});
+
 describe("conflicts mode on an existing repo (#4, review)", () => {
   it("re-creating a repo with a different conflicts mode fails; the same mode is accepted and nothing changes", async () => {
     const repo = uniqueRepo("conflicts-existing");
