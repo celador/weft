@@ -97,3 +97,10 @@ Append-only. One dated entry per heartbeat that changed something.
 
 ## 2026-10-09 23:05 — landed L1 leases
 - Merged wt/leases (t_199b55fb: 2 min soft claim leases, 10 min hard firm cap, release on session end, per-change open errors closing the #17-audit gate bypasses, claude-code symlink guard + Bash reconciliation, `weft claim` CLI). All 6 commits worker-authored (no outside-contributor code). Clean merge; gate on main green (protocol 151, sequencer 104, gateway 84, claude-code 42). Worktree removed. Board 40/40 done.
+
+## 2026-10-13 16:36 — SECURITY HOLD: untrusted contributor (Omer / barnessomer) on main + public repo; wt/local held
+- Standing directive: outside contributors UNTRUSTED (named barnessomer, omer@zsquared.io). Never fetch/build/test/run their code on this Mac; never merge without John's explicit yes after a static security review.
+- Finding: Omer's PRs are on main AND on public origin (celador/weft, local main == origin/main 0/0). `git rev-list` + `git log origin/main` show merges #2/#4/#12/#16/#19 authored "Omer (combined local)", pulled in by reflog main@{1} `git pull -q: Fast-forward`. No approval on record (pm-log ends 10-09 23:05; grep for omer/pr/approve = empty; no decision file).
+- Static review only (no execution, per directive): diff `bb8ead3..b3abc71` = 21 files / +1384, per-repo enforcement + protocol/ownership/safe-read + a Claude Code adapter + a local 127.0.0.1 demo coordinator. No obvious exfil (only a local `fetchEvent` method and a local HTTP demo server), but it changes protocol format + the Claude Code adapter — the exact "journal/protocol format" pattern the directive flags. Local `pr16` ref exists. Not a full review.
+- Action this tick: HED wt/local landing (t_e5801824, 9 commits ahead, unmerged — it sits on main bearing Omer code; skill rule "never land a worker branch that pulled their code"). Did not run the gate (would execute Omer code on this Mac), did not push further. Omer code already public; not propagating more.
+- Needs John: his explicit call on Omer's PRs (approve-as-recorded / revert from main + public history / investigate) before anything touching main lands. Flagged to John.
