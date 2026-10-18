@@ -24,8 +24,17 @@ For each merge it:
   4. a rejected land (R1 trunk CAS: `stale_overwrite`) is logged and retried against a fresh head.
      git already holds the merge, so "rebase" here means re-reading Weft's trunk view.
 
-Token: a system token (scopes system+observe, repos [<repo>]) kept under `land` in
-~/.config/weft/hermes-adapter.json (mode 600). It is minted on first use from the admin token
+Other repos: `--repo hermes-ios --git-dir ~/code/hermes-ios --ref rebrand/otto --trunk-ref
+rebrand/otto --kanban-db ~/.hermes/kanban/boards/otto/kanban.db`. `--trunk-ref` is recorded in each
+land payload (`trunk_ref: refs/heads/<branch>`), which is how Weft knows a repo's trunk branch.
+
+`--note-install` appends a system `checkpoint` (no change) recording an install/release of trunk
+(`payload {sha, ref, x_install: {build, target, devices}}`), so every agent and the Otto Weft
+strip sees which build went where.
+
+Token: a system token (scopes system+observe, repos [<repo>]) kept per repo under
+`land_tokens.<repo>` in ~/.config/weft/hermes-adapter.json (mode 600; the legacy single `land`
+entry is still read when its repo matches). It is minted on first use from the admin token
 (~/.config/weft/preview-admin-token) and revoked by `install.py --uninstall`. Secrets are never
 printed. Every decision is appended as one JSON line to ~/.cache/weft-hermes/land.log.
 
@@ -186,14 +195,24 @@ def err_text(body: Any) -> str:
     return str(body)[:200]
 
 
+def trunk_ref_of(branch: Optional[str]) -> Optional[str]:
+    if not branch:
+        return None
+    return branch if branch.startswith("refs/") else f"refs/heads/{branch}"
+
+
 def post_land(gw: Gateway, change: str, sha: str, retries: int = 3,
               sleep: Callable[[float], None] = time.sleep,
-              log: Callable[[dict], None] = lambda r: None) -> Tuple[str, Optional[dict]]:
+              log: Callable[[dict], None] = lambda r: None,
+              trunk_ref: Optional[str] = None) -> Tuple[str, Optional[dict]]:
     """POST the land; on an R1 rejection log it, re-read head ("rebase") and retry."""
     oid = op_id(gw.repo, change, sha)
     for attempt in range(1, retries + 2):
         base = gw.head()
-        draft = {"kind": "land", "base_seq": base, "change": change, "payload": {"sha": sha, "op_id": oid}}
+        payload: Dict[str, Any] = {"sha": sha, "op_id": oid}
+        if trunk_ref:
+            payload["trunk_ref"] = trunk_ref
+        draft = {"kind": "land", "base_seq": base, "change": change, "payload": payload}
         status, rec = gw.land(draft)
         if status == 200 and isinstance(rec, dict) and rec.get("status") == "accepted":
             return "landed", rec
@@ -241,10 +260,28 @@ def recent_merges(repo_dir: Path, ref: str, n: int) -> List[str]:
 
 # ---------------------------------------------------------------------------- token
 
-def system_token(cfg: dict, url: str, repo: str, admin_file: str) -> str:
+def note_install(gw: Gateway, sha: str, ref: str, install: Dict[str, Any]) -> Tuple[int, Any]:
+    """System checkpoint (no change) recording that trunk ``sha`` was installed/released."""
+    draft = {"kind": "checkpoint", "base_seq": gw.head(),
+             "payload": {"sha": sha, "ref": ref, "x_install": install}}
+    return gw.call("POST", f"/v1/repos/{gw.repo}/system/events", draft)
+
+
+def cached_token(cfg: dict, url: str, repo: str) -> Optional[str]:
+    """The repo's saved system token: `land_tokens.<repo>`, else the legacy single `land` entry."""
+    entry = (cfg.get("land_tokens") or {}).get(repo) or {}
+    if entry.get("token") and entry.get("url") == url:
+        return entry["token"]
     entry = cfg.get("land") or {}
     if entry.get("token") and entry.get("url") == url and entry.get("repo") == repo:
         return entry["token"]
+    return None
+
+
+def system_token(cfg: dict, url: str, repo: str, admin_file: str) -> str:
+    cached = cached_token(cfg, url, repo)
+    if cached:
+        return cached
     admin_path = Path(admin_file).expanduser()
     if not admin_path.exists():
         sys.exit(f"no system token in {CONFIG} and no admin token at {admin_path}")
@@ -254,8 +291,8 @@ def system_token(cfg: dict, url: str, repo: str, admin_file: str) -> str:
     if status != 201 or not isinstance(body, dict):
         sys.exit(f"could not issue a system token: HTTP {status} {err_text(body)}")
     cfg = load_config()  # re-read: never clobber a concurrent installer write
-    cfg["land"] = {"url": url, "repo": repo, "principal": "weft-pm-land", "token": body["token"],
-                   "token_id": body["info"]["id"]}
+    cfg.setdefault("land_tokens", {})[repo] = {"url": url, "repo": repo, "principal": "weft-pm-land",
+                                               "token": body["token"], "token_id": body["info"]["id"]}
     save_config(cfg)
     print(f"issued system token {body['info']['id']} (principal weft-pm-land, repos [{repo}]); saved to {CONFIG}")
     return body["token"]
@@ -272,7 +309,8 @@ def write_log(rec: dict) -> None:
         pass
 
 
-def process(gw: Gateway, info: dict, kanban_db: Path, dry_run: bool) -> List[dict]:
+def process(gw: Gateway, info: dict, kanban_db: Path, dry_run: bool,
+            trunk_ref: Optional[str] = None) -> List[dict]:
     branch = info["branch"] or ""
     tasks: List[str] = []
     for t in tasks_from_kanban(kanban_db, branch) + tasks_from_branch(branch) + tasks_from_messages(info["messages"]):
@@ -303,7 +341,7 @@ def process(gw: Gateway, info: dict, kanban_db: Path, dry_run: bool) -> List[dic
             elif dry_run:
                 r.update(result="would_land", reason=reason)
             else:
-                outcome, rec = post_land(gw, change, info["sha"], log=write_log)
+                outcome, rec = post_land(gw, change, info["sha"], log=write_log, trunk_ref=trunk_ref)
                 r.update(result=outcome, reason=reason)
                 if rec:
                     r.update(seq=rec.get("seq"), keys=len(rec.get("writes") or []))
@@ -325,6 +363,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--kanban-db", default=DEFAULT_KANBAN_DB)
     p.add_argument("--admin-token-file", default=DEFAULT_ADMIN)
     p.add_argument("--token-file", help="use this system token instead of the config's")
+    p.add_argument("--trunk-ref", help="trunk branch recorded in each land (e.g. rebrand/otto)")
+    p.add_argument("--note-install", metavar="JSON",
+                   help='record an install of <ref>: {"build": "87", "target": "mac", "devices": [...]}')
     p.add_argument("--dry-run", action="store_true")
     a = p.parse_args(argv)
 
@@ -335,6 +376,17 @@ def main(argv: Optional[List[str]] = None) -> int:
              else system_token(cfg, url, repo, a.admin_token_file))
     gw = Gateway(url, token, repo)
     git_dir = Path(a.git_dir).expanduser()
+    trunk_ref = trunk_ref_of(a.trunk_ref)
+
+    if a.note_install:
+        install = json.loads(a.note_install)
+        sha = git(git_dir, "rev-parse", f"{a.sha or a.ref}^{{commit}}").strip()
+        status, rec = note_install(gw, sha, trunk_ref or trunk_ref_of(a.ref) or a.ref, install)
+        ok = status == 200 and isinstance(rec, dict) and rec.get("status") == "accepted"
+        write_log({"event": "install", "repo": repo, "sha": sha[:12], "install": install,
+                   "result": "noted" if ok else f"http_{status}", **({"seq": rec.get("seq")} if ok else {})})
+        print(f"{sha[:12]} install {install}: " + (f"noted seq #{rec.get('seq')}" if ok else f"HTTP {status} {err_text(rec)}"))
+        return 0 if ok else 1
 
     infos: List[dict] = []
     if a.branch:
@@ -349,7 +401,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not info["merge"] and not a.branch:
             print(f"{info['sha'][:12]} is not a merge commit ({info['subject'][:60]}); pass --branch for a fast-forward")
             continue
-        for r in process(gw, info, Path(a.kanban_db).expanduser(), a.dry_run):
+        for r in process(gw, info, Path(a.kanban_db).expanduser(), a.dry_run, trunk_ref):
             extra = f" seq #{r['seq']}" if r.get("seq") else ""
             print(f"{r['sha']} {r.get('branch') or '-'} {r.get('change') or r.get('task') or ''}: {r['result']}{extra} ({r.get('reason', '')})")
             if r["result"] not in ("landed", "skip", "would_land", "unknown_change"):
