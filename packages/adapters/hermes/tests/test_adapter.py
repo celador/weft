@@ -299,6 +299,48 @@ class EditTests(AdapterTestCase):
         self.assertIsNone(out)
 
 
+class EnforceFailsOpenTests(AdapterTestCase):
+    """John's rule for enforce repos: an unreachable gateway never stalls a card. Every hook
+    lets the tool run, one log line per failure, and the breaker makes later calls instant."""
+
+    def test_enforce_with_dead_gateway_allows_everything_and_logs(self):
+        import socket
+        import time as _time
+        from weft.wcp import CircuitBreaker, WcpClient
+        with socket.socket() as s:  # a port nothing listens on
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        log = self.tmp / "weft.log"
+        self.cfg.log_path = log
+        self.assertEqual(self.cfg.mode, "enforce")
+        client = WcpClient(f"http://127.0.0.1:{port}", "t", "weft", timeout=1.0, breaker=CircuitBreaker(300))
+        adapter = WeftAdapter(self.cfg, client=client, heartbeat=False)
+        try:
+            path = self.repo / "src" / "a.ts"
+            path.parent.mkdir(exist_ok=True)
+            path.write_text("export function f() { return 1; }\n")
+            args = {"path": str(path), "content": "export function f() { return 2; }\n"}
+            self.assertIsNone(adapter.pre_tool_call(tool_name="write_file", args=args, tool_call_id="e1"))
+            path.write_text(args["content"])
+            adapter.post_tool_call(tool_name="write_file", args=args, tool_call_id="e1", result="{}")
+            self.assertIsNone(adapter.transform_tool_result(tool_name="write_file", args=args, result="{}",
+                                                            tool_call_id="e1"))
+            # the breaker is open now: the next edit costs no network round trip
+            t0 = _time.monotonic()
+            args2 = {"path": str(path), "content": "export function f() { return 3; }\n"}
+            self.assertIsNone(adapter.pre_tool_call(tool_name="write_file", args=args2, tool_call_id="e2"))
+            self.assertLess(_time.monotonic() - t0, 0.5)
+            commit = {"command": "git commit -qam x", "workdir": str(self.repo)}
+            self.assertIsNone(adapter.pre_tool_call(tool_name="terminal", args=commit, tool_call_id="g1"))
+            self.assertIsNone(adapter.pre_tool_call(tool_name="kanban_complete", args={}, tool_call_id="k1"))
+            self.assertIsNone(adapter.pre_verify())
+            text = log.read_text()
+            self.assertIn("failed open", text)
+            self.assertIn("circuit_open", text)
+        finally:
+            adapter.analyzer.close()
+
+
 class TerminalAndGateTests(AdapterTestCase):
     def test_terminal_edits_and_commits_become_events(self):
         args = {"command": "echo more >> docs/notes.md", "workdir": str(self.repo)}

@@ -133,6 +133,50 @@ class Retry(unittest.TestCase):
         self.assertEqual(len(gw.drafts), 1)
 
 
+class TrunkAndTokens(unittest.TestCase):
+    def test_trunk_ref_recorded_in_land_payload(self):
+        gw = FakeGateway([(200, {"status": "accepted", "seq": 11})])
+        wl.post_land(gw, "c", "sha1", sleep=lambda s: None, trunk_ref=wl.trunk_ref_of("rebrand/otto"))
+        self.assertEqual(gw.drafts[0]["payload"]["trunk_ref"], "refs/heads/rebrand/otto")
+        self.assertIsNone(wl.trunk_ref_of(None))
+        self.assertEqual(wl.trunk_ref_of("refs/heads/main"), "refs/heads/main")
+
+    def test_no_trunk_ref_by_default(self):
+        gw = FakeGateway([(200, {"status": "accepted", "seq": 11})])
+        wl.post_land(gw, "c", "sha1", sleep=lambda s: None)
+        self.assertNotIn("trunk_ref", gw.drafts[0]["payload"])
+
+    def test_tokens_are_kept_per_repo(self):
+        u = "https://gw"
+        cfg = {"land": {"url": u, "repo": "weft", "token": "W"},
+               "land_tokens": {"hermes-ios": {"url": u, "repo": "hermes-ios", "token": "H"}}}
+        self.assertEqual(wl.cached_token(cfg, u, "weft"), "W")         # legacy entry still read
+        self.assertEqual(wl.cached_token(cfg, u, "hermes-ios"), "H")
+        self.assertIsNone(wl.cached_token(cfg, u, "other"))
+        self.assertIsNone(wl.cached_token(cfg, "https://elsewhere", "hermes-ios"))
+
+    def test_note_install_is_a_changeless_system_checkpoint(self):
+        class GW:
+            repo = "hermes-ios"
+            def __init__(self):
+                self.posts = []
+            def head(self):
+                return 41
+            def call(self, method, path, body=None):
+                self.posts.append((method, path, body))
+                return 200, {"status": "accepted", "seq": 42}
+        gw = GW()
+        status, rec = wl.note_install(gw, "abc1234", "refs/heads/rebrand/otto", {"build": "87", "target": "mac"})
+        self.assertEqual((status, rec["seq"]), (200, 42))
+        method, path, body = gw.posts[0]
+        self.assertEqual((method, path), ("POST", "/v1/repos/hermes-ios/system/events"))
+        self.assertEqual(body["kind"], "checkpoint")
+        self.assertNotIn("change", body)
+        self.assertEqual(body["base_seq"], 41)
+        self.assertEqual(body["payload"], {"sha": "abc1234", "ref": "refs/heads/rebrand/otto",
+                                           "x_install": {"build": "87", "target": "mac"}})
+
+
 class Git(unittest.TestCase):
     def test_merge_info_collects_merged_commit_messages(self):
         with tempfile.TemporaryDirectory() as d:

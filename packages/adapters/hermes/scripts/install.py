@@ -302,13 +302,15 @@ def uninstall(args) -> None:
                 status, _ = admin_call(cfg["url"], admin, "DELETE", f"/v1/admin/tokens/{tid}")
                 revoked += status == 204
         print(f"[{profile}] disabled ({res.returncode}), removed {dest}; {revoked}/{len(ids)} tokens revoked")
-    land = cfg.get("land") or {}
-    if not cfg.get("agents") and land:  # last profile gone: also revoke weft_land.py's system token
+    lands = [cfg.get("land") or {}] + list((cfg.get("land_tokens") or {}).values())
+    if not cfg.get("agents") and any(lands):  # last profile gone: also revoke weft_land.py's system tokens
         cfg.pop("land", None)
-        if land.get("token_id") and admin:
-            status, _ = admin_call(land.get("url") or cfg.get("url") or args.url, admin, "DELETE",
-                                   f"/v1/admin/tokens/{land['token_id']}")
-            print(f"land system token {land['token_id']} revoked (HTTP {status})")
+        cfg.pop("land_tokens", None)
+        for land in lands:
+            if land.get("token_id") and admin:
+                status, _ = admin_call(land.get("url") or cfg.get("url") or args.url, admin, "DELETE",
+                                       f"/v1/admin/tokens/{land['token_id']}")
+                print(f"land system token {land['token_id']} revoked (HTTP {status})")
     if cfg.get("agents"):
         save_config(cfg)
     elif CONFIG.exists():
