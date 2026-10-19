@@ -108,3 +108,7 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-10-18 06:45 — unstuck t_43de870b (Atelier Builds podcast)
 - Run 2 hung on publish.sh (wrangler r2 put, 582 s) until its lease expired; dispatcher gave up after 2 stale_lock reclaims. Feed already live (atelier-builds.xml 200, 3 items; cover 200). Commented: skip publish.sh/wrangler, verify with curl, go to Spotify step, `timeout 120` every command. Unblocked + dispatched (running). Rationale: only Spotify submission + README remain.
 - wt/local (t_e5801824) still HELD pending John's call on Omer's PRs (flagged 10-13). Main advanced by John's own wt/otto-guard merge (012cd84).
+
+## 2026-10-19 20:55 — unstuck t_3c900064 (Connect 10-slide deck)
+- Worker stopped with a partial handoff (deck/pdf/pptx committed 4924543). Commented the Aura-2 path (demo/video/rig/narrate.mjs --provider cf-aura2) and remaining items; unblocked + dispatched (running). Rationale: talk is Wed Oct 21, finish today.
+- Pushed main (852b34a, 4924543) to origin. wt/local still HELD (Omer-code question, flagged 10-13).
