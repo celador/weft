@@ -11,17 +11,17 @@
 html,body{height:100%;background:#0b0d12;color:#e8e8ea;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;overflow:hidden}
 section{position:absolute;inset:0;padding:7vh 7vw;display:none;flex-direction:column;justify-content:center;gap:4vh}
 section.on{display:flex}
-h1{font-size:9vh;line-height:1.05;letter-spacing:-.02em}
-h2{font-size:7vh;line-height:1.1;letter-spacing:-.015em}
-.kicker{color:#ffa53d;font-size:3vh;text-transform:uppercase;letter-spacing:.12em}
+h1{font-size:11vh;line-height:1.05;letter-spacing:-.02em}
+h2{font-size:8vh;line-height:1.1;letter-spacing:-.015em}
+.kicker{color:#ffa53d;font-size:3.4vh;text-transform:uppercase;letter-spacing:.12em}
 .kicker .step{margin-left:2vw;color:#8b909b}
-.lead{color:#b9bec8;font-size:4vh;line-height:1.35}
-.lead.big{font-size:4.4vh}
+.lead{color:#b9bec8;font-size:4.8vh;line-height:1.35}
+.lead.big{font-size:5vh}
 .hl{color:#ffa53d}
-blockquote{font-size:7.2vh;line-height:1.18;letter-spacing:-.01em;font-weight:600}
-blockquote.sm{font-size:4.6vh;font-weight:500;color:#d6d9df}
-blockquote.hl{font-size:6vh}
-.qs{display:block;font-size:4.4vh;color:#b9bec8;font-weight:500;margin-top:1.5vh}
+blockquote{font-size:8.6vh;line-height:1.18;letter-spacing:-.01em;font-weight:600}
+blockquote.sm{font-size:5.6vh;font-weight:500;color:#d6d9df}
+blockquote.hl{font-size:7vh}
+.qs{display:block;font-size:5.2vh;color:#b9bec8;font-weight:500;margin-top:1.5vh}
 .sq{text-decoration:underline wavy #ff4d4d;text-underline-offset:1.4vh;text-decoration-thickness:.45vh}
 .split{display:grid;grid-template-columns:1fr 1.2fr;gap:4vw;align-items:center}
 .split.wide{grid-template-columns:1.7fr 1fr}
@@ -30,13 +30,13 @@ figcaption{font-size:2.2vh;color:#8b909b;margin-top:1vh}
 .nums{display:grid;grid-template-columns:repeat(4,1fr);gap:1.5vw}
 .nums.one{grid-template-columns:1fr}
 .nums div{background:#141821;border:1px solid #262b36;border-radius:14px;padding:3vh 1.6vw}
-.nums b{display:block;font-size:8vh;color:#ffa53d;letter-spacing:-.02em}
-.nums span{font-size:3vh;color:#c3c7cf;line-height:1.35;display:block}
+.nums b{display:block;font-size:10vh;color:#ffa53d;letter-spacing:-.02em}
+.nums span{font-size:3.6vh;color:#c3c7cf;line-height:1.35;display:block}
 table.map{border-collapse:collapse;width:100%}
-table.map td{padding:3vh 1.2vw;border-bottom:1px solid #232834;vertical-align:top;font-size:4.2vh;line-height:1.35}
+table.map td{padding:3vh 1.2vw;border-bottom:1px solid #232834;vertical-align:top;font-size:5vh;line-height:1.3}
 table.map td:first-child{color:#ffa53d;white-space:nowrap;font-weight:600;width:28%}
 ul.plain{list-style:none}
-ul.plain li{font-size:5.4vh;line-height:1.5}
+ul.plain li{font-size:6.4vh;line-height:1.5}
 ul.plain li:before{content:"·";color:#ffa53d;margin-right:1.5vw}
 .src{font-size:2.2vh;color:#7d828d}
 .demo{gap:2vh}
@@ -44,14 +44,14 @@ ul.plain li:before{content:"·";color:#ffa53d;margin-right:1.5vw}
 .method{gap:1.5vh}
 .mwrap{position:relative;padding-bottom:20vh}
 .method svg.loop{position:absolute;left:0;right:0;bottom:0;width:100%;height:20vh}
-ol.ten{list-style:none;display:grid;grid-template-columns:repeat(10,1fr);gap:.8vw}
-ol.ten li{background:#141821;border:1px solid #262b36;border-radius:12px;padding:2vh .7vw;font-size:2.7vh;line-height:1.25;min-height:19vh}
-ol.ten b{display:block;color:#ffa53d;font-size:4.6vh;margin-bottom:1vh}
-.loopbox{position:absolute;left:30%;right:0;bottom:0;display:flex;gap:1.5vw;justify-content:center;align-items:center;font-size:3.2vh;white-space:nowrap;background:#1c1610;border:1px dashed #ffa53d;border-radius:12px;padding:2vh 1.5vw}
+ol.ten{list-style:none;display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:.8vw}
+ol.ten li{background:#141821;border:1px solid #262b36;border-radius:12px;padding:2vh .6vw;font-size:3vh;line-height:1.2;min-height:30vh;hyphens:manual;-webkit-hyphens:manual}
+ol.ten b{display:block;color:#ffa53d;font-size:5.6vh;margin-bottom:1vh}
+.loopbox{position:absolute;left:30%;right:0;bottom:0;display:flex;gap:1.5vw;justify-content:center;align-items:center;font-size:3.8vh;white-space:nowrap;background:#1c1610;border:1px dashed #ffa53d;border-radius:12px;padding:2vh 1.5vw}
 .loopbox b{color:#ffa53d;margin-right:.6vw}
 .end{align-items:center;text-align:center}
 .qrs{display:flex;gap:6vw;justify-content:center}
-.qrs img{width:26vh;height:26vh;image-rendering:pixelated;border-radius:12px;border:none}
+.qrs img{width:30vh;height:30vh;image-rendering:pixelated;border-radius:12px;border:none}
 .qrs figcaption{font-size:2.8vh;color:#e8e8ea}
 #n{position:fixed;right:2vw;bottom:2vh;font-size:1.8vh;color:#5d626c}
 </style></head><body>
@@ -136,14 +136,14 @@ ol.ten b{display:block;color:#ffa53d;font-size:4.6vh;margin-bottom:1vh}
   </div>
 </section>
 <section>
-  <h2>Weft’s own log, Oct 19</h2>
+  <h2>Weft’s own log, Monday Oct 19</h2>
   <div class="nums">
     <div><b>918</b><span>events</span></div>
     <div><b>679</b><span>edits</span></div>
     <div><b>27</b><span>landings on main</span></div>
     <div><b>60</b><span>“wait for the other agent”</span></div>
   </div>
-  <div class="nums one"><div><b>5</b><span>edits refused, and rewritten by the agent</span></div></div>
+  <div class="nums one"><div><b>5</b><span>edits refused before they could land</span></div></div>
   <p class="src">weft.elier.ai/api/repos/weft/events · log-stats-2026-10-19.json</p>
 </section>
 <section class="big">
@@ -160,15 +160,15 @@ ol.ten b{display:block;color:#ffa53d;font-size:4.6vh;margin-bottom:1vh}
   <ul class="plain">
     <li>Hacker News: no upvotes</li>
     <li>The build broke</li>
-    <li>A stranger sent pull requests: review, ask for proof</li>
+    <li>A stranger’s pull requests: agents asked for proof</li>
   </ul>
   <blockquote class="hl">“I want every edit visible. That’s the magical part.”</blockquote>
-  <p class="src">Oct 18, after seeing only landed tickets in my Mac app</p>
+  <p class="src">Oct 18, after my Mac app showed only finished work</p>
 </section>
 <section class="method">
   <h2>How I build with agents</h2>
   <div class="mwrap">
-    <ol class="ten"><li><b>1</b>Explore</li><li><b>2</b>Dig into specifics</li><li><b>3</b>Think up solutions</li><li><b>4</b>Discuss alternatives</li><li><b>5</b>Make decisions</li><li><b>6</b>Reason through edge cases</li><li><b>7</b>Delegate</li><li><b>8</b>Build the system around the agents</li><li><b>9</b>Hand over authority, keep sign-off</li><li><b>10</b>Verify and steer</li></ol>
+    <ol class="ten"><li><b>1</b>Explore</li><li><b>2</b>Dig into specifics</li><li><b>3</b>Think up solutions</li><li><b>4</b>Discuss alter&shy;natives</li><li><b>5</b>Make decisions</li><li><b>6</b>Reason through edge cases</li><li><b>7</b>Delegate</li><li><b>8</b>Build the system around the agents</li><li><b>9</b>Hand over authority, keep sign-off</li><li><b>10</b>Verify and steer</li></ol>
     <svg class="loop" viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true">
       <path d="M 955 2 L 955 50" fill="none" stroke="#ffa53d" stroke-width="3" vector-effect="non-scaling-stroke"/>
       <path d="M 945 42 L 955 52 L 965 42" fill="none" stroke="#ffa53d" stroke-width="3" vector-effect="non-scaling-stroke"/>
@@ -177,7 +177,7 @@ ol.ten b{display:block;color:#ffa53d;font-size:4.6vh;margin-bottom:1vh}
     </svg>
     <div class="loopbox"><span><b>11</b> Use it, find issues</span><span>→</span><span><b>12</b> Iterate: back to step 1 for each gap</span></div>
   </div>
-  <p class="lead">Now: making Weft run fully local, and putting it inside my app.<br>Preparing this talk was the loop too.</p>
+  <p class="lead">Now: Weft on a laptop, and inside my app. Neither is finished.<br>Preparing this talk was the loop too.</p>
 </section>
 <section class="end">
   <h2>If the code editor disappears,<br>agents still need <span class="sq">squiggles</span>.</h2>
