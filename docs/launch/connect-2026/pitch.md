@@ -28,9 +28,11 @@ Artifacts and Workflows.
    header shows `live · #<number>`.
 4. Backup video downloaded to the desktop, in case the venue Wi-Fi fails:
    `curl -o ~/Desktop/weft-demo-short.mp4 https://weft-media.elier.ai/weft-demo-short.mp4`
-   (3:00 cut; the squiggle segment runs from 0:37 to 1:24).
-5. If the demo-hardening card (t_a411f661) has landed `scripts/connect-preflight.sh`, run it
-   from the repo root and check every line is green.
+   (3:00 cut; the squiggle segment runs from 0:37 to 1:24). The live-system backup recording
+   (2:55, no audio, same beats as the live demo) is
+   `curl -o ~/Desktop/weft-connect-backup.mp4 https://weft-media.elier.ai/connect-2026-backup.mp4`;
+   stills per beat are in `demo/video/connect-2026/stills/`. See `runbook.md`.
+5. Run `scripts/connect-preflight.sh` from the repo root; it must end with "All green."
 
 ---
 
