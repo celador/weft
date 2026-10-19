@@ -5,8 +5,12 @@ Say the answer, then stop. Full list with sources: `../qa.md`.
 **1. Did you write the code?**
 No. Agents wrote it, coordinated by Weft itself. I designed it in one conversation on Oct 3, then made the decisions and kept final sign-off.
 
-**2. Did a human review the code?** (John: confirm this is true before you say it)
+**2. Did a human review the code?**
 Not line by line. I reviewed evidence instead: tests, a recorded demo and Weft's public log, and I signed off on anything public.
+
+The scale is why. From my first message to the submitted entry took 64 hours (Sat Oct 3, 10:00 PM to Mon Oct 6, 1:40 PM). In that time the agents wrote 231 files: 38,593 lines of code and tests, about 2 million characters. The usual industry figure for a human is 10 to 50 finished lines a day (Steve McConnell, *Code Complete*). At 50 a day, writing it by hand would have taken me about 770 working days, roughly three years. Even at the best small-project rate McConnell reports, 125 a day, it's over a year. Today the repo has about 44,000 agent-written lines in roughly 270 files, plus about 1,400 lines from an outside contributor.
+
+Lines of code aren't a measure of quality. They show why line-by-line review stops working, and why the checks have to happen while the agents are writing.
 
 **3. How is this different from git merge or a merge queue?**
 Git and merge queues find conflicts after the code is written. Weft checks each edit while it is being made, at the level of functions and types, so the agent hears about it before a commit exists.

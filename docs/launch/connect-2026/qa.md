@@ -191,3 +191,13 @@ Hermes session `api_1791070817_1d33e733` (Oct 3-13); `docs/pm-log.md`.
 | Spec status, AAIF item open | `README.md`, `ROADMAP.md`, aaif/project-proposals#53 |
 | `weft serve` not on main | `git branch --merged main` (Oct 19 2026); `docs/pm-log.md` |
 | Roadmap items | `ROADMAP.md` |
+
+
+## The numbers behind "did a human review the code?"
+
+- Time: 64 hours, from the first message (Sat Oct 3 2026, 22:00 -03, session api_1791070817_1d33e733) to the submission commit "R4: submitted" (Mon Oct 6, 13:40 -03).
+- At submission: 231 files of code and tests (.ts/.tsx/.js/.mjs/.py/.sh/.css/.swift/.sql/.html; excluding node_modules, build output, lockfiles, fixtures, evidence and slide decks): 38,593 lines, 1,971,355 characters. All commits by agents; no outside contributors yet.
+- Today (Oct 19): about 44,000 agent-written lines (git blame, code and tests), plus 1,356 lines from Omer Bar-Ness.
+- Human benchmark: 10-50 delivered lines per person per day, industry average including non-coding work (McConnell, Code Complete 2nd ed., ch. 20.5); 20-125 for small projects (McConnell via Coding Horror); Capers Jones 16-38; Brooks (OS/360) about 10.
+- 38,593 / 50 = 772 working days (about 3 years at 250 days/year). 38,593 / 125 = 309 working days (over a year).
+- Caveat to say out loud if pushed: lines of code are not quality; the figures show scale.
