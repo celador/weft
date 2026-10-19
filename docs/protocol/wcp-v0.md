@@ -419,7 +419,8 @@ claims on k, R the requester.
 | `wait-die` | **wait**: R gets `claim_wait` — warning, or error if H's claim is firm | **die**: R gets `claim_die` (error) |
 
 **Enforcement** is a repo config field, `enforcement` (`advise` | `block`; absent = `advise`), set
-at repo creation and recorded in the journaled config like `policy`. Under `advise`, `claim_wait`
+at repo creation and recorded in the journaled config like `policy`; re-creating an existing repo
+with a different mode fails (the gateway does not change a stored mode). Under `advise`, `claim_wait`
 is a warning (error only if the holder's claim is firm). Under `block`, a `claim_wait` on an edit is an error and the edit is rejected; a claim submission is
 never refused by the mode (a firm holder still errors). Nothing else changes: the same arbitration,
 claims and TTLs apply. The mode is part of the repo config record that `replay()` takes as its init:

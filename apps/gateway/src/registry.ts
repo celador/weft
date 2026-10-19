@@ -52,9 +52,12 @@ export class Registry extends DurableObject<RegistryEnv> {
     const stub = this.env.WEFT_REPO.get(this.env.WEFT_REPO.idFromName(init.repo));
     const r = (await stub.init(init)) as unknown as Result<{ created: boolean; config: CoordinatorConfig }>;
     if (!r.ok) return { error: r.error.error.message };
-    // An existing repo keeps its stored config. Asking for a different conflicts mode must fail, not be ignored.
+    // An existing repo keeps its stored config. Asking for a different conflicts or enforcement mode must fail, not be ignored.
     if (!r.value.created && (init.conflicts ?? "hold") !== (r.value.config.conflicts ?? "hold")) {
       return { error: `repo ${init.repo} already exists with conflicts=${r.value.config.conflicts ?? "hold"}; create it with the mode you want` };
+    }
+    if (!r.value.created && (init.enforcement ?? "advise") !== (r.value.config.enforcement ?? "advise")) {
+      return { error: `repo ${init.repo} already exists with enforcement=${r.value.config.enforcement ?? "advise"}; create it with the mode you want` };
     }
     const now = new Date().toISOString();
     this.sql.exec(`INSERT OR IGNORE INTO repos (repo, config, created_at) VALUES (?, ?, ?)`, init.repo, JSON.stringify(init), now);
