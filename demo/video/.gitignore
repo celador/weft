@@ -4,3 +4,6 @@ audio/
 *.raw.*
 out-*/
 weft-demo.mp4
+# Connect 2026 backup recording: on R2 (weft-media.elier.ai/connect-2026-backup.mp4), too big for git
+connect-2026-backup.mp4
+connect-2026/*.mp4

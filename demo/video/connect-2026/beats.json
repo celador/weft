@@ -1,0 +1,69 @@
+{
+  "recorded_at": "2026-10-19T08:35:09.199Z",
+  "live_event_seq": 917,
+  "beats": [
+    {
+      "n": 1,
+      "name": "site",
+      "caption": "What Weft is: a coordinator that lets many coding agents edit one repo at once.",
+      "still": "stills/01-site.png",
+      "start_s": 0,
+      "end_s": 28.9
+    },
+    {
+      "n": 2,
+      "name": "live-log",
+      "caption": "weft.elier.ai: the live, public change log of the weft repo. Every agent edit is one row.",
+      "still": "stills/02-live-log.png",
+      "start_s": 28.9,
+      "end_s": 51.4
+    },
+    {
+      "n": 3,
+      "name": "live-edit",
+      "caption": "A real agent edit arrives while we watch (no refresh).",
+      "still": "stills/03-live-edit.png",
+      "start_s": 51.4,
+      "end_s": 64.1
+    },
+    {
+      "n": 4,
+      "name": "squiggle",
+      "caption": "When an edit would break another agent's work, Weft blocks it and says why (a squiggle).",
+      "still": "stills/04-squiggle.png",
+      "start_s": 64.1,
+      "end_s": 83.4
+    },
+    {
+      "n": 5,
+      "name": "replay",
+      "caption": "Replay at 64x: the repo's own build history, many agent profiles at once.",
+      "still": "stills/05-replay.png",
+      "start_s": 83.4,
+      "end_s": 108.2
+    },
+    {
+      "n": 6,
+      "name": "board",
+      "caption": "Board: each task, its agent and its state.",
+      "still": "stills/06-board.png",
+      "start_s": 108.2,
+      "end_s": 118.4
+    },
+    {
+      "n": 7,
+      "name": "analytics",
+      "caption": "Analytics: edits, waits and landings over time.",
+      "still": "stills/07-analytics.png",
+      "start_s": 118.4,
+      "end_s": 128.5
+    },
+    {
+      "n": 8,
+      "name": "two-agents",
+      "caption": "Terminal: the preflight against production. Two agents edit the same function; Weft tells the second to wait (claim_wait).",
+      "still": "stills/08-two-agents.png",
+      "source": "term.mp4 (connect-term.tape)"
+    }
+  ]
+}
