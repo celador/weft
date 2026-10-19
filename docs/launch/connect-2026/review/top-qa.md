@@ -16,7 +16,18 @@ Lines of code aren't a measure of quality. They show why line-by-line review sto
 Git and merge queues find conflicts after the code is written. Weft checks each edit while it is being made, at the level of functions and types, so the agent hears about it before a commit exists.
 
 **4. Why Cloudflare?**
-The core need is one ordered log per repo. A Durable Object is exactly that: one copy per repo with its own database, so I didn't build leader election or run a database cluster.
+Weft has three layers, and Cloudflare matters for two of them.
+
+The protocol (WCP) is an idea, not a Cloudflare product. It's a written set of rules for how agents report edits and get back allow, advise or deny. It can be built on other technology and run locally. The repo ships a reference coordinator that runs with no Cloudflare at all, and a full local server is in progress.
+
+The platform and the product are where Cloudflare earns its place. Running this for real takes a lot of infrastructure, and Cloudflare has all of it in one place:
+- one ordered log per repo: a Durable Object, one per repo with its own database, so I didn't build leader election or run a database cluster
+- git storage for main and every candidate change: Artifacts
+- background jobs that test, pick, land or revert: Workflows and Queues
+- a safe place to run git and tests: Sandbox containers
+- the API, web app and previews: Workers, plus D1 and R2 for the index and logs
+
+Short version: the protocol runs anywhere. Cloudflare is what lets the platform and product run at scale, close to every agent, without me operating servers.
 
 **5. What do you use Artifacts for?**
 Each repo's main branch lives in Artifacts, and every agent attempt gets its own fork with a repo-scoped token. Push events from the forks come back into Weft's log.
