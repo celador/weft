@@ -1,187 +1,201 @@
-# Weft at Cloudflare Connect 2026: finalist talk script
+# Weft at Cloudflare Connect 2026: the true origin story
 
-Format, confirmed: **7 minutes per finalist, demo included.** Source: Dina Kozlov's finalist
-email of Fri Oct 16 2026 ("Each finalist gets 7 minutes to present what you built"). All three
-finalists present Wed Oct 21, 1:35-2:20 PM PT, Moscone West, San Francisco.
-**Not confirmed yet:** whether there is Q&A after each talk, how long it is, who the judges are,
-and whether you present from your own laptop (HDMI/USB-C) or a shared machine. Dina wrote "We'll
-send more details on format and setup soon"; no such email had arrived by Oct 19. Note: Dina is
-the Senior Product Manager for Cloudflare Artifacts, so expect Artifacts questions (qa.md).
+Story version, John's decision (Oct 19 2026, card t_eddf67e7): "Tell them the truth." The talk is
+how Weft actually came to be: I designed it in one conversation on Oct 3, and AI agents wrote the
+code under my direction, coordinated by Weft itself. Nothing below says I wrote the code.
+The through-line: that conversation is a worked example of how I build with agents (12 steps,
+slide 17). The earlier feature-led version is kept as `pitch-feature-v1.md` / `slides-feature-v1.html`.
 
-Files in this kit: `pitch.md` (this), `qa.md` (judge questions), `slides.html` (open in any
-browser, works offline, arrow keys), `one-pager.md` + `qr-weft-site.png` + `qr-calendly.png`.
+Format: **7 minutes per finalist, demo included** (Dina Kozlov's email, Oct 16 2026).
+Q&A, judges and laptop setup were not announced as of Oct 19; see `qa.md`.
 
-The script below is about 880 spoken words, demo narration included. At 145 words per minute
-that is about 6:05 of talking, plus about 45 seconds of clicking in the demo: 6:50, leaving 10
-seconds of slack. If you run long in rehearsal, cut Section 7 (credits) to its first sentence,
-then drop demo step 5 (Ops), then shorten the product list in Section 4 to Durable Objects,
-Artifacts and Workflows.
+Timing: about **763 spoken words**; at 130 words a minute that is **5:52**, plus the 47-second
+clip on slide 12 = **6:39**, leaving 20 seconds of slack.
+Read it slowly. If you run long, cut slide 13 (event #834) first, then slide 15.
 
----
+Slides: open `slides.html` from disk (no network needed), press `F` for full screen, right arrow
+to advance. The clip on slide 12 is inside the file; it starts when you land on the slide and
+stops when you leave. Click the video if it doesn't start. Backup: play
+<https://weft-media.elier.ai/weft-demo-short.mp4> from 0:37 to 1:24.
+
+Only the text in quotation marks is spoken.
 
 ## Before you walk on (T-30 min)
 
-1. Laptop on power, Do Not Disturb on, notifications off, display mirroring on, browser zoom 125%.
-2. Tab 1: `docs/launch/connect-2026/slides.html` (open the file from disk; it needs no network).
-   Press `F` for full screen.
-3. Tab 2: <https://weft.elier.ai/#/r/weft/live> (public, read-only, no login). Wait until the
-   header shows `live · #<number>`.
-4. Backup video downloaded to the desktop, in case the venue Wi-Fi fails:
+1. Laptop on power, Do Not Disturb on, notifications off, display mirroring on.
+2. Open `docs/launch/connect-2026/slides.html` from disk; press `F` for full screen.
+3. Optional tab: <https://weft.elier.ai/#/r/weft/live> (public, read-only), in case a judge asks
+   to see the live log.
+4. Backups on the desktop, in case the venue Wi-Fi fails (the deck itself needs no network):
    `curl -o ~/Desktop/weft-demo-short.mp4 https://weft-media.elier.ai/weft-demo-short.mp4`
-   (3:00 cut; the squiggle segment runs from 0:37 to 1:24). The live-system backup recording
-   (2:55, no audio, same beats as the live demo) is
+   (squiggle segment 0:37-1:24) and the live-system recording
    `curl -o ~/Desktop/weft-connect-backup.mp4 https://weft-media.elier.ai/connect-2026-backup.mp4`;
-   stills per beat are in `demo/video/connect-2026/stills/`. See `runbook.md`.
+   stills are in `demo/video/connect-2026/stills/`. See `runbook.md`.
 5. Run `scripts/connect-preflight.sh` from the repo root; it must end with "All green."
 
 ---
 
-## 0:00-0:45 · Section 1 · The problem (slides 1-2)
+## 0:00-0:35 · Who I am, honestly (slides 1-2)
 
-**Slide 1 (title):**
-"I'm John Nelson. I built Weft. It gives teams of coding agents red squiggles: it tells an agent
-it's about to break another agent's work while it's still typing, not after."
+**Slide 1 (title).**
+"I'm John Nelson. I'm a product engineer between jobs, living in Uruguay.
+Two and a half weeks ago, on a Saturday night, I read your blog post about the next Git platform,
+and I started asking questions."
 
-**Slide 2 (merge time is too late):**
-"Git and GitHub coordinate people at merge time. You work on a branch for a day, open a pull
-request, and conflicts show up in review. That works for people. Agents edit code in seconds,
-and if you run five or fifty of them on one repo, they collide constantly. By the time a pull
-request exists, the damage is done: one agent built on a function another agent already changed.
-Merge time is too late."
+**Slide 2 (the honest part).**
+"How this was built is the point, so here's the truth. I didn't write Weft's code. Agents did.
+I asked the questions, made the decisions, and directed the work. And from the first night,
+Weft coordinated the agents building it."
 
-## 0:45-1:15 · Section 2 · The idea (slide 3)
+## 0:35-2:45 · The conversation (slides 3-9, one quote each)
 
-**Slide 3 (squiggles for agents):**
-"Every coding agent changes code through tool calls: Edit, Write, apply_patch. Weft hooks those
-calls. Each edit goes into one ordered log per repository, with the functions it reads and the
-functions it writes. Weft checks it against everything other agents changed since this agent
-started. If there's a conflict, the agent gets a compiler-style error inside its own run, with
-the other agent's code quoted, and exactly one side is told to adapt. No file locks."
+**Slide 3 · 8:45 PM. Step 1: explore.**
+"My first question was about your brief. 'They want the next GitHub. What does that mean? Are they
+conflating git with GitHub?' And: 'Why is git worktrees not the easy answer?'
+Worktrees give every agent its own copy, but they only find out about each other at merge time.
+That's too late."
 
-## 1:15-3:25 · Section 3 · Live demo (slide 4, then switch to Tab 2)
+**Slide 4 · 8:49 PM. Step 4: alternatives.**
+"Then jujutsu, the newer version-control tool. 'Why is it not the obvious answer?'
+It still records history after the fact. Nothing warns two agents that they're about to collide."
 
-**Slide 4 (live demo):**
-"This is the live log of Weft's own repository. Every edit the agents made while building Weft
-went through Weft."
+**Slide 5 · 9:17 PM. Step 2: specifics.**
+"Then I got specific. 'An agent uses a tool, correct? These changes happen in a sequence.'
+Every edit is a tool call. So you can check each one as it happens, and send the warning back into
+the agent's run, so it doesn't finish until its code doesn't conflict."
 
-Switch to Tab 2. Each beat: what to do, what to say.
+**Slide 6 · 9:21 PM. Step 3: solutions.**
+"'Think about the little red squiggles.' 'Sort of like a pre-commit hook.'
+An agent can get the same thing: an error that says another agent just changed this function,
+and here's the change."
 
-1. **Header (15 s).** URL <https://weft.elier.ai/#/r/weft/live>. Point at the numbers at the top
-   right (HEAD, SQUIGGLES, BLOCKED, LANDED).
-   "Each row is one agent edit, landing or message. HEAD is how many events this repo has
-   recorded. Blocked means Weft stopped an edit before it was written."
-2. **Find a real collision (25 s).** Click the filter box, type `stale_assumption`. One row
-   remains: **#834**, BLOCKED, agent `hermes-default`, task `t_e5801824`.
-   "This is from last week. One agent was building a local mode for Weft. Days earlier, another
-   agent's work on a different task had landed and changed a type this one depended on, and
-   this agent was still working from the older code."
-3. **Open it (40 s).** Click row #834. The detail panel opens on the right.
-   "The agent tried to write host.ts using CoordinatorConfig. At event #813 the other agent's
-   work landed on main and changed that type's signature, after this agent's starting point. So
-   the edit was refused, and this message went straight back into the agent's tool result. Its
-   next attempt, #835, was accepted. No human touched it."
-4. **Follow the cause (25 s).** In the detail panel, click the blue `#813` link next to
-   "caused by". The panel switches to #813: "hermes-default landed hermes-default/t_199b55fb
-   (392 symbols)", ACCEPTED, Oct 9, with every symbol it wrote (SIG = signature change).
-   "Every squiggle links to the event that caused it. Here's the landing that changed the type,
-   and every function and type it touched. You can always see who changed what, and why you
-   were told to stop."
-5. **Landings and undo (20 s).** Press Escape, clear the filter, click **Ops** in the top bar
-   (<https://weft.elier.ai/#/r/weft/ops>).
-   "Every landing on main is an operation in this log, and undo appends a revert. History is
-   never rewritten." (The public site is read-only, so the Undo button is hidden here.)
-6. **Back to slides (10 s).** Switch to Tab 1, press the right arrow.
+**Slide 7 · 9:32 PM. Steps 5 and 6: decide, edge cases.**
+"Then a decision: 'a combined event queue that has strict ordering.' I half-remembered a word from
+my batch-script days: 'elect'? The word was consensus. Decide which edit came first, and the order
+settles every argument."
 
-If the Wi-Fi is down or the page doesn't load in 5 seconds: say "the Wi-Fi's not with me, here's
-the recording", play `~/Desktop/weft-demo-short.mp4` from 0:37 to 1:24 (Codex is denied, reads
-the error, adapts, the edit is accepted), then continue with slide 5. Slide 4 also shows the same
-#834 screenshot, so you can talk over the slide if nothing else works.
+**Slide 8 · 9:51 PM.**
+"'Are there not tool call hooks with other harnesses? Could we propose that as a new shared
+standard, like MCP!' There were hooks, and no shared standard. That became WCP, the Weft
+Coordination Protocol."
 
-## 3:25-4:40 · Section 4 · Why it's built on Cloudflare (slides 5-6)
+**Slide 9 · 9:57-10:20 PM. Steps 7, 8, 9: delegate.**
+"Then I handed it off. 'Spec this all out in a new Kanban board, set up a heartbeat agent, like a
+project manager.' Then: 'Make decisions, without my intervention.' And the core of it: 'We have to assume the code editor disappears
+in the future.'"
 
-**Slide 5 (architecture):**
-"The hard part of coordination is order. Someone has to say: this edit came first. On
-Cloudflare that's a Durable Object. Think of it as a tiny server with its own SQLite database,
-and Cloudflare guarantees exactly one copy runs per repository. So each repo gets one sequencer
-that hands out order numbers and checks every edit. I didn't have to build leader election.
-Cloudflare runs it."
+## 2:45-4:40 · What happened next (slides 10-13)
 
-**Slide 6 (each product, in plain words):**
-"The rest of the platform maps one-to-one:
-Workers are the API layer: the gateway the agents talk to and the web UI you just saw.
-Artifacts is Git hosting as a service: it holds each repo's main branch, which we call trunk,
-plus a fork for every agent.
-Queues and Workflows are a job queue with checkpoints: when an agent pushes, Weft rebases, runs
-tests, picks a winner and lands it, and every step retries if it fails.
-Containers are throwaway Linux boxes for git and tests, with no secrets inside.
-D1 is the SQL index of tasks and evidence, R2 is file storage for logs and screenshots, and
-Workers AI does review and even narrated our demo video."
+**Slide 10 (what the agents did).**
+"The first commit landed at 10 PM, eighty minutes after my first question. The board had 25 cards,
+and a project-manager agent checked it every hour. Agents worked in parallel, and their edits went
+through Weft. Three days later, I watched the demo video, said 'ship it', and submitted."
 
-## 4:40-5:20 · Section 5 · Evidence (slide 7)
+**Slide 11 (Cloudflare, in plain words).**
+"Three Cloudflare pieces do the core work.
+A Durable Object is one tiny server with its own database, one per repo. Cloudflare runs exactly
+one copy, so it keeps the order. That was my 'elect', built in.
+Artifacts is the git storage. Workers is the web service: the API agents call, and the site."
 
-**Slide 7 (numbers):**
-"This isn't a mockup. In the first eleven hours of the build, Weft's own log recorded 627
-events: 460 edits from three agent profiles across 25 tasks, 18 landings, and 59 warnings that
-told one agent to wait for another.
-In the full end-to-end run, 18 live agents, six each of Claude Code, Codex and OpenCode, worked
-six tasks against one coordinator. Every coordination beat passed in all four valid runs, and
-after all the landings, main typechecked and passed its tests.
-A pre-edit check takes about half a second, median 558 milliseconds, against the deployed
-gateway."
+**Slide 12 (the squiggle, 47-second clip).**
+"Here's the squiggle. The voice is an AI voice; agents made the video too."
+Play the clip. Don't talk over it. (Codex's edit is refused because Claude Code changed
+`createSession`; Codex reads the error, adapts, and the retry is accepted.)
+After it ends: "The conflict was settled before either commit existed."
 
-## 5:20-6:05 · Section 6 · Open protocol and what's next (slide 8)
+**Slide 13 (a real one, from Weft's own build).**
+"This one wasn't staged. Event 834 in Weft's own log: an agent's edit was refused because event
+813 changed a type it used. Its next try was accepted. Nobody stepped in."
 
-**Slide 8 (open protocol):**
-"Weft is open source under MIT, and the protocol is separate from the product. WCP, the Weft
-Coordination Protocol, works with any agent: there are adapters for Claude Code, Codex, OpenCode
-and Hermes, and translators for Cursor and Gemini CLI. We've also written up the hook rules it
-runs on, Agent Hooks Core, with a conformance test anyone can run, and proposed it to the
-Agentic AI Foundation as a discussion item.
-What's next is concrete: real users before more features. Run Weft on outside teams' repos,
-support languages beyond TypeScript, and make the fully local mode the default way to try it."
+## 4:40-5:35 · What's honest (slides 14-16)
 
-## 6:05-6:35 · Section 7 · What $25k in credits buys (slide 9)
+**Slide 14 (the numbers).**
+"Weft's own log, this morning: 918 events. 679 edits, 27 landings on main. Sixty times, Weft told
+an agent to wait for another. Five edits were refused, and rewritten. Most edits go straight
+through. The collisions are real, and caught."
 
-**Slide 9 (credits):**
-"The credits turn Weft from my setup into something other teams can use. A hosted coordinator
-for outside teams at no cost to them while we learn: one Durable Object per repo, containers for
-merges and tests, Workers AI for review. And a public benchmark: many agents, real repos, with
-and without Weft, so we can measure how much rework it actually saves instead of guessing."
+**Slide 15 (what it isn't).**
+"It's a research prototype. The code analysis understands TypeScript and JavaScript only.
+WCP is a draft, version 0.1. No outside team runs it in production yet."
 
-## 6:35-6:50 · Close (slide 10)
+**Slide 16 (step 11: use it, find issues).**
+"Then I used it, and found problems. My Hacker News post got no upvotes. The build broke. A
+stranger sent pull requests, and agents reviewed them and asked for proof. When I put Weft in my
+own Mac app, I only saw landed tickets. 'I want every edit visible. That's the magical part.'"
 
-**Slide 10 (QR codes):**
-"Git was built for people taking turns. Agents don't take turns. Weft lets them work at the same
-time without breaking each other. The live log and the code are on this QR code. Thank you."
+## 5:35-6:40 · The method and the ask (slides 17-18)
+
+**Slide 17 (How I build with agents, all twelve steps).**
+"So here's how I build with agents. Explore. Dig in. Think up solutions. Discuss alternatives.
+Decide. Reason through edge cases. Delegate. Build the system around the agents. Hand over
+authority, keep sign-off. Verify and steer. Then use it, find the issues, and go back to step one
+for each gap. That's where we are now: Weft running fully on a laptop, and inside my app.
+Preparing this talk was that loop too."
+
+**Slide 18 (close).**
+"If the code editor disappears, agents still need squiggles.
+With the credits, I'd run a free hosted coordinator for outside teams, and a public benchmark:
+many agents on real repos, with and without Weft, measuring the rework it saves.
+Weft exists because delegating breaks down when many agents work at once. Weft is what
+'verify and steer' needs at scale. Thank you."
 
 ---
 
+## The method, mapped to the record
+
+All quotes are John's own words from Hermes session `api_1791070817_1d33e733` (-03), unless a
+different session is named. The steps were not done strictly in order; the times show the real
+sequence. Slide labels use the step that best fits each moment.
+
+| Step | Moment | John's words |
+|---|---|---|
+| 1 Explore | Oct 3 20:45 | "They want 'the next GitHub'. What does that mean? Are they conflating git with GitHub…?" |
+| 2 Dig into specifics | Oct 3 21:12, 21:17 | "Go further. Explain how this system would work in detail and how we could codify it."; "an agent uses a 'tool', correct? These changes happen in a sequence." |
+| 3 Think up solutions | Oct 3 21:17, 21:21 | "These 'conflict alerts' could be injected mid-run into the agent message chain"; "Think about the little red squiggles"; "sort of like a pre-commit hook" |
+| 4 Discuss alternatives | Oct 3 20:45, 20:49 | "Why is git worktrees not the easy answer?"; "Why is it not the obvious answer?" (jujutsu) |
+| 5 Make decisions | Oct 3 21:32 | "there should be a combined event queue that has strict ordering" |
+| 6 Reason through edge cases | Oct 3 21:32 | "negotiate… What's it called when there are multiple systems that can propose a change… 'elect'??"; "the combined time-ordered event queue… determines who gets a warning and why" |
+| 7 Delegate | Oct 3 21:57 | "Can you spec this all out in a new Kanban board" |
+| 8 Build the system around the agents | Oct 3 21:57 | "setup a heartbeat agent that regularly monitors progress on the board… Like a project manager heartbeat" (board: 25 cards, a worktree per card, hourly PM, `docs/pm-log.md` 22:40) |
+| 9 Hand over authority, keep sign-off | Oct 3 22:11; Oct 4 13:16 | "Make decisions… without my intervention."; "I would like to have final sign off" |
+| 10 Verify and steer | Oct 4 (four "How's it going?" check-ins); Oct 6 12:13 | "I liked the video. Ship it" |
+| 11 Use it, find issues | Oct 7 17:07; Oct 7 17:12; Oct 9 00:25 and 21:49; Oct 18 02:16 and 02:32 (session `api_1792301506_7eca465a`) | "no upvotes, no other comments… just vanished into the ether"; "I see the build on github is failing"; "We got a PR on the repo"; "We need to encourage contributions, but require lots of proof"; "all I see is the landed tickets"; "I want every edit visible. that's the magical part of Weft, from my perspective" |
+| 12 Iterate: back to step 1 per gap | Oct 13 14:37; Oct 18-19 | "let's focus on getting Weft working locally (without depending on Cloudflare cloud resources"; Weft in Otto; podcasts to find gaps; this talk |
+
 ## Things not to say
 
-- Don't claim production users, revenue, a price or a cost per repo: none are measured (qa.md).
-- Don't call WCP or Agent Hooks Core a standard: they are v0 drafts; the AAIF item is an open
-  discussion proposal (aaif/project-proposals#53), not an accepted project.
-- Don't promise local mode on main: `weft serve` is on branch `wt/local` (card t_e5801824),
-  not merged as of Oct 19 (`git branch --merged main` does not list it).
-- Don't say the analyzer understands Swift or Python: TypeScript/JavaScript only; other
-  languages get whole-file checks.
+- Don't say "I built" or "I coded" Weft. Say "I designed it and directed it; agents wrote it."
+- Don't say it was built in 11 days. Eleven days was the time left to the deadline when you
+  started; the entry was submitted after three (Oct 3 → Oct 6). Work continued after that.
+- Don't say the local mode is done. It is on branch `wt/local` (card LOC1), not merged to main.
+- Don't call WCP a standard. It's a v0.1 draft; the AAIF item is an open discussion proposal.
+- Don't claim production users, revenue or a cost per repo. None exist or are measured.
+- Don't say the analysis understands Swift or Python. TypeScript/JavaScript only.
+- Don't say you named it. The agent proposed "Weft" as a working name (Oct 3 22:04) and you kept it.
 
-## Sources for every number
+## Sources
 
-| Number in this kit | Source file (repo-relative unless noted) |
+| Claim | Source |
 |---|---|
-| 7 minutes per finalist; Oct 21 1:35-2:20 PM; Dina's role | Finalist email from Dina Kozlov, Oct 16 2026 (John's john@elier.ai inbox); not in the repo |
-| 627 events, 460 edits, 3 agent profiles, 25 tasks, 73 checkpoints, 18 landings, 59 wait warnings, 11.3 hours | `demo/video/dogfood-stats.json` (`records`, `edits`, `agents`, `tasks`, `checkpoints`, `lands`, `by_code.warning:claim_wait`, `hours`) |
-| 18 live agents, 6 tasks, 6 each of Claude Code/Codex/OpenCode, all coordination beats in 4/4 valid runs, trunk typechecks and tests green | `demo/evidence/m2-report.md` (beats table, runs 2-5) |
-| Auto-revert beat passed in runs 4-5 | `demo/evidence/m2-report.md` |
-| Pre-edit check p50 558 ms / max 753 ms; coordinator call p50 389 ms | `demo/evidence/m1-report.md` line 115 |
-| About 400 ms per coordinator call, about 0.55 s per pre-edit check | `docs/design.md` line 278 |
-| Event #834 blocked by #813 (stale_assumption on CoordinatorConfig; #813 = land of t_199b55fb), #835 accepted, task t_e5801824 | Live log, <https://weft.elier.ai/#/r/weft/live>, read Oct 19 2026; screenshot embedded in `slides.html` |
-| Adapters: Claude Code, Codex, OpenCode, Hermes live; Cursor and Gemini CLI fixture-tested only | `docs/standardization/one-pager.md`, `docs/standardization/reports/README.md` |
-| Hook conformance ~100 ms p50 per hook | `docs/standardization/reports/README.md` (80-172 ms p50) |
-| 3:00 short video; squiggle segment 0:37-1:24 | `demo/video/short.json` (segment in/out points; ffprobe 180.09 s) |
-| Durable Object per repo as sequencer; product mapping | `README.md` "Why Cloudflare", `docs/design.md` §2, §7 |
-| Workers AI narrated the demo video | `demo/video/submission.md` ("Workers AI also narrated our demo video") |
-| MIT license | `LICENSE` |
-| AAIF proposal is open | `ROADMAP.md`; GitHub issue aaif/project-proposals#53 (state `open`, read Oct 19 2026) |
-| `wt/local` not merged | `git branch --merged main` on Oct 19 2026; `docs/pm-log.md` 2026-10-13 and 2026-10-18 |
+| All Oct 3-13 quotes and their times | `~/.hermes/state.db`, `messages` table, session `api_1791070817_1d33e733`, user messages (local to John's Mac, not in the repo) |
+| "all I see is the landed tickets" (Oct 18 02:16) | same DB, session `api_1792300118_ad889641` |
+| "I want every edit visible…" (Oct 18 02:32) | same DB, session `api_1792301506_7eca465a` |
+| Oct 3 2026 was a Saturday; talk on Oct 21 = 18 days later | calendar; `one-pager.md` line 3 |
+| First commit 22:00:55 -03 Oct 3 ("docs: design v0, plan, agent rules"), 80 min after the first message at 20:40 | `git log --reverse` |
+| 25 cards, hourly PM heartbeat, decisions delegated | `docs/pm-log.md`, 2026-10-03 22:40 kickoff |
+| A worktree per card | assistant reply in the session, Oct 3 22:04 ("Each card has its own worktree and branch") |
+| Weft coordinated its own build from the first night: log starts Oct 4 00:24 -03 (the first ~2.5 h predate it) | `log-stats-2026-10-19.json` (`first_event`, `note`) |
+| Submitted Oct 6 after "ship it" | `docs/pm-log.md`, 2026-10-06 entries; submission ID 19a22dd7-554f-43be-b80a-d57ad6414c4c |
+| 918 events, 679 edits, 3 agent profiles, 27 landings, 60 wait warnings, 5 refused edits | `log-stats-2026-10-19.json` (`events`, `by_kind.edit`, `agents`, `by_kind.land`, `diagnostics_by_code.warning:claim_wait`, `edits_refused`), read from the public API Oct 19. The live count keeps rising. |
+| Event #834 refused, caused by #813 (land changing CoordinatorConfig), #835 accepted | live log <https://weft.elier.ai/#/r/weft/live>, read Oct 19; screenshot reused from `slides-feature-v1.html` |
+| Squiggle clip | <https://weft-media.elier.ai/weft-demo-short.mp4> 0:37-1:24 (`demo/video/short.json`, segment "the squiggle") |
+| Video narrated by an AI voice | `demo/video/submission.md` ("Workers AI also narrated our demo video") |
+| Hooks exist in other harnesses, no shared standard | assistant reply Oct 3 21:52; `docs/standardization/one-pager.md` |
+| Durable Object = single sequencer per repo; Artifacts = git storage; Workers = gateway + web UI | `README.md` "Why Cloudflare", `docs/design.md` §2, §7 |
+| TypeScript/JavaScript-only analysis | `docs/design.md` §4; `qa.md` #11 |
+| WCP version 0.1 | `docs/protocol/wcp-v0.md` line 1 |
+| No outside team in production | `qa.md` #13 |
+| HN post got no traction; CI failing; outside PRs reviewed with "request changes" | session messages Oct 7 17:07, 17:12; Oct 9 00:25, 21:49, 21:57 |
+| Local mode in progress, not merged | branch `wt/local`; `docs/pm-log.md` 2026-10-13 16:36 (held); `.worktrees/local/demo/evidence/README.md` (LOC1) |
+| Credits plan (hosted coordinator, public benchmark) | `qa.md` #20; `ROADMAP.md` |
+| 7 minutes per finalist | Dina Kozlov's finalist email, Oct 16 2026 (John's inbox) |

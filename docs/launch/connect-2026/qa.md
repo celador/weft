@@ -127,6 +127,52 @@ That turns "it works on my repos" into numbers anyone can check.
 
 ---
 
+## Honest answers about how it was built
+
+Added Oct 19 for the story version of the talk (card t_eddf67e7). Same rule: say it, stop.
+
+**Did you write the code?**
+No. Agents did, coordinated by Weft. I designed it in one conversation on Oct 3 and directed the
+work: the questions, the decisions, the sign-off. That's the point of the project.
+
+**Which agents?**
+Hermes agent profiles did most of the work (three profiles show up in Weft's own log: 795, 85
+and 38 events). Claude Code, Codex and OpenCode were used in the collision demos.
+
+**So what did you actually do?**
+Asked what the brief meant, rejected the easy answers (worktrees, jujutsu), proposed checking each
+tool call and returning a "squiggle", decided on one strictly ordered log, asked for a shared hooks
+standard, then set up the board and the project-manager agent and kept final sign-off.
+
+**Can you explain the system without the agents in the room?**
+Every agent edit is a tool call. A hook sends it to one Durable Object per repo, which puts it in
+order and checks it against what other agents changed since this agent started. If it conflicts,
+the agent gets an error in its own run and fixes it before anything is committed.
+
+**Was it built in 11 days?**
+No. Eleven days was the time to the deadline. The entry was submitted three days in (Oct 3 → Oct 6);
+work continued after.
+
+**Who named it?**
+The agent proposed "Weft" as a working name on Oct 3 and I kept it.
+
+**Did a human review the code?** **[John: confirm before saying]**
+Not line by line. Review was evidence-based: tests, a recorded demo, the repo, and Weft's own log.
+I signed off on anything public. That is a real limit of how it was built; the benchmark in the
+credits plan is how I'd measure it properly.
+
+**What went wrong?**
+The Hacker News post got no traction. CI broke after launch. An outside contributor's PRs needed
+careful review; one was merged. In my own Mac app I could only see landed work, not each edit,
+which is the part that matters. Fully local mode is in progress, not merged.
+
+**Why should we trust a project nobody wrote by hand?**
+Don't take my word for it: the log is public at weft.elier.ai, read-only, and the repo is MIT.
+Event 834 is a real refused edit from Weft's own build.
+
+Sources for this section: `pitch.md` "Sources" table; `log-stats-2026-10-19.json` (`agents`);
+Hermes session `api_1791070817_1d33e733` (Oct 3-13); `docs/pm-log.md`.
+
 ## Sources
 
 | Claim | Source |
