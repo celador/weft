@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Build the visual Connect 2026 deck (slides.html), offline, single file, stdlib only.
 
-Slide order (rev 6, criteria-led): 1 headline, 2 what I built (criterion 1), 3-4 why it's new
-(criterion 2), 5-10 the four questions (criterion 3: Q1 slide 5, Q2 slides 6-8 with the without-Weft
-and with-Weft clips, Q3 slide 9, Q4 slide 10), 11 why Artifacts + Cloudflare, 12 close.
+Slide order (rev 7 = rev 6 + the Otto clip): 1 headline, 2 what I built (criterion 1), 3-4 why it's new
+(criterion 2), 5-11 the four questions (criterion 3: Q1 slide 5, Q2 slides 6-9 with the without-Weft,
+with-Weft and Otto team-run clips, Q3 slide 10, Q4 slide 11), 12 why Artifacts + Cloudflare, 13 close.
 Inputs: demo/video/connect-2026/stills/*.png, qr-weft.svg, the 22 s "without Weft" clip
-(demo/video/connect-2026/baseline.mp4, recorded from baseline.tape), and the 47 s squiggle clip, which is
-reused from slides-story-v1.html (data:video/mp4). The story version build is
+(demo/video/connect-2026/baseline.mp4, recorded from baseline.tape), the 47 s squiggle clip, which is
+reused from slides-story-v1.html (data:video/mp4), and the 58 s Otto clip
+(demo/video/connect-2026/otto-weft-demo-cut.mp4 = demo/otto/video/cut.py output, run-4, card t_83def502;
+also on R2 under connect-2026/review-.../otto-demo/). The mp4s are gitignored; slides.html embeds them. The story version build is
 build_slides-story-v1.py. `--count` prints the spoken word count of pitch.md and talk time incl. clips.
 Keys: right/left (or tap right/left quarter) to move, F full screen, M toggles clip sound (clips start muted).
 """
@@ -16,7 +18,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 STILLS = ROOT / "demo/video/connect-2026/stills"
 
-CLIPS = {6: 22.44, 7: 47.03}  # slide number -> clip seconds (narration runs over the clip)
+CLIPS = {6: 22.44, 7: 47.03, 8: 58.1}  # slide number -> clip seconds (narration runs over the clip)
 
 def count_words():
     """Spoken words (quoted text in section bodies) and talk time incl. clips at 130 wpm."""
@@ -36,6 +38,9 @@ def img(name):
 def baseline_clip():
     return "data:video/mp4;base64," + base64.b64encode((ROOT / "demo/video/connect-2026/baseline.mp4").read_bytes()).decode()
 
+def otto_clip():
+    return "data:video/mp4;base64," + base64.b64encode((ROOT / "demo/video/connect-2026/otto-weft-demo-cut.mp4").read_bytes()).decode()
+
 def clip():
     src = (HERE / "slides-story-v1.html").read_text()
     m = re.search(r'data:video/mp4;base64,[A-Za-z0-9+/=]+', src)
@@ -49,7 +54,7 @@ def chips(items):
 def slides():
     qr = (HERE / "qr-weft.svg").read_text() if (HERE / "qr-weft.svg").exists() else ""
     harness = chips([("Claude Code", "live"), ("Codex", "live"), ("OpenCode", "live"), ("Hermes", "live"),
-                     ("Cursor", "wr"), ("Gemini", "wr"), ("File watcher: any editor, people too", "wt")])
+                     ("Gemini CLI", "live"), ("Cursor", "wr"), ("File watcher: any editor, people too", "wt")])
     resolve = "".join(f'<li style="--i:{i}"><b>{i+1}</b><em>{h}</em>{d}</li>' for i, (h, d) in enumerate([
         ("Refused before it's written", "a stale_assumption squiggle quotes the other agent's change"),
         ("Reroute or negotiate", "propose an overload · accept · counter"),
@@ -80,21 +85,23 @@ changed in #3 by agent-a after your base #1.</span>
 <div class="chips">{harness}</div>
 <p class="src"><span class="lg live"></span>live today &nbsp; <span class="lg wr"></span>adapter written &nbsp; <span class="lg wt"></span>observes, can't refuse</p>
 <p class="sub">The protocol runs on a laptop, no Cloudflare account. <b>Cloudflare is how it scales.</b></p></section>''',
-        '''<section><p class="kicker">3 · Many agents at once · Question 1 of 4</p>
+        f'''<section><p class="kicker">3 · Many agents at once · Question 1 of 4</p>
 <h2 class="q">How do agents know what other agents are working on?</h2>
-<svg viewBox="0 0 1600 560" class="diag">
+<div class="q1"><svg viewBox="0 0 1600 560" class="diag">
 <g class="agent"><rect x="40" y="20" width="300" height="110" rx="18"/><text x="190" y="88">Agent A</text></g>
 <g class="agent"><rect x="40" y="225" width="300" height="110" rx="18"/><text x="190" y="293">Agent B</text></g>
 <g class="agent"><rect x="40" y="430" width="300" height="110" rx="18"/><text x="190" y="498">Agent C</text></g>
 <path class="flow" d="M340 75 C560 75 560 280 700 280"/><path class="flow d2" d="M340 280 L700 280"/><path class="flow d3" d="M340 485 C560 485 560 280 700 280"/>
 <g class="do"><rect x="700" y="150" width="520" height="260" rx="22"/><text x="960" y="235">One ordered log per repo</text><text x="960" y="290" class="dim">one Durable Object</text><text x="960" y="345" class="dim">intent · claim · edit · checkpoint</text></g>
 <path class="flow ok" d="M1220 280 L1380 280"/><g class="agent"><rect x="1380" y="225" width="190" height="110" rx="18"/><text x="1475" y="293">main</text></g>
-</svg>
+</svg><figure class="shot"><img src="{img("09-otto-board.png")}" alt="Otto board: Running 7, Weft editing now"><figcaption>The Otto run: 7 cards, who is editing what, live</figcaption></figure></div>
 <p class="sub">Every edit is checked against the <b>functions and types other agents just changed</b>.</p></section>''',
         f'''<section class="hero"><p class="kicker">3 · Question 2 of 4 · Conflicting changes · without Weft, a real run</p><video data-clip muted playsinline preload="auto" src="{baseline_clip()}"></video>
 <p class="cap">Both branches green alone → git merges cleanly → <span class="red">build breaks on main</span></p></section>''',
         f'''<section class="hero"><p class="kicker">3 · Question 2 of 4 · Conflicting changes · with Weft</p><video data-clip muted playsinline preload="auto" src="{clip()}"></video>
 <p class="cap">Claude Code changes <code>createSession</code> → Codex's edit is refused → it adapts → accepted</p></section>''',
+        f'''<section class="hero"><p class="kicker">3 · Question 2 of 4 · A whole team, in Otto · a real run</p><video data-clip muted playsinline preload="auto" src="{otto_clip()}"></video>
+<p class="cap">7 cards at once · candidates on 5 harnesses · <b>no agent in charge</b> · 6 squiggles, all rerouted · all 7 landed</p></section>''',
         f'''<section><p class="kicker">3 · Question 2 of 4 · How Weft resolves it</p>
 <h2 class="q">What happens when they make conflicting changes?</h2>
 <ol class="steps">{resolve}</ol></section>''',
@@ -102,8 +109,10 @@ changed in #3 by agent-a after your base #1.</span>
 <h2 class="q">How do you review everything they produce?</h2>
 <p class="sub">An evidence pipeline for every candidate:</p>
 <ol class="pipe">{review}</ol>
-<ul class="why sm"><li>Low risk lands on its own. <b>Higher risk waits for a human.</b></li>
-<li>Production errors spike after a landing → <span class="red">Weft reverts it.</span></li></ul></section>''',
+<div class="q3"><ul class="why sm"><li>Low risk lands on its own. <b>Higher risk waits for a human.</b></li>
+<li>Production errors spike after a landing → <span class="red">Weft reverts it.</span></li>
+<li class="dim">In the Otto run: a planted bug was reverted <b>32 s</b> after it landed.</li></ul>
+<img src="{img("10-otto-revert.png")}" alt="Otto: landing reverted after a production error spike"></div></section>''',
         '''<section><p class="kicker">3 · Question 4 of 4</p>
 <h2 class="q">How do you keep track of <span class="red">why</span>?</h2>
 <pre class="code tr">Change-Id: I2e59ce5c1eaa4d57a28a2a5c8f9458bdcd8fd4f3
@@ -180,6 +189,12 @@ section.on .steps li{animation:in .35s calc(var(--i)*.18s) forwards}.steps b{dis
 .pipe small{display:block;font-size:1.6vw;font-weight:400;color:#c9c9d6;margin-top:.6vh}
 section.on .pipe li{animation:in .3s calc(var(--i)*.15s) forwards}
 .why.sm{font-size:2.4vw;gap:1.6vh}.layer b{width:22vw}
+.q1{display:grid;grid-template-columns:1fr 29vw;gap:2vw;align-items:center}.q1 .diag{max-height:52vh}
+.shot{margin:0;text-align:center}.shot img{width:100%;max-height:54vh;object-fit:cover;object-position:top;border-radius:12px;box-shadow:0 0 0 1px #333}
+.shot figcaption{font-size:1.45vw;color:#9a9aab;margin-top:.8vh;line-height:1.25}
+.q3{display:grid;grid-template-columns:1fr 44vw;gap:2.4vw;align-items:center}.q3 img{width:100%;max-height:42vh;object-fit:contain;border-radius:12px;box-shadow:0 0 0 1px #333}
+.why .dim b{color:#c9c9d6}
+@media (orientation:portrait){.q1,.q3{grid-template-columns:1fr}.shot img{max-height:24vh}.shot figcaption{font-size:2.8vw}.q3 img{max-height:22vh}}
 @media (orientation:portrait){.huge2{font-size:10vw}.q{font-size:6vw}.lede{max-width:none}.tag{font-size:6vw}.code{font-size:2.15vw;padding:1.2vh 2vw;white-space:pre-wrap;word-break:break-all}.code.tr{font-size:2.3vw}.chip{font-size:3.6vw}.lg{width:2.4vw;height:2.4vw}
 .steps{grid-template-columns:1fr}.steps li{min-height:auto;font-size:3.2vw;padding:1vh 2vw}.steps b{font-size:4.4vw;display:inline;margin-right:2vw}.steps em{display:inline;font-size:3.6vw}
 .pipe{grid-template-columns:repeat(2,1fr)}.pipe li{font-size:3.6vw}.pipe small{font-size:2.8vw}.why.sm{font-size:4.2vw}.layer b{width:auto}}"""

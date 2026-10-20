@@ -1,4 +1,14 @@
-# Weft at Cloudflare Connect 2026: the criteria-led version (rev 6)
+# Weft at Cloudflare Connect 2026: the criteria-led version (rev 7)
+
+Rev 7 (card t_a16b130a, Oct 20 2026): rev 6 plus the 58 s Otto clip from the run-4 team demo
+(card t_83def502, `demo/evidence/otto-report.md`): 7 kanban cards running at once on one board in
+Otto, candidates on 5 harnesses, no orchestrator. It is its own slide (8), right after the with-Weft
+clip under Q2, narrated muted. Both earlier clips stay: total is under 6:30 because the
+"how it resolves" (9) and Q3 (10) narration got shorter (the clip just showed both). Otto stills: the
+board + "Editing now" on Q1 (slide 5), the revert sheet on Q3 (slide 10). Gemini CLI moves to "live"
+on slide 4: in run-4 its Weft hooks ran live (`demo/evidence/otto/run-4/lanes/t7/agents/gemini-t7-r4/`,
+every edit checked and accepted, a candidate pushed and reviewed). Its quota failure is in
+`review/deep-qa.md`, not on slides. Rev 6 is kept as `*-v6` (pitch, build script, slides html/pdf/pptx).
 
 Rev 6 (card t_3435fdd7, Oct 20 2026): John's decision: the talk is built on the judging criteria,
 not the origin story. Slide 1 is the website headline, verbatim. The spine is Dina's three
@@ -15,6 +25,9 @@ competition post (blog.cloudflare.com/next-git-platform-on-cloudflare), one slid
    - Q4 How do you keep track of why? (slide 10)
 4. Why Artifacts and Cloudflare (slide 11, 4:50-5:17), then the close (slide 12, 5:17-5:33)
 
+(The outline above is rev 6. Rev 7 numbering and times are in the section headings below: Q2 is
+slides 6-9, Q3 slide 10, Q4 slide 11, Artifacts slide 12, close slide 13.)
+
 Dropped as the frame: "I didn't write the code. I directed the agents that did." and the
 Oct 3 origin arc. The origin numbers (64 hours, 231 files, 38,593 lines, 627 events) now live in
 `review/deep-qa.md` under "Origin story" for Q&A. One proof line stays on slide 2: Weft
@@ -24,10 +37,10 @@ Rev 5 is kept as `*-visual-v5` (pitch, build script, slides html/pdf/pptx, cue c
 Format: 7 minutes per finalist, demo included, hard cap; then 3 minutes Q&A. Wed Oct 21, 1:35 PM PT.
 Timing: see the bottom. Only text in quotation marks is spoken.
 Slides: open `slides.html` from disk (no network), press `F` for full screen, right arrow or tap
-to advance. The two clips (slides 6 and 7) are inside the file and play muted when you land on
+to advance. The three clips (slides 6, 7 and 8) are inside the file and play muted when you land on
 them; you narrate over them, so the laptop's audio never matters. `M` unmutes a clip if you ever
-need the recorded voice track (the 47 s clip has one; the 22 s clip is silent).
-Backups: `slides.pdf`, `slides.pptx` (clips embedded), `slides-visual-v5.html` (rev 5).
+need the recorded voice track (the 47 s clip has one; the 22 s and 58 s clips are silent).
+Backups: `slides.pdf`, `slides.pptx` (clips embedded), `slides-v6.html` (rev 6).
 Rebuild: `python3 docs/launch/connect-2026/build_slides.py`; timing: `... build_slides.py --count`.
 
 Sources for every claim (nothing unbuilt is presented as built):
@@ -44,11 +57,13 @@ Sources for every claim (nothing unbuilt is presented as built):
   coordinator is a log plus validation rules, and arbitration is between peers (`design.md` §2.6,
   §4). Escalation can merge two tasks (B11), still without a lead agent splitting work.
 - Harnesses: live-verified Claude Code, Codex, OpenCode (`demo/evidence/m1-report.md`,
-  `m2-report.md`, `b12*`) and Hermes (dogfood, `design.md` B16). Cursor CLI: adapter written to
-  its documented hooks, not live-verified. Gemini CLI: fixture-only. File watcher
+  `m2-report.md`, `b12*`), Hermes (dogfood, `design.md` B16) and Gemini CLI (Otto run-4: hooks
+  fired on every edit, checks accepted, candidate pushed; `demo/evidence/otto/run-4/lanes/t7/agents/
+  gemini-t7-r4/hooks.jsonl`, `adapter.log`; no Gemini edit was refused in that run). Cursor CLI:
+  adapter written to its documented hooks, not live-verified. File watcher
   (`@weft/adapter-watcher`, level L0) reports edits from any editor, a person's included; it
-  cannot refuse them, so say "joins", not "is checked". Say "Cursor and Gemini adapters are
-  written", never "run live".
+  cannot refuse them, so say "joins", not "is checked". Say "a Cursor adapter is written", never
+  "runs live".
 - Runs without Cloudflare: `docs/try-it.md` (local gateway via `wrangler dev`, no Cloudflare
   account, no API token, no model key; tests need no network services).
 - Q1: one Durable Object per repo (`apps/gateway/src/index.ts`, `idFromName(repo)`); event kinds
@@ -79,6 +94,18 @@ Sources for every claim (nothing unbuilt is presented as built):
   `demo/evidence/m1-baseline/` (each branch green alone, clean git merge, main tsc TS2554 + 1 test
   failing). Both agents ran on Codex in that run; say "two agents", not "Claude Code".
 - "About half a second": `demo/evidence/m1-report.md`, pre-edit checks n=18, p50 558 ms.
+- Otto clip (slide 8) and Otto stills (slides 5, 10): run-4 of `demo/otto` (card t_83def502),
+  `demo/evidence/otto-report.md` + `demo/evidence/otto/run-4/run.json`, cut by
+  `demo/otto/video/cut.py` (trim/crop/captions only, no re-staging). On-screen numbers: 7 cards
+  (t1-t7) running at once on board weft-demo-site; 16 candidates on 5 harnesses (Claude Code 5,
+  Codex 4, Gemini CLI 3, OpenCode 2, Hermes 2); winners came from 4 (Codex t1/t3, OpenCode t2/t7,
+  Hermes t4, Claude Code t5/t6); 6 `stale_assumption` squiggles, all rerouted; t3's overload
+  proposals (#655, #659) accepted by t1's agent (#662, #663), overload on trunk; Mergiraf landing
+  on t5; t6 (menu) evidence: preview, 2 screenshots, pixel diff, risk, review; 3 approvals (t1, t3,
+  t6) by clicking Otto's Approve button, approved_by=john (the clicks were sent by the recording
+  script on John's machine, not by hand); planted bug t8 landed, reverted 32.5 s later (#780), Weft
+  task reopened; trunk tsc + 22/22 tests green; all 7 cards landed. Do not say "I approved".
+  Say "no agent in charge": no planner in the run; each card's lane only talks to Weft.
 
 ---
 
@@ -108,8 +135,8 @@ writing it, so no finished work gets thrown away."
 
 "Weft coordinates; it doesn't orchestrate. There's no agent on top splitting up the work. Agents
 are peers, and each one hears only about what touches its own edit.
-Any harness works with any other in one codebase. Claude Code, Codex, OpenCode and Hermes run live
-today; Cursor and Gemini adapters are written. A file watcher lets anything else join, people
+Any harness works with any other in one codebase. Claude Code, Codex, OpenCode, Hermes and Gemini
+run live today; a Cursor adapter is written. A file watcher lets anything else join, people
 included.
 And the protocol doesn't need Cloudflare: it runs on a laptop, no account. Cloudflare is how it
 scales."
@@ -137,37 +164,47 @@ Codex reads it, adapts its call, and tries again. Accepted. A check takes about 
 No human stepped in."
 (Pause until the clip ends.)
 
-## 3:29-3:59 · Slide 8: Q2, how Weft resolves it
+## 3:29-4:27 · Slide 8: Q2, a whole team in Otto (58 seconds, muted, a real run, narrate over it)
 
-"Under the hood: the hook refuses the stale edit. The agent can reroute, or negotiate: propose an
-overload, and the other agent accepts or counters.
-When two agents want the same code, priority decides who adapts, the same rule every time, so
-they never deadlock.
-Then a structural merge with Mergiraf. And landing is a compare-and-swap on trunk: main only
-moves if nothing moved under it."
+"Now a whole team: a real run, on one board in Otto. Seven cards running at once, with candidates
+on five harnesses: Claude Code, Codex, OpenCode, Gemini and Hermes. No agent is in charge.
+A squiggle stops a stale edit mid-flight, and the agent reroutes. Six squiggles in this run; all
+six rerouted.
+An Approve click in Otto lets this candidate land.
+This one changed the menu, so it comes with a preview, screenshots and a pixel diff.
+Here an agent proposed an overload, and the agent that changed createSession accepted it.
+All seven cards landed.
+Then a planted bug. It lands, production errors spike, and Weft reverts it thirty-two seconds later."
+(Pause until the clip ends.)
 
-## 3:59-4:28 · Slide 9: Q3: how do you review everything they produce?
+## 4:27-4:53 · Slide 9: Q2, how Weft resolves it
 
-"How do you review everything they produce? Every candidate goes through an evidence pipeline:
-tests, a preview, screenshots with a pixel diff, a risk tier, and a review agent that checks the
-task's acceptance criteria and fails closed.
-Low risk can land on its own. Higher risk waits for a human. And if production errors spike after
-a landing, Weft reverts it."
+"Under the hood: a stale edit is refused. The agent reroutes, or negotiates, like that overload.
+When two agents want the same code, priority decides who adapts, every time, so they never
+deadlock. Adjacent edits get a structural merge with Mergiraf. And landing is a compare-and-swap on
+trunk: main only moves if nothing moved under it."
 
-## 4:28-4:50 · Slide 10: Q4: how do you keep track of why?
+## 4:53-5:20 · Slide 10: Q3: how do you review everything they produce?
+
+"How do you review everything they produce? You just saw it: every candidate gets tests, a preview,
+screenshots with a pixel diff, a risk tier, and a review agent that checks the task's acceptance
+criteria and fails closed. Low risk lands on its own; higher risk waits for a human. And if
+production errors spike, Weft reverts the landing."
+
+## 5:20-5:42 · Slide 11: Q4: how do you keep track of why?
 
 "How do you keep track of why? Every commit carries a Change-Id, a Task-Id and an Agent-Id. Every
 squiggle cites the event that caused it. The log replays byte for byte, each run's model
 transcript is stored, and a revert names the operation it undoes, and why."
 
-## 4:50-5:17 · Slide 11: why Artifacts and Cloudflare
+## 5:42-6:09 · Slide 12: why Artifacts and Cloudflare
 
 "Why Cloudflare? Honestly, Weft doesn't need Artifacts to work. Artifacts is what lets it scale:
 one call forks the repo and mints a scoped token for each agent, it's built for millions of
 repos, every push arrives as an event in a Queue, and landing is an atomic push. And Durable
 Objects give each repo exactly one authoritative log."
 
-## 5:17-5:33 · Slide 12: close
+## 6:09-6:25 · Slide 13: close
 
 "So that's Weft. Red squiggles for teams of coding agents. It coordinates; it doesn't
 orchestrate.
@@ -176,18 +213,25 @@ role. Thank you."
 
 ---
 
-Timing (Oct 20, rev 6): 651 spoken words at 130 wpm, computed by `build_slides.py --count`. Section
+Timing (Oct 20, rev 7): 750 spoken words at 130 wpm, computed by `build_slides.py --count`. Section
 times above are cumulative and use the clip length when a clip runs longer than its narration
-(slide 6: 22.4 s clip vs 15 s spoken; slide 7: 47.0 s clip vs 21 s spoken). Total: about 5:33,
-57 s under the 6:30 target and 1:27 under the 7:00 hard cap (rev 5: 6:08). The slack is
-deliberate: a first-time stage delivery runs slower than 130 wpm, and the clips need pauses.
-By criterion: (1) what I built 0:00-0:43 (headline + slide 2); (2) why it's new 0:43-1:51 (1:08);
-(3) many agents at once, the four questions 1:51-4:50 (2:59: Q1 0:28, Q2 1:40 incl. both clips,
-Q3 0:29, Q4 0:22); why Artifacts + Cloudflare 4:50-5:17; close 5:17-5:33.
+(slide 6: 22.4 s clip vs 15 s spoken; slide 7: 47.0 s clip vs 21 s spoken; slide 8: 58.1 s clip vs
+52 s spoken). Total: about 6:25, 5 s under the 6:30 target and 35 s under the 7:00 hard cap
+(rev 6: 5:33). The Otto clip added 58 s; shorter narration on slides 9 and 10 (the clip had just
+shown negotiation, approval, evidence and the revert) took back 6 s, so both earlier clips stay.
+By criterion: (1) what I built 0:00-0:43; (2) why it's new 0:43-1:51; (3) many agents at once, the
+four questions 1:51-5:42 (Q1 0:28, Q2 2:34 incl. three clips, Q3 0:27, Q4 0:22); why Artifacts +
+Cloudflare 5:42-6:09; close 6:09-6:25.
+Slide 8 narration is cued to the clip's captions: board (0-8 s), squiggle (8-15), reroute + Approve
+(15-23), menu evidence (23-30), negotiated overload (30-37), landings (37-43), planted bug +
+revert (43-58). If you fall behind the clip, skip "Six squiggles in this run; all six rerouted."
 Moved to Q&A (`review/deep-qa.md`, "Origin story"): Oct 3 start, 80 minutes to first commit,
 64 hours, 231 files, 38,593 lines, 627 events / 460 edits / 59 waits, event 834 refused because of
-813 (still visible on slide 10 as the cause example), the explore/decide/delegate/verify loop,
+813 (still visible on slide 11 as the cause example), the explore/decide/delegate/verify loop,
 traction (39 stars, 22 issues/PRs from one outside user, Beads asked), Time Machine (next, not
-built), credits plan, prototype status.
-If you run long: on slide 4, drop "Cursor and Gemini adapters are written" (-3 s); on slide 11,
-drop "every push arrives as an event in a Queue" (-4 s); on slide 2, drop the 918/27 line (-5 s).
+built), credits plan, prototype status. Otto run details and honest failures: `review/deep-qa.md`,
+"The Otto run".
+If you run long: on slide 4, drop "a Cursor adapter is written" (-2 s); on slide 12, drop "every
+push arrives as an event in a Queue" (-4 s); on slide 2, drop the 918/27 line (-5 s); on slide 10,
+drop "You just saw it:" (-1 s). Worst case, skip slide 9 (-26 s): the Otto clip already showed the
+reroute, the negotiation and the landings.
