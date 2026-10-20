@@ -1,6 +1,14 @@
-# Weft at Cloudflare Connect 2026: the visual version (rev 3)
+# Weft at Cloudflare Connect 2026: the visual version (rev 5)
 
-Rev 3 (card t_45974a00, Oct 20 2026): aligned with Dina Kozlov's brief (email Oct 19, 23:24 ET):
+Rev 5 (card t_bc6aed38, Oct 20 2026): John's decision: the talk follows Dina's three criteria in
+her order, with set time per criterion: (1) what I built, slides 1-3, 0:00-1:30; (2) why it's
+new, slide 4, 1:30-2:21 (51 s); (3) many agents changing code at once, slides 5-9, 2:21-5:11: the without-Weft clip,
+then the with-Weft clip, then how Weft resolves it, then built with itself; then a short close,
+slides 10-12, 5:11-6:08. The two clips moved ahead of the "how it works" slides (problem, then fix, then
+mechanism). Slide 4 grew from 26 s to 51 s; slides 9-10 went from 92 s to 55 s by
+cutting phrasing, not ideas. Rev 4 is kept as `*-visual-v4`.
+
+Rev 4 (card t_45974a00, Oct 20 2026): aligned with Dina Kozlov's brief (email Oct 19, 23:24 ET):
 7 minutes to present, hard cap, then 3 minutes of Q&A, judged on (1) what you built, (2) why it's
 novel, (3) how it solves the problems of many agents changing code at once. Changes: a new slide 4,
 "Why it's new", says the novelty out loud; slides 3, 4 and 5 carry the three criteria as their
@@ -20,7 +28,7 @@ slides) and is still a valid fallback.
 Format: 7 minutes per finalist, demo included, hard cap; then 3 minutes Q&A. Wed Oct 21, 1:35 PM PT.
 Timing: see the bottom. Only text in quotation marks is spoken.
 Slides: open `slides.html` from disk (no network), press `F` for full screen, right arrow or tap
-to advance. The two clips (slides 7 and 8) are inside the file and play muted when you land on
+to advance. The two clips (slides 5 and 6) are inside the file and play muted when you land on
 them; you narrate over them, so the laptop's audio never matters. `M` unmutes a clip if you ever
 need the recorded voice track (the 47 s clip has one; the 22 s clip is silent).
 Backups: `slides.pdf`, `slides.pptx` (clips embedded), `slides-story-v1.html`.
@@ -43,10 +51,10 @@ Sources for every number (do not mix windows):
   "partnership".
 - Traction (gh api repos/celador/weft, Oct 20): 39 stars, repo created Oct 4; 22 issues/PRs
   (12 issues, 10 PRs, Oct 8-13), all from one outside user (barnessomer).
-- Without-Weft clip (slide 7): a real run, `demo/m1-baseline.mjs`, evidence in
+- Without-Weft clip (slide 5): a real run, `demo/m1-baseline.mjs`, evidence in
   `demo/evidence/m1-baseline/` (each branch green alone, clean git merge, main tsc TS2554 + 1 test
-  failing). Both agents ran on Codex in that run; say "the same two agents", not "Claude Code".
-- Ordering (slides 5-6): what Weft checks is a stale assumption (an edit that reads something
+  failing). Both agents ran on Codex in that run; say "two agents", not "Claude Code".
+- Ordering (slides 7-8): what Weft checks is a stale assumption (an edit that reads something
   another agent changed since its base), not arrival time. `packages/sequencer/src/coordinator.ts`
   (stale_assumption); landing is a queue, final rebase + presubmit, compare-and-swap advance of
   main (`apps/workflows`). Merge-order planning from a board (blocked-by/depends-on) is NOT built:
@@ -56,9 +64,15 @@ Sources for every number (do not mix windows):
   Codex, OpenCode), so a stale edit is refused before it applies, before any commit or PR. That is
   edit time, not landing time. Systems that validate at landing (merge queues, CI, read-set checks
   when a change lands) send finished work back to be redone. "Open protocol": WCP draft v0.1
-  (`docs/` specs), adapters per harness plus a file watcher. Do not name other finalists on stage.
-- Criteria map (Dina's brief): (1) what I built = slides 1-3, (2) why it's new = slide 4, (3) how
-  it solves many agents at once = slides 5-9. Slides 10-12: why it matters, thesis, close.
+  (`docs/protocol/wcp-v0.md`), adapters per harness (`packages/adapters/*`) plus a file watcher
+  (`@weft/adapter-watcher`, level L0: it reports a person's plain-editor edits; it cannot refuse
+  them, so say "joins", not "is checked"). Cloudflare is the reference platform: the coordinator
+  runs on Workers + Durable Objects; the protocol does not depend on it. Do not name other
+  finalists on stage.
+- Criteria map (Dina's brief, her order): (1) what I built = slides 1-3 (0:00-1:30); (2) why it's
+  new = slide 4 (1:30-2:21); (3) how it solves many agents at once = slides 5-9 (2:21-5:11): without
+  Weft (5), with Weft (6), how Weft resolves it (7-8), built with itself (9). Close = slides 10-12
+  (5:11-6:08): why it matters, thesis, takeaway. On-screen kickers: "1 ·", "2 ·", "3 ·".
 
 ---
 
@@ -76,7 +90,7 @@ Sixty-four hours later, I submitted. 231 files. 38,593 lines. Every commit writt
 In the first eleven hours, Weft's log recorded 627 events and 460 edits. 59 times, Weft told one
 agent to wait for another."
 
-## 0:49-1:30 · Slide 3: what I built
+## 0:49-1:30 · Slide 3: 1, what I built
 
 "What I built: Weft. A live feed of every edit every agent makes to a repo, in order, while they
 type. Not after the merge.
@@ -86,37 +100,24 @@ function, the file, and the event that caused it, and tells the agent what to do
 new version, update your call.
 It's public and read-only. Watch it from your seat."
 
-## 1:30-1:56 · Slide 4: why it's new
+## 1:30-2:21 · Slide 4: 2, why it's new
 
-"Here's what's new. Other systems check a change when it lands. Weft checks every edit while the
-agent is still writing it, before a commit or a pull request exists. So the agent fixes it in
-seconds instead of redoing finished work. And it does that through an open protocol that any
-agent harness can speak."
+"Two: why it's new. Other systems check a change when it lands. Weft checks every edit while the
+agent is still writing it.
+That timing is the whole difference. A check at landing runs on finished work, so the work gets
+thrown away and redone. Weft catches the conflict before a commit or a pull request exists.
+Nothing finished is thrown away: the agent reroutes mid-edit, in seconds, and keeps going.
+And it's an open protocol, WCP, a draft at version 0.1. Any agent harness can speak it, and so can
+a person: a plain editor joins through a file watcher. Cloudflare is the reference platform; the
+protocol runs anywhere."
 
-## 1:56-3:23 · Slides 5-6: how it handles many agents at once
+## 2:21-2:44 · Slide 5: 3, without Weft (22 seconds, muted, a real recorded run, narrate over it)
 
-"How does that work with many agents at once? Every edit goes through one checkpoint per repo, a
-Durable Object. Cloudflare runs exactly one copy, so every agent sees the same history.
-The question isn't which edit came first. It's which change breaks which. If one agent changes a
-function and another still calls the old version, the healthy order is: the second adopts the new
-signature, then lands. So that edit doesn't land yet. The agent gets a squiggle back, inside its
-own run: this function changed, here's the change. It fixes its code and tries again. Main moves
-one checked landing at a time.
+"Three: many agents changing code at once. First, two agents with Weft switched off. One changes
+createSession. The other keeps calling the old version. Each branch passes its own tests. Git
+merges both, no conflict. Then the build breaks on main, and someone has to send the work back."
 
-Under the hood: Workers serve the API and the site. A Durable Object per repo keeps the order.
-Artifacts stores the git. Workflows and Queues land work on main.
-The rules are the open protocol, WCP: a draft, version 0.1, that can run anywhere.
-Claude Code, Codex and OpenCode each run a hook on every tool call. That's where the check
-happens. In our test runs, eighteen agents across those three tools worked on one repo at once,
-through one checkpoint."
-
-## 3:23-3:45 · Slide 7: without Weft (22 seconds, muted, a real recorded run, narrate over it)
-
-"First, the same two agents with Weft switched off. One changes createSession. The other keeps
-calling the old version. Each branch passes its own tests. Git merges both, no conflict. Then the
-build breaks on main, and someone has to send the work back."
-
-## 3:45-4:32 · Slide 8: with Weft (47 seconds, muted, narrate over it)
+## 2:44-3:31 · Slide 6: with Weft (47 seconds, muted, narrate over it)
 
 "Now with Weft. Claude Code on the left, Codex on the right.
 Claude Code changes a function called createSession.
@@ -126,31 +127,43 @@ It tries again, and it's accepted. A typical check takes just over half a second
 No human stepped in. No merge conflict. Caught before a commit existed."
 (Pause until the clip ends.)
 
-## 4:32-5:01 · Slide 9: how it was built
+## 3:31-4:52 · Slides 7-8: how Weft resolves it
 
-"That's not only a demo. Weft coordinated the agents building Weft. By Monday its log had 918
-events, 679 edits, 27 landings on main, sixty waits, and five edits refused before they could land.
-Event 834 was refused because event 813 changed a type it used. The next try was accepted.
-This is how I work with agents: explore, decide, delegate, verify, repeat."
+"How did Weft resolve that? Every edit goes through one checkpoint per repo, a Durable Object.
+Cloudflare runs exactly one copy, so every agent sees the same history.
+The question isn't which edit came first. It's which change breaks which. One agent changed a
+function; the other still called the old version. The healthy order is: the second adopts the new
+signature, then lands. So that edit doesn't land yet. The agent gets a squiggle back, inside its
+own run: this function changed, here's the change. It fixes its code and tries again. Main moves
+one checked landing at a time.
 
-## 5:01-6:02 · Slide 10: why it matters
+Under the hood: Workers serve the API and the site. A Durable Object per repo keeps the order.
+Artifacts stores the git. Workflows and Queues land work on main.
+The rules are WCP, so the harness doesn't matter: Claude Code, Codex and OpenCode each run a hook
+on every tool call. That's where the check happens. In our test runs, eighteen agents across
+those three tools worked on one repo at once, through one checkpoint."
 
-"Why does it matter? One agent is a tool. Ten agents on one repo is a team, and teams step on each
-other. Today they find out at merge time, like the first clip. At edit time the fix is cheap: the
-agent still holds the task.
+## 4:52-5:11 · Slide 9: built with itself
+
+"That's not just a demo. Weft coordinated the agents building Weft: 918 events, 27 landings, five
+edits refused. Event 834 was refused because 813 changed a type it used; the next try was accepted.
+My loop: explore, decide, delegate, verify, repeat."
+
+## 5:11-5:47 · Slide 10: why it matters
+
+"One agent is a tool. Ten on one repo is a team, and teams collide.
 In two weeks: 39 stars, a stranger filed 22 issues and pull requests, and the Beads team asked how
 to integrate.
-It's a prototype: TypeScript and JavaScript, not in production yet.
-Next: a Time Machine for agent work. Weft already renders a preview of every revision; the
-timeline to scrub through them and find the one that broke it isn't built yet.
-With the credits: a free hosted coordinator for outside teams, and a public benchmark with and
-without Weft, measuring the rework it saves."
+It's a prototype: TypeScript and JavaScript, not in production.
+Next, a Time Machine: every revision already has a preview; the timeline to scrub them isn't
+built.
+With the credits: a free hosted coordinator, and a public benchmark of the rework it saves."
 
-## 6:02-6:07 · Slide 11: thesis
+## 5:47-5:52 · Slide 11: thesis
 
 "So that's Weft. Red squiggles, for teams of coding agents."
 
-## 6:07-6:23 · Slide 12: takeaway
+## 5:52-6:08 · Slide 12: takeaway
 
 "We have to assume the code editor disappears. If it does, agents still need squiggles.
 It's live right now at weft.elier.ai. Scan it, watch the agents.
@@ -158,11 +171,15 @@ And I'm looking for my next builder role. Thank you."
 
 ---
 
-Timing (Oct 20, rev 3): 797 spoken words, 130 wpm. Section times above are cumulative and use the
-clip length when a clip runs longer than its narration (slide 7: 22.4 s clip vs 20 s spoken;
-slide 8: 47.0 s clip vs 33 s spoken). Total: about 6:23, inside the 6:30 target and 37 s under
-the 7:00 hard cap. Rev 2 was 6:44; the cut was 36 words of phrasing, no ideas. "A typical check
-takes just over half a second" moved from slide 6 into the slide 8 clip, where the narration had
-14 s of slack.
-If you run long: on slide 10, drop the credits sentence (-8 s), then on slide 6 the Workers /
-Durable Object / Artifacts / Workflows list (the slide shows it, -10 s).
+Timing (Oct 20, rev 5): 769 spoken words, 130 wpm. Section times above are cumulative and use the
+clip length when a clip runs longer than its narration (slide 5: 22.4 s clip vs 22.6 s spoken;
+slide 6: 47.0 s clip vs 33 s spoken). Total: about 6:08, 22 s under the 6:30 target and 52 s under
+the 7:00 hard cap (rev 4: 6:23).
+By criterion: (1) what I built 0:00-1:30 (1:30); (2) why it's new 1:30-2:21 (0:51); (3) many agents
+at once 2:21-5:11 (2:50); close 5:11-6:08 (0:57).
+What moved, nothing cut: "merge time vs edit time, the agent still holds the task" (old slide 10)
+is now said on slide 4 ("thrown away and redone" / "reroutes mid-edit") and stays as the slide 10
+line "Weft moves it to edit time". "WCP, a draft, version 0.1" moved from the stack slide to slide
+4. 679 edits and 60 waits stay on slide 9's screen, not spoken.
+If you run long: on slide 10, drop the credits sentence (-7 s), then on slide 8 the Workers /
+Durable Object / Artifacts / Workflows list (the slide shows it, -11 s).

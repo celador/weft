@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Build the visual Connect 2026 deck (slides.html), offline, single file, stdlib only.
 
+Slide order (rev 5): 1-3 what I built, 4 why it's new, 5 without-Weft clip, 6 with-Weft clip,
+7-8 how Weft resolves it, 9 built with itself, 10-12 close.
 Inputs: demo/video/connect-2026/stills/*.png, qr-weft.svg, the 22 s "without Weft" clip
 (demo/video/connect-2026/baseline.mp4, recorded from baseline.tape), and the 47 s squiggle clip, which is
 reused from slides-story-v1.html (data:video/mp4). The story version build is
@@ -13,7 +15,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 STILLS = ROOT / "demo/video/connect-2026/stills"
 
-CLIPS = {7: 22.44, 8: 47.03}  # slide number -> clip seconds (narration runs over the clip)
+CLIPS = {5: 22.44, 6: 47.03}  # slide number -> clip seconds (narration runs over the clip)
 
 def count_words():
     """Spoken words (quoted text in section bodies) and talk time incl. clips at 130 wpm."""
@@ -62,8 +64,13 @@ def slides():
 <div class="st hit"><i></i><b>Edit</b><span>Weft checks here</span></div>
 <div class="st"><i></i><b>Commit</b></div><div class="st"><i></i><b>Pull request</b></div>
 <div class="st late"><i></i><b>Merge / land</b><span>others check here</span></div></div>
-<p class="sub">Caught before a commit exists: <b>no finished work redone.</b><br>Through an open protocol, WCP, that any agent harness can speak.</p></section>''',
-        '''<section><p class="kicker">3 · Many agents at once: how it works</p>
+<p class="sub">Caught before a commit exists: <b>no finished work thrown away.</b><br>The agent reroutes mid-edit.</p>
+<p class="sub">An open protocol, <b>WCP</b> (draft v0.1): any agent harness or person can speak it.<br><span class="dim">Cloudflare is the reference platform.</span></p></section>''',
+        f'''<section class="hero"><p class="kicker">3 · Many agents at once · without Weft, a real run</p><video data-clip muted playsinline preload="auto" src="{baseline_clip()}"></video>
+<p class="cap">Both branches green alone → git merges cleanly → <span class="red">build breaks on main</span></p></section>''',
+        f'''<section class="hero"><p class="kicker">3 · Many agents at once · with Weft</p><video data-clip muted playsinline preload="auto" src="{clip()}"></video>
+<p class="cap">Claude Code changes <code>createSession</code> → Codex's edit is refused → it adapts → accepted</p></section>''',
+        '''<section><p class="kicker">3 · How Weft resolves it</p>
 <svg viewBox="0 0 1600 640" class="diag">
 <g class="agent"><rect x="40" y="60" width="300" height="110" rx="18"/><text x="190" y="128">Agent A</text></g>
 <g class="agent"><rect x="40" y="265" width="300" height="110" rx="18"/><text x="190" y="333">Agent B</text></g>
@@ -83,11 +90,7 @@ def slides():
 <div class="layer l4"><b>Workflows + Queues</b>land on main one at a time: rebase, test, advance</div>
 </div>
 <p class="sub">WCP, the Weft Coordination Protocol · open draft v0.1 · any harness, any host</p></section>''',
-        f'''<section class="hero"><p class="kicker">Without Weft · a real run</p><video data-clip muted playsinline preload="auto" src="{baseline_clip()}"></video>
-<p class="cap">Both branches green alone → git merges cleanly → <span class="red">build breaks on main</span></p></section>''',
-        f'''<section class="hero"><p class="kicker">With Weft</p><video data-clip muted playsinline preload="auto" src="{clip()}"></video>
-<p class="cap">Claude Code changes <code>createSession</code> → Codex's edit is refused → it adapts → accepted</p></section>''',
-        f'''<section><p class="kicker">Weft coordinated the agents building Weft</p>
+        f'''<section><p class="kicker">3 · Weft coordinated the agents building Weft</p>
 <div class="stats small"><div><b>918</b>events</div><div><b>679</b>edits</div><div><b>27</b>landings</div><div><b>60</b>waits</div><div><b>5</b>refused</div></div>
 <p class="src">Weft's own log, to Oct 19 · event 834 refused because event 813 changed a type; next try accepted</p>
 <ol class="loop">{steps}</ol></section>''',
