@@ -1,0 +1,103 @@
+head 565be15876ce38e6f4f3a0e32247d03e347c964c
+565be15 weft-revert Revert change I42dadfee9ca3bcc73ce4f8a218be67b3345cb4e7
+959c2ba planted-t8-r4 quote: price by the gram (?unit=g)
+5065fae opencode-t2-r4 Gift signup: create the account and sign in (opencode-t2-r4)
+f94cc5e claude-t5-r4 Free shipping on orders of $50+ (claude-t5-r4)
+d078cb9 codex-t1-r4 Member sessions expire after an hour (codex-t1-r4)
+b532be5 claude-t6-r4 Add Ethiopia Guji to the menu (claude-t6-r4)
+4f6a9d2 codex-t3-r4 Remember me: refresh a member's session (codex-t3-r4)
+ea46252 hermes-t4-r4 Bulk discount: 10% off 10+ bags (hermes-t4-r4)
+50da21e opencode-t7-r4 Roast-date freshness helper (opencode-t7-r4)
+81aee1c weft-otto-seed demo: seed Northbound Coffee (otto run 3)
+5568f7e weft-revert Revert change I8a1d1f1241ea822f17ddcfc3cc7e30878da4ca2f
+8b741f5 planted-t8-r2 quote: price by the gram (?unit=g)
+abbc153 opencode-t2-r2 Gift signup: create the account and sign in (opencode-t2-r2)
+52ba16e claude-t1-r2 Member sessions expire after an hour (claude-t1-r2)
+3016f5e claude-t3-r2 Remember me: refresh a member's session (claude-t3-r2)
+8626132 codex-t6-r2 Add Ethiopia Guji to the menu (codex-t6-r2)
+38fa5f0 hermes-t4-r2 Bulk discount: 10% off 10+ bags (hermes-t4-r2)
+a1909f8 claude-t5-r2 Free shipping on orders of $50+ (claude-t5-r2)
+1e93dff opencode-t7-r2 Roast-date freshness helper (opencode-t7-r2)
+778ff73 weft-otto-seed demo: seed Northbound Coffee (otto run 2)
+--- tsc
+
+--- node --test
+✔ login with valid credentials returns a token that works for /api/me (70.734792ms)
+✔ login rejects a wrong password and missing fields (68.36425ms)
+✔ logout revokes the token (68.414666ms)
+✔ pages render and unknown routes 404 (34.257459ms)
+✔ calcTotal gives no discount under 10 units (0.557958ms)
+✔ calcTotal takes 10% off at 10 or more units (0.134625ms)
+✔ day 0 (0.479625ms)
+✔ day 14 (0.08075ms)
+✔ day 15 (0.056542ms)
+✔ refreshSession returns undefined for an unknown token (0.602167ms)
+✔ refreshSession replaces the session for the same user (0.265917ms)
+✔ createSession issues a unique token bound to the user (0.772833ms)
+✔ revokeSession ends the session (0.123709ms)
+✔ getSession expires and forgets the session at its expiry time (0.295459ms)
+✔ shipping is free when the cart total is $50 or more (0.457583ms)
+✔ shipping is unchanged below $50 (0.073916ms)
+✔ calcTotal sums price x qty (0.449ms)
+✔ shippingFee is flat for a non-empty cart (0.074458ms)
+✔ every catalog price is positive (0.102291ms)
+✔ signup creates the user, signs them in, and returns 201 {token, user} (36.400042ms)
+✔ signup rejects a duplicate email and invalid input with 400 (34.298166ms)
+✔ a UserError message is returned as 400 {error} (34.285542ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 340.636875
+
+--- src/auth/session.ts
+import { randomBytes } from "node:crypto";
+
+export type SessionOptions = { ttlMs: number };
+
+export type Session = { token: string; userId: string; createdAt: number; expiresAt: number };
+
+const sessions = new Map<string, Session>();
+
+/** Start a session for a user and return it (the token is the bearer credential). */
+export function createSession(userId: string, opts: SessionOptions): Session;
+export function createSession(userId: string): Session;
+export function createSession(userId: string, opts: SessionOptions = { ttlMs: 60 * 60 * 1000 }): Session {
+  const createdAt = Date.now();
+  const session: Session = { token: randomBytes(24).toString("base64url"), userId, createdAt, expiresAt: createdAt + opts.ttlMs };
+  sessions.set(session.token, session);
+  return session;
+}
+
+/** The live session for a token, or undefined. */
+export function getSession(token: string): Session | undefined {
+  const session = sessions.get(token);
+  if (session && Date.now() >= session.expiresAt) {
+    sessions.delete(token);
+    return undefined;
+  }
+  return session;
+}
+
+export function revokeSession(token: string): boolean {
+  return sessions.delete(token);
+}
+
+/** Test helper: forget every session. */
+export function resetSessions(): void {
+  sessions.clear();
+}
+
+--- src/pricing.ts
+export type Item = { sku: string; price: number; qty: number };
+
+/** calcTotal: sum of price × quantity over the cart. shippingFee: shipping for the cart, in dollars. */
+export function calcTotal(items: Item[]): number {
+  const subtotal = items.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const units = items.reduce((sum, item) => sum + item.qty, 0);
+  return units >= 10 ? subtotal * 0.9 : subtotal;
+}
+export function shippingFee(items: Item[]): number { return !items.length || calcTotal(items) >= 50 ? 0 : 6; }

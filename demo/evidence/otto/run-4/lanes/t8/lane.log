@@ -1,0 +1,11 @@
+[lane t8 run-4 +0.3s] preflight {"quote":{"status":200,"ms":267,"body":"{\"sku\":\"house-blend\",\"qty\":2,\"total\":32}","waited_s":0.269}}
+[lane t8 run-4 +8s] candidate {"agent":"planted-t8-r4","harness":"planted","change":"I42dadfee9ca3bcc73ce4f8a218be67b3345cb4e7","fork":"weft-weft-demo-site-t_8eee648c-1"}
+[lane t8 run-4 +56.3s] planted_pushed {"sha":"959c2ba6c42f3c6bfed4ccef5d3e8eed3e763f4b","diff":["+      const unit = url.searchParams.get(\"unit\")!.toLowerCase(); // throws when ?unit is absent","+      if (unit === \"g\") return Response.json({ sku, qty, total: calcTotal([{ sku, price: priceOf(sku) / 340, qty }]) });"]}
+[lane t8 run-4 +75.7s] processed {"revision":"processed"}
+[lane t8 run-4 +99.9s] landed {"op":"op-9ee876e0243da5dd86eed624","workflow":"land-I42dadfee9ca3-1792502004958"}
+[lane t8 run-4 +105.1s] production_broken {"land_to_broken_s":5.177,"sample":{"status":500,"ms":106,"body":"<!DOCTYPE html>\n<!--[if lt IE 7]> <html class=\"no-js ie6 oldie\" lang=\"en-US\"> <![endif]-->\n<!--[if IE 7]>    <html class=\"no-js ie7 oldie\" lang=\"en-US\"> <![endif]-->\n<!--[if IE 8]>    <html class=\"no-","waited_s":5.176}}
+[lane t8 run-4 +105.4s] production_traffic {"statuses":[500,500,500,500,500,500,500,500]}
+[lane t8 run-4 +115.7s] revert_started {"workflow":"prod-revert-op-9ee876e0243da5dd86eed624","land_to_trigger_s":15.81}
+[lane t8 run-4 +131.9s] reverted {"output":{"status":"reverted","op_id":"op-cd591c96ba037dacfaa4e196","reverts_op_id":"op-9ee876e0243da5dd86eed624","seq":780,"sha":"565be15876ce38e6f4f3a0e32247d03e347c964c"}}
+[lane t8 run-4 +131.9s] production_healed {"land_to_healed_s":32.043,"sample":{"status":200,"ms":82,"body":"{\"sku\":\"house-blend\",\"qty\":2,\"total\":32}","waited_s":0.082}}
+[lane t8 run-4 +132.4s] final {"status":"reverted","land_op":"op-9ee876e0243da5dd86eed624","revert_op":"op-cd591c96ba037dacfaa4e196","change_status":"reverted","weft_task_status":"open","stack":"","timings":{"land_to_broken_s":5.177,"land_to_healed_s":32.462},"at":"2026-10-20T13:14:21.424Z"}

@@ -15,3 +15,9 @@
 [2026-10-20T13:01:04.110Z] follow error git clone -q https://2d659dee148763a8d64c80135da7165d.artifacts.cloudflare.net/git/w: error: RPC failed; HTTP 503 curl 22 The requested URL returned error: 503
 fatal: expected flush after ref listing
 
+[2026-10-20T13:11:04.772Z] trunk 5065fae42 Gift signup: create the account and sign in (opencode-t2-r4)
+  deploy exit 0 Deployed weft-demo-site triggers (1.65 sec) | Current Version ID: ab82acf4-feb4-4169-ba0a-93a010162fe1
+[2026-10-20T13:13:46.395Z] trunk 959c2ba6c quote: price by the gram (?unit=g)
+  deploy exit 0 Deployed weft-demo-site triggers (1.04 sec) | Current Version ID: a532aa92-cf3f-4fc0-9fab-de70931c352c
+[2026-10-20T13:14:12.336Z] trunk 565be1587 Revert change I42dadfee9ca3bcc73ce4f8a218be67b3345cb4e7
+  deploy exit 0 Deployed weft-demo-site triggers (1.58 sec) | Current Version ID: 6bd18a94-1784-43d9-8faf-20165fd63e6b

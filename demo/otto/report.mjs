@@ -113,6 +113,7 @@ for (const r of RUNS) {
   rows.push(`## run-${r}`, "");
   rows.push(`Started ${b.started_at}, last lane finished ${b.finished_at ?? "—"} (${b.total_s ?? "—"} s). Weft log #${b.seq_range[0]}–#${b.seq_range[1]}, ${b.events_in_run} events from this run's agents and landings.`);
   if (b.cards) rows.push(`Kanban: board \`${b.cards.board}\`, cards ${Object.entries(b.cards.cards ?? {}).map(([k, c]) => `${k}=${c}`).join(", ")}.`);
+  if (b.cards?.notes?.length) rows.push("", "Run notes (honest failures and how the run was driven):", "", ...b.cards.notes.map((n) => `- ${n}`), "");
   rows.push(`Harnesses: ${Object.entries(b.harnesses).map(([h, n]) => `${h} ×${n}`).join(", ")}.`, "");
   rows.push("| card | title | candidates (pushed) | result | winner | approval | land layer | start → end (s) |", "|---|---|---|---|---|---|---|---|");
   for (const [k, l] of Object.entries(b.lanes).sort()) {

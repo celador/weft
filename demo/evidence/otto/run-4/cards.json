@@ -1,1 +1,22 @@
-{"t1": "t_a9c85828", "t2": "t_ea0e0bf1", "t3": "t_a9c19726", "t4": "t_23d314c0", "t5": "t_4ec5a04f", "t6": "t_5d8a31ae", "t7": "t_163c8487"}
+{
+ "board": "weft-demo-site",
+ "created_via": "Otto relay POST /kanban/tasks (demo/otto/cards.py)",
+ "cards": {
+  "t1": "t_a9c85828",
+  "t2": "t_ea0e0bf1",
+  "t3": "t_a9c19726",
+  "t4": "t_23d314c0",
+  "t5": "t_4ec5a04f",
+  "t6": "t_5d8a31ae",
+  "t7": "t_163c8487",
+  "t8": "t_8eee648c"
+ },
+ "notes": [
+  "All 7 cards t1-t7 were running at once on the board (Otto showed Running \u00b7 7); t8 created after the others finished.",
+  "Approvals for t1, t3 and t6 were clicks on Otto Dev's Approve button (recorded); approved_by=john.",
+  "The t3 and t6 lanes died once on a `fetch failed` while polling BestOfN; fixed with a retry and `lane.mjs reattach` to the same workflow; cards set back to ready via the relay PATCH.",
+  "gemini-t2-r4 hit the Gemini free-tier daily quota (429); gemini-t5-r4 made no changes. cursor-agent not used (not logged in).",
+  "Trunk deploys during the run came from `trunk.mjs follow --deploy` (wrangler), not Workers Builds; one follow clone hit an Artifacts 503 and retried.",
+  "First attempt (run-3) put cards on board `weft` by mistake (worker kanban tools are pinned to their own board); aborted, evidence in run-3-aborted."
+ ]
+}
