@@ -112,3 +112,7 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-10-19 20:55 — unstuck t_3c900064 (Connect 10-slide deck)
 - Worker stopped with a partial handoff (deck/pdf/pptx committed 4924543). Commented the Aura-2 path (demo/video/rig/narrate.mjs --provider cf-aura2) and remaining items; unblocked + dispatched (running). Rationale: talk is Wed Oct 21, finish today.
 - Pushed main (852b34a, 4924543) to origin. wt/local still HELD (Omer-code question, flagged 10-13).
+
+## 2026-10-20 03:05 — unstuck t_83def502 (Otto multi-harness demo)
+- Run 1 ended on iteration budget with a clean progress handoff (site, Weft repo, adapter candidate mode, lanes; smoke runs landed with all 5 harnesses). Commented next steps, unblocked + dispatched (running). Rationale: only the real run, clip and upload remain.
+- wt/local still HELD (Omer-code question, flagged 10-13). wt/t_be804fb4 (competitor recon) intentionally unmerged: public repo.
