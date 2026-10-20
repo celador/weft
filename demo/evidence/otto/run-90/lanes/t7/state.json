@@ -1,0 +1,352 @@
+{
+  "run": 90,
+  "task": "t7",
+  "card": "smoke90-t7",
+  "title": "Roast-date freshness helper",
+  "harnesses": [
+    "gemini",
+    "opencode"
+  ],
+  "beat": "independent work: no collision, lands on its own",
+  "started_at": "2026-10-20T05:07:28.506Z",
+  "phase": "final",
+  "marks": {
+    "candidates": 12.8,
+    "agents_ready": 15.6,
+    "working": 15.6,
+    "pushed gemini-t7-r90": 244.7,
+    "pushed opencode-t7-r90": 246.8,
+    "evidence": 246.8,
+    "evidence_done": 284.2,
+    "selecting": 285,
+    "selected": 290.4,
+    "final": 304.3
+  },
+  "steps": [
+    {
+      "name": "candidates",
+      "at_s": 12.8,
+      "at": "2026-10-20T05:07:41.327Z",
+      "data": [
+        {
+          "agent": "gemini-t7-r90",
+          "harness": "gemini",
+          "change": "Icc7cf5956f01306a94da6f3c39c3713b40c090f9",
+          "fork": "weft-weft-demo-site-smoke90-t7-1"
+        },
+        {
+          "agent": "opencode-t7-r90",
+          "harness": "opencode",
+          "change": "I3945bcbb8874002748789e675a160a179cb98ac8",
+          "fork": "weft-weft-demo-site-smoke90-t7-2"
+        }
+      ]
+    },
+    {
+      "name": "agents_ready",
+      "at_s": 15.6,
+      "at": "2026-10-20T05:07:44.072Z"
+    },
+    {
+      "name": "working",
+      "at_s": 15.6,
+      "at": "2026-10-20T05:07:44.072Z"
+    },
+    {
+      "name": "pushed gemini-t7-r90",
+      "at_s": 244.7,
+      "at": "2026-10-20T05:11:33.168Z",
+      "data": {
+        "ok": false,
+        "reason": "no changes"
+      }
+    },
+    {
+      "name": "pushed opencode-t7-r90",
+      "at_s": 246.8,
+      "at": "2026-10-20T05:11:35.289Z",
+      "data": {
+        "sha": "303e08a2d228d62dee15aac61a629028eb05ffa3"
+      }
+    },
+    {
+      "name": "evidence",
+      "at_s": 246.8,
+      "at": "2026-10-20T05:11:35.290Z"
+    },
+    {
+      "name": "evidence_done",
+      "at_s": 284.2,
+      "at": "2026-10-20T05:12:12.753Z"
+    },
+    {
+      "name": "selecting",
+      "at_s": 285,
+      "at": "2026-10-20T05:12:13.462Z",
+      "data": {
+        "workflow": "bestofn-weft-demo-site-smoke90-t7"
+      }
+    },
+    {
+      "name": "selected",
+      "at_s": 290.4,
+      "at": "2026-10-20T05:12:18.893Z",
+      "data": {
+        "status": "complete",
+        "result": "landing",
+        "winner": "I3945bcbb8874002748789e675a160a179cb98ac8",
+        "approved_by": null,
+        "ranking": [
+          {
+            "agent": "opencode-t7-r90",
+            "score": 1154,
+            "eligible": true,
+            "layer": "git",
+            "reasons": [
+              "tests pass",
+              "rebase: git",
+              "churn 32",
+              "review pass 100",
+              "risk low"
+            ]
+          },
+          {
+            "agent": "gemini-t7-r90",
+            "score": -1,
+            "eligible": false,
+            "layer": "git",
+            "reasons": [
+              "revision missing",
+              "no tests",
+              "rebase: git"
+            ]
+          }
+        ],
+        "winner_agent": "opencode-t7-r90",
+        "land": {
+          "workflow_status": "complete",
+          "status": "landed",
+          "op_id": "op-a4f89521ce0207833ada3cca",
+          "seq": 17,
+          "before": "1adaeb37eef3cc61a5843c6ef16ab8afaf3c3aa0",
+          "after": "07ed8b0eac23d42210ca82c6f6c1e7e72e1c4795",
+          "layer": "git",
+          "attempts": 1,
+          "queue_id": 2
+        }
+      }
+    },
+    {
+      "name": "final",
+      "at_s": 304.3,
+      "at": "2026-10-20T05:12:32.816Z",
+      "data": {
+        "status": "landed",
+        "winner": "opencode-t7-r90",
+        "harness": "opencode",
+        "approved_by": null,
+        "land_op": "op-a4f89521ce0207833ada3cca",
+        "layer": "git",
+        "trunk": null,
+        "at": "2026-10-20T05:12:32.816Z"
+      }
+    }
+  ],
+  "pid": 241,
+  "first_seq": 1,
+  "agents": [
+    {
+      "agent": "gemini-t7-r90",
+      "harness": "gemini",
+      "change": "Icc7cf5956f01306a94da6f3c39c3713b40c090f9",
+      "fork": "weft-weft-demo-site-smoke90-t7-1",
+      "turns": [
+        {
+          "name": "work",
+          "code": 0,
+          "ms": 229068
+        }
+      ],
+      "push": {
+        "ok": false,
+        "reason": "no changes"
+      }
+    },
+    {
+      "agent": "opencode-t7-r90",
+      "harness": "opencode",
+      "change": "I3945bcbb8874002748789e675a160a179cb98ac8",
+      "fork": "weft-weft-demo-site-smoke90-t7-2",
+      "turns": [
+        {
+          "name": "work",
+          "code": 0,
+          "ms": 58202
+        }
+      ],
+      "push": {
+        "ok": true,
+        "sha": "303e08a2d228d62dee15aac61a629028eb05ffa3"
+      }
+    }
+  ],
+  "evidence": {
+    "opencode-t7-r90": {
+      "revision": {
+        "status": "processed",
+        "layer": "git"
+      },
+      "rows": [
+        {
+          "kind": "rebase",
+          "status": "pass",
+          "data": {
+            "status": "clean",
+            "layer": "git"
+          }
+        },
+        {
+          "kind": "test",
+          "status": "pass",
+          "data": {
+            "status": "pass",
+            "summary": {
+              "pass": 14,
+              "fail": 0
+            }
+          }
+        },
+        {
+          "kind": "preview",
+          "status": "pass",
+          "data": {
+            "url": "https://weft-previews-preview.elier.ai/p/weft-weft-demo-site-smoke90-t7-2/07ed8b0eac23d42210ca82c6f6c1e7e72e1c4795/Od1Kjlbhip3CkVSdrBgFVA/",
+            "trunk_url": "https://weft-previews-preview.elier.ai/p/weft-demo-site/1adaeb37eef3cc61a5843c6ef16ab8afaf3c3aa0/dWFWG8US0WBbvhgILUOs8g/",
+            "routes": [
+              "/",
+              "/menu.html"
+            ],
+            "provider": "weft-previews (Artifacts)",
+            "sha": "07ed8b0eac23d42210ca82c6f6c1e7e72e1c4795",
+            "onto": "1adaeb37eef3cc61a5843c6ef16ab8afaf3c3aa0"
+          }
+        },
+        {
+          "kind": "screenshot",
+          "status": "pass",
+          "data": {
+            "route": "/",
+            "ratio": 0
+          }
+        },
+        {
+          "kind": "screenshot",
+          "status": "pass",
+          "data": {
+            "route": "/menu.html",
+            "ratio": 0
+          }
+        },
+        {
+          "kind": "visual_diff",
+          "status": "info",
+          "data": {
+            "routes": [
+              {
+                "route": "/",
+                "ratio": 0,
+                "pixels": 0,
+                "uri": null
+              },
+              {
+                "route": "/menu.html",
+                "ratio": 0,
+                "pixels": 0,
+                "uri": null
+              }
+            ],
+            "max_ratio": 0,
+            "changed": false,
+            "baseline": "1adaeb37eef3cc61a5843c6ef16ab8afaf3c3aa0"
+          }
+        },
+        {
+          "kind": "risk",
+          "status": "info",
+          "data": {
+            "risk": "low"
+          }
+        },
+        {
+          "kind": "review",
+          "status": "pass",
+          "data": {
+            "verdict": "pass",
+            "score": 100,
+            "summary": "The candidate change meets all acceptance criteria and the diff looks correct, with all tests passing and no visual differences in the rendered pages."
+          }
+        }
+      ],
+      "waited_s": 37
+    }
+  },
+  "selection": {
+    "workflow": "bestofn-weft-demo-site-smoke90-t7",
+    "n": 1,
+    "risk": "low",
+    "status": "complete",
+    "result": "landing",
+    "winner": "I3945bcbb8874002748789e675a160a179cb98ac8",
+    "approved_by": null,
+    "ranking": [
+      {
+        "agent": "opencode-t7-r90",
+        "score": 1154,
+        "eligible": true,
+        "layer": "git",
+        "reasons": [
+          "tests pass",
+          "rebase: git",
+          "churn 32",
+          "review pass 100",
+          "risk low"
+        ]
+      },
+      {
+        "agent": "gemini-t7-r90",
+        "score": -1,
+        "eligible": false,
+        "layer": "git",
+        "reasons": [
+          "revision missing",
+          "no tests",
+          "rebase: git"
+        ]
+      }
+    ],
+    "winner_agent": "opencode-t7-r90",
+    "land": {
+      "workflow_status": "complete",
+      "status": "landed",
+      "op_id": "op-a4f89521ce0207833ada3cca",
+      "seq": 17,
+      "before": "1adaeb37eef3cc61a5843c6ef16ab8afaf3c3aa0",
+      "after": "07ed8b0eac23d42210ca82c6f6c1e7e72e1c4795",
+      "layer": "git",
+      "attempts": 1,
+      "queue_id": 2
+    }
+  },
+  "final": {
+    "status": "landed",
+    "winner": "opencode-t7-r90",
+    "harness": "opencode",
+    "approved_by": null,
+    "land_op": "op-a4f89521ce0207833ada3cca",
+    "layer": "git",
+    "trunk": null,
+    "at": "2026-10-20T05:12:32.816Z"
+  },
+  "finished_at": "2026-10-20T05:12:32.816Z",
+  "duration_s": 304.3
+}

@@ -1,0 +1,10 @@
+[lane t5 run-2 +10.7s] candidates [{"agent":"claude-t5-r2","harness":"claude","change":"Id9baba0a66e657f4c9a57b936dd5fcce877bb806","fork":"weft-weft-demo-site-r2-t5-1"},{"agent":"gemini-t5-r2","harness":"gemini","change":"I4a11f5790f0688c88880397074bf381a6f24d8b7","fork":"weft-weft-demo-site-r2-t5-2"}]
+[lane t5 run-2 +13.9s] agents_ready 
+[lane t5 run-2 +13.9s] working 
+[lane t5 run-2 +38s] pushed claude-t5-r2 {"sha":"0bd77ed3d2808e4f10dff5ffc9417c765d72cfe5"}
+[lane t5 run-2 +38s] pushed gemini-t5-r2 {"ok":false,"reason":"no changes"}
+[lane t5 run-2 +38s] evidence 
+[lane t5 run-2 +170.1s] evidence_done 
+[lane t5 run-2 +170.8s] selecting {"workflow":"bestofn-weft-demo-site-r2-t5"}
+[lane t5 run-2 +175.5s] selected {"status":"complete","result":"landing","winner":"Id9baba0a66e657f4c9a57b936dd5fcce877bb806","approved_by":null,"ranking":[{"agent":"claude-t5-r2","score":1177,"eligible":true,"layer":"none","reasons":["tests pass","rebase: none","churn 15","review pass 100","risk low"]},{"agent":"gemini-t5-r2","score":-1,"eligible":false,"layer":"git","reasons":["revision missing","no tests","rebase: git"]}],"winner_agent":"claude-t5-r2"}
+[lane t5 run-2 +190.4s] final {"status":"landed","winner":"claude-t5-r2","harness":"claude","approved_by":null,"land_op":"op-c08adb730b60cd0daedb07bd","layer":"git","trunk":null,"at":"2026-10-20T06:34:27.202Z"}

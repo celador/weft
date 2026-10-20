@@ -1,0 +1,27 @@
+Warning: 256-color support not detected. Using a terminal with at least 256-color support is recommended for a better visual experience.
+YOLO mode is enabled. All tool calls will be automatically approved.
+YOLO mode is enabled. All tool calls will be automatically approved.
+[STARTUP] Phase 'cleanup_ops' was started but never ended. Skipping metrics.
+[STARTUP] Cannot measure phase 'cleanup_ops': start mark 'startup:cleanup_ops:start' not found (likely cleared by reset).
+Attempt 1 failed. Retrying with backoff... Error: exception TypeError: fetch failed sending request
+    at file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:267700:13
+    at async Models.generateContentStream (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:268721:16)
+    at async file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:311569:19
+    at async file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:288130:23
+    at async retryWithBackoff (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:308151:23)
+    at async GeminiChat.makeApiCallAndProcessStream (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:332718:28)
+    at async GeminiChat.streamWithRetries (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:332471:29)
+    at async Turn.run (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:333393:24)
+    at async GeminiClient.processTurn (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:347067:22)
+    at async GeminiClient.sendMessageStream (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:347164:14)
+Attempt 2 failed. Retrying with backoff... Error: exception TypeError: fetch failed sending request
+    at file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:267700:13
+    at async Models.generateContentStream (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:268721:16)
+    at async file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:311569:19
+    at async file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:288130:23
+    at async retryWithBackoff (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:308151:23)
+    at async GeminiChat.makeApiCallAndProcessStream (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:332718:28)
+    at async GeminiChat.streamWithRetries (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:332471:29)
+    at async Turn.run (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:333393:24)
+    at async GeminiClient.processTurn (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:347067:22)
+    at async GeminiClient.sendMessageStream (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:347164:14)

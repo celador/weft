@@ -1,0 +1,11 @@
+[lane t8 run-2 +0.4s] preflight {"quote":{"status":200,"ms":413,"body":"{\"sku\":\"house-blend\",\"qty\":2,\"total\":32}","waited_s":0.414}}
+[lane t8 run-2 +6.9s] candidate {"agent":"planted-t8-r2","harness":"planted","change":"I8a1d1f1241ea822f17ddcfc3cc7e30878da4ca2f","fork":"weft-weft-demo-site-r2-t8-1"}
+[lane t8 run-2 +54.2s] planted_pushed {"sha":"8b741f5ae220340504b4ec65acbfbe298e3db934","diff":["+      const unit = url.searchParams.get(\"unit\")!.toLowerCase(); // throws when ?unit is absent","+      if (unit === \"g\") return Response.json({ sku, qty, total: calcTotal([{ sku, price: priceOf(sku) / 340, qty }]) });"]}
+[lane t8 run-2 +164s] processed {"revision":"processed"}
+[lane t8 run-2 +183.1s] landed {"op":"op-a8320fc0339db7da6053659a","workflow":"land-I8a1d1f1241ea-1792479346233"}
+[lane t8 run-2 +188.3s] production_broken {"land_to_broken_s":5.19,"sample":{"status":500,"ms":98,"body":"<!DOCTYPE html>\n<!--[if lt IE 7]> <html class=\"no-js ie6 oldie\" lang=\"en-US\"> <![endif]-->\n<!--[if IE 7]>    <html class=\"no-js ie7 oldie\" lang=\"en-US\"> <![endif]-->\n<!--[if IE 8]>    <html class=\"no-","waited_s":5.189}}
+[lane t8 run-2 +188.7s] production_traffic {"statuses":[500,500,500,500,500,500,500,500]}
+[lane t8 run-2 +199.3s] revert_started {"workflow":"prod-revert-op-a8320fc0339db7da6053659a","land_to_trigger_s":16.145}
+[lane t8 run-2 +215s] reverted {"output":{"status":"reverted","op_id":"op-04eeffb838e2c7cb939d4645","reverts_op_id":"op-a8320fc0339db7da6053659a","seq":459,"sha":"5568f7e8ca9ced204d5f67870f5d9b37e57791b5"}}
+[lane t8 run-2 +215.1s] production_healed {"land_to_healed_s":32.007,"sample":{"status":200,"ms":103,"body":"{\"sku\":\"house-blend\",\"qty\":2,\"total\":32}","waited_s":0.104}}
+[lane t8 run-2 +215.8s] final {"status":"reverted","land_op":"op-a8320fc0339db7da6053659a","revert_op":"op-04eeffb838e2c7cb939d4645","change_status":"reverted","weft_task_status":"open","stack":"","timings":{"land_to_broken_s":5.19,"land_to_healed_s":32.635},"at":"2026-10-20T06:56:37.847Z"}

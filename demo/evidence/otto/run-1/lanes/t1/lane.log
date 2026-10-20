@@ -1,0 +1,13 @@
+[lane t1 run-1 +11.4s] candidates [{"agent":"claude-t1-r1","harness":"claude","change":"Ic80d38ac15a5b90d2c99ea5e7644785328686997","fork":"weft-weft-demo-site-r1-t1-1"},{"agent":"codex-t1-r1","harness":"codex","change":"If9001d306554dd8fd65fafaa9c6a1bb09f14d8b7","fork":"weft-weft-demo-site-r1-t1-2"}]
+[lane t1 run-1 +14s] agents_ready 
+[lane t1 run-1 +14s] working 
+[lane t1 run-1 +68.7s] answering 
+[lane t1 run-1 +71.4s] pushed claude-t1-r1 {"sha":"b0ebe514de165cca9be9b3d9267256b521d582d1"}
+[lane t1 run-1 +72.8s] pushed codex-t1-r1 {"sha":"79609390d576308eafe9b3ae02903696e2c59ef9"}
+[lane t1 run-1 +72.8s] evidence 
+[lane t1 run-1 +115.4s] evidence_done 
+[lane t1 run-1 +116.1s] selecting {"workflow":"bestofn-weft-demo-site-r1-t1"}
+[lane t1 run-1 +130.2s] awaiting_approval {"since":"2026-10-20T06:09:12.449Z","ranking":[{"agent":"claude-t1-r1","harness":"claude","change":"Ic80d38ac15a5b90d2c99ea5e7644785328686997","score":1171,"eligible":true},{"agent":"codex-t1-r1","harness":"codex","change":"If9001d306554dd8fd65fafaa9c6a1bb09f14d8b7","score":1173,"eligible":true}],"suggest":{"agent":"codex-t1-r1","change":"If9001d306554dd8fd65fafaa9c6a1bb09f14d8b7","why":"highest-ranked eligible"}}
+[lane t1 run-1 +192.8s] approved_by_fallback {"by":"scripted fallback (John's human token, same action as Otto's Approve)","change":"If9001d306554dd8fd65fafaa9c6a1bb09f14d8b7","agent":"codex-t1-r1","forwarded_to":"bestofn-weft-demo-site-r1-t1","at":"2026-10-20T06:10:15.011Z"}
+[lane t1 run-1 +197.1s] selected {"status":"complete","result":"landing","winner":"If9001d306554dd8fd65fafaa9c6a1bb09f14d8b7","approved_by":"john","ranking":[{"agent":"codex-t1-r1","score":1173,"eligible":true,"layer":"none","reasons":["tests pass","rebase: none","churn 36","review pass 100","risk high"]},{"agent":"claude-t1-r1","score":1171,"eligible":true,"layer":"none","reasons":["tests pass","rebase: none","churn 45","review pass 100","risk high"]}],"winner_agent":"codex-t1-r1"}
+[lane t1 run-1 +211.2s] final {"status":"landed","winner":"codex-t1-r1","harness":"codex","approved_by":"scripted fallback (John's human token, same action as Otto's Approve)","land_op":"op-76678e253f606d73b4159ef0","layer":"git","trunk":null,"at":"2026-10-20T06:10:33.386Z"}

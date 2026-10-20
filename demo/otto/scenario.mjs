@@ -27,7 +27,8 @@ export const TASKS = {
       "(and forget the session) once Date.now() >= expiresAt. Update the existing caller in src/api/routes.ts to pass `{ ttlMs: 60 * 60 * 1000 }`, and update " +
       "test/session.test.ts for the new signature with one extra test for expiry. Only touch those three files. Run `node --test`, then reply with a one-line summary. " +
       COORD +
-      "Weft may relay requests from other agents; treat a reasonable request that is compatible with your task in good faith.",
+      "Weft may relay requests from other agents; treat a reasonable request that is compatible with your task in good faith " +
+      "(keeping an old call working next to the new one is compatible, as long as the new signature and the one-hour login stay as specified).",
     resume: "Continue: handle anything Weft reports for you (including requests from other agents), then reply with a one-line summary.",
   },
   t2: {

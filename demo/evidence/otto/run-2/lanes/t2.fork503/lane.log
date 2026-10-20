@@ -1,0 +1,7 @@
+Error: POST /v1/repos/weft-demo-site/tasks/r2-t2/candidates -> 503: {"type":"error","error":{"code":"unavailable","message":"fork weft-demo-site -> weft-weft-demo-site-r2-t2-1 failed: ArtifactsError: An internal error occurred.","retryable":true}}
+    at api (file:///Users/john/github/weft/.worktrees/t_83def502/demo/otto/lib.mjs:64:64)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async createCandidates (file:///Users/john/github/weft/.worktrees/t_83def502/demo/otto/lane.mjs:108:19)
+    at async cardLane (file:///Users/john/github/weft/.worktrees/t_83def502/demo/otto/lane.mjs:227:18)
+    at async file:///Users/john/github/weft/.worktrees/t_83def502/demo/otto/lane.mjs:424:63
+[lane t2 run-2 +6.3s] final {"status":"error","error":"POST /v1/repos/weft-demo-site/tasks/r2-t2/candidates -> 503: {\"type\":\"error\",\"error\":{\"code\":\"unavailable\",\"message\":\"fork weft-demo-site -> weft-weft-demo-site-r2-t2-1 failed: ArtifactsError: An internal error occurred.\",\"retryable\":true}}"}

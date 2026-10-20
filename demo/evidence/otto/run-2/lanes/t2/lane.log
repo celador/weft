@@ -1,0 +1,13 @@
+[lane t2 run-2 +15.1s] candidates [{"agent":"claude-t2-r2","harness":"claude","change":"Id80740d629edd3de18456d9eb319f87f5939506d","fork":"weft-weft-demo-site-r2-t2-2"},{"agent":"opencode-t2-r2","harness":"opencode","change":"I5545ebc4c71d39a86ed00ee8e1c313891fb69799","fork":"weft-weft-demo-site-r2-t2-3"},{"agent":"gemini-t2-r2","harness":"gemini","change":"I4fb40590ea85c271f238bb8c76caeb38dae09e39","fork":"weft-weft-demo-site-r2-t2-4"}]
+[lane t2 run-2 +20.2s] agents_ready 
+[lane t2 run-2 +20.2s] planning 
+[lane t2 run-2 +97.9s] waiting_for_cue 
+[lane t2 run-2 +98.1s] implementing {"seq":340,"agent":"claude-t1-r2","waited_s":0}
+[lane t2 run-2 +1039.7s] pushed claude-t2-r2 {"sha":"66cdac64eaf8c4ab9f199427274bf218d0a94e85"}
+[lane t2 run-2 +1041.4s] pushed opencode-t2-r2 {"sha":"3fb56116680515098b3745c333e337c8e5fdbbcc"}
+[lane t2 run-2 +1041.5s] pushed gemini-t2-r2 {"ok":false,"reason":"no changes"}
+[lane t2 run-2 +1041.5s] evidence 
+[lane t2 run-2 +1078.6s] evidence_done 
+[lane t2 run-2 +1079.4s] selecting {"workflow":"bestofn-weft-demo-site-r2-t2"}
+[lane t2 run-2 +1091.1s] selected {"status":"complete","result":"landing","winner":"I5545ebc4c71d39a86ed00ee8e1c313891fb69799","approved_by":null,"ranking":[{"agent":"opencode-t2-r2","score":1149,"eligible":true,"layer":"git","reasons":["tests pass","rebase: git","churn 55","review pass 100","risk low"]},{"agent":"claude-t2-r2","score":1147,"eligible":true,"layer":"git","reasons":["tests pass","rebase: git","churn 67","review pass 100","risk low"]},{"agent":"gemini-t2-r2","score":-1,"eligible":false,"layer":"git","reasons":["revision missing","no tests","rebase: git"]}],"winner_agent":"opencode-t2-r2"}
+[lane t2 run-2 +1097.9s] final {"status":"landed","winner":"opencode-t2-r2","harness":"opencode","approved_by":null,"land_op":"op-5afcfe1026da29b850d2e2a2","layer":"git","trunk":null,"at":"2026-10-20T06:52:53.152Z"}

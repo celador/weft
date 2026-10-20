@@ -1,0 +1,34 @@
+{
+  "run": 2,
+  "task": "t1",
+  "card": "r2-t1",
+  "title": "Member sessions expire after an hour",
+  "harnesses": [
+    "claude",
+    "codex"
+  ],
+  "beat": "signature change (its callers collide with it)",
+  "started_at": "2026-10-20T06:31:16.611Z",
+  "phase": "final",
+  "marks": {
+    "final": 5.8
+  },
+  "steps": [
+    {
+      "name": "final",
+      "at_s": 5.8,
+      "at": "2026-10-20T06:31:22.417Z",
+      "data": {
+        "status": "error",
+        "error": "POST /v1/repos/weft-demo-site/tasks/r2-t1/candidates -> 503: {\"type\":\"error\",\"error\":{\"code\":\"unavailable\",\"message\":\"fork weft-demo-site -> weft-weft-demo-site-r2-t1-1 failed: ArtifactsError: An internal error occurred.\",\"retryable\":true}}"
+      }
+    }
+  ],
+  "pid": 45489,
+  "first_seq": 270,
+  "error": "POST /v1/repos/weft-demo-site/tasks/r2-t1/candidates -> 503: {\"type\":\"error\",\"error\":{\"code\":\"unavailable\",\"message\":\"fork weft-demo-site -> weft-weft-demo-site-r2-t1-1 failed: ArtifactsError: An internal error occurred.\",\"retryable\":true}}",
+  "final": {
+    "status": "error",
+    "error": "POST /v1/repos/weft-demo-site/tasks/r2-t1/candidates -> 503: {\"type\":\"error\",\"error\":{\"code\":\"unavailable\",\"message\":\"fork weft-demo-site -> weft-weft-demo-site-r2-t1-1 failed: ArtifactsError: An internal error occurred.\",\"retryable\":true}}"
+  }
+}

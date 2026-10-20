@@ -1,0 +1,352 @@
+{
+  "run": 90,
+  "task": "t4",
+  "card": "smoke90-t4",
+  "title": "Bulk discount: 10% off 10+ bags",
+  "harnesses": [
+    "codex",
+    "hermes"
+  ],
+  "beat": "adjacent one-line edit in src/pricing.ts (git conflicts; Weft merges structurally)",
+  "started_at": "2026-10-20T05:07:28.458Z",
+  "phase": "final",
+  "marks": {
+    "candidates": 12.9,
+    "agents_ready": 15.5,
+    "working": 15.5,
+    "pushed codex-t4-r90": 101.8,
+    "pushed hermes-t4-r90": 101.9,
+    "evidence": 101.9,
+    "evidence_done": 161,
+    "selecting": 162,
+    "selected": 167.8,
+    "final": 181.5
+  },
+  "steps": [
+    {
+      "name": "candidates",
+      "at_s": 12.9,
+      "at": "2026-10-20T05:07:41.348Z",
+      "data": [
+        {
+          "agent": "codex-t4-r90",
+          "harness": "codex",
+          "change": "Ic9740b5a809e44ca8d9f60bfcb2ef3feb4c5dde3",
+          "fork": "weft-weft-demo-site-smoke90-t4-1"
+        },
+        {
+          "agent": "hermes-t4-r90",
+          "harness": "hermes",
+          "change": "I8f060b06a05847fd0f31e2568fb7ad311a09b9b6",
+          "fork": "weft-weft-demo-site-smoke90-t4-2"
+        }
+      ]
+    },
+    {
+      "name": "agents_ready",
+      "at_s": 15.5,
+      "at": "2026-10-20T05:07:43.941Z"
+    },
+    {
+      "name": "working",
+      "at_s": 15.5,
+      "at": "2026-10-20T05:07:43.941Z"
+    },
+    {
+      "name": "pushed codex-t4-r90",
+      "at_s": 101.8,
+      "at": "2026-10-20T05:09:10.294Z",
+      "data": {
+        "sha": "1adaeb37eef3cc61a5843c6ef16ab8afaf3c3aa0"
+      }
+    },
+    {
+      "name": "pushed hermes-t4-r90",
+      "at_s": 101.9,
+      "at": "2026-10-20T05:09:10.322Z",
+      "data": {
+        "ok": false,
+        "reason": "no changes"
+      }
+    },
+    {
+      "name": "evidence",
+      "at_s": 101.9,
+      "at": "2026-10-20T05:09:10.322Z"
+    },
+    {
+      "name": "evidence_done",
+      "at_s": 161,
+      "at": "2026-10-20T05:10:09.496Z"
+    },
+    {
+      "name": "selecting",
+      "at_s": 162,
+      "at": "2026-10-20T05:10:10.428Z",
+      "data": {
+        "workflow": "bestofn-weft-demo-site-smoke90-t4"
+      }
+    },
+    {
+      "name": "selected",
+      "at_s": 167.8,
+      "at": "2026-10-20T05:10:16.221Z",
+      "data": {
+        "status": "complete",
+        "result": "landing",
+        "winner": "Ic9740b5a809e44ca8d9f60bfcb2ef3feb4c5dde3",
+        "approved_by": null,
+        "ranking": [
+          {
+            "agent": "codex-t4-r90",
+            "score": 1175,
+            "eligible": true,
+            "layer": "none",
+            "reasons": [
+              "tests pass",
+              "rebase: none",
+              "churn 25",
+              "review pass 100",
+              "risk low"
+            ]
+          },
+          {
+            "agent": "hermes-t4-r90",
+            "score": -1,
+            "eligible": false,
+            "layer": "git",
+            "reasons": [
+              "revision missing",
+              "no tests",
+              "rebase: git"
+            ]
+          }
+        ],
+        "winner_agent": "codex-t4-r90",
+        "land": {
+          "workflow_status": "complete",
+          "status": "landed",
+          "op_id": "op-69a28c0c8fa776859b1e9a2f",
+          "seq": 14,
+          "before": "d7adff9a8271567e95f3f6661886fb7f493f88f3",
+          "after": "1adaeb37eef3cc61a5843c6ef16ab8afaf3c3aa0",
+          "layer": "none",
+          "attempts": 1,
+          "queue_id": 1
+        }
+      }
+    },
+    {
+      "name": "final",
+      "at_s": 181.5,
+      "at": "2026-10-20T05:10:29.974Z",
+      "data": {
+        "status": "landed",
+        "winner": "codex-t4-r90",
+        "harness": "codex",
+        "approved_by": null,
+        "land_op": "op-69a28c0c8fa776859b1e9a2f",
+        "layer": "none",
+        "trunk": null,
+        "at": "2026-10-20T05:10:29.974Z"
+      }
+    }
+  ],
+  "pid": 239,
+  "first_seq": 1,
+  "agents": [
+    {
+      "agent": "codex-t4-r90",
+      "harness": "codex",
+      "change": "Ic9740b5a809e44ca8d9f60bfcb2ef3feb4c5dde3",
+      "fork": "weft-weft-demo-site-smoke90-t4-1",
+      "turns": [
+        {
+          "name": "work",
+          "code": 0,
+          "ms": 29831
+        }
+      ],
+      "push": {
+        "ok": true,
+        "sha": "1adaeb37eef3cc61a5843c6ef16ab8afaf3c3aa0"
+      }
+    },
+    {
+      "agent": "hermes-t4-r90",
+      "harness": "hermes",
+      "change": "I8f060b06a05847fd0f31e2568fb7ad311a09b9b6",
+      "fork": "weft-weft-demo-site-smoke90-t4-2",
+      "turns": [
+        {
+          "name": "work",
+          "code": 0,
+          "ms": 84918
+        }
+      ],
+      "push": {
+        "ok": false,
+        "reason": "no changes"
+      }
+    }
+  ],
+  "evidence": {
+    "codex-t4-r90": {
+      "revision": {
+        "status": "processed",
+        "layer": "none"
+      },
+      "rows": [
+        {
+          "kind": "rebase",
+          "status": "pass",
+          "data": {
+            "status": "up_to_date",
+            "layer": "none"
+          }
+        },
+        {
+          "kind": "test",
+          "status": "pass",
+          "data": {
+            "status": "pass",
+            "summary": {
+              "pass": 11,
+              "fail": 0
+            }
+          }
+        },
+        {
+          "kind": "preview",
+          "status": "pass",
+          "data": {
+            "url": "https://weft-previews-preview.elier.ai/p/weft-weft-demo-site-smoke90-t4-1/1adaeb37eef3cc61a5843c6ef16ab8afaf3c3aa0/HyvZf5SwgbeKyILdaqz0qw/",
+            "trunk_url": "https://weft-previews-preview.elier.ai/p/weft-demo-site/d7adff9a8271567e95f3f6661886fb7f493f88f3/ndHepap3rBU0-dQ9CwEfBQ/",
+            "routes": [
+              "/",
+              "/menu.html"
+            ],
+            "provider": "weft-previews (Artifacts)",
+            "sha": "1adaeb37eef3cc61a5843c6ef16ab8afaf3c3aa0",
+            "onto": "d7adff9a8271567e95f3f6661886fb7f493f88f3"
+          }
+        },
+        {
+          "kind": "screenshot",
+          "status": "pass",
+          "data": {
+            "route": "/",
+            "ratio": 0
+          }
+        },
+        {
+          "kind": "screenshot",
+          "status": "pass",
+          "data": {
+            "route": "/menu.html",
+            "ratio": 0
+          }
+        },
+        {
+          "kind": "visual_diff",
+          "status": "info",
+          "data": {
+            "routes": [
+              {
+                "route": "/",
+                "ratio": 0,
+                "pixels": 0,
+                "uri": null
+              },
+              {
+                "route": "/menu.html",
+                "ratio": 0,
+                "pixels": 0,
+                "uri": null
+              }
+            ],
+            "max_ratio": 0,
+            "changed": false,
+            "baseline": "d7adff9a8271567e95f3f6661886fb7f493f88f3"
+          }
+        },
+        {
+          "kind": "risk",
+          "status": "info",
+          "data": {
+            "risk": "low"
+          }
+        },
+        {
+          "kind": "review",
+          "status": "pass",
+          "data": {
+            "verdict": "pass",
+            "score": 100,
+            "summary": "The candidate change meets all acceptance criteria and the diff looks correct, so it passes."
+          }
+        }
+      ],
+      "waited_s": 59
+    }
+  },
+  "selection": {
+    "workflow": "bestofn-weft-demo-site-smoke90-t4",
+    "n": 1,
+    "risk": "low",
+    "status": "complete",
+    "result": "landing",
+    "winner": "Ic9740b5a809e44ca8d9f60bfcb2ef3feb4c5dde3",
+    "approved_by": null,
+    "ranking": [
+      {
+        "agent": "codex-t4-r90",
+        "score": 1175,
+        "eligible": true,
+        "layer": "none",
+        "reasons": [
+          "tests pass",
+          "rebase: none",
+          "churn 25",
+          "review pass 100",
+          "risk low"
+        ]
+      },
+      {
+        "agent": "hermes-t4-r90",
+        "score": -1,
+        "eligible": false,
+        "layer": "git",
+        "reasons": [
+          "revision missing",
+          "no tests",
+          "rebase: git"
+        ]
+      }
+    ],
+    "winner_agent": "codex-t4-r90",
+    "land": {
+      "workflow_status": "complete",
+      "status": "landed",
+      "op_id": "op-69a28c0c8fa776859b1e9a2f",
+      "seq": 14,
+      "before": "d7adff9a8271567e95f3f6661886fb7f493f88f3",
+      "after": "1adaeb37eef3cc61a5843c6ef16ab8afaf3c3aa0",
+      "layer": "none",
+      "attempts": 1,
+      "queue_id": 1
+    }
+  },
+  "final": {
+    "status": "landed",
+    "winner": "codex-t4-r90",
+    "harness": "codex",
+    "approved_by": null,
+    "land_op": "op-69a28c0c8fa776859b1e9a2f",
+    "layer": "none",
+    "trunk": null,
+    "at": "2026-10-20T05:10:29.974Z"
+  },
+  "finished_at": "2026-10-20T05:10:29.974Z",
+  "duration_s": 181.5
+}

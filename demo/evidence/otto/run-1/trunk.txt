@@ -1,0 +1,91 @@
+head f9a3d7243e5f2f3fa9cf10dd9fb2c839231b9913
+f9a3d72 weft-revert Revert change Ib3fe22557d8bb12854a7f336bd2f1c923d0ca259
+96ac8b9 weft-revert Revert change Ie994b7adaddaf96075eaa3d67e00ce3a7b462d54
+a3aece6 planted-t8-r1 quote: price by the gram (?unit=g)
+00a79f7 gemini-t2-r1 Gift signup: create the account and sign in (gemini-t2-r1)
+7a8c5f9 gemini-t7-r1 Roast-date freshness helper (gemini-t7-r1)
+fe961d9 claude-t5-r1 Free shipping on orders of $50+ (claude-t5-r1)
+9b16e8e claude-t6-r1 Add Ethiopia Guji to the menu (claude-t6-r1)
+bab3b0a codex-t1-r1 Member sessions expire after an hour (codex-t1-r1)
+c1f460e codex-t4-r1 Bulk discount: 10% off 10+ bags (codex-t4-r1)
+e4b387d weft-otto-seed demo: seed Northbound Coffee (otto run 1)
+1fc37c0 claude-t6-r91 Add Ethiopia Guji to the menu (claude-t6-r91)
+3a78df6 opencode-t7-r91 Roast-date freshness helper (opencode-t7-r91)
+54e923f weft-otto-seed demo: seed Northbound Coffee (otto run 91)
+07ed8b0 opencode-t7-r90 Roast-date freshness helper (opencode-t7-r90)
+1adaeb3 codex-t4-r90 Bulk discount: 10% off 10+ bags (codex-t4-r90)
+d7adff9 weft-otto-seed demo: seed Northbound Coffee
+--- tsc
+
+--- node --test
+✔ login with valid credentials returns a token that works for /api/me (94.405ms)
+✔ login rejects a wrong password and missing fields (82.163833ms)
+✔ logout revokes the token (75.467166ms)
+✔ pages render and unknown routes 404 (34.87125ms)
+✔ calcTotal keeps full price below 10 total units (0.640125ms)
+✔ calcTotal discounts carts with 10 or more total units by 10% (0.374291ms)
+✔ daysSinceRoast and isFresh on day 0 (0.650084ms)
+✔ daysSinceRoast and isFresh on day 14 (0.110834ms)
+✔ daysSinceRoast and isFresh on day 15 (0.091458ms)
+✔ createSession issues a unique token bound to the user (1.009042ms)
+✔ revokeSession ends the session (0.220792ms)
+✔ getSession expires and forgets the session at its expiry time (0.563875ms)
+✔ shippingFee is free at $50 or more (0.658125ms)
+✔ shippingFee is unchanged under $50 (0.130417ms)
+✔ calcTotal sums price x qty (0.686167ms)
+✔ shippingFee is flat for a non-empty cart (0.144667ms)
+✔ every catalog price is positive (0.151209ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 423.698208
+
+--- src/auth/session.ts
+import { randomBytes } from "node:crypto";
+
+export type SessionOptions = { ttlMs: number };
+export type Session = { token: string; userId: string; createdAt: number; expiresAt: number };
+
+const sessions = new Map<string, Session>();
+
+/** Start a session for a user and return it (the token is the bearer credential). */
+export function createSession(userId: string, opts: SessionOptions): Session {
+  const createdAt = Date.now();
+  const session: Session = { token: randomBytes(24).toString("base64url"), userId, createdAt, expiresAt: createdAt + opts.ttlMs };
+  sessions.set(session.token, session);
+  return session;
+}
+
+/** The live session for a token, or undefined. */
+export function getSession(token: string): Session | undefined {
+  const session = sessions.get(token);
+  if (session && Date.now() >= session.expiresAt) {
+    sessions.delete(token);
+    return undefined;
+  }
+  return session;
+}
+
+export function revokeSession(token: string): boolean {
+  return sessions.delete(token);
+}
+
+/** Test helper: forget every session. */
+export function resetSessions(): void {
+  sessions.clear();
+}
+
+--- src/pricing.ts
+export type Item = { sku: string; price: number; qty: number };
+
+/** calcTotal: sum of price × quantity over the cart. shippingFee: shipping for the cart, in dollars. */
+export function calcTotal(items: Item[]): number {
+  const total = items.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const quantity = items.reduce((sum, item) => sum + item.qty, 0);
+  return quantity >= 10 ? total * 0.9 : total;
+}
+export function shippingFee(items: Item[]): number { return !items.length || calcTotal(items) >= 50 ? 0 : 6; }

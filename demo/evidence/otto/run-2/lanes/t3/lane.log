@@ -1,0 +1,14 @@
+[lane t3 run-2 +11s] candidates [{"agent":"claude-t3-r2","harness":"claude","change":"I07ee67e0c029ba10f8f50449520efbf01815aa5d","fork":"weft-weft-demo-site-r2-t3-1"},{"agent":"codex-t3-r2","harness":"codex","change":"Ia64ca0fa2af30955756066e2f6fbfc16abd685d4","fork":"weft-weft-demo-site-r2-t3-2"}]
+[lane t3 run-2 +13.6s] agents_ready 
+[lane t3 run-2 +13.6s] planning 
+[lane t3 run-2 +35.6s] waiting_for_cue 
+[lane t3 run-2 +230.5s] implementing {"seq":340,"agent":"claude-t1-r2","waited_s":195}
+[lane t3 run-2 +316.9s] pushed claude-t3-r2 {"sha":"a73ed6638d1f3a26e243d4a0c02a308ad2a041d7"}
+[lane t3 run-2 +318.4s] pushed codex-t3-r2 {"sha":"64e527b4d2c76ea27151b766954ce318dd1e634e"}
+[lane t3 run-2 +318.4s] evidence 
+[lane t3 run-2 +371.4s] evidence_done 
+[lane t3 run-2 +371.9s] selecting {"workflow":"bestofn-weft-demo-site-r2-t3"}
+[lane t3 run-2 +387.8s] awaiting_approval {"since":"2026-10-20T06:37:44.513Z","ranking":[{"agent":"claude-t3-r2","harness":"claude","change":"I07ee67e0c029ba10f8f50449520efbf01815aa5d","score":1153,"eligible":true},{"agent":"codex-t3-r2","harness":"codex","change":"Ia64ca0fa2af30955756066e2f6fbfc16abd685d4","score":1152,"eligible":true}],"suggest":{"agent":"claude-t3-r2","change":"I07ee67e0c029ba10f8f50449520efbf01815aa5d","why":"highest-ranked eligible"}}
+[lane t3 run-2 +449.1s] approved_by_fallback {"by":"scripted fallback (John's human token, same action as Otto's Approve)","change":"I07ee67e0c029ba10f8f50449520efbf01815aa5d","agent":"claude-t3-r2","forwarded_to":"bestofn-weft-demo-site-r2-t3","at":"2026-10-20T06:38:45.845Z"}
+[lane t3 run-2 +453.5s] selected {"status":"complete","result":"landing","winner":"I07ee67e0c029ba10f8f50449520efbf01815aa5d","approved_by":"john","ranking":[{"agent":"claude-t3-r2","score":1153,"eligible":true,"layer":"git","reasons":["tests pass","rebase: git","churn 35","review pass 100","risk high"]},{"agent":"codex-t3-r2","score":1152,"eligible":true,"layer":"git","reasons":["tests pass","rebase: git","churn 38","review pass 100","risk high"]}],"winner_agent":"claude-t3-r2"}
+[lane t3 run-2 +476.2s] final {"status":"landed","winner":"claude-t3-r2","harness":"claude","approved_by":"scripted fallback (John's human token, same action as Otto's Approve)","land_op":"op-1c001a2490db35c51fa0e9a6","layer":"git","trunk":null,"at":"2026-10-20T06:39:12.949Z"}

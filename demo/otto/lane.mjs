@@ -105,7 +105,22 @@ if (cmd !== "run") throw new Error("usage: lane.mjs start|wait|run --run N --tas
 async function createCandidates(work) {
   const queue = await queueId();
   const names = T.harnesses.map((h) => `${h}-${KEY}-r${RUN}`);
-  const created = await api("POST", `/v1/repos/${REPO}/tasks/${CARD}/candidates`, TOK.sys, { count: names.length, agents: names, title: T.title, acceptance: T.acceptance, ttl: 7200 }, 201);
+  // One fork per call, retried: Artifacts fork creation sometimes answers a retryable 503
+  // ("An internal error occurred"); a failed fork only burns its candidate number.
+  const created = { candidates: [] };
+  for (const name of names) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        created.candidates.push(...(await api("POST", `/v1/repos/${REPO}/tasks/${CARD}/candidates`, TOK.sys, { count: 1, agents: [name], title: T.title, acceptance: T.acceptance, ttl: 7200 }, 201)).candidates);
+        break;
+      } catch (e) {
+        if (attempt >= 6 || !/-> 503/.test(String(e.message))) throw e;
+        (state.fork_retries ??= []).push({ agent: name, attempt, error: scrub(String(e.message)).slice(0, 200) });
+        log(`fork for ${name} failed (attempt ${attempt}), retrying`);
+        await sleep(5000 * attempt);
+      }
+    }
+  }
   const agents = [];
   for (const [i, c] of created.candidates.entries()) {
     if (c.subscription.status !== "active") {
@@ -157,10 +172,10 @@ async function waitEvidence(pushed) {
 async function acceptorChange(head0, agents) {
   const ev = await events(head0).catch(() => []);
   const mine = new Set(agents.map((a) => a.cand.change));
-  const props = ev.filter((e) => e.kind === "negotiate.propose" && e.status === "accepted" && mine.has(e.payload?.to?.change ?? ""));
+  const props = ev.filter((e) => e.kind === "negotiate.propose" && e.status === "accepted" && (mine.has(e.payload?.to?.change ?? "") || agents.some((a) => a.id === e.payload?.to?.agent)));
   for (const p of props) {
     const ans = ev.find((r) => r.kind === "negotiate.accept" && r.payload?.reply_to === p.seq);
-    if (ans) return p.payload.to.change;
+    if (ans) return p.payload.to.change ?? agents.find((a) => a.id === p.payload.to.agent)?.cand.change;
   }
   const byAgent = ev.filter((e) => e.kind === "negotiate.accept" && agents.some((a) => a.id === e.agent));
   return byAgent.length ? agents.find((a) => a.id === byAgent[0].agent).cand.change : undefined;
@@ -270,12 +285,17 @@ async function cardLane() {
       // stay available for proposals from other cards for a while (their agents implement after us)
       state.note = "edits done; answering other agents' requests via Weft";
       phase("answering");
-      const until = Date.now() + Number(process.env.WEFT_OTTO_T1_LISTEN_S ?? 600) * 1000;
+      // Other cards' agents propose at their own pace (one per candidate), so stay until every
+      // proposal for us is answered and none came in for QUIET_S, or the listen window ends.
+      const until = Date.now() + Number(process.env.WEFT_OTTO_T1_LISTEN_S ?? 900) * 1000;
+      const QUIET_S = Number(process.env.WEFT_OTTO_T1_QUIET_S ?? 150);
       while (Date.now() < until) {
         const ev = await events(head0).catch(() => []);
-        const props = ev.filter((e) => e.kind === "negotiate.propose" && e.status === "accepted" && agents.some((a) => a.cand.change === e.payload?.to?.change));
+        const props = ev.filter((e) => e.kind === "negotiate.propose" && e.status === "accepted" && agents.some((a) => a.cand.change === e.payload?.to?.change || a.id === e.payload?.to?.agent));
         const open = props.filter((p) => !ev.some((r) => ["negotiate.accept", "negotiate.reject", "negotiate.counter"].includes(r.kind) && r.payload?.reply_to === p.seq));
-        if (props.length && !open.length && Object.values(done).every(Boolean)) break;
+        const ts = props.length ? props[props.length - 1].ts : 0;
+        const lastAt = typeof ts === "number" ? ts : Date.parse(ts) || 0;
+        if (props.length && !open.length && Object.values(done).every(Boolean) && Date.now() - lastAt > QUIET_S * 1000) break;
         await sleep(5000);
       }
     }

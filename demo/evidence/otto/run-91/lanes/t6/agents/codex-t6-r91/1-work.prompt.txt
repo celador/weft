@@ -1,0 +1,3 @@
+codex
+
+Task (menu): we now sell Ethiopia Guji (tasting notes: jasmine, peach, bergamot) at $22.00 per 340 g bag. Add `"ethiopia-guji": 22` to PRICES in src/catalog.ts and add an Ethiopia Guji row to the table in public/menu.html, matching the existing rows. The home page must not change. Run `node --test`, then reply with a one-line summary. This checkout is coordinated by Weft with other agents working on the same codebase at the same time. If a Weft hook blocks an edit or reports a conflict, read its diagnostic and follow it. 

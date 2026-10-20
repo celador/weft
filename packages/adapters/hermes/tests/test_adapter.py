@@ -182,6 +182,8 @@ class EditTests(AdapterTestCase):
         self.assertEqual(commit[3]["writes"], [{"key": "src/a.ts#refreshToken", "kind": "signature"}])
         self.assertIn("+export function refreshToken(a: number, retries = 1)", commit[3]["diff"])
         self.assertEqual(commit[3]["base_seq"], 10)
+        # the first edit's pre-check opens the session; it must carry the welcome's base, not 0
+        self.assertEqual(check[3]["base_seq"], 10)
         self.assertEqual(commit[3]["tool"]["call_id"], "c1")
         self.assertIsNone(out, "no diagnostics -> tool result untouched")
 

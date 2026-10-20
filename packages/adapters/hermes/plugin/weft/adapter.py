@@ -834,6 +834,10 @@ class WeftAdapter:
 
     def _event(self, files: List[str], reads: List[str], writes: List[dict], diff: str,
                tool: str, call_id: str, hook: str) -> dict:
+        # The session opens lazily on the first edit. Hello before reading the base: otherwise the
+        # first edit carries the pre-hello base 0 and every symbol landed earlier in the repo's
+        # log looks like a stale_overwrite to a checkout that already contains it.
+        self.ensure_session()
         event: Dict[str, Any] = {
             "kind": "edit", "base_seq": self._effective_base(), "files": files, "reads": reads,
             "writes": writes, "tool": {"name": tool, "harness_event": hook},

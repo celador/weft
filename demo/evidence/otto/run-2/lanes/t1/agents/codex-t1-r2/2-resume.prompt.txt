@@ -1,0 +1,3 @@
+codex (resume 01a15805-0e6a-7653-94c6-4b8faf070587)
+
+Continue: handle anything Weft reports for you (including requests from other agents), then reply with a one-line summary.

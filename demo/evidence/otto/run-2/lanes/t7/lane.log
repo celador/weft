@@ -1,0 +1,10 @@
+[lane t7 run-2 +11.1s] candidates [{"agent":"gemini-t7-r2","harness":"gemini","change":"I6a71647e6fb2c30f77d3c37b0c51d6e81e3e9f0b","fork":"weft-weft-demo-site-r2-t7-1"},{"agent":"opencode-t7-r2","harness":"opencode","change":"Ida3097566739207e99924ab6d7b14efaa38ebad0","fork":"weft-weft-demo-site-r2-t7-2"}]
+[lane t7 run-2 +14.5s] agents_ready 
+[lane t7 run-2 +14.5s] working 
+[lane t7 run-2 +110.2s] pushed gemini-t7-r2 {"sha":"864a65c9593be39b155fa3a274a293e2c8f27fd4"}
+[lane t7 run-2 +112.1s] pushed opencode-t7-r2 {"sha":"1e93dff5257a258491754cba41916d531b3fd93a"}
+[lane t7 run-2 +112.1s] evidence 
+[lane t7 run-2 +149.2s] evidence_done 
+[lane t7 run-2 +149.8s] selecting {"workflow":"bestofn-weft-demo-site-r2-t7"}
+[lane t7 run-2 +155.4s] selected {"status":"complete","result":"landing","winner":"Ida3097566739207e99924ab6d7b14efaa38ebad0","approved_by":null,"ranking":[{"agent":"opencode-t7-r2","score":1173,"eligible":true,"layer":"none","reasons":["tests pass","rebase: none","churn 35","review pass 100","risk low"]},{"agent":"gemini-t7-r2","score":1172,"eligible":true,"layer":"none","reasons":["tests pass","rebase: none","churn 40","review pass 100","risk low"]}],"winner_agent":"opencode-t7-r2"}
+[lane t7 run-2 +169.5s] final {"status":"landed","winner":"opencode-t7-r2","harness":"opencode","approved_by":null,"land_op":"op-75746aa059b2662cfdc30022","layer":"none","trunk":null,"at":"2026-10-20T06:34:06.353Z"}
