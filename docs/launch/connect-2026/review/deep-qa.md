@@ -10,6 +10,9 @@ four questions, why Artifacts). The origin story, the build numbers, traction an
 moved out of the talk and into the sections at the end of this file: "Origin story", "Traction"
 and "What's next". Questions 1-12 still match the talk; slide pointers are in brackets.
 
+Rev 7 (Oct 20): slide 8 is the 58 s Otto clip (run-4 of the team demo); old slides 8-12 are now
+9-13. Pointers below use rev 7 numbers. The Otto run, with its honest failures, is in "The Otto run".
+
 Cloudflare terms in plain words: a **Worker** is a stateless web service. A **Durable
 Object (DO)** is one single-threaded server with its own small SQLite database; there is exactly
 one per name. **Queues** is a message queue, **Workflows** is a job runner with retries,
@@ -17,7 +20,7 @@ one per name. **Queues** is a message queue, **Workflows** is a job runner with 
 
 ---
 
-**1. How does conflict detection work, exactly?** [slides 3, 5, 8]
+**1. How does conflict detection work, exactly?** [slides 3, 5, 9]
 When an agent starts a change, it gets the log position it started from, its "base". Every edit
 it sends says what it changed and which functions and types it relied on, its read set. The
 coordinator looks only at what other changes wrote after that base. If one of them landed a write
@@ -27,7 +30,7 @@ read is just a warning. It's the same idea as optimistic concurrency in a databa
 what changed since you read, don't lock.
 <!-- notes: docs/protocol/wcp-v0.md §6.1-6.2 (W = records with seq > base, rules R1 stale_overwrite, R2 stale_assumption/stale_read, R3 claims); packages/sequencer/src/coordinator.ts (validate); packages/analyzer/src/index.ts (reads/writes, keys path#qualified.name) -->
 
-**2. And when two agents are editing the same thing at the same time, before either lands?** [slide 8: "priority decides who adapts"]
+**2. And when two agents are editing the same thing at the same time, before either lands?** [slide 9: "priority decides who adapts"]
 Agents can claim a function for a short time, like a lease. If two claims collide, the more senior
 change wins: higher task priority first, then whoever started first. The default rule is
 wound-wait: a senior agent proceeds and the junior one is told to back off; the alternative is
@@ -36,7 +39,7 @@ or keep backing off from each other. By default this is advice, a warning; a rep
 "block" so the losing edit is refused.
 <!-- notes: docs/protocol/wcp-v0.md §7.1 seniority (priority, birth seq, change id), §7.2 wound-wait default / wait-die, enforcement advise|block (default advise); claim TTLs expired by the DO alarm, packages/sequencer/src/do.ts:4,210-218 -->
 
-**3. The sequencer is one Durable Object per repo. Isn't that a bottleneck, and what if it goes down?** [slides 5, 11]
+**3. The sequencer is one Durable Object per repo. Isn't that a bottleneck, and what if it goes down?** [slides 5, 12]
 Yes, by design: one object per repo is what gives a single, ordered log, the way a database
 primary does. Repos don't share anything, so a thousand repos are a thousand independent objects.
 The log is in that object's own SQLite storage, so if it restarts, Cloudflare brings it back with
@@ -77,9 +80,10 @@ calling a function whose signature just changed. We want that conflict reported,
 **8. How do agents hook in? Which ones work today?** [slide 4]
 Each coding agent has hooks that run before and after a tool call. Our adapter is a small program
 those hooks call: before an edit it asks the coordinator, and if the answer is reject, the agent
-sees the reason and adjusts. Live today: Claude Code, Codex, OpenCode and Hermes. Cursor CLI and
-Gemini CLI adapters are tested against their documented formats only, and there's a file-watcher
-for tools with no hooks.
+sees the reason and adjusts. Live today: Claude Code, Codex, OpenCode, Hermes and Gemini CLI
+(Gemini's hooks ran live in the Otto run: every edit checked and accepted, a candidate pushed; no
+Gemini edit happened to be refused there). The Cursor CLI adapter is tested against its documented
+format only, and there's a file-watcher for tools with no hooks.
 <!-- notes: packages/adapters/{claude-code,codex,opencode,hermes,cursor,gemini,watcher}; packages/adapters/claude-code/src/hooks.ts (PreToolUse); docs/standardization/reports/README.md; qa.md #12 -->
 
 **9. How do security and auth work?**
@@ -154,6 +158,31 @@ that plans the merge order up front and shows which change is blocked by or depe
   any spike in the window; there's no per-route baseline yet.
 - **"A preview" for every candidate?** Static sites, served straight from Artifacts at that exact
   commit. Server-rendered apps would need a Worker Loader variant, not built.
+
+## The Otto run (slide 8), in case a judge asks
+
+Source: `demo/evidence/otto-report.md`, `demo/evidence/otto/run-4/run.json` (card t_83def502).
+The clip is cut from a 26:54 screen recording of Otto by `demo/otto/video/cut.py`: trims, crops and
+captions, no re-staging. Full recording and 8 stills: the phone page, "Otto demo".
+
+- **What ran:** 7 kanban cards (t1-t7) on board weft-demo-site, all running at once, each a
+  BestOfN task with 2-3 candidates on different harnesses: 16 candidates, Claude Code 5, Codex 4,
+  Gemini CLI 3, OpenCode 2, Hermes 2. Each card's worker only talks to Weft; no planner agent.
+  All 7 landed. Winners: Codex t1 and t3, OpenCode t2 and t7, Hermes t4, Claude Code t5 and t6.
+- **Squiggles:** 6 `stale_assumption`, all rerouted (3.8 s to 554 s). **Negotiation:** t3's
+  agents proposed an overload of `createSession`; t1's agent accepted both (#662, #663); the
+  overload is on trunk. **Mergiraf:** t5 landed through a structural merge. **Evidence:** the t6
+  menu change had a preview, 2 screenshots, a 9,301 px pixel diff, risk low, review pass.
+- **Approvals:** 3 (t1, t3, t6), each a click on Otto's Approve button on John's account. The
+  recording script sent the clicks; I didn't click by hand. Say "an Approve click in Otto".
+- **Revert:** a planted bug (t8) landed; production errors 5 s later; Weft reverted it (#780)
+  32.5 s after the landing and reopened the task. Trunk afterwards: tsc and 22/22 tests green.
+- **What went wrong (say it if asked, not on slides):** Gemini CLI hit its free-tier daily quota
+  (HTTP 429) on t2 and made no changes on t5; its t7 candidate was valid but lost to OpenCode's.
+  The t3 and t6 lanes died once on a network `fetch failed` while polling and were reattached to
+  the same workflow. Trunk deploys came from `wrangler` (a follow script), not Workers Builds.
+  Cursor wasn't in the run (not logged in). Rehearsal run 1 failed the negotiation beat (proposals,
+  no accept); runs 2 and 4 passed every beat; run 3 was aborted (cards on the wrong board).
 
 ## Origin story (moved out of the talk in rev 6)
 
