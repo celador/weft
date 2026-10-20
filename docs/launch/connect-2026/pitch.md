@@ -45,14 +45,14 @@ Sources for every number (do not mix windows):
 
 ---
 
-## 0:00-0:25 · Slide 1: "I didn't write the code. I directed the agents that did."
+## 0:00-0:26 · Slide 1: "I didn't write the code. I directed the agents that did."
 
 "I'm John Nelson. This red line is a squiggle. It's what your editor shows you when your code is
 wrong.
 Here's the honest part, up front: I didn't write the code. I directed the agents that did. I
 asked the questions and I made the decisions."
 
-## 0:25-0:55 · Slide 2: the numbers
+## 0:26-0:58 · Slide 2: the numbers
 
 "On October 3rd, a Saturday night, I read Cloudflare's post about the next Git platform, and I
 started asking questions. Eighty minutes later, the first commit landed.
@@ -61,7 +61,7 @@ agent.
 And in the first eleven hours alone, Weft's log recorded 627 events and 460 edits. 59 times, Weft
 told one agent to wait for another."
 
-## 0:55-1:50 · Slide 3: the product
+## 0:58-1:47 · Slide 3: the product
 
 "This is Weft. It's a live feed of every edit every agent makes to a repo, in order, as it
 happens. Not after the merge. While they type.
@@ -72,7 +72,7 @@ names the function, the file, and the event that caused it. And it tells the age
 next: read the new version, and update your call.
 It's public and read-only. You can watch it from your seat."
 
-## 1:50-3:20 · Slides 4-5: how it works
+## 1:47-3:35 · Slides 4-5: how it works
 
 "Here's how it works. Every time an agent edits a file, that edit goes through a checkpoint for
 the repo. Cloudflare runs exactly one copy of it, a Durable Object, so every agent sees the same
@@ -92,13 +92,13 @@ on every tool call, and that's where the check happens. In our test runs, eighte
 those three tools worked on one repo at the same time, through one checkpoint. A typical check
 takes just over half a second, so the agent barely notices."
 
-## 3:20-3:40 · Slide 6a: without Weft (20 seconds, muted, a real recorded run, narrate over it)
+## 3:35-3:57 · Slide 6a: without Weft (22 seconds, muted, a real recorded run, narrate over it)
 
 "First, the same two agents with Weft switched off. One changes createSession. The other keeps
 calling the old version. Each branch passes its own tests. Git merges both, no conflict. Then the
 build breaks on main, and someone has to send the work back."
 
-## 3:40-4:30 · Slide 6b: with Weft (47 seconds, muted, narrate over it)
+## 3:57-4:44 · Slide 6b: with Weft (47 seconds, muted, narrate over it)
 
 "Now with Weft. Claude Code on the left, Codex on the right.
 Claude Code changes a function called createSession.
@@ -108,7 +108,7 @@ It tries again, and it's accepted.
 No human stepped in. No merge conflict. Nobody found out at review time."
 (Pause until the clip ends.)
 
-## 4:30-5:10 · Slide 7: how it was built
+## 4:44-5:15 · Slide 7: how it was built
 
 "That's not only a demo. Weft coordinated the agents building Weft. By Monday its log had 918
 events, 679 edits and 27 landings on main. Sixty waits. Five edits refused before they could land.
@@ -116,7 +116,7 @@ Event 834 is a real one: refused because event 813 changed a type it used. The n
 accepted.
 And this is how I work with agents: explore, decide, delegate, verify, repeat."
 
-## 5:10-6:25 · Slide 8: why it matters
+## 5:15-6:22 · Slide 8: why it matters
 
 "Why does this matter? One agent is a tool. Ten agents on one repo is a team, and teams step on
 each other. Today they find out at merge time, like the first clip. Weft moves that moment to edit
@@ -129,11 +129,11 @@ timeline to scrub through them and jump to the one that broke it isn't built yet
 With the credits, I'd run a free hosted coordinator for outside teams, and a public benchmark with
 and without Weft, measuring the rework it saves."
 
-## 6:25-6:30 · Slide 9: thesis
+## 6:22-6:27 · Slide 9: thesis
 
 "So that's Weft. Red squiggles, for teams of coding agents."
 
-## 6:30-6:50 · Slide 10: takeaway
+## 6:27-6:44 · Slide 10: takeaway
 
 "We have to assume the code editor disappears. If it does, agents still need squiggles.
 It's live right now at weft.elier.ai. Scan it, watch the agents.
@@ -141,7 +141,9 @@ And I'm looking for my next builder role. Thank you."
 
 ---
 
-Word count (spoken text only, counted by `build_slides.py --count`, Oct 19): 833 words = 6:24 at
-130 wpm; the clip runs ~15 s longer than its narration, so about 6:40 total, 20 s under 7:00.
+Word count (spoken text only, counted by `build_slides.py --count`, Oct 20): 833 words = 6:24 at
+130 wpm. The two muted clips run longer than their narration (6a 22.4 s vs ~20 s spoken, 6b 47 s
+vs ~30 s), so about 6:44 total, inside the 6:50 hard limit and 16 s under 7:00. Section times
+above are cumulative at 130 wpm.
 If you run long, cut the twelve steps list on slide 7 to "explore, decide, delegate, verify,
 repeat" (-20 s), then the "Picture it" lines on slide 8 (-20 s).
