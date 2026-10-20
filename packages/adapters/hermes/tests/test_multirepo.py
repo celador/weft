@@ -23,7 +23,7 @@ sys.path.insert(0, str(HERE.parent / "plugin"))
 
 from test_adapter import FakeClient, git  # noqa: E402
 from weft.adapter import (  # noqa: E402
-    Config, Root, Scope, WeftRouter, discover_projects, sanitize_repo,
+    Config, Root, Scope, WeftAdapter, WeftRouter, discover_projects, sanitize_repo,
 )
 from weft.wcp import CircuitBreaker, WcpClient, WcpError  # noqa: E402
 
@@ -205,6 +205,30 @@ class RouterTests(Workspace):
         self.assertIsNone(cfg.for_repo("weft"), "no token for weft in this profile")
         self.assertEqual(cfg.for_repo("alpha").token, "ta")
         self.assertIsNone(Config.load(p, profile="nobody"))
+
+    def test_candidate_mode_env_pins_repo_agent_change_task(self):
+        p = self.tmp / "c.json"
+        p.write_text(json.dumps({
+            "url": "https://g", "repo": "weft", "modes": {"alpha": "enforce"},
+            "projects": {"dirs": [str(self.gh)], "repos": {str(self.gh / "alpha"): "alpha"}},
+            "agents": {"default": {"agent": "hermes-default", "tokens": {"weft": "tw", "alpha": "ta"}}}}))
+        env = {"WEFT_HERMES_REPO": "alpha", "WEFT_HERMES_TOKEN": "cand", "WEFT_HERMES_AGENT": "hermes-t4-r1",
+               "WEFT_HERMES_CHANGE": "chg_123", "WEFT_HERMES_TASK": "t_card", "WEFT_HERMES_TASK_TITLE": "Bulk discount"}
+        old = {k: os.environ.get(k) for k in env}
+        os.environ.update(env)
+        try:
+            cfg = Config.load(p, profile="default")
+            self.assertEqual((cfg.agent, cfg.tokens["alpha"], cfg.tokens["weft"]), ("hermes-t4-r1", "cand", "tw"))
+            a = WeftAdapter(cfg.for_repo("alpha"), client=object(), analyzer=object(), heartbeat=False)
+            self.assertEqual((a.change, a.task), ("chg_123", {"id": "t_card", "title": "Bulk discount"}))
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        cfg = Config.load(p, profile="default")
+        self.assertEqual((cfg.agent, cfg.tokens["alpha"]), ("hermes-default", "ta"), "no env: profile config")
 
 
 class Silent:

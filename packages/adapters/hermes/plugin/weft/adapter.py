@@ -235,10 +235,20 @@ class Config:
             tok = t.get("token") if isinstance(t, dict) else t
             if tok:
                 tokens[str(r)] = str(tok)
-        token = os.environ.get("WEFT_HERMES_TOKEN") or entry.get("token") or tokens.get(repo) or ""
+        # Candidate mode (a Hermes run as one best-of-N candidate, e.g. demo/otto): the launcher
+        # pins this process to one repo with its own agent id, token and Change-Id.
+        #   WEFT_HERMES_REPO + WEFT_HERMES_TOKEN  -> that repo's token (instead of the profile's)
+        #   WEFT_HERMES_AGENT                     -> agent id (the token's agent)
+        #   WEFT_HERMES_CHANGE / _TASK / _TASK_TITLE -> see WeftAdapter
+        pinned = os.environ.get("WEFT_HERMES_REPO", "").strip()
+        if pinned and os.environ.get("WEFT_HERMES_TOKEN"):
+            tokens[pinned] = os.environ["WEFT_HERMES_TOKEN"]
+            token = tokens.get(repo) or ""
+        else:
+            token = os.environ.get("WEFT_HERMES_TOKEN") or entry.get("token") or tokens.get(repo) or ""
         if repo and token:
             tokens.setdefault(repo, str(token))
-        agent = entry.get("agent") or f"hermes-{profile}"
+        agent = os.environ.get("WEFT_HERMES_AGENT") or entry.get("agent") or f"hermes-{profile}"
         url = os.environ.get("WEFT_HERMES_URL") or raw.get("url")
         if not (url and tokens):
             return None
@@ -630,7 +640,7 @@ class WeftAdapter:
         self.last_drain = 0.0
         self.refusals: Dict[str, int] = {}  # open-error fingerprint -> consecutive refusals
         self.task = self._task_info()
-        self.change = f"{config.agent}/{self.task['id']}"
+        self.change = os.environ.get("WEFT_HERMES_CHANGE", "").strip() or f"{config.agent}/{self.task['id']}"
         self._hb_thread: Optional[threading.Thread] = None
         self._hb_enabled = heartbeat
         self._closed = False
@@ -684,6 +694,12 @@ class WeftAdapter:
             pass
 
     def _task_info(self) -> Dict[str, Any]:
+        pinned = os.environ.get("WEFT_HERMES_TASK", "").strip()
+        if pinned:  # candidate mode: the launcher names the task (and its title) explicitly
+            info: Dict[str, Any] = {"id": pinned}
+            if os.environ.get("WEFT_HERMES_TASK_TITLE"):
+                info["title"] = os.environ["WEFT_HERMES_TASK_TITLE"][:200]
+            return info
         task_id = os.environ.get("HERMES_KANBAN_TASK", "").strip()
         if not task_id:
             sid = os.environ.get("HERMES_SESSION_ID", "").strip() or f"pid{os.getpid()}"
