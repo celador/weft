@@ -1,0 +1,72 @@
+{
+  "run": 3,
+  "task": "t1",
+  "card": "t_ea07091b",
+  "title": "Member sessions expire after an hour",
+  "harnesses": [
+    "claude",
+    "codex"
+  ],
+  "beat": "signature change (its callers collide with it)",
+  "started_at": "2026-10-20T12:41:07.052Z",
+  "phase": "answering",
+  "marks": {
+    "candidates": 13.6,
+    "agents_ready": 16.3,
+    "working": 16.3,
+    "answering": 55.8
+  },
+  "steps": [
+    {
+      "name": "candidates",
+      "at_s": 13.6,
+      "at": "2026-10-20T12:41:20.618Z",
+      "data": [
+        {
+          "agent": "claude-t1-r3",
+          "harness": "claude",
+          "change": "I4c7bccd15cfae0d0decce9c50d9764777fdf504e",
+          "fork": "weft-weft-demo-site-t_ea07091b-1"
+        },
+        {
+          "agent": "codex-t1-r3",
+          "harness": "codex",
+          "change": "I83668217adedde1820dec5873de720eb51ca4ca5",
+          "fork": "weft-weft-demo-site-t_ea07091b-2"
+        }
+      ]
+    },
+    {
+      "name": "agents_ready",
+      "at_s": 16.3,
+      "at": "2026-10-20T12:41:23.330Z"
+    },
+    {
+      "name": "working",
+      "at_s": 16.3,
+      "at": "2026-10-20T12:41:23.330Z"
+    },
+    {
+      "name": "answering",
+      "at_s": 55.8,
+      "at": "2026-10-20T12:42:02.863Z"
+    }
+  ],
+  "pid": 94578,
+  "first_seq": 508,
+  "agents": [
+    {
+      "agent": "claude-t1-r3",
+      "harness": "claude",
+      "change": "I4c7bccd15cfae0d0decce9c50d9764777fdf504e",
+      "fork": "weft-weft-demo-site-t_ea07091b-1"
+    },
+    {
+      "agent": "codex-t1-r3",
+      "harness": "codex",
+      "change": "I83668217adedde1820dec5873de720eb51ca4ca5",
+      "fork": "weft-weft-demo-site-t_ea07091b-2"
+    }
+  ],
+  "note": "edits done; answering other agents' requests via Weft"
+}

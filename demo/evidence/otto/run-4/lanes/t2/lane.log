@@ -1,0 +1,5 @@
+[lane t2 run-4 +15.7s] candidates [{"agent":"claude-t2-r4","harness":"claude","change":"I7a6a971c2cd98ac38a408accc534ac4d037edfeb","fork":"weft-weft-demo-site-t_ea0e0bf1-1"},{"agent":"opencode-t2-r4","harness":"opencode","change":"I08e714d4b03dfbad470b7333e0c9e48762830d10","fork":"weft-weft-demo-site-t_ea0e0bf1-2"},{"agent":"gemini-t2-r4","harness":"gemini","change":"I151d599017d536021efd863f34f68a29462534ec","fork":"weft-weft-demo-site-t_ea0e0bf1-3"}]
+[lane t2 run-4 +20.5s] agents_ready 
+[lane t2 run-4 +20.5s] planning 
+[lane t2 run-4 +458.9s] waiting_for_cue 
+[lane t2 run-4 +459.1s] implementing {"seq":607,"agent":"claude-t1-r4","waited_s":0}

@@ -1,0 +1,453 @@
+{
+  "run": 4,
+  "task": "t7",
+  "card": "t_163c8487",
+  "title": "Roast-date freshness helper",
+  "harnesses": [
+    "gemini",
+    "opencode"
+  ],
+  "beat": "independent work: no collision, lands on its own",
+  "started_at": "2026-10-20T12:47:01.614Z",
+  "phase": "final",
+  "marks": {
+    "candidates": 10.6,
+    "agents_ready": 14.5,
+    "working": 14.5,
+    "pushed gemini-t7-r4": 108.9,
+    "pushed opencode-t7-r4": 110.7,
+    "evidence": 110.7,
+    "evidence_done": 148.1,
+    "selecting": 148.8,
+    "selected": 160.6,
+    "final": 171.1
+  },
+  "steps": [
+    {
+      "name": "candidates",
+      "at_s": 10.6,
+      "at": "2026-10-20T12:47:12.177Z",
+      "data": [
+        {
+          "agent": "gemini-t7-r4",
+          "harness": "gemini",
+          "change": "I33f0e00a8585760cf20e3e5f91e103e1eb11e776",
+          "fork": "weft-weft-demo-site-t_163c8487-1"
+        },
+        {
+          "agent": "opencode-t7-r4",
+          "harness": "opencode",
+          "change": "I0bd7cc64e2978d584b619cb22b82347b06513186",
+          "fork": "weft-weft-demo-site-t_163c8487-2"
+        }
+      ]
+    },
+    {
+      "name": "agents_ready",
+      "at_s": 14.5,
+      "at": "2026-10-20T12:47:16.105Z"
+    },
+    {
+      "name": "working",
+      "at_s": 14.5,
+      "at": "2026-10-20T12:47:16.106Z"
+    },
+    {
+      "name": "pushed gemini-t7-r4",
+      "at_s": 108.9,
+      "at": "2026-10-20T12:48:50.503Z",
+      "data": {
+        "sha": "815ff11bcb7c7c3285309e25fb05a78c55e5cb0c"
+      }
+    },
+    {
+      "name": "pushed opencode-t7-r4",
+      "at_s": 110.7,
+      "at": "2026-10-20T12:48:52.299Z",
+      "data": {
+        "sha": "50da21e91e9d139066d3c81b920492b688336ad3"
+      }
+    },
+    {
+      "name": "evidence",
+      "at_s": 110.7,
+      "at": "2026-10-20T12:48:52.300Z"
+    },
+    {
+      "name": "evidence_done",
+      "at_s": 148.1,
+      "at": "2026-10-20T12:49:29.669Z"
+    },
+    {
+      "name": "selecting",
+      "at_s": 148.8,
+      "at": "2026-10-20T12:49:30.375Z",
+      "data": {
+        "workflow": "bestofn-weft-demo-site-t_163c8487"
+      }
+    },
+    {
+      "name": "selected",
+      "at_s": 160.6,
+      "at": "2026-10-20T12:49:42.253Z",
+      "data": {
+        "status": "complete",
+        "result": "landing",
+        "winner": "I0bd7cc64e2978d584b619cb22b82347b06513186",
+        "approved_by": null,
+        "ranking": [
+          {
+            "agent": "opencode-t7-r4",
+            "score": 1173,
+            "eligible": true,
+            "layer": "none",
+            "reasons": [
+              "tests pass",
+              "rebase: none",
+              "churn 34",
+              "review pass 100",
+              "risk low"
+            ]
+          },
+          {
+            "agent": "gemini-t7-r4",
+            "score": 1171,
+            "eligible": true,
+            "layer": "none",
+            "reasons": [
+              "tests pass",
+              "rebase: none",
+              "churn 46",
+              "review pass 100",
+              "risk low"
+            ]
+          }
+        ],
+        "winner_agent": "opencode-t7-r4",
+        "land": {
+          "workflow_status": "complete",
+          "status": "landed",
+          "op_id": "op-8d69336cb5867bab0f541af1",
+          "seq": 689,
+          "before": "81aee1c9bda015219fca1b4ee6847469ed5b017b",
+          "after": "50da21e91e9d139066d3c81b920492b688336ad3",
+          "layer": "none",
+          "attempts": 1,
+          "queue_id": 20
+        }
+      }
+    },
+    {
+      "name": "final",
+      "at_s": 171.1,
+      "at": "2026-10-20T12:49:52.701Z",
+      "data": {
+        "status": "landed",
+        "winner": "opencode-t7-r4",
+        "harness": "opencode",
+        "approved_by": null,
+        "land_op": "op-8d69336cb5867bab0f541af1",
+        "layer": "none",
+        "trunk": null,
+        "at": "2026-10-20T12:49:52.701Z"
+      }
+    }
+  ],
+  "pid": 26030,
+  "first_seq": 600,
+  "agents": [
+    {
+      "agent": "gemini-t7-r4",
+      "harness": "gemini",
+      "change": "I33f0e00a8585760cf20e3e5f91e103e1eb11e776",
+      "fork": "weft-weft-demo-site-t_163c8487-1",
+      "turns": [
+        {
+          "name": "work",
+          "code": 0,
+          "ms": 38740
+        }
+      ],
+      "push": {
+        "ok": true,
+        "sha": "815ff11bcb7c7c3285309e25fb05a78c55e5cb0c"
+      }
+    },
+    {
+      "agent": "opencode-t7-r4",
+      "harness": "opencode",
+      "change": "I0bd7cc64e2978d584b619cb22b82347b06513186",
+      "fork": "weft-weft-demo-site-t_163c8487-2",
+      "turns": [
+        {
+          "name": "work",
+          "code": 0,
+          "ms": 65340
+        }
+      ],
+      "push": {
+        "ok": true,
+        "sha": "50da21e91e9d139066d3c81b920492b688336ad3"
+      }
+    }
+  ],
+  "evidence": {
+    "gemini-t7-r4": {
+      "revision": {
+        "status": "processed",
+        "layer": "none"
+      },
+      "rows": [
+        {
+          "kind": "rebase",
+          "status": "pass",
+          "data": {
+            "status": "up_to_date",
+            "layer": "none"
+          }
+        },
+        {
+          "kind": "test",
+          "status": "pass",
+          "data": {
+            "status": "pass",
+            "summary": {
+              "pass": 12,
+              "fail": 0
+            }
+          }
+        },
+        {
+          "kind": "preview",
+          "status": "pass",
+          "data": {
+            "url": "https://weft-previews-preview.elier.ai/p/weft-weft-demo-site-t_163c8487-1/815ff11bcb7c7c3285309e25fb05a78c55e5cb0c/cjZzrE13xLc2hsH0iGQ8pQ/",
+            "trunk_url": "https://weft-previews-preview.elier.ai/p/weft-demo-site/81aee1c9bda015219fca1b4ee6847469ed5b017b/nLathTSgFMWEVXGkonVgqw/",
+            "routes": [
+              "/",
+              "/menu.html"
+            ],
+            "provider": "weft-previews (Artifacts)",
+            "sha": "815ff11bcb7c7c3285309e25fb05a78c55e5cb0c",
+            "onto": "81aee1c9bda015219fca1b4ee6847469ed5b017b"
+          }
+        },
+        {
+          "kind": "screenshot",
+          "status": "pass",
+          "data": {
+            "route": "/",
+            "ratio": 0
+          }
+        },
+        {
+          "kind": "screenshot",
+          "status": "pass",
+          "data": {
+            "route": "/menu.html",
+            "ratio": 0
+          }
+        },
+        {
+          "kind": "visual_diff",
+          "status": "info",
+          "data": {
+            "routes": [
+              {
+                "route": "/",
+                "ratio": 0,
+                "pixels": 0,
+                "uri": null
+              },
+              {
+                "route": "/menu.html",
+                "ratio": 0,
+                "pixels": 0,
+                "uri": null
+              }
+            ],
+            "max_ratio": 0,
+            "changed": false,
+            "baseline": "81aee1c9bda015219fca1b4ee6847469ed5b017b"
+          }
+        },
+        {
+          "kind": "risk",
+          "status": "info",
+          "data": {
+            "risk": "low"
+          }
+        },
+        {
+          "kind": "review",
+          "status": "pass",
+          "data": {
+            "verdict": "pass",
+            "score": 100,
+            "summary": "The candidate change meets all acceptance criteria and the diff looks correct, so it passes the review."
+          }
+        }
+      ],
+      "waited_s": 32
+    },
+    "opencode-t7-r4": {
+      "revision": {
+        "status": "processed",
+        "layer": "none"
+      },
+      "rows": [
+        {
+          "kind": "rebase",
+          "status": "pass",
+          "data": {
+            "status": "up_to_date",
+            "layer": "none"
+          }
+        },
+        {
+          "kind": "test",
+          "status": "pass",
+          "data": {
+            "status": "pass",
+            "summary": {
+              "pass": 12,
+              "fail": 0
+            }
+          }
+        },
+        {
+          "kind": "preview",
+          "status": "pass",
+          "data": {
+            "url": "https://weft-previews-preview.elier.ai/p/weft-weft-demo-site-t_163c8487-2/50da21e91e9d139066d3c81b920492b688336ad3/OGnoYbaxxdU_SzFYzCGB3g/",
+            "trunk_url": "https://weft-previews-preview.elier.ai/p/weft-demo-site/81aee1c9bda015219fca1b4ee6847469ed5b017b/nLathTSgFMWEVXGkonVgqw/",
+            "routes": [
+              "/",
+              "/menu.html"
+            ],
+            "provider": "weft-previews (Artifacts)",
+            "sha": "50da21e91e9d139066d3c81b920492b688336ad3",
+            "onto": "81aee1c9bda015219fca1b4ee6847469ed5b017b"
+          }
+        },
+        {
+          "kind": "screenshot",
+          "status": "pass",
+          "data": {
+            "route": "/",
+            "ratio": 0
+          }
+        },
+        {
+          "kind": "screenshot",
+          "status": "pass",
+          "data": {
+            "route": "/menu.html",
+            "ratio": 0
+          }
+        },
+        {
+          "kind": "visual_diff",
+          "status": "info",
+          "data": {
+            "routes": [
+              {
+                "route": "/",
+                "ratio": 0,
+                "pixels": 0,
+                "uri": null
+              },
+              {
+                "route": "/menu.html",
+                "ratio": 0,
+                "pixels": 0,
+                "uri": null
+              }
+            ],
+            "max_ratio": 0,
+            "changed": false,
+            "baseline": "81aee1c9bda015219fca1b4ee6847469ed5b017b"
+          }
+        },
+        {
+          "kind": "risk",
+          "status": "info",
+          "data": {
+            "risk": "low"
+          }
+        },
+        {
+          "kind": "review",
+          "status": "pass",
+          "data": {
+            "verdict": "pass",
+            "score": 100,
+            "summary": "The candidate change meets all acceptance criteria and the diff looks correct, with all tests passing and no visual differences in the rendered pages."
+          }
+        }
+      ],
+      "waited_s": 37
+    }
+  },
+  "selection": {
+    "workflow": "bestofn-weft-demo-site-t_163c8487",
+    "n": 2,
+    "risk": "low",
+    "status": "complete",
+    "result": "landing",
+    "winner": "I0bd7cc64e2978d584b619cb22b82347b06513186",
+    "approved_by": null,
+    "ranking": [
+      {
+        "agent": "opencode-t7-r4",
+        "score": 1173,
+        "eligible": true,
+        "layer": "none",
+        "reasons": [
+          "tests pass",
+          "rebase: none",
+          "churn 34",
+          "review pass 100",
+          "risk low"
+        ]
+      },
+      {
+        "agent": "gemini-t7-r4",
+        "score": 1171,
+        "eligible": true,
+        "layer": "none",
+        "reasons": [
+          "tests pass",
+          "rebase: none",
+          "churn 46",
+          "review pass 100",
+          "risk low"
+        ]
+      }
+    ],
+    "winner_agent": "opencode-t7-r4",
+    "land": {
+      "workflow_status": "complete",
+      "status": "landed",
+      "op_id": "op-8d69336cb5867bab0f541af1",
+      "seq": 689,
+      "before": "81aee1c9bda015219fca1b4ee6847469ed5b017b",
+      "after": "50da21e91e9d139066d3c81b920492b688336ad3",
+      "layer": "none",
+      "attempts": 1,
+      "queue_id": 20
+    }
+  },
+  "final": {
+    "status": "landed",
+    "winner": "opencode-t7-r4",
+    "harness": "opencode",
+    "approved_by": null,
+    "land_op": "op-8d69336cb5867bab0f541af1",
+    "layer": "none",
+    "trunk": null,
+    "at": "2026-10-20T12:49:52.701Z"
+  },
+  "finished_at": "2026-10-20T12:49:52.701Z",
+  "duration_s": 171.1
+}

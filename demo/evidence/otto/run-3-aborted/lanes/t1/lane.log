@@ -1,0 +1,4 @@
+[lane t1 run-3 +13.6s] candidates [{"agent":"claude-t1-r3","harness":"claude","change":"I4c7bccd15cfae0d0decce9c50d9764777fdf504e","fork":"weft-weft-demo-site-t_ea07091b-1"},{"agent":"codex-t1-r3","harness":"codex","change":"I83668217adedde1820dec5873de720eb51ca4ca5","fork":"weft-weft-demo-site-t_ea07091b-2"}]
+[lane t1 run-3 +16.3s] agents_ready 
+[lane t1 run-3 +16.3s] working 
+[lane t1 run-3 +55.8s] answering 

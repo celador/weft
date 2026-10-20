@@ -1,0 +1,100 @@
+{
+  "run": 4,
+  "task": "t2",
+  "card": "t_ea0e0bf1",
+  "title": "Gift signup: create the account and sign in",
+  "harnesses": [
+    "claude",
+    "opencode",
+    "gemini"
+  ],
+  "beat": "stale call caught mid-edit (squiggle) and rerouted",
+  "started_at": "2026-10-20T12:46:52.082Z",
+  "phase": "implementing",
+  "marks": {
+    "candidates": 15.7,
+    "agents_ready": 20.5,
+    "planning": 20.5,
+    "waiting_for_cue": 458.9,
+    "implementing": 459.1
+  },
+  "steps": [
+    {
+      "name": "candidates",
+      "at_s": 15.7,
+      "at": "2026-10-20T12:47:07.761Z",
+      "data": [
+        {
+          "agent": "claude-t2-r4",
+          "harness": "claude",
+          "change": "I7a6a971c2cd98ac38a408accc534ac4d037edfeb",
+          "fork": "weft-weft-demo-site-t_ea0e0bf1-1"
+        },
+        {
+          "agent": "opencode-t2-r4",
+          "harness": "opencode",
+          "change": "I08e714d4b03dfbad470b7333e0c9e48762830d10",
+          "fork": "weft-weft-demo-site-t_ea0e0bf1-2"
+        },
+        {
+          "agent": "gemini-t2-r4",
+          "harness": "gemini",
+          "change": "I151d599017d536021efd863f34f68a29462534ec",
+          "fork": "weft-weft-demo-site-t_ea0e0bf1-3"
+        }
+      ]
+    },
+    {
+      "name": "agents_ready",
+      "at_s": 20.5,
+      "at": "2026-10-20T12:47:12.551Z"
+    },
+    {
+      "name": "planning",
+      "at_s": 20.5,
+      "at": "2026-10-20T12:47:12.552Z"
+    },
+    {
+      "name": "waiting_for_cue",
+      "at_s": 458.9,
+      "at": "2026-10-20T12:54:30.939Z"
+    },
+    {
+      "name": "implementing",
+      "at_s": 459.1,
+      "at": "2026-10-20T12:54:31.183Z",
+      "data": {
+        "seq": 607,
+        "agent": "claude-t1-r4",
+        "waited_s": 0
+      }
+    }
+  ],
+  "pid": 24655,
+  "first_seq": 599,
+  "agents": [
+    {
+      "agent": "claude-t2-r4",
+      "harness": "claude",
+      "change": "I7a6a971c2cd98ac38a408accc534ac4d037edfeb",
+      "fork": "weft-weft-demo-site-t_ea0e0bf1-1"
+    },
+    {
+      "agent": "opencode-t2-r4",
+      "harness": "opencode",
+      "change": "I08e714d4b03dfbad470b7333e0c9e48762830d10",
+      "fork": "weft-weft-demo-site-t_ea0e0bf1-2"
+    },
+    {
+      "agent": "gemini-t2-r4",
+      "harness": "gemini",
+      "change": "I151d599017d536021efd863f34f68a29462534ec",
+      "fork": "weft-weft-demo-site-t_ea0e0bf1-3"
+    }
+  ],
+  "cue": {
+    "seq": 607,
+    "agent": "claude-t1-r4",
+    "waited_s": 0
+  }
+}

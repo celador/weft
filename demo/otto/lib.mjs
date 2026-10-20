@@ -66,6 +66,18 @@ export async function api(method, path, token, body, expect) {
   }
 }
 export async function wf(kind, id) {
+  // A dropped connection to the workflow API must not end a lane: retry (run-4 lost t3/t6 to one
+  // "fetch failed" while polling BestOfN).
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      return await wfOnce(kind, id);
+    } catch (err) {
+      if (attempt === 5) throw err;
+      await sleep(2000 * (attempt + 1));
+    }
+  }
+}
+async function wfOnce(kind, id) {
   const r = await fetch(`${WF}/v1/workflows/${kind}/${id}`, { headers: { authorization: `Bearer ${TOK.wf}` } });
   if (r.status === 404 || r.status === 400) return { status: "absent", http: r.status };
   return r.json();

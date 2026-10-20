@@ -1,0 +1,3 @@
+[lane t2 run-3 +14.2s] candidates [{"agent":"claude-t2-r3","harness":"claude","change":"I884984a55a81486aba3ddcd12770446947efe278","fork":"weft-weft-demo-site-t_c194b88f-1"},{"agent":"opencode-t2-r3","harness":"opencode","change":"I9bcbd6ba70be22655f3c0c6b3a5cc44166e17d53","fork":"weft-weft-demo-site-t_c194b88f-2"},{"agent":"gemini-t2-r3","harness":"gemini","change":"Ic1100132e3ba6948b23371f20f98ec007888331c","fork":"weft-weft-demo-site-t_c194b88f-3"}]
+[lane t2 run-3 +18.2s] agents_ready 
+[lane t2 run-3 +18.2s] planning 

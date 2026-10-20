@@ -98,7 +98,22 @@ if (cmd === "wait") {
     await sleep(5000);
   }
 }
-if (cmd !== "run") throw new Error("usage: lane.mjs start|wait|run --run N --task tK [--card ID]");
+if (cmd === "reattach") {
+  // Resume a lane whose process died after it had asked Weft to select (state.selection.workflow):
+  // keeps the same candidates and BestOfN workflow, clears the error, polls to the end.
+  const s = JSON.parse(readFileSync(STATE, "utf8"));
+  if (!s.selection?.workflow) throw new Error(`lane ${KEY} has no selection workflow to reattach to`);
+  const fd = openSync(join(OUT, "lane.log"), "a");
+  const child = spawn(process.execPath, [process.argv[1], "reattach-run", ...argv.slice(1)], { detached: true, stdio: ["ignore", fd, fd], env: process.env });
+  child.unref();
+  const lost = { at: new Date().toISOString(), previous_final: s.final, previous_pid: s.pid };
+  delete s.final;
+  delete s.error;
+  writeFileSync(STATE, JSON.stringify({ ...s, pid: child.pid, phase: "reattaching", reattached: [...(s.reattached ?? []), lost] }, null, 2) + "\n");
+  console.log(`lane ${KEY} reattached (pid ${child.pid})`);
+  process.exit(0);
+}
+if (cmd !== "run" && cmd !== "reattach-run") throw new Error("usage: lane.mjs start|wait|run|reattach --run N --task tK [--card ID]");
 
 // ------------------------------------------------------------------------------ run
 
@@ -181,9 +196,9 @@ async function acceptorChange(head0, agents) {
   return byAgent.length ? agents.find((a) => a.id === byAgent[0].agent).cand.change : undefined;
 }
 
-async function selectAndLand(head0, agents, pushed) {
-  const sel = await api("POST", `/v1/repos/${REPO}/tasks/${CARD}/select`, TOK.sys, { n: pushed.length, risk: T.risk, poll_s: 10, approval_timeout_s: 7200 }, 202);
-  state.selection = { workflow: sel.workflow, n: pushed.length, risk: T.risk };
+async function selectAndLand(head0, agents, pushed, existingWorkflow) {
+  const sel = existingWorkflow ? { workflow: existingWorkflow } : await api("POST", `/v1/repos/${REPO}/tasks/${CARD}/select`, TOK.sys, { n: pushed.length, risk: T.risk, poll_s: 10, approval_timeout_s: 7200 }, 202);
+  state.selection = { workflow: sel.workflow, n: pushed.length, risk: T.risk, ...(existingWorkflow ? { reattached: true } : {}) };
   phase("selecting", { workflow: sel.workflow });
   const t0 = Date.now();
   let bon;
@@ -432,11 +447,21 @@ async function plantedLane() {
 
 // ------------------------------------------------------------------------------ main
 
+async function reattachLane() {
+  const agents = (state.agents ?? []).map((a) => ({ id: a.agent, harness: a.harness, cand: { change: a.change }, push: a.push }));
+  const pushed = agents.filter((a) => a.push?.ok);
+  phase("reattached", { workflow: state.selection.workflow });
+  const sel = await selectAndLand(state.first_seq - 1, agents, pushed, state.selection.workflow);
+  state.selection = { ...state.selection, ...sel };
+  const landed = ["landed", "already_landed"].includes(sel.land?.status);
+  return { status: landed ? "landed" : sel.result ?? sel.status, winner: sel.winner_agent, harness: agents.find((a) => a.id === sel.winner_agent)?.harness ?? null, approved_by: state.approved?.by ?? sel.approved_by ?? null, land_op: sel.land?.op_id ?? null, layer: sel.land?.layer ?? null, trunk: sel.land?.trunk_sha ?? sel.land?.sha ?? null, reattached: true };
+}
+
 (async () => {
   state.pid = process.pid;
   save();
   try {
-    state.final = KEY === PLANTED.key ? await plantedLane() : await cardLane();
+    state.final = cmd === "reattach-run" ? await reattachLane() : KEY === PLANTED.key ? await plantedLane() : await cardLane();
     state.final.at = new Date().toISOString();
     state.finished_at = state.final.at;
     state.duration_s = secs();

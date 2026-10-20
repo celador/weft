@@ -1,0 +1,17 @@
+[lane t3 run-4 +10.6s] candidates [{"agent":"claude-t3-r4","harness":"claude","change":"I8ed16a21b214d42f628f7e37dd49e7b20ebc4678","fork":"weft-weft-demo-site-t_a9c19726-1"},{"agent":"codex-t3-r4","harness":"codex","change":"I9a3829f4665e1aab7a38980cfd319165a0282eec","fork":"weft-weft-demo-site-t_a9c19726-2"}]
+[lane t3 run-4 +14.2s] agents_ready 
+[lane t3 run-4 +14.2s] planning 
+[lane t3 run-4 +37.4s] waiting_for_cue 
+[lane t3 run-4 +37.5s] implementing {"seq":607,"agent":"claude-t1-r4","waited_s":0}
+[lane t3 run-4 +110.6s] pushed claude-t3-r4 {"sha":"c5fb6c03d0b997a84b4ddb4eda637a43776909a8"}
+[lane t3 run-4 +112.4s] pushed codex-t3-r4 {"sha":"c189c6b7805684d94a8f9cb2944e71052bd5aa76"}
+[lane t3 run-4 +112.4s] evidence 
+[lane t3 run-4 +152.7s] evidence_done 
+[lane t3 run-4 +153.2s] selecting {"workflow":"bestofn-weft-demo-site-t_a9c19726"}
+[lane t3 run-4 +164.4s] awaiting_approval {"since":"2026-10-20T12:49:45.633Z","ranking":[{"agent":"codex-t3-r4","harness":"codex","change":"I9a3829f4665e1aab7a38980cfd319165a0282eec","score":1174,"eligible":true}],"suggest":{"agent":"codex-t3-r4","change":"I9a3829f4665e1aab7a38980cfd319165a0282eec","why":"highest-ranked eligible"}}
+TypeError: fetch failed
+[lane t3 run-4 +202s] final {"status":"error","error":"fetch failed"}
+[lane t3 run-4 +0s] reattached {"workflow":"bestofn-weft-demo-site-t_a9c19726"}
+[lane t3 run-4 +0s] selecting {"workflow":"bestofn-weft-demo-site-t_a9c19726"}
+[lane t3 run-4 +0.8s] selected {"status":"complete","result":"landing","winner":"I9a3829f4665e1aab7a38980cfd319165a0282eec","approved_by":"john","ranking":[{"agent":"codex-t3-r4","score":1174,"eligible":true,"layer":"none","reasons":["tests pass","rebase: none","churn 30","review pass 100","risk high"]},{"agent":"claude-t3-r4","score":1173,"eligible":true,"layer":"none","reasons":["tests pass","rebase: none","churn 35","review pass 100","risk high"]}],"winner_agent":"codex-t3-r4"}
+[lane t3 run-4 +1.3s] final {"status":"landed","winner":"codex-t3-r4","harness":"codex","approved_by":"john","land_op":"op-a5356ce5948b620d96d68231","layer":"git","trunk":null,"reattached":true,"at":"2026-10-20T12:52:13.922Z"}
