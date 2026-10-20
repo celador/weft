@@ -56,8 +56,7 @@ Sources for every number (do not mix windows):
   Codex, OpenCode), so a stale edit is refused before it applies, before any commit or PR. That is
   edit time, not landing time. Systems that validate at landing (merge queues, CI, read-set checks
   when a change lands) send finished work back to be redone. "Open protocol": WCP draft v0.1
-  (`docs/` specs), adapters per harness plus a file watcher. Do not name other finalists on stage;
-  comparison answers are in the unmerged recon (branch wt/t_be804fb4, not public).
+  (`docs/` specs), adapters per harness plus a file watcher. Do not name other finalists on stage.
 - Criteria map (Dina's brief): (1) what I built = slides 1-3, (2) why it's new = slide 4, (3) how
   it solves many agents at once = slides 5-9. Slides 10-12: why it matters, thesis, close.
 
