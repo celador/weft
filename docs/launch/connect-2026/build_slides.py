@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build the visual Connect 2026 deck (slides.html), offline, single file, stdlib only.
 
-Slide order (rev 5): 1-3 what I built, 4 why it's new, 5 without-Weft clip, 6 with-Weft clip,
-7-8 how Weft resolves it, 9 built with itself, 10-12 close.
+Slide order (rev 6, criteria-led): 1 headline, 2 what I built (criterion 1), 3-4 why it's new
+(criterion 2), 5-10 the four questions (criterion 3: Q1 slide 5, Q2 slides 6-8 with the without-Weft
+and with-Weft clips, Q3 slide 9, Q4 slide 10), 11 why Artifacts + Cloudflare, 12 close.
 Inputs: demo/video/connect-2026/stills/*.png, qr-weft.svg, the 22 s "without Weft" clip
 (demo/video/connect-2026/baseline.mp4, recorded from baseline.tape), and the 47 s squiggle clip, which is
 reused from slides-story-v1.html (data:video/mp4). The story version build is
@@ -15,7 +16,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 STILLS = ROOT / "demo/video/connect-2026/stills"
 
-CLIPS = {5: 22.44, 6: 47.03}  # slide number -> clip seconds (narration runs over the clip)
+CLIPS = {6: 22.44, 7: 47.03}  # slide number -> clip seconds (narration runs over the clip)
 
 def count_words():
     """Spoken words (quoted text in section bodies) and talk time incl. clips at 130 wpm."""
@@ -42,66 +43,86 @@ def clip():
         sys.exit("clip not found in slides-story-v1.html")
     return m.group(0)
 
-STEPS = ["Explore", "Decide", "Delegate", "Verify", "Repeat"]
+def chips(items):
+    return "".join(f'<span class="chip {c}">{t}</span>' for t, c in items)
 
 def slides():
     qr = (HERE / "qr-weft.svg").read_text() if (HERE / "qr-weft.svg").exists() else ""
-    steps = "".join(f'<li style="--i:{i}"><b>{i+1}</b>{s}</li>' for i, s in enumerate(STEPS))
+    harness = chips([("Claude Code", "live"), ("Codex", "live"), ("OpenCode", "live"), ("Hermes", "live"),
+                     ("Cursor", "wr"), ("Gemini", "wr"), ("File watcher: any editor, people too", "wt")])
+    resolve = "".join(f'<li style="--i:{i}"><b>{i+1}</b><em>{h}</em>{d}</li>' for i, (h, d) in enumerate([
+        ("Refused before it's written", "a stale_assumption squiggle quotes the other agent's change"),
+        ("Reroute or negotiate", "propose an overload · accept · counter"),
+        ("Priority decides who adapts", "same rule every time: no deadlocks"),
+        ("Structural merge", "Mergiraf, not line-by-line"),
+        ("Land", "compare-and-swap on trunk: main moves only if nothing moved")]))
+    review = "".join(f'<li style="--i:{i}">{t}</li>' for i, t in enumerate([
+        "Tests", "Preview", "Screenshots<br>+ pixel diff", "Risk tier", "Review agent<br><small>acceptance criteria, fails closed</small>"]))
     return [
-        f'''<section class="bg" style="background-image:linear-gradient(90deg,rgba(10,10,16,.92) 38%,rgba(10,10,16,.35)),url({img("04-squiggle.png")})">
-<h1 class="huge">I didn't write the code.<br><span class="red">I directed the agents that did.</span></h1>
-<p class="sub">I asked the questions and made the decisions.<br>John Nelson · Weft</p></section>''',
-        '''<section><p class="kicker">Oct 3, Saturday night → submitted Oct 6</p>
-<div class="stats"><div><b>64</b>hours</div><div><b>231</b>files</div><div><b>38,593</b>lines</div></div>
-<p class="sub">Every commit authored by an agent.</p>
-<div class="stats small"><div><b>627</b>events</div><div><b>460</b>edits</div><div><b>59</b>waits</div></div>
-<p class="src">Weft's own log, first 11.3 hours of the build</p></section>''',
-        f'''<section class="hero"><p class="kicker">1 · What I built</p><img src="{img("02-live-log.png")}" alt="Weft live feed">
-<p class="cap">weft.elier.ai · every agent edit, in order, live · squiggles name the function, the cause, the fix</p></section>''',
+        f'''<section class="bg" style="background-image:linear-gradient(90deg,rgba(10,10,16,.94) 42%,rgba(10,10,16,.35)),url({img("04-squiggle.png")})">
+<h1 class="huge">Red squiggles<br>for teams of<br>coding <span class="red sq">agents</span>.</h1>
+<p class="sub lede">Weft checks every agent edit against what the other agents just changed, and tells the agent <b>before the conflict exists</b>.</p>
+<p class="src">John Nelson · Weft</p></section>''',
+        f'''<section class="hero"><p class="kicker">1 · What I built: an open protocol (WCP) + a platform on Cloudflare</p><img src="{img("02-live-log.png")}" alt="Weft live feed">
+<p class="cap">weft.elier.ai · every agent edit, in order, live · Weft coordinated the agents that built Weft: <b>918</b> events · <b>27</b> landings</p></section>''',
         '''<section><p class="kicker">2 · Why it's new</p>
-<h1 class="nov">Other systems check a change <span class="dim">when it lands.</span><br>Weft checks every edit<br><span class="red">while the agent is still writing it.</span></h1>
-<div class="track"><div class="tl"></div>
-<div class="st hit"><i></i><b>Edit</b><span>Weft checks here</span></div>
-<div class="st"><i></i><b>Commit</b></div><div class="st"><i></i><b>Pull request</b></div>
-<div class="st late"><i></i><b>Merge / land</b><span>others check here</span></div></div>
-<p class="sub">Caught before a commit exists: <b>no finished work thrown away.</b><br>The agent reroutes mid-edit.</p>
-<p class="sub">An open protocol, <b>WCP</b> (draft v0.1): any agent harness or person can speak it.<br><span class="dim">Cloudflare is the reference platform.</span></p></section>''',
-        f'''<section class="hero"><p class="kicker">3 · Many agents at once · without Weft, a real run</p><video data-clip muted playsinline preload="auto" src="{baseline_clip()}"></video>
-<p class="cap">Both branches green alone → git merges cleanly → <span class="red">build breaks on main</span></p></section>''',
-        f'''<section class="hero"><p class="kicker">3 · Many agents at once · with Weft</p><video data-clip muted playsinline preload="auto" src="{clip()}"></video>
-<p class="cap">Claude Code changes <code>createSession</code> → Codex's edit is refused → it adapts → accepted</p></section>''',
-        '''<section><p class="kicker">3 · How Weft resolves it</p>
-<svg viewBox="0 0 1600 640" class="diag">
-<g class="agent"><rect x="40" y="60" width="300" height="110" rx="18"/><text x="190" y="128">Agent A</text></g>
-<g class="agent"><rect x="40" y="265" width="300" height="110" rx="18"/><text x="190" y="333">Agent B</text></g>
-<g class="agent"><rect x="40" y="470" width="300" height="110" rx="18"/><text x="190" y="538">Agent C</text></g>
-<path class="flow" d="M340 115 C560 115 560 320 700 320"/><path class="flow d2" d="M340 320 L700 320"/><path class="flow d3" d="M340 525 C560 525 560 320 700 320"/>
-<g class="do"><rect x="700" y="210" width="420" height="220" rx="22"/><text x="910" y="300">One checkpoint per repo</text><text x="910" y="350" class="dim">Durable Object · one shared history</text></g>
-<path class="flow ok" d="M1120 290 L1360 290"/><g class="agent"><rect x="1360" y="235" width="210" height="110" rx="18"/><text x="1465" y="303">main</text></g>
-<path class="back" d="M910 430 C910 560 600 560 340 540"/>
-<text x="640" y="610" class="redt">squiggle back: "createSession changed, here's the diff"</text>
+<h1 class="nov">Agents message each other <span class="red">in squiggles</span>.</h1>
+<pre class="code"><span class="ln">src/cart.ts  4</span>  const total = <span class="sqe">calcTotal(items)</span>;
+<span class="err">[weft error] stale_assumption src/cart.ts:4:42
+You use src/pricing.ts#calcTotal, whose signature
+changed in #3 by agent-a after your base #1.</span>
+<span class="del">-export function calcTotal(items: Item[]): number {</span>
+<span class="add">+export function calcTotal(items: Item[], opts: PriceOptions): number {</span></pre>
+<p class="sub">Delivered into the agent's own run, <b>mid-edit</b>, carrying the other agent's code.<br>Others check a change <span class="dim">when it lands</span>. Weft checks every edit <span class="red">while it's being written</span>.</p></section>''',
+        f'''<section><p class="kicker">2 · Why it's new</p>
+<h1 class="huge2">Coordinates,<br><span class="red">doesn't orchestrate.</span></h1>
+<p class="sub">No agent on top splitting the work. <b>Agents are peers.</b></p>
+<div class="chips">{harness}</div>
+<p class="src"><span class="lg live"></span>live today &nbsp; <span class="lg wr"></span>adapter written &nbsp; <span class="lg wt"></span>observes, can't refuse</p>
+<p class="sub">The protocol runs on a laptop, no Cloudflare account. <b>Cloudflare is how it scales.</b></p></section>''',
+        '''<section><p class="kicker">3 · Many agents at once · Question 1 of 4</p>
+<h2 class="q">How do agents know what other agents are working on?</h2>
+<svg viewBox="0 0 1600 560" class="diag">
+<g class="agent"><rect x="40" y="20" width="300" height="110" rx="18"/><text x="190" y="88">Agent A</text></g>
+<g class="agent"><rect x="40" y="225" width="300" height="110" rx="18"/><text x="190" y="293">Agent B</text></g>
+<g class="agent"><rect x="40" y="430" width="300" height="110" rx="18"/><text x="190" y="498">Agent C</text></g>
+<path class="flow" d="M340 75 C560 75 560 280 700 280"/><path class="flow d2" d="M340 280 L700 280"/><path class="flow d3" d="M340 485 C560 485 560 280 700 280"/>
+<g class="do"><rect x="700" y="150" width="520" height="260" rx="22"/><text x="960" y="235">One ordered log per repo</text><text x="960" y="290" class="dim">one Durable Object</text><text x="960" y="345" class="dim">intent · claim · edit · checkpoint</text></g>
+<path class="flow ok" d="M1220 280 L1380 280"/><g class="agent"><rect x="1380" y="225" width="190" height="110" rx="18"/><text x="1475" y="293">main</text></g>
 </svg>
-<p class="sub">Not "which edit came first" but <b>which change breaks which</b>: B adopts A's new signature, then lands.</p></section>''',
-        '''<section><p class="kicker">On Cloudflare · protocol runs anywhere</p>
+<p class="sub">Every edit is checked against the <b>functions and types other agents just changed</b>.</p></section>''',
+        f'''<section class="hero"><p class="kicker">3 · Question 2 of 4 · Conflicting changes · without Weft, a real run</p><video data-clip muted playsinline preload="auto" src="{baseline_clip()}"></video>
+<p class="cap">Both branches green alone → git merges cleanly → <span class="red">build breaks on main</span></p></section>''',
+        f'''<section class="hero"><p class="kicker">3 · Question 2 of 4 · Conflicting changes · with Weft</p><video data-clip muted playsinline preload="auto" src="{clip()}"></video>
+<p class="cap">Claude Code changes <code>createSession</code> → Codex's edit is refused → it adapts → accepted</p></section>''',
+        f'''<section><p class="kicker">3 · Question 2 of 4 · How Weft resolves it</p>
+<h2 class="q">What happens when they make conflicting changes?</h2>
+<ol class="steps">{resolve}</ol></section>''',
+        f'''<section><p class="kicker">3 · Question 3 of 4</p>
+<h2 class="q">How do you review everything they produce?</h2>
+<p class="sub">An evidence pipeline for every candidate:</p>
+<ol class="pipe">{review}</ol>
+<ul class="why sm"><li>Low risk lands on its own. <b>Higher risk waits for a human.</b></li>
+<li>Production errors spike after a landing → <span class="red">Weft reverts it.</span></li></ul></section>''',
+        '''<section><p class="kicker">3 · Question 4 of 4</p>
+<h2 class="q">How do you keep track of <span class="red">why</span>?</h2>
+<pre class="code tr">Change-Id: I2e59ce5c1eaa4d57a28a2a5c8f9458bdcd8fd4f3
+Task-Id:   agent-issue-4-continue
+Agent-Id:  wt-4-agent-issue-4-continue</pre>
+<ul class="why sm"><li>Every commit carries its change, task and agent.</li>
+<li>Every squiggle cites the event that caused it <span class="dim">(#834 ← #813)</span>.</li>
+<li>The log replays byte for byte · each run's model transcript is stored.</li>
+<li>A revert names the operation it undoes, and why.</li></ul></section>''',
+        '''<section><p class="kicker">Why Artifacts + Cloudflare</p>
+<p class="sub">Weft doesn't need Artifacts to work. <b>Artifacts is how it scales.</b></p>
 <div class="stack">
-<div class="layer l1"><b>Workers</b>API agents call + the site</div>
-<div class="layer l2"><b>Durable Object</b>per-repo sequencer: checks every edit</div>
-<div class="layer l3"><b>Artifacts</b>git storage</div>
-<div class="layer l4"><b>Workflows + Queues</b>land on main one at a time: rebase, test, advance</div>
-</div>
-<p class="sub">WCP, the Weft Coordination Protocol · open draft v0.1 · any harness, any host</p></section>''',
-        f'''<section><p class="kicker">3 · Weft coordinated the agents building Weft</p>
-<div class="stats small"><div><b>918</b>events</div><div><b>679</b>edits</div><div><b>27</b>landings</div><div><b>60</b>waits</div><div><b>5</b>refused</div></div>
-<p class="src">Weft's own log, to Oct 19 · event 834 refused because event 813 changed a type; next try accepted</p>
-<ol class="loop">{steps}</ol></section>''',
-        '''<section><p class="kicker">Why it matters</p>
-<ul class="why"><li>One agent is a tool. Ten agents on one repo is a <b>team</b>.</li>
-<li>Today they find out at merge time. <span class="red">Weft moves it to edit time.</span></li>
-<li>In two weeks: <b>39</b> stars · a stranger filed <b>22</b> issues &amp; PRs · the Beads team asked how to integrate</li>
-<li>Next: a <b>Time Machine</b> for agent work. Previews per revision exist; the timeline isn't built yet.</li>
-<li class="dim">Prototype: TypeScript/JavaScript only, not in production yet</li></ul></section>''',
-        '''<section class="center"><h1 class="huge">Red squiggles<br>for teams of <span class="red">coding agents</span>.</h1></section>''',
-        f'''<section class="center"><h1 class="mid">If the code editor disappears,<br>agents still need <span class="red sq">squiggles</span>.</h1>
+<div class="layer l1"><b>Artifacts</b>a fork + a scoped token per agent, in one call · millions of repos</div>
+<div class="layer l2"><b>Queues</b>every push arrives as an event</div>
+<div class="layer l3"><b>Atomic landing</b>a lease push: trunk moves only if nothing moved</div>
+<div class="layer l4"><b>Durable Objects</b>exactly one authoritative log per repo</div>
+</div></section>''',
+        f'''<section class="center"><h1 class="mid">Red squiggles<br>for teams of coding <span class="red sq">agents</span>.</h1>
+<p class="tag">Coordinates, doesn't orchestrate.</p>
 <div class="close"><div class="qr">{qr}</div><div><p class="url">weft.elier.ai</p><p class="sub">I'm looking for my next builder role.<br>John Nelson</p></div></div></section>''',
     ]
 
@@ -140,7 +161,28 @@ section.on .loop li{animation:in .3s calc(var(--i)*.12s) forwards}.loop b{displa
 .st.hit i{background:#ff4d5e;border-color:#ff4d5e;box-shadow:0 0 0 0 #ff4d5e88;animation:pulse 1.6s infinite}.st.hit span{color:#ff4d5e;font-weight:700}.st.late span{color:#8b8b9c}
 @keyframes pulse{70%{box-shadow:0 0 0 2.4vw #ff4d5e00}100%{box-shadow:0 0 0 0 #ff4d5e00}}
 @media (orientation:portrait){.nov{font-size:6.4vw}.huge{font-size:11vw}.mid{font-size:8vw}.sub{font-size:4.2vw}.kicker{font-size:3.4vw}.stats{flex-wrap:wrap}.stats b{font-size:13vw}.stats div{font-size:3.6vw}.stats.small b{font-size:9vw}
-.cap,.src{font-size:3vw}.st{font-size:3.4vw}.st span{font-size:2.8vw}.track{margin:1vh 0}.layer{font-size:3.6vw}.layer b{width:auto;display:block}.loop{grid-template-columns:repeat(3,1fr)}.loop li{font-size:2.8vw;min-height:auto}.loop b{font-size:4vw}.why{font-size:5vw}.url{font-size:7vw}.close{flex-direction:column}.n{font-size:3vw}}"""
+.cap,.src{font-size:3vw}.st{font-size:3.4vw}.st span{font-size:2.8vw}.track{margin:1vh 0}.layer{font-size:3.6vw}.layer b{width:auto;display:block}.loop{grid-template-columns:repeat(3,1fr)}.loop li{font-size:2.8vw;min-height:auto}.loop b{font-size:4vw}.why{font-size:5vw}.url{font-size:7vw}.close{flex-direction:column}.n{font-size:3vw}}
+.huge2{font-size:6.6vw;line-height:1.02;font-weight:800;letter-spacing:-.02em}.q{font-size:3.6vw;line-height:1.12;font-weight:800}
+.lede{max-width:52vw}.tag{font-size:3.2vw;font-weight:800;color:#ff4d5e;margin-top:-1vh}
+.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:1.7vw;line-height:1.45;background:#12121a;border:1px solid #2c2c3c;border-radius:14px;padding:2.2vh 2vw;color:#d6d6e0;white-space:pre;overflow:hidden}
+.code .ln{color:#77778a}.code .sqe{text-decoration:underline wavy #ff4d5e;text-underline-offset:.25em;text-decoration-thickness:2px}
+.code .err{color:#ff8a95}.code .del{color:#ff6b6b}.code .add{color:#4ade80}.code.tr{font-size:2.1vw;color:#f6c177}
+.chips{display:flex;flex-wrap:wrap;gap:1.2vw}.chip{font-size:2.1vw;padding:1.2vh 1.6vw;border-radius:999px;background:#171722;border:3px solid #3a3a4c;color:#fff;font-weight:600}
+.chip.live{border-color:#4ade80}.chip.wr{border-color:#7aa2ff}.chip.wt{border-color:#8b8b9c;border-style:dashed}
+.lg{display:inline-block;width:1.2vw;height:1.2vw;border-radius:50%;margin-right:.5vw;vertical-align:middle;border:3px solid}.lg.live{border-color:#4ade80}.lg.wr{border-color:#7aa2ff}.lg.wt{border-color:#8b8b9c;border-style:dashed}
+.steps{list-style:none;padding:0;display:grid;grid-template-columns:repeat(5,1fr);gap:1.2vw;margin-top:2vh}
+.steps li{background:#171722;border-radius:14px;padding:2.4vh 1.1vw;font-size:1.9vw;line-height:1.3;color:#c9c9d6;min-height:40vh;opacity:0;border-top:8px solid #ff4d5e}
+.steps li:last-child{border-top-color:#4ade80}
+section.on .steps li{animation:in .35s calc(var(--i)*.18s) forwards}.steps b{display:block;color:#ff4d5e;font-size:3.4vw;line-height:1}.steps li:last-child b{color:#4ade80}
+.steps em{display:block;font-style:normal;color:#fff;font-weight:800;font-size:2.4vw;line-height:1.15;margin:1.4vh 0}
+.pipe{list-style:none;padding:0;display:grid;grid-template-columns:repeat(5,1fr);gap:1vw}
+.pipe li{background:#171722;border-radius:12px;padding:2vh .8vw;font-size:2.1vw;font-weight:700;color:#fff;text-align:center;position:relative;opacity:0;border-bottom:6px solid #f6821f}
+.pipe small{display:block;font-size:1.6vw;font-weight:400;color:#c9c9d6;margin-top:.6vh}
+section.on .pipe li{animation:in .3s calc(var(--i)*.15s) forwards}
+.why.sm{font-size:2.4vw;gap:1.6vh}.layer b{width:22vw}
+@media (orientation:portrait){.huge2{font-size:10vw}.q{font-size:6vw}.lede{max-width:none}.tag{font-size:6vw}.code{font-size:2.15vw;padding:1.2vh 2vw;white-space:pre-wrap;word-break:break-all}.code.tr{font-size:2.3vw}.chip{font-size:3.6vw}.lg{width:2.4vw;height:2.4vw}
+.steps{grid-template-columns:1fr}.steps li{min-height:auto;font-size:3.2vw;padding:1vh 2vw}.steps b{font-size:4.4vw;display:inline;margin-right:2vw}.steps em{display:inline;font-size:3.6vw}
+.pipe{grid-template-columns:repeat(2,1fr)}.pipe li{font-size:3.6vw}.pipe small{font-size:2.8vw}.why.sm{font-size:4.2vw}.layer b{width:auto}}"""
 
 JS = """const S=[...document.querySelectorAll('section')];let i=Math.max(0,Math.min(S.length-1,(parseInt(location.hash.slice(1))||1)-1));
 const N=document.querySelector('.n');

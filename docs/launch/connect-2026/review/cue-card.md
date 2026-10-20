@@ -1,52 +1,60 @@
-# Cue card · Weft · 12 slides · talk + clips 6:08 · hard cap 7:00
+# Cue card · Weft · rev 6 · 12 slides · talk + clips 5:33 · hard cap 7:00
 
 Judges score, in order: (1) what you built, (2) why it's novel, (3) many agents at once.
-Budget: (1) 0:00-1:30 · (2) 1:30-2:21 · (3) 2:21-5:11 · close 5:11-6:08.
+Criterion 3 = Cloudflare's four questions, one slide each.
+Budget: (1) 0:00-0:43 · (2) 0:43-1:51 · (3) Q1-Q4 1:51-4:50 · Cloudflare 4:50-5:17 · close 5:17-5:33.
 
-**0:00 · SQUIGGLE, HONEST UP FRONT** (slide 1)
-**"I didn't write the code. I directed the agents that did."** I asked, decided.
+**0:00 · HEADLINE** (slide 1)
+**"Red squiggles for teams of coding agents."** Checks every agent edit against what the others
+just changed · tells the agent **before the conflict exists**
 
-**0:19 · NUMBERS** (slide 2)
-Oct 3, Saturday night, Cloudflare blog post · first commit in 80 min ·
-**64 h · 231 files · 38,593 lines** · first 11 h: 627 events · 460 edits · 59 waits
+**0:15 · (1) WHAT I BUILT** (slide 2)
+Two things: open protocol **WCP** + reference platform on Cloudflare · live feed, weft.elier.ai ·
+squiggles on the right · built with itself: **918 events · 27 landings**
 
-**0:49 · (1) WHAT I BUILT** (slide 3)
-Live feed of every edit, while they type · row = agent, file, task · **squiggles** name the
-function, the cause, what to do · public, read-only
+**0:43 · (2) WHY IT'S NEW: SQUIGGLES** (slide 3)
+Agents message each other as **diagnostics**, into the agent's own run, mid-edit · carries the
+other agent's code (diff) · others check **when it lands**, Weft **while it's being written** ·
+no finished work thrown away
 
-**1:30 · (2) WHY IT'S NEW** (slide 4)
-**"Other systems check a change when it lands. Weft checks every edit while the agent is still
-writing it."** Timing is the whole difference · landing check = finished work thrown away, redone ·
-before a commit/PR → **nothing thrown away, agent reroutes mid-edit**, keeps going ·
-**open protocol WCP**, draft v0.1 · any harness, or a person (plain editor via file watcher) ·
-Cloudflare = reference platform, protocol runs anywhere
+**1:14 · "COORDINATES, DOESN'T ORCHESTRATE."** (slide 4)
+No agent on top · **peers** · any harness with any harness · **live:** Claude Code, Codex,
+OpenCode, Hermes · **written:** Cursor, Gemini · file watcher: anything else *joins*, people too ·
+runs on a laptop, no account · **Cloudflare is how it scales**
 
-**2:21 · (3) MANY AGENTS AT ONCE · WITHOUT WEFT, CLIP 22 s, real run** (slide 5)
-"Three: many agents changing code at once." Two agents, Weft off · each branch green alone ·
-git merges clean · **build breaks on main** → work sent back
+**1:51 · (3) Q1 · WHO'S WORKING ON WHAT** (slide 5)
+"Cloudflare's post asked four questions." One ordered log per repo, **one Durable Object** ·
+intent · claim · edit · checkpoint = events · each edit vs functions/types others just changed
 
-**2:44 · WITH WEFT, CLIP 47 s, NARRATE** (slide 6)
-createSession changed → Codex **refused** → reads, adapts → accepted · ~½ s per check ·
-"No human. No merge conflict. Caught before a commit existed." · **pause until it ends**
+**2:19 · Q2 · CONFLICTS · WITHOUT WEFT, CLIP 22 s, real run** (slide 6)
+createSession changed, other keeps old call · each branch green · git merges clean · **main breaks**
 
-**3:31 · HOW WEFT RESOLVES IT** (slides 7-8)
-Every edit → one checkpoint per repo (**Durable Object**, one shared history) → not "which came
-first" but **which change breaks which** (second adopts the new signature, then lands) → squiggle
-back → fix, retry · Workers · DO · Artifacts · Workflows + Queues · rules = WCP, so harness
-doesn't matter · hooks: Claude Code, Codex, OpenCode · **18 agents**, one checkpoint
+**2:42 · Q2 · WITH WEFT, CLIP 47 s** (slide 7)
+Codex edit **refused before it's written** · squiggle quotes Claude's change · adapts → accepted ·
+~½ s · no human · **pause until it ends**
 
-**4:52 · BUILT WITH ITSELF** (slide 9)
-918 events · 27 landings · 5 refused · event #834 ← #813, next try accepted
-Explore · decide · delegate · verify · repeat
+**3:29 · Q2 · HOW IT RESOLVES** (slide 8)
+Hook refuses · reroute or **negotiate** (propose / accept / counter) · **priority decides who
+adapts**, same rule, no deadlocks · **Mergiraf** structural merge · land = **compare-and-swap** on trunk
 
-**5:11 · WHY IT MATTERS** (slide 10)
-1 agent = tool, 10 = team, teams collide · **2 weeks: 39 stars · a stranger filed 22 issues/PRs ·
-Beads team *asked* how to integrate** · prototype, TS/JS, not in prod · **Next: Time Machine**
-(previews per revision exist, timeline NOT built) · credits: free hosted coordinator + public benchmark
+**3:59 · Q3 · REVIEW** (slide 9)
+Evidence per candidate: tests · preview · screenshots + pixel diff · risk tier · review agent vs
+acceptance criteria, **fails closed** · low risk lands itself, higher waits for a human ·
+prod error spike → **auto-revert**
 
-**5:47 · THESIS** (slide 11): "Red squiggles, for teams of coding agents."
+**4:28 · Q4 · WHY** (slide 10)
+Change-Id · Task-Id · Agent-Id on every commit · squiggle cites its cause event · log replays byte
+for byte · transcript per run · revert names the op + reason
 
-**5:52 · CLOSE** (slide 12): "If the code editor disappears, agents still need squiggles."
-weft.elier.ai QR · next builder role · Thank you.
+**4:50 · WHY ARTIFACTS + CLOUDFLARE** (slide 11)
+"Honestly, Weft doesn't need Artifacts to work." Artifacts = scale: fork + scoped token per
+agent, one call · millions of repos · push → Queue event · atomic landing · DO = one log per repo
 
-Running long: drop the credits line (slide 10), then the Workers/DO/Artifacts list (slide 8, it's on screen).
+**5:17 · CLOSE** (slide 12): "Red squiggles for teams of coding agents. It coordinates; it doesn't
+orchestrate." weft.elier.ai QR · next builder role · Thank you.
+
+Never say: "Cursor/Gemini run live", "file watcher blocks edits", "preview deploy" (it's a
+preview served from Artifacts), any competitor's name.
+Running long: drop "Cursor and Gemini adapters are written" (slide 4), the Queue line (slide 11),
+the 918/27 line (slide 2).
+Q&A: origin numbers, traction, Time Machine, tokens, merge order: `review/deep-qa.md`.

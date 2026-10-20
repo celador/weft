@@ -5,6 +5,11 @@ These are the 12 deepest questions we expect. Answers are short and true: say th
 Where something is not built, the answer says so. Each answer has a hidden notes line
 (`<!-- notes: ... -->`) with the files it was checked against, as of commit 391683d (Oct 19).
 
+Rev 6 (Oct 20): the talk is now criteria-led (headline, what I built, why it's new, Cloudflare's
+four questions, why Artifacts). The origin story, the build numbers, traction and the roadmap
+moved out of the talk and into the sections at the end of this file: "Origin story", "Traction"
+and "What's next". Questions 1-12 still match the talk; slide pointers are in brackets.
+
 Cloudflare terms in plain words: a **Worker** is a stateless web service. A **Durable
 Object (DO)** is one single-threaded server with its own small SQLite database; there is exactly
 one per name. **Queues** is a message queue, **Workflows** is a job runner with retries,
@@ -12,7 +17,7 @@ one per name. **Queues** is a message queue, **Workflows** is a job runner with 
 
 ---
 
-**1. How does conflict detection work, exactly?**
+**1. How does conflict detection work, exactly?** [slides 3, 5, 8]
 When an agent starts a change, it gets the log position it started from, its "base". Every edit
 it sends says what it changed and which functions and types it relied on, its read set. The
 coordinator looks only at what other changes wrote after that base. If one of them landed a write
@@ -22,7 +27,7 @@ read is just a warning. It's the same idea as optimistic concurrency in a databa
 what changed since you read, don't lock.
 <!-- notes: docs/protocol/wcp-v0.md §6.1-6.2 (W = records with seq > base, rules R1 stale_overwrite, R2 stale_assumption/stale_read, R3 claims); packages/sequencer/src/coordinator.ts (validate); packages/analyzer/src/index.ts (reads/writes, keys path#qualified.name) -->
 
-**2. And when two agents are editing the same thing at the same time, before either lands?**
+**2. And when two agents are editing the same thing at the same time, before either lands?** [slide 8: "priority decides who adapts"]
 Agents can claim a function for a short time, like a lease. If two claims collide, the more senior
 change wins: higher task priority first, then whoever started first. The default rule is
 wound-wait: a senior agent proceeds and the junior one is told to back off; the alternative is
@@ -31,7 +36,7 @@ or keep backing off from each other. By default this is advice, a warning; a rep
 "block" so the losing edit is refused.
 <!-- notes: docs/protocol/wcp-v0.md §7.1 seniority (priority, birth seq, change id), §7.2 wound-wait default / wait-die, enforcement advise|block (default advise); claim TTLs expired by the DO alarm, packages/sequencer/src/do.ts:4,210-218 -->
 
-**3. The sequencer is one Durable Object per repo. Isn't that a bottleneck, and what if it goes down?**
+**3. The sequencer is one Durable Object per repo. Isn't that a bottleneck, and what if it goes down?** [slides 5, 11]
 Yes, by design: one object per repo is what gives a single, ordered log, the way a database
 primary does. Repos don't share anything, so a thousand repos are a thousand independent objects.
 The log is in that object's own SQLite storage, so if it restarts, Cloudflare brings it back with
@@ -69,7 +74,7 @@ danger is the opposite: two edits that merge cleanly as text and still break the
 calling a function whose signature just changed. We want that conflict reported, not merged away.
 <!-- notes: README.md:5 (without file locks); docs/design.md:199-200,277 (worktrees share repo-relative keys); wcp-v0.md §6.2 R2 stale_assumption; no CRDT anywhere in repo -->
 
-**8. How do agents hook in? Which ones work today?**
+**8. How do agents hook in? Which ones work today?** [slide 4]
 Each coding agent has hooks that run before and after a tool call. Our adapter is a small program
 those hooks call: before an edit it asks the coordinator, and if the answer is reject, the agent
 sees the reason and adjusts. Live today: Claude Code, Codex, OpenCode and Hermes. Cursor CLI and
@@ -100,7 +105,7 @@ real costs are container minutes for rebases and tests and model calls for revie
 with how much work lands, not with how many agents are connected.
 <!-- notes: docs/pm-log.md lines 12,16 (Workers Paid $5/mo); apps/gateway/wrangler.toml (containers, workflows); no cost measurement in repo -->
 
-**12. What does WCP standardize, what's Weft-specific, and what's next?**
+**12. What does WCP standardize, what's Weft-specific, and what's next?** [slides 2, 4]
 WCP is the wire protocol: the event format, the conflict rules, the arbitration rules and auth
 scopes, so any agent and any coordinator can interoperate. Weft is one implementation on
 Cloudflare, plus the analyzer, adapters, web UI and land pipeline. We proposed the hook layer to
@@ -128,3 +133,54 @@ Not yet; it's on the roadmap (an outside contributor asked for it). Today Weft r
 that relies on a change another agent just made, and lands changes on main one at a time through
 a queue (rebase, presubmit, then main advances only if nothing moved). What isn't built is a board
 that plans the merge order up front and shows which change is blocked by or depends on which.
+
+## Rev 6 talk claims, in case a judge pushes
+
+- **"Coordinates, doesn't orchestrate": isn't the coordinator an orchestrator?** No. It doesn't
+  assign or split work; it's an ordered log plus rules that check each edit. Agents pick their
+  own work (from a board, a person, or another tool) and decide how to react to a squiggle.
+  Arbitration is between peers: one rule decides which side adapts. When two tasks turn out to be
+  one, escalation merges them; still no agent above the others.
+- **"It runs on a laptop": really without Cloudflare?** The coordinator runs locally under
+  `wrangler dev` (the open-source Workers runtime) with no Cloudflare account, token or model
+  key (`docs/try-it.md`). Locally there's no landing queue, forks or evidence; you post land
+  events yourself. A second, non-Cloudflare implementation of WCP is roadmap.
+- **"Review agent fails closed": what does that mean?** If the reviewer says pass but any
+  acceptance criterion is unmet or unknown, it's recorded as fail or needs-a-human, never pass.
+  It's a text review today; screenshots are diffed, but no vision model reads them yet.
+- **"Weft reverts it": in production?** On the preview stack, live: a planted bug landed, errors
+  started in 6 s, the revert started 16 s after the land, and trunk was reverted and redeployed
+  43 s after it (`demo/evidence/b13-auto-revert-live`). The detector blames the latest landing for
+  any spike in the window; there's no per-route baseline yet.
+- **"A preview" for every candidate?** Static sites, served straight from Artifacts at that exact
+  commit. Server-rendered apps would need a Worker Loader variant, not built.
+
+## Origin story (moved out of the talk in rev 6)
+
+Say it only if asked how it was built, or how fast.
+
+- I read Cloudflare's post on Saturday night, October 3rd, and started asking questions. The
+  first commit landed about 80 minutes later.
+- 64 hours later I submitted: 231 files, 38,593 lines. Every commit was written by an agent; I
+  asked the questions and made the decisions. My loop: explore, decide, delegate, verify, repeat.
+- Weft coordinated its own build from about its third hour. In the first 11.3 hours its log recorded
+  627 events and 460 edits, and 59 times it told one agent to wait for another. To Oct 19: 918
+  events, 679 edits, 60 waits, 27 landings, 5 edits refused. Event 834 was refused because event
+  813 changed a type it used; the next try was accepted.
+<!-- notes: qa.md (first commit Oct 3 22:00 -03, submitted Oct 6 13:40 -03, 231 files, 38,593 lines); demo/video/dogfood-stats.json (627/460/59, first 11.3 h); log-stats-2026-10-19.json (918/679/60/27/5, refused seqs incl. 834); pitch-story-v1.md slide 13 (834 <- 813) -->
+
+## Traction
+
+In two weeks: 39 GitHub stars (repo created Oct 4); one outside user filed 22 issues and pull
+requests (12 issues, 10 PRs, Oct 8-13); the Beads team asked how to integrate. No Beads
+integration exists: say "asked", not "partnership". It's a prototype: TypeScript and JavaScript
+analysis only, not in production anywhere.
+<!-- notes: gh api repos/celador/weft (Oct 20); issues/PRs all from barnessomer -->
+
+## What's next
+
+- A Time Machine for agent work: every revision already has its own preview; the timeline to
+  scrub through them is not built.
+- With the credits: a free hosted coordinator, and a public benchmark of the rework Weft saves,
+  measured with and without Weft through AI Gateway metadata.
+- Merge-order planning on the board (blocked by / depends on): roadmap, see above.
