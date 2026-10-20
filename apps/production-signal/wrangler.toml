@@ -74,5 +74,7 @@ script_name = "weft-workflows-preview"
 
 [env.preview.vars]
 WEFT_REPO = "weft-demo"
+# Producer Worker -> Weft repo for every other target that names this tail consumer.
+WEFT_REPOS = '{"weft-demo-site":"weft-demo-site"}'
 WEFT_SPIKE_WINDOW_SECONDS = "600"
 WEFT_SPIKE_THRESHOLD = "5"

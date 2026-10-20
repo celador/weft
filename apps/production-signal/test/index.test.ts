@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { errorsFromTail, handleTail, type Env } from "../src/index";
+import { errorsFromTail, handleTail, repoMap, type Env } from "../src/index";
 
 describe("Tail normalization", () => {
   it("forwards exception stack traces but ignores response-only failures", async () => {
@@ -29,5 +29,25 @@ describe("Tail normalization", () => {
     await handleTail([{ eventTimestamp: 5, scriptName: "weft-demo", exceptions: [{ name: "Error", message: "x", stack: "    at y" }] }], env);
     expect(points).toEqual([expect.objectContaining({ indexes: ["weft-demo"] })]);
     expect(sent).toHaveLength(1);
+  });
+
+  it("routes each producer script to its repo via WEFT_REPOS, else the default repo", async () => {
+    const sent: Array<{ repo: string; script?: string }> = [];
+    const env = {
+      WEFT_REPO: "weft-demo",
+      WEFT_REPOS: JSON.stringify({ "weft-demo-site": "weft-demo-site" }),
+      WEFT_PROD: { writeDataPoint: () => undefined },
+      WEFT_PROD_EVENTS: { send: async (m: { repo: string; script?: string }) => { sent.push(m); } },
+    } as unknown as Env;
+    const ex = [{ name: "Error", message: "x", stack: "    at y" }];
+    await handleTail([{ eventTimestamp: 7, scriptName: "weft-demo-site", exceptions: ex }, { eventTimestamp: 8, scriptName: "weft-demo", exceptions: ex }, { eventTimestamp: 9, exceptions: ex }], env);
+    expect(sent.map((e) => [e.script ?? null, e.repo])).toEqual([["weft-demo-site", "weft-demo-site"], ["weft-demo", "weft-demo"], [null, "weft-demo"]]);
+  });
+
+  it("treats a malformed WEFT_REPOS as no map", () => {
+    expect(repoMap("{nope")).toEqual({});
+    expect(repoMap('["a"]')).toEqual({});
+    expect(repoMap('{"a":"b","c":3}')).toEqual({ a: "b" });
+    expect(repoMap(undefined)).toEqual({});
   });
 });

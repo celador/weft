@@ -6,6 +6,8 @@ export interface Env {
   WEFT_PROD_EVENTS: Queue<ProductionError>;
   WEFT_PROD: AnalyticsEngineDataset;
   WEFT_REPO: string;
+  /** Optional JSON map of producer Worker script name -> Weft repo (one tail consumer, many repos). */
+  WEFT_REPOS?: string;
   WEFT_SPIKE_WINDOW_SECONDS?: string;
   WEFT_SPIKE_THRESHOLD?: string;
 }
@@ -41,8 +43,23 @@ async function eventId(repo: string, at: number, stack: string, script?: string)
   return Array.from(new Uint8Array(digest), (n) => n.toString(16).padStart(2, "0")).join("");
 }
 
-/** Convert Cloudflare Tail records into a minimal, non-secret error envelope. */
-export async function errorsFromTail(events: TailRecord[], repo: string): Promise<ProductionError[]> {
+/** `WEFT_REPOS` parsed (script name -> repo); malformed JSON counts as no map. */
+export function repoMap(raw: string | undefined): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter((e): e is [string, string] => typeof e[1] === "string" && e[1].length > 0));
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Convert Cloudflare Tail records into a minimal, non-secret error envelope. The repo is the
+ * producer script's entry in `scripts` (WEFT_REPOS), else the default repo (WEFT_REPO).
+ */
+export async function errorsFromTail(events: TailRecord[], defaultRepo: string, scripts: Record<string, string> = {}): Promise<ProductionError[]> {
   const out: ProductionError[] = [];
   for (const record of events) {
     const exceptions = Array.isArray(record.exceptions) ? record.exceptions : [];
@@ -57,13 +74,14 @@ export async function errorsFromTail(events: TailRecord[], repo: string): Promis
     const stack = where ? `${thrown}\n    (request: ${where})` : thrown;
     const occurred_at = typeof record.eventTimestamp === "number" ? record.eventTimestamp : Date.now();
     const script = typeof record.scriptName === "string" ? record.scriptName : undefined;
+    const repo = (script && scripts[script]) || defaultRepo;
     out.push({ event_id: await eventId(repo, occurred_at, stack, script), repo, occurred_at, stack, script, status: record.event?.response?.status });
   }
   return out;
 }
 
 export async function handleTail(events: TailRecord[], env: Env): Promise<void> {
-  const errors = await errorsFromTail(events, env.WEFT_REPO);
+  const errors = await errorsFromTail(events, env.WEFT_REPO, repoMap(env.WEFT_REPOS));
   for (const error of errors) {
     // Analytics Engine allows exactly one index (sampling key): the repo. Live-verified: two
     // indexes throw "writeDataPoint(): Maximum of 1 indexes supported.". Metrics must never block
