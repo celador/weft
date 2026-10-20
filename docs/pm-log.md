@@ -116,3 +116,6 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-10-20 03:05 — unstuck t_83def502 (Otto multi-harness demo)
 - Run 1 ended on iteration budget with a clean progress handoff (site, Weft repo, adapter candidate mode, lanes; smoke runs landed with all 5 harnesses). Commented next steps, unblocked + dispatched (running). Rationale: only the real run, clip and upload remain.
 - wt/local still HELD (Omer-code question, flagged 10-13). wt/t_be804fb4 (competitor recon) intentionally unmerged: public repo.
+
+## 2026-10-20 04:05 — t_83def502 blocked on locked screen
+- Run 2 handoff: rehearsal run-2 passed 7/7 beats; recorded Otto run impossible while the MacBook screen is locked (CGSSessionScreenIsLocked confirmed). Physically needs John: unlock, keep awake ~45 min, then unblock. Flagged to John.
