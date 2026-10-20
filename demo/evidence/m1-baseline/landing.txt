@@ -1,0 +1,29 @@
+--- Weft OFF. agent-a commit c0c8412, agent-b commit d2fe49c
+--- agent-a alone: tsc exit 0, tests exit 0
+--- agent-b alone: tsc exit 0, tests exit 0
+--- merge agent-a: ok; merge agent-b: ok
+--- main after both merges: tsc exit 2
+src/api/account.ts(19,25): error TS2554: Expected 2 arguments, but got 1.
+--- main: node --test exit 1
+✔ login with valid credentials returns a token that works for /api/me (49.86825ms)
+✔ login rejects a wrong password and missing fields (47.9815ms)
+✔ logout revokes the token (47.842042ms)
+✔ pages render and unknown routes 404 (24.141875ms)
+✔ createSession issues a unique token bound to the user (0.543959ms)
+✔ revokeSession ends the session (0.214959ms)
+✔ getSession expires and forgets a session at its expiry time (0.259625ms)
+✖ signup registers a user and signs them in immediately (26.136084ms)
+✔ signup returns UserError messages as 400 responses (24.2735ms)
+✔ signup rejects missing and non-string fields (0.165875ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 9
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 240.936917
+✖ failing tests:
+✖ signup registers a user and signs them in immediately (26.136084ms)
+--- main:src/api/account.ts createSession calls
+src/api/account.ts:19:        const session = createSession(user.id);

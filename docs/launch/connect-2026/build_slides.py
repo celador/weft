@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build the visual Connect 2026 deck (slides.html), offline, single file, stdlib only.
 
-Inputs: demo/video/connect-2026/stills/*.png, qr-weft.svg, and the 47 s squiggle clip, which is
+Inputs: demo/video/connect-2026/stills/*.png, qr-weft.svg, the 22 s "without Weft" clip
+(demo/video/connect-2026/baseline.mp4, recorded from baseline.tape), and the 47 s squiggle clip, which is
 reused from slides-story-v1.html (data:video/mp4). The story version build is
 build_slides-story-v1.py. `--count` prints the spoken word count of pitch.md.
 """
@@ -21,6 +22,9 @@ def count_words():
 def img(name):
     return "data:image/png;base64," + base64.b64encode((STILLS / name).read_bytes()).decode()
 
+def baseline_clip():
+    return "data:video/mp4;base64," + base64.b64encode((ROOT / "demo/video/connect-2026/baseline.mp4").read_bytes()).decode()
+
 def clip():
     src = (HERE / "slides-story-v1.html").read_text()
     m = re.search(r'data:video/mp4;base64,[A-Za-z0-9+/=]+', src)
@@ -28,17 +32,15 @@ def clip():
         sys.exit("clip not found in slides-story-v1.html")
     return m.group(0)
 
-STEPS = ["Explore", "Dig in", "Think up solutions", "Discuss alternatives", "Decide",
-         "Edge cases", "Delegate", "Build the system", "Hand over authority, keep sign-off",
-         "Verify &amp; steer", "Use it, find gaps", "Back to step 1"]
+STEPS = ["Explore", "Decide", "Delegate", "Verify", "Repeat"]
 
 def slides():
     qr = (HERE / "qr-weft.svg").read_text() if (HERE / "qr-weft.svg").exists() else ""
     steps = "".join(f'<li style="--i:{i}"><b>{i+1}</b>{s}</li>' for i, s in enumerate(STEPS))
     return [
         f'''<section class="bg" style="background-image:linear-gradient(90deg,rgba(10,10,16,.92) 38%,rgba(10,10,16,.35)),url({img("04-squiggle.png")})">
-<h1 class="huge">I didn't write the code.<br><span class="red">Agents did.</span></h1>
-<p class="sub">I asked the questions, made the decisions, directed the work.<br>John Nelson · Weft</p></section>''',
+<h1 class="huge">I didn't write the code.<br><span class="red">I directed the agents that did.</span></h1>
+<p class="sub">I asked the questions and made the decisions.<br>John Nelson · Weft</p></section>''',
         '''<section><p class="kicker">Oct 3, Saturday night → submitted Oct 6</p>
 <div class="stats"><div><b>64</b>hours</div><div><b>231</b>files</div><div><b>38,593</b>lines</div></div>
 <p class="sub">Every commit authored by an agent.</p>
@@ -52,20 +54,23 @@ def slides():
 <g class="agent"><rect x="40" y="265" width="300" height="110" rx="18"/><text x="190" y="333">Agent B</text></g>
 <g class="agent"><rect x="40" y="470" width="300" height="110" rx="18"/><text x="190" y="538">Agent C</text></g>
 <path class="flow" d="M340 115 C560 115 560 320 700 320"/><path class="flow d2" d="M340 320 L700 320"/><path class="flow d3" d="M340 525 C560 525 560 320 700 320"/>
-<g class="do"><rect x="700" y="210" width="420" height="220" rx="22"/><text x="910" y="300">One checkpoint per repo</text><text x="910" y="350" class="dim">Durable Object · one true order</text></g>
+<g class="do"><rect x="700" y="210" width="420" height="220" rx="22"/><text x="910" y="300">One checkpoint per repo</text><text x="910" y="350" class="dim">Durable Object · one shared history</text></g>
 <path class="flow ok" d="M1120 290 L1360 290"/><g class="agent"><rect x="1360" y="235" width="210" height="110" rx="18"/><text x="1465" y="303">main</text></g>
 <path class="back" d="M910 430 C910 560 600 560 340 540"/>
 <text x="640" y="610" class="redt">squiggle back: "createSession changed, here's the diff"</text>
-</svg></section>''',
+</svg>
+<p class="sub">Not "which edit came first" but <b>which change breaks which</b>: B adopts A's new signature, then lands.</p></section>''',
         '''<section><p class="kicker">On Cloudflare · protocol runs anywhere</p>
 <div class="stack">
 <div class="layer l1"><b>Workers</b>API agents call + the site</div>
-<div class="layer l2"><b>Durable Object</b>per-repo sequencer: one order</div>
+<div class="layer l2"><b>Durable Object</b>per-repo sequencer: checks every edit</div>
 <div class="layer l3"><b>Artifacts</b>git storage</div>
-<div class="layer l4"><b>Workflows + Queues</b>land work on main</div>
+<div class="layer l4"><b>Workflows + Queues</b>land on main one at a time: rebase, test, advance</div>
 </div>
 <p class="sub">WCP, the Weft Coordination Protocol · open draft v0.1 · any harness, any host</p></section>''',
-        f'''<section class="hero"><video data-clip muted playsinline preload="auto" src="{clip()}"></video>
+        f'''<section class="hero"><p class="kicker">Without Weft · a real run</p><video data-clip muted playsinline preload="auto" src="{baseline_clip()}"></video>
+<p class="cap">Both branches green alone → git merges cleanly → <span class="red">build breaks on main</span></p></section>''',
+        f'''<section class="hero"><p class="kicker">With Weft</p><video data-clip muted playsinline preload="auto" src="{clip()}"></video>
 <p class="cap">Claude Code changes <code>createSession</code> → Codex's edit is refused → it adapts → accepted</p></section>''',
         f'''<section><p class="kicker">Weft coordinated the agents building Weft</p>
 <div class="stats small"><div><b>918</b>events</div><div><b>679</b>edits</div><div><b>27</b>landings</div><div><b>60</b>waits</div><div><b>5</b>refused</div></div>
@@ -73,9 +78,9 @@ def slides():
 <ol class="loop">{steps}</ol></section>''',
         '''<section><p class="kicker">Why it matters</p>
 <ul class="why"><li>One agent is a tool. Ten agents on one repo is a <b>team</b>.</li>
-<li>Today they find out at merge time. <span class="red">Too late.</span></li>
-<li>Open protocol: discussion proposal at the Agentic AI Foundation</li>
-<li>Interest from the Beads team</li>
+<li>Today they find out at merge time. <span class="red">Weft moves it to edit time.</span></li>
+<li>In two weeks: <b>39</b> stars · a stranger filed <b>22</b> issues &amp; PRs · the Beads team asked how to integrate</li>
+<li>Next: a <b>Time Machine</b> for agent work. Previews per revision exist; the timeline isn't built yet.</li>
 <li class="dim">Prototype: TypeScript/JavaScript only, not in production yet</li></ul></section>''',
         '''<section class="center"><h1 class="huge">Red squiggles<br>for teams of <span class="red">coding agents</span>.</h1></section>''',
         f'''<section class="center"><h1 class="mid">If the code editor disappears,<br>agents still need <span class="red sq">squiggles</span>.</h1>
@@ -91,7 +96,7 @@ section.on{display:flex}.bg{background-size:cover;background-position:center}
 .src{font-size:1.2vw;color:#8b8b9c}.dim{color:#8b8b9c}
 .stats{display:flex;gap:5vw}.stats div{font-size:1.9vw;color:#c9c9d6}.stats b{display:block;font-size:8vw;color:#fff;line-height:1}
 .stats.small b{font-size:4.6vw}.stats.small{gap:4vw}
-.hero{padding:2vh 2vw;align-items:center}.hero img,.hero video{max-width:100%;max-height:86vh;border-radius:14px;box-shadow:0 0 0 1px #333}
+.hero{padding:2vh 2vw;align-items:center;gap:1.6vh}.hero .kicker{align-self:flex-start}.hero img,.hero video{max-width:100%;max-height:78vh;border-radius:14px;box-shadow:0 0 0 1px #333}
 .cap{font-size:1.5vw;color:#c9c9d6}code{color:#ff8a95}
 .center{align-items:center;text-align:center}
 .diag{width:100%;height:auto;max-height:76vh}.diag rect{fill:#171722;stroke:#3a3a4c;stroke-width:3}.diag text{fill:#f2f2f5;font-size:34px;text-anchor:middle;font-weight:600}
@@ -104,7 +109,7 @@ section.on .back{animation:draw 1.6s 1.4s ease-out forwards}
 .layer b{color:#fff;display:inline-block;width:28vw}
 section.on .layer{animation:in .5s ease-out forwards}.l2{animation-delay:.35s!important}.l3{animation-delay:.7s!important}.l4{animation-delay:1.05s!important}
 @keyframes in{to{opacity:1;transform:none}}
-.loop{list-style:none;padding:0;display:grid;grid-template-columns:repeat(6,1fr);gap:1.2vw}
+.loop{list-style:none;padding:0;display:grid;grid-template-columns:repeat(5,1fr);gap:1.2vw}
 .loop li{background:#171722;border-radius:12px;padding:1.4vh .8vw;font-size:1.25vw;color:#d6d6e0;min-height:11vh;opacity:0}
 section.on .loop li{animation:in .3s calc(var(--i)*.12s) forwards}.loop b{display:block;color:#ff4d5e;font-size:2vw}
 .why{list-style:none;padding:0;display:flex;flex-direction:column;gap:2.6vh;font-size:2.7vw;line-height:1.2}

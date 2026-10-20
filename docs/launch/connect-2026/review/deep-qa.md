@@ -109,3 +109,22 @@ implementation that isn't on Cloudflare, and working with tools like Beads that 
 agent tasks: Beads decides what each agent works on, Weft checks the edits as they happen. There's
 no Beads integration yet.
 <!-- notes: docs/protocol/wcp-v0.md (§3 auth, §6 validation, §7 arbitration); docs/proposal-aaif.md (discussion proposal, Agent Hooks Core v0.1, docs/protocol/hooks-core-v0.md); ROADMAP.md (second implementation, WCP v1 multi-repo); no Beads/BDP code or doc in repo; interest is conversational only -->
+
+## How does Weft affect token consumption?
+
+Measured, but only on the small collision demo, not on real workloads. In the four recorded M1
+runs (demo/evidence/m1-report.md), the text Weft injects into an agent costs roughly 136-291
+tokens for the agent that changes the function and 272-1,248 for the agent that gets the squiggle,
+of which the refusal itself is about 520-673. Against that agent's whole run that is 0.07-0.31%
+of its input tokens. These are chars/4 estimates of Weft's own text, not provider billing. The
+hypothesis we haven't measured is the savings side: a refusal at edit time should cost far fewer
+tokens than rerunning or reworking a branch after a broken merge, like the baseline run where both
+branches passed alone and main broke. Next step is to measure that end to end, with and without
+Weft, using AI Gateway request metadata.
+
+## Can it show merge order, "blocked by" and "depends on" between agents' changes?
+
+Not yet; it's on the roadmap (an outside contributor asked for it). Today Weft refuses an edit
+that relies on a change another agent just made, and lands changes on main one at a time through
+a queue (rebase, presubmit, then main advances only if nothing moved). What isn't built is a board
+that plans the merge order up front and shows which change is blocked by or depends on which.

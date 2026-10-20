@@ -1,4 +1,8 @@
-# Weft at Cloudflare Connect 2026: the visual version
+# Weft at Cloudflare Connect 2026: the visual version (rev 2)
+
+Rev 2 (card t_91a7dc7d, Oct 20 2026): new opener line, ordering reframed as "which change breaks
+which", a real without-Weft clip before the squiggle clip, traction + Time Machine on slide 8,
+roadmap and token answers in `review/deep-qa.md`. Rev 1 kept as `*-visual-v1`.
 
 Visual version (card t_3c900064, Oct 19 2026). 10 slides, modeled on the strongest Cold Start
 pitch: big visual first, numbers early, product, how it works, the clip, how it was built, why it
@@ -8,7 +12,7 @@ matters, thesis, takeaway. The previous story version is kept as `pitch-story-v1
 Format: 7 minutes per finalist, demo included. Wed Oct 21, 1:35 PM PT.
 Timing: see the word count at the bottom. Only text in quotation marks is spoken.
 Slides: open `slides.html` from disk (no network), press `F` for full screen, right arrow or tap
-to advance. The clip on slide 6 is inside the file, muted, and plays when you land on it.
+to advance. The two clips on slide 6a/6b are inside the file, muted, and play when you land on them.
 Backups: `slides.pdf`, `slides.pptx` (clip embedded), `slides-story-v1.html`.
 Rebuild: `python3 docs/launch/connect-2026/build_slides.py`.
 
@@ -25,17 +29,28 @@ Sources for every number (do not mix windows):
   Claude Code, Codex, OpenCode, one coordinator; four valid runs passed, run 1 aborted).
 - "Just over half a second": `demo/evidence/m1-report.md`, pre-edit checks n=18, p50 558 ms.
 - Credits plan (hosted coordinator, public benchmark): same ask as the story version; a plan only.
-- Beads: conversations with people on the Beads team. No integration exists. Say "interest", not
+- Beads: the Beads team asked how to integrate. No integration exists. Say "asked", not
   "partnership".
+- Traction (gh api repos/celador/weft, Oct 20): 39 stars, repo created Oct 4; 22 issues/PRs
+  (12 issues, 10 PRs, Oct 8-13), all from one outside user (barnessomer).
+- Without-Weft clip (slide 6a): a real run, `demo/m1-baseline.mjs`, evidence in
+  `demo/evidence/m1-baseline/` (each branch green alone, clean git merge, main tsc TS2554 + 1 test
+  failing). Both agents ran on Codex in that run; say "the same two agents", not "Claude Code".
+- Ordering (slides 4-5): what Weft checks is a stale assumption (an edit that reads something
+  another agent changed since its base), not arrival time. `packages/sequencer/src/coordinator.ts`
+  (stale_assumption); landing is a queue, final rebase + presubmit, compare-and-swap advance of
+  main (`apps/workflows`). Merge-order planning from a board (blocked-by/depends-on) is NOT built:
+  roadmap only.
+- Time Machine: previews per revision exist; the scrub timeline does not. Say "next".
 
 ---
 
-## 0:00-0:25 · Slide 1: "I didn't write the code. Agents did."
+## 0:00-0:25 · Slide 1: "I didn't write the code. I directed the agents that did."
 
 "I'm John Nelson. This red line is a squiggle. It's what your editor shows you when your code is
 wrong.
-Here's the honest part, up front: I didn't write Weft's code. Agents did. I asked the questions, I
-made the decisions, and I directed the work."
+Here's the honest part, up front: I didn't write the code. I directed the agents that did. I
+asked the questions and I made the decisions."
 
 ## 0:25-0:55 · Slide 2: the numbers
 
@@ -51,8 +66,7 @@ told one agent to wait for another."
 "This is Weft. It's a live feed of every edit every agent makes to a repo, in order, as it
 happens. Not after the merge. While they type.
 Every row is one event: which agent, which file, what it was doing, and which task on the board
-it was for. Across the top: how many agents are live, how many squiggles, how many edits landed
-on main.
+it was for.
 On the right are the squiggles: the edits that would have broken someone else's work. Each one
 names the function, the file, and the event that caused it. And it tells the agent what to do
 next: read the new version, and update your call.
@@ -60,12 +74,15 @@ It's public and read-only. You can watch it from your seat."
 
 ## 1:50-3:20 · Slides 4-5: how it works
 
-"Here's how it works. Every time an agent edits a file, that edit goes to one place first: a
-checkpoint for the repo. Cloudflare runs exactly one copy of it, a Durable Object, so there is one
-true order.
-If the edit conflicts with what another agent just changed, it doesn't land. The agent gets a
-squiggle back, inside its own run: this function changed, here is the change. It fixes its code
-and tries again. The conflict is settled before either commit exists.
+"Here's how it works. Every time an agent edits a file, that edit goes through a checkpoint for
+the repo. Cloudflare runs exactly one copy of it, a Durable Object, so every agent sees the same
+history.
+The real question isn't which edit came first. It's which change breaks which. If one agent
+changes a function and another still calls the old version, the healthy order is: the second agent
+adopts the new signature, then it lands. So an edit that relies on something another agent just
+changed doesn't land. The agent gets a squiggle back, inside its own run: this function changed,
+here is the change. It fixes its code and tries again. And main moves one checked landing at a
+time.
 
 Under the hood: Workers serve the API and the site. A Durable Object per repo keeps the order.
 Artifacts stores the git. Workflows and Queues land the work on main.
@@ -75,9 +92,15 @@ on every tool call, and that's where the check happens. In our test runs, eighte
 those three tools worked on one repo at the same time, through one checkpoint. A typical check
 takes just over half a second, so the agent barely notices."
 
-## 3:20-4:10 · Slide 6: the clip (47 seconds, muted, narrate over it)
+## 3:20-3:40 · Slide 6a: without Weft (20 seconds, muted, a real recorded run, narrate over it)
 
-"Here are two agents on the same repo. Claude Code on the left, Codex on the right.
+"First, the same two agents with Weft switched off. One changes createSession. The other keeps
+calling the old version. Each branch passes its own tests. Git merges both, no conflict. Then the
+build breaks on main, and someone has to send the work back."
+
+## 3:40-4:30 · Slide 6b: with Weft (47 seconds, muted, narrate over it)
+
+"Now with Weft. Claude Code on the left, Codex on the right.
 Claude Code changes a function called createSession.
 Now Codex tries to edit code that calls it. Refused. There's the squiggle.
 Codex reads the error, it's told exactly what changed. It adapts its code.
@@ -85,37 +108,32 @@ It tries again, and it's accepted.
 No human stepped in. No merge conflict. Nobody found out at review time."
 (Pause until the clip ends.)
 
-## 4:10-5:00 · Slide 7: how it was built
+## 4:30-5:10 · Slide 7: how it was built
 
 "That's not only a demo. Weft coordinated the agents building Weft. By Monday its log had 918
 events, 679 edits and 27 landings on main. Sixty waits. Five edits refused before they could land.
 Event 834 is a real one: refused because event 813 changed a type it used. The next try was
 accepted.
-And this is how I work with agents, in twelve steps. Explore, dig in, think up solutions, discuss
-alternatives, decide, reason through edge cases. Then delegate, build the system around the
-agents, hand over authority but keep sign-off, verify and steer. Then use it, find the gaps, and
-go back to step one."
+And this is how I work with agents: explore, decide, delegate, verify, repeat."
 
-## 5:00-6:20 · Slide 8: why it matters
+## 5:10-6:25 · Slide 8: why it matters
 
 "Why does this matter? One agent is a tool. Ten agents on one repo is a team, and teams step on
-each other. Today they find out at merge time. That's too late, and it's expensive.
-Picture it. Two agents both pass their tests. Both open a pull request. The second one breaks at
-merge, and now a person has to read both, work out who was right, and redo the work. Weft moves
-that moment from merge time to edit time, where the fix is cheap: the agent is still holding the
-task.
-So the protocol is open. I've opened a discussion proposal with the Agentic AI Foundation, and
-people on the Beads team have been talking with me about it.
+each other. Today they find out at merge time, like the first clip. Weft moves that moment to edit
+time, where the fix is cheap: the agent is still holding the task.
+In two weeks: 39 stars, a stranger filed 22 issues and pull requests, and the Beads team asked how
+to integrate.
 It's a prototype. It understands TypeScript and JavaScript today. Nobody runs it in production yet.
-That's the next step. With the credits, I'd run a free hosted coordinator for outside teams. And a
-public benchmark: many agents on real repos, with and without Weft, measuring the rework it
-saves."
+Next: a Time Machine for agent work. Weft already renders a preview of every revision. The
+timeline to scrub through them and jump to the one that broke it isn't built yet.
+With the credits, I'd run a free hosted coordinator for outside teams, and a public benchmark with
+and without Weft, measuring the rework it saves."
 
-## 6:20-6:25 · Slide 9: thesis
+## 6:25-6:30 · Slide 9: thesis
 
 "So that's Weft. Red squiggles, for teams of coding agents."
 
-## 6:25-6:45 · Slide 10: takeaway
+## 6:30-6:50 · Slide 10: takeaway
 
 "We have to assume the code editor disappears. If it does, agents still need squiggles.
 It's live right now at weft.elier.ai. Scan it, watch the agents.
