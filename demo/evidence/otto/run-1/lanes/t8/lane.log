@@ -1,0 +1,11 @@
+[lane t8 run-1 +0.6s] preflight {"quote":{"status":200,"ms":607,"body":"{\"sku\":\"house-blend\",\"qty\":2,\"total\":32}","waited_s":0.608}}
+[lane t8 run-1 +7.1s] candidate {"agent":"planted-t8-r1","harness":"planted","change":"Ie994b7adaddaf96075eaa3d67e00ce3a7b462d54","fork":"weft-weft-demo-site-r1-t8-1"}
+[lane t8 run-1 +54.3s] planted_pushed {"sha":"a3aece6999382bd5c97572db5ad679ddcd0b2ec8","diff":["+      const unit = url.searchParams.get(\"unit\")!.toLowerCase(); // throws when ?unit is absent","+      if (unit === \"g\") return Response.json({ sku, qty, total: calcTotal([{ sku, price: priceOf(sku) / 340, qty }]) });"]}
+[lane t8 run-1 +165.6s] processed {"revision":"processed"}
+[lane t8 run-1 +189.5s] landed {"op":"op-47440b85193f821cc48ad745","workflow":"land-Ie994b7adadda-1792477774269"}
+[lane t8 run-1 +194.8s] production_broken {"land_to_broken_s":5.332,"sample":{"status":500,"ms":267,"body":"<!DOCTYPE html>\n<!--[if lt IE 7]> <html class=\"no-js ie6 oldie\" lang=\"en-US\"> <![endif]-->\n<!--[if IE 7]>    <html class=\"no-js ie7 oldie\" lang=\"en-US\"> <![endif]-->\n<!--[if IE 8]>    <html class=\"no-","waited_s":5.331}}
+[lane t8 run-1 +195.3s] production_traffic {"statuses":[500,500,500,500,500,500,500,500]}
+[lane t8 run-1 +205.9s] revert_started {"workflow":"prod-revert-op-47440b85193f821cc48ad745","land_to_trigger_s":16.375}
+[lane t8 run-1 +225s] reverted {"output":{"status":"reverted","op_id":"op-13c7e436e0dedcc2ad1d2fdb","reverts_op_id":"op-47440b85193f821cc48ad745","seq":243,"sha":"96ac8b9271d86b5036f37a45a6d3cfb5307ad6a5"}}
+[lane t8 run-1 +230.2s] production_healed {"land_to_healed_s":40.681,"sample":{"status":200,"ms":95,"body":"{\"sku\":\"house-blend\",\"qty\":2,\"total\":32}","waited_s":5.188}}
+[lane t8 run-1 +230.5s] final {"status":"reverted","land_op":"op-47440b85193f821cc48ad745","revert_op":"op-13c7e436e0dedcc2ad1d2fdb","change_status":"reverted","weft_task_status":"open","stack":"","timings":{"land_to_broken_s":5.332,"land_to_healed_s":41.032},"at":"2026-10-20T06:30:39.092Z"}

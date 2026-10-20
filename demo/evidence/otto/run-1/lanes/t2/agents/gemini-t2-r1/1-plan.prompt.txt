@@ -1,0 +1,3 @@
+gemini
+
+Task (signup): add `POST /api/signup` taking a JSON body {email, name, password}. It registers the member with createUser from src/auth/users.ts and signs them in right away by starting a session the same way login in src/api/routes.ts does, responding 201 with {token, user: publicUser(user)}; a UserError becomes 400 {error}. Add the route to the accountRoutes array in src/api/account.ts and add test/signup.test.ts. For now ONLY read the relevant files and reply with a short plan that includes the exact code you will write. Do not edit any file yet.

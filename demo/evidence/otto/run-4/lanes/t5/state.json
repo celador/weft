@@ -1,0 +1,352 @@
+{
+  "run": 4,
+  "task": "t5",
+  "card": "t_4ec5a04f",
+  "title": "Free shipping on orders of $50+",
+  "harnesses": [
+    "claude",
+    "gemini"
+  ],
+  "beat": "the other adjacent one-liner in src/pricing.ts",
+  "started_at": "2026-10-20T12:46:58.683Z",
+  "phase": "final",
+  "marks": {
+    "candidates": 10.4,
+    "agents_ready": 13,
+    "working": 13,
+    "pushed claude-t5-r4": 622,
+    "pushed gemini-t5-r4": 622,
+    "evidence": 622,
+    "evidence_done": 685.6,
+    "selecting": 686.6,
+    "selected": 698.1,
+    "final": 709.4
+  },
+  "steps": [
+    {
+      "name": "candidates",
+      "at_s": 10.4,
+      "at": "2026-10-20T12:47:09.047Z",
+      "data": [
+        {
+          "agent": "claude-t5-r4",
+          "harness": "claude",
+          "change": "Ibe090266704993d4bf2dd7c5bd4f85ed183e3d14",
+          "fork": "weft-weft-demo-site-t_4ec5a04f-1"
+        },
+        {
+          "agent": "gemini-t5-r4",
+          "harness": "gemini",
+          "change": "I4c8f8b215d4e06f065439a8fbc1a86ea27c95956",
+          "fork": "weft-weft-demo-site-t_4ec5a04f-2"
+        }
+      ]
+    },
+    {
+      "name": "agents_ready",
+      "at_s": 13,
+      "at": "2026-10-20T12:47:11.691Z"
+    },
+    {
+      "name": "working",
+      "at_s": 13,
+      "at": "2026-10-20T12:47:11.691Z"
+    },
+    {
+      "name": "pushed claude-t5-r4",
+      "at_s": 622,
+      "at": "2026-10-20T12:57:20.658Z",
+      "data": {
+        "sha": "a911e80efbeb1e8753600348442035b98b1d2d32"
+      }
+    },
+    {
+      "name": "pushed gemini-t5-r4",
+      "at_s": 622,
+      "at": "2026-10-20T12:57:20.696Z",
+      "data": {
+        "ok": false,
+        "reason": "no changes"
+      }
+    },
+    {
+      "name": "evidence",
+      "at_s": 622,
+      "at": "2026-10-20T12:57:20.696Z"
+    },
+    {
+      "name": "evidence_done",
+      "at_s": 685.6,
+      "at": "2026-10-20T12:58:24.255Z"
+    },
+    {
+      "name": "selecting",
+      "at_s": 686.6,
+      "at": "2026-10-20T12:58:25.312Z",
+      "data": {
+        "workflow": "bestofn-weft-demo-site-t_4ec5a04f"
+      }
+    },
+    {
+      "name": "selected",
+      "at_s": 698.1,
+      "at": "2026-10-20T12:58:36.815Z",
+      "data": {
+        "status": "complete",
+        "result": "landing",
+        "winner": "Ibe090266704993d4bf2dd7c5bd4f85ed183e3d14",
+        "approved_by": null,
+        "ranking": [
+          {
+            "agent": "claude-t5-r4",
+            "score": 1137,
+            "eligible": true,
+            "layer": "mergiraf",
+            "reasons": [
+              "tests pass",
+              "rebase: mergiraf",
+              "churn 15",
+              "review pass 100",
+              "risk low"
+            ]
+          },
+          {
+            "agent": "gemini-t5-r4",
+            "score": -1,
+            "eligible": false,
+            "layer": "git",
+            "reasons": [
+              "revision missing",
+              "no tests",
+              "rebase: git"
+            ]
+          }
+        ],
+        "winner_agent": "claude-t5-r4",
+        "land": {
+          "workflow_status": "complete",
+          "status": "landed",
+          "op_id": "op-9eebf087c693758dd251520c",
+          "seq": 761,
+          "before": "d078cb91881cfa05ddc300a79adb8f0f8531530f",
+          "after": "f94cc5eafc21f3544475a47be2942ae69c66ac14",
+          "layer": "mergiraf",
+          "attempts": 1,
+          "queue_id": 25
+        }
+      }
+    },
+    {
+      "name": "final",
+      "at_s": 709.4,
+      "at": "2026-10-20T12:58:48.040Z",
+      "data": {
+        "status": "landed",
+        "winner": "claude-t5-r4",
+        "harness": "claude",
+        "approved_by": null,
+        "land_op": "op-9eebf087c693758dd251520c",
+        "layer": "mergiraf",
+        "trunk": null,
+        "at": "2026-10-20T12:58:48.040Z"
+      }
+    }
+  ],
+  "pid": 25494,
+  "first_seq": 599,
+  "agents": [
+    {
+      "agent": "claude-t5-r4",
+      "harness": "claude",
+      "change": "Ibe090266704993d4bf2dd7c5bd4f85ed183e3d14",
+      "fork": "weft-weft-demo-site-t_4ec5a04f-1",
+      "turns": [
+        {
+          "name": "work",
+          "code": 0,
+          "ms": 18738
+        }
+      ],
+      "push": {
+        "ok": true,
+        "sha": "a911e80efbeb1e8753600348442035b98b1d2d32"
+      }
+    },
+    {
+      "agent": "gemini-t5-r4",
+      "harness": "gemini",
+      "change": "I4c8f8b215d4e06f065439a8fbc1a86ea27c95956",
+      "fork": "weft-weft-demo-site-t_4ec5a04f-2",
+      "turns": [
+        {
+          "name": "work",
+          "code": 247,
+          "ms": 606445
+        }
+      ],
+      "push": {
+        "ok": false,
+        "reason": "no changes"
+      }
+    }
+  ],
+  "evidence": {
+    "claude-t5-r4": {
+      "revision": {
+        "status": "processed",
+        "layer": "mergiraf"
+      },
+      "rows": [
+        {
+          "kind": "rebase",
+          "status": "pass",
+          "data": {
+            "status": "clean",
+            "layer": "mergiraf"
+          }
+        },
+        {
+          "kind": "test",
+          "status": "pass",
+          "data": {
+            "status": "pass",
+            "summary": {
+              "pass": 19,
+              "fail": 0
+            }
+          }
+        },
+        {
+          "kind": "preview",
+          "status": "pass",
+          "data": {
+            "url": "https://weft-previews-preview.elier.ai/p/weft-weft-demo-site-t_4ec5a04f-1/f94cc5eafc21f3544475a47be2942ae69c66ac14/d2BviUx_yVwDzn0SqLm4Yw/",
+            "trunk_url": "https://weft-previews-preview.elier.ai/p/weft-demo-site/d078cb91881cfa05ddc300a79adb8f0f8531530f/xv3Ogl1HEckRKzW7QX-0cA/",
+            "routes": [
+              "/",
+              "/menu.html"
+            ],
+            "provider": "weft-previews (Artifacts)",
+            "sha": "f94cc5eafc21f3544475a47be2942ae69c66ac14",
+            "onto": "d078cb91881cfa05ddc300a79adb8f0f8531530f"
+          }
+        },
+        {
+          "kind": "screenshot",
+          "status": "pass",
+          "data": {
+            "route": "/",
+            "ratio": 0
+          }
+        },
+        {
+          "kind": "screenshot",
+          "status": "pass",
+          "data": {
+            "route": "/menu.html",
+            "ratio": 0
+          }
+        },
+        {
+          "kind": "visual_diff",
+          "status": "info",
+          "data": {
+            "routes": [
+              {
+                "route": "/",
+                "ratio": 0,
+                "pixels": 0,
+                "uri": null
+              },
+              {
+                "route": "/menu.html",
+                "ratio": 0,
+                "pixels": 0,
+                "uri": null
+              }
+            ],
+            "max_ratio": 0,
+            "changed": false,
+            "baseline": "d078cb91881cfa05ddc300a79adb8f0f8531530f"
+          }
+        },
+        {
+          "kind": "risk",
+          "status": "info",
+          "data": {
+            "risk": "low"
+          }
+        },
+        {
+          "kind": "review",
+          "status": "pass",
+          "data": {
+            "verdict": "pass",
+            "score": 100,
+            "summary": "The candidate change meets all acceptance criteria and the diff appears to be correct, so it passes."
+          }
+        }
+      ],
+      "waited_s": 64
+    }
+  },
+  "selection": {
+    "workflow": "bestofn-weft-demo-site-t_4ec5a04f",
+    "n": 1,
+    "risk": "low",
+    "status": "complete",
+    "result": "landing",
+    "winner": "Ibe090266704993d4bf2dd7c5bd4f85ed183e3d14",
+    "approved_by": null,
+    "ranking": [
+      {
+        "agent": "claude-t5-r4",
+        "score": 1137,
+        "eligible": true,
+        "layer": "mergiraf",
+        "reasons": [
+          "tests pass",
+          "rebase: mergiraf",
+          "churn 15",
+          "review pass 100",
+          "risk low"
+        ]
+      },
+      {
+        "agent": "gemini-t5-r4",
+        "score": -1,
+        "eligible": false,
+        "layer": "git",
+        "reasons": [
+          "revision missing",
+          "no tests",
+          "rebase: git"
+        ]
+      }
+    ],
+    "winner_agent": "claude-t5-r4",
+    "land": {
+      "workflow_status": "complete",
+      "status": "landed",
+      "op_id": "op-9eebf087c693758dd251520c",
+      "seq": 761,
+      "before": "d078cb91881cfa05ddc300a79adb8f0f8531530f",
+      "after": "f94cc5eafc21f3544475a47be2942ae69c66ac14",
+      "layer": "mergiraf",
+      "attempts": 1,
+      "queue_id": 25
+    }
+  },
+  "final": {
+    "status": "landed",
+    "winner": "claude-t5-r4",
+    "harness": "claude",
+    "approved_by": null,
+    "land_op": "op-9eebf087c693758dd251520c",
+    "layer": "mergiraf",
+    "trunk": null,
+    "at": "2026-10-20T12:58:48.040Z"
+  },
+  "finished_at": "2026-10-20T12:58:48.040Z",
+  "duration_s": 709.4
+}

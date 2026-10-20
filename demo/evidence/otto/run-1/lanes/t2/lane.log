@@ -1,0 +1,13 @@
+[lane t2 run-1 +15.4s] candidates [{"agent":"claude-t2-r1","harness":"claude","change":"I2bec184d624474952078e7551fc6210bd0160812","fork":"weft-weft-demo-site-r1-t2-1"},{"agent":"opencode-t2-r1","harness":"opencode","change":"Icd6c40706b70ee4fb9c3aacaf0440ce25ecc4db0","fork":"weft-weft-demo-site-r1-t2-2"},{"agent":"gemini-t2-r1","harness":"gemini","change":"Ib3fe22557d8bb12854a7f336bd2f1c923d0ca259","fork":"weft-weft-demo-site-r1-t2-3"}]
+[lane t2 run-1 +20.8s] agents_ready 
+[lane t2 run-1 +20.8s] planning 
+[lane t2 run-1 +172.9s] waiting_for_cue 
+[lane t2 run-1 +173.1s] implementing {"seq":95,"agent":"claude-t1-r1","waited_s":0}
+[lane t2 run-1 +1111.8s] pushed claude-t2-r1 {"ok":false,"reason":"commit refused","detail":"weft: commit refused — 1 open error(s):\n[weft error] stale_assumption src/auth/session.ts:8:17: You use src/auth/session.ts#createSession, whose signature changed in #111 by codex-t1-r1 after your base #92. (caused by codex-t1-r1 · task r1-t1 · event #111). Suggestion: Read the new src/auth/session.ts#createSession (event #111) and update this call site, or negotiate with codex-t1-r1.\n  ↳ event #111 by codex-t1-r1 changed src/auth/session.ts (their change is not in your checkout yet):\n    @@ -1,12 +1,14 @@\n     import { randomBytes } from \"node:crypto\";\n     \n    -export type Session = { token: string; userId: string; createdAt: number };\n    +export type SessionOptions = { ttlMs: number };\n    +export type Session = { token: string; userId: string; createdAt: number; expiresAt: number };\n"}
+[lane t2 run-1 +1114.5s] pushed opencode-t2-r1 {"sha":"77c1349422a302c7876862f8e977d3a1c687df34"}
+[lane t2 run-1 +1116.6s] pushed gemini-t2-r1 {"sha":"2a7c84b2bdd665a0b81c98fdca214dd09a38b326"}
+[lane t2 run-1 +1116.6s] evidence 
+[lane t2 run-1 +1159s] evidence_done 
+[lane t2 run-1 +1159.7s] selecting {"workflow":"bestofn-weft-demo-site-r1-t2"}
+[lane t2 run-1 +1171.5s] selected {"status":"complete","result":"landing","winner":"Ib3fe22557d8bb12854a7f336bd2f1c923d0ca259","approved_by":null,"ranking":[{"agent":"gemini-t2-r1","score":1142,"eligible":true,"layer":"git","reasons":["tests pass","rebase: git","churn 88","review pass 100","risk low"]},{"agent":"claude-t2-r1","score":-1,"eligible":false,"layer":"git","reasons":["revision missing","no tests","rebase: git"]},{"agent":"opencode-t2-r1","score":-1,"eligible":false,"layer":"git","reasons":["tests fail","rebase: git","churn 61"]}],"winner_agent":"gemini-t2-r1"}
+[lane t2 run-1 +1177.7s] final {"status":"landed","winner":"gemini-t2-r1","harness":"gemini","approved_by":null,"land_op":"op-45ba7daa57928b7102f4be31","layer":"git","trunk":null,"at":"2026-10-20T06:26:39.950Z"}

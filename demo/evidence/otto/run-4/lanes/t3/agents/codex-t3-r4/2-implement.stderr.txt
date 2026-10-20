@@ -1,0 +1,122 @@
+2026-10-20T12:47:58.056730Z ERROR codex_core::tools::router: error=Command blocked by PreToolUse hook: [weft] Edit to src/auth/refresh.ts, test/refresh.test.ts blocked: it conflicts with another agent's change (Weft edit-time coordination, log #654).
+[weft error] stale_assumption src/auth/refresh.ts:3:48: You use src/auth/session.ts#Session, whose signature changed in #630 by codex-t1-r4 after your base #610. (caused by codex-t1-r4 · task t_a9c85828 · event #630). Suggestion: Read the new src/auth/session.ts#Session (event #630) and update this call site, or negotiate with codex-t1-r4.
+  ↳ event #630 by codex-t1-r4 changed src/auth/session.ts (their change is not in your checkout yet):
+    @@ -1,12 +1,15 @@
+     import { randomBytes } from "node:crypto";
+     
+    -export type Session = { token: string; userId: string; createdAt: number };
+    +export type SessionOptions = { ttlMs: number };
+     
+    +export type Session = { token: string; userId: string; createdAt: number; expiresAt: number };
+    +
+     const sessions = new Map<string, Session>();
+     
+     /** Start a session for a user and return it (the token is the bearer credential). */
+    -export function createSession(userId: string): Session {
+    -  const session: Session = { token: randomBytes(24).toString("base64url"), userId, createdAt: Date.now() };
+    +export function createSession(userId: string, opts: SessionOptions): Session {
+    +  const createdAt = Date.now();
+    +  const session: Session = { token: randomBytes(24).toString("base64url"), userId, createdAt, expiresAt: createdAt + opts.ttlMs };
+       sessions.set(session.token, session);
+       return session;
+     }
+    @@ -13,7 +16,12 @@
+     
+     /** The live session for a token, or undefined. */
+     export function getSession(token: string): Session | undefined {
+    -  return sessions.get(token);
+    +  const session = sessions.get(token);
+    +  if (session && Date.now() >= session.expiresAt) {
+    +    sessions.delete(token);
+    +    return undefined;
+    +  }
+    +  return session;
+    … (3 more lines)
+[weft error] stale_assumption src/auth/refresh.ts:7:10: You use src/auth/session.ts#createSession, whose signature changed in #630 by codex-t1-r4 after your base #610. (caused by codex-t1-r4 · task t_a9c85828 · event #630). Suggestion: Read the new src/auth/session.ts#createSession (event #630) and update this call site, or negotiate with codex-t1-r4.
+[weft warning] stale_read src/auth/refresh.ts:4:19: src/auth/session.ts#getSession body changed in #630 by codex-t1-r4 after your base #610; its contract is unchanged. (caused by codex-t1-r4 · task t_a9c85828 · event #630).
+  ↳ Your options: retreat (rework without that code) | wait (until codex-t1-r4 lands or releases it) | negotiate: `/private/var/folders/h7/fpctn9ss3d72g2gn83vfhfdr0000gn/T/weft-otto-r4-t3-vS3cEA/codex-t3-r4/.weft/bin/weft negotiate propose overload "<what codex-t1-r4 should keep working for you>" --wait 240` (terms: overload | transfer | share | sequence | merge_tasks | other; it is delivered to codex-t1-r4 and you get the reply) | escalate: `/private/var/folders/h7/fpctn9ss3d72g2gn83vfhfdr0000gn/T/weft-otto-r4-t3-vS3cEA/codex-t3-r4/.weft/bin/weft negotiate escalate "<why>"` (the coordinator merges your two tasks).
+Do not retry the same edit. Adapt your code to the change described above (or work around it), then edit again — your next attempt is checked against the current log.. Command: *** Begin Patch
+*** Add File: /private/var/folders/h7/fpctn9ss3d72g2gn83vfhfdr0000gn/T/weft-otto-r4-t3-vS3cEA/codex-t3-r4/src/auth/refresh.ts
++import { createSession, getSession, revokeSession, type Session } from "./session.ts";
++
++export function refreshSession(token: string): Session | undefined {
++  const session = getSession(token);
++  if (!session) return undefined;
++  revokeSession(token);
++  return createSession(session.userId);
++}
+*** Add File: /private/var/folders/h7/fpctn9ss3d72g2gn83vfhfdr0000gn/T/weft-otto-r4-t3-vS3cEA/codex-t3-r4/test/refresh.test.ts
++import { test, beforeEach } from "node:test";
++import assert from "node:assert/strict";
++import { refreshSession } from "../src/auth/refresh.ts";
++import { createSession, getSession, resetSessions } from "../src/auth/session.ts";
++
++beforeEach(() => resetSessions());
++
++test("refreshSession returns undefined for an unknown token", () => {
++  assert.equal(refreshSession("unknown"), undefined);
++});
++
++test("refreshSession replaces the session for the same user", () => {
++  const original = createSession("u_1");
++  const refreshed = refreshSession(original.token);
++
++  assert.ok(refreshed);
++  assert.equal(refreshed.userId, original.userId);
++  assert.notEqual(refreshed.token, original.token);
++  assert.equal(getSession(original.token), undefined);
++  assert.equal(getSession(refreshed.token), refreshed);
++  assert.equal(refreshSession(original.token), undefined);
++});
+*** End Patch
+
+2026-10-20T12:48:22.586144Z ERROR codex_core::tools::router: error=Command blocked by PreToolUse hook: [weft] Edit to src/auth/refresh.ts, test/refresh.test.ts blocked: it conflicts with another agent's change (Weft edit-time coordination, log #667).
+[weft error] stale_assumption src/auth/refresh.ts:7:10: You use src/auth/session.ts#createSession, whose signature changed in #664 by codex-t1-r4 after your base #663. (caused by codex-t1-r4 · task t_a9c85828 · event #664). Suggestion: Read the new src/auth/session.ts#createSession (event #664) and update this call site, or negotiate with codex-t1-r4.
+  ↳ event #664 by codex-t1-r4 changed src/auth/session.ts (their change is not in your checkout yet):
+    @@ -7,7 +7,9 @@
+     const sessions = new Map<string, Session>();
+     
+     /** Start a session for a user and return it (the token is the bearer credential). */
+    -export function createSession(userId: string, opts: SessionOptions): Session {
+    +export function createSession(userId: string, opts: SessionOptions): Session;
+    +export function createSession(userId: string): Session;
+    +export function createSession(userId: string, opts: SessionOptions = { ttlMs: 60 * 60 * 1000 }): Session {
+       const createdAt = Date.now();
+       const session: Session = { token: randomBytes(24).toString("base64url"), userId, createdAt, expiresAt: createdAt + opts.ttlMs };
+       sessions.set(session.token, session);
+  ↳ Your options: retreat (rework without that code) | wait (until codex-t1-r4 lands or releases it) | negotiate: `/private/var/folders/h7/fpctn9ss3d72g2gn83vfhfdr0000gn/T/weft-otto-r4-t3-vS3cEA/codex-t3-r4/.weft/bin/weft negotiate propose overload "<what codex-t1-r4 should keep working for you>" --wait 240` (terms: overload | transfer | share | sequence | merge_tasks | other; it is delivered to codex-t1-r4 and you get the reply) | escalate: `/private/var/folders/h7/fpctn9ss3d72g2gn83vfhfdr0000gn/T/weft-otto-r4-t3-vS3cEA/codex-t3-r4/.weft/bin/weft negotiate escalate "<why>"` (the coordinator merges your two tasks).
+Do not retry the same edit. Adapt your code to the change described above (or work around it), then edit again — your next attempt is checked against the current log.. Command: *** Begin Patch
+*** Add File: /private/var/folders/h7/fpctn9ss3d72g2gn83vfhfdr0000gn/T/weft-otto-r4-t3-vS3cEA/codex-t3-r4/src/auth/refresh.ts
++import { createSession, getSession, revokeSession, type Session } from "./session.ts";
++
++export function refreshSession(token: string): Session | undefined {
++  const session = getSession(token);
++  if (!session) return undefined;
++  revokeSession(token);
++  return createSession(session.userId);
++}
+*** Add File: /private/var/folders/h7/fpctn9ss3d72g2gn83vfhfdr0000gn/T/weft-otto-r4-t3-vS3cEA/codex-t3-r4/test/refresh.test.ts
++import { test, beforeEach } from "node:test";
++import assert from "node:assert/strict";
++import { refreshSession } from "../src/auth/refresh.ts";
++import { createSession, getSession, resetSessions } from "../src/auth/session.ts";
++
++beforeEach(() => resetSessions());
++
++test("refreshSession returns undefined for an unknown token", () => {
++  assert.equal(refreshSession("unknown"), undefined);
++});
++
++test("refreshSession replaces the session for the same user", () => {
++  const original = createSession("u_1");
++  const refreshed = refreshSession(original.token);
++
++  assert.ok(refreshed);
++  assert.equal(refreshed.userId, original.userId);
++  assert.notEqual(refreshed.token, original.token);
++  assert.equal(getSession(original.token), undefined);
++  assert.equal(getSession(refreshed.token), refreshed);
++  assert.equal(refreshSession(original.token), undefined);
++});
+*** End Patch
+

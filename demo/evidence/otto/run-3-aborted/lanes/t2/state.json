@@ -1,0 +1,78 @@
+{
+  "run": 3,
+  "task": "t2",
+  "card": "t_c194b88f",
+  "title": "Gift signup: create the account and sign in",
+  "harnesses": [
+    "claude",
+    "opencode",
+    "gemini"
+  ],
+  "beat": "stale call caught mid-edit (squiggle) and rerouted",
+  "started_at": "2026-10-20T12:41:13.851Z",
+  "phase": "planning",
+  "marks": {
+    "candidates": 14.2,
+    "agents_ready": 18.2,
+    "planning": 18.2
+  },
+  "steps": [
+    {
+      "name": "candidates",
+      "at_s": 14.2,
+      "at": "2026-10-20T12:41:28.049Z",
+      "data": [
+        {
+          "agent": "claude-t2-r3",
+          "harness": "claude",
+          "change": "I884984a55a81486aba3ddcd12770446947efe278",
+          "fork": "weft-weft-demo-site-t_c194b88f-1"
+        },
+        {
+          "agent": "opencode-t2-r3",
+          "harness": "opencode",
+          "change": "I9bcbd6ba70be22655f3c0c6b3a5cc44166e17d53",
+          "fork": "weft-weft-demo-site-t_c194b88f-2"
+        },
+        {
+          "agent": "gemini-t2-r3",
+          "harness": "gemini",
+          "change": "Ic1100132e3ba6948b23371f20f98ec007888331c",
+          "fork": "weft-weft-demo-site-t_c194b88f-3"
+        }
+      ]
+    },
+    {
+      "name": "agents_ready",
+      "at_s": 18.2,
+      "at": "2026-10-20T12:41:32.027Z"
+    },
+    {
+      "name": "planning",
+      "at_s": 18.2,
+      "at": "2026-10-20T12:41:32.027Z"
+    }
+  ],
+  "pid": 95223,
+  "first_seq": 508,
+  "agents": [
+    {
+      "agent": "claude-t2-r3",
+      "harness": "claude",
+      "change": "I884984a55a81486aba3ddcd12770446947efe278",
+      "fork": "weft-weft-demo-site-t_c194b88f-1"
+    },
+    {
+      "agent": "opencode-t2-r3",
+      "harness": "opencode",
+      "change": "I9bcbd6ba70be22655f3c0c6b3a5cc44166e17d53",
+      "fork": "weft-weft-demo-site-t_c194b88f-2"
+    },
+    {
+      "agent": "gemini-t2-r3",
+      "harness": "gemini",
+      "change": "Ic1100132e3ba6948b23371f20f98ec007888331c",
+      "fork": "weft-weft-demo-site-t_c194b88f-3"
+    }
+  ]
+}

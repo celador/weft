@@ -1,0 +1,13 @@
+[lane t6 run-91 +14.7s] candidates [{"agent":"claude-t6-r91","harness":"claude","change":"Ia2d051fa72aab761a97d8364f0510c67919ee913","fork":"weft-weft-demo-site-smoke91-t6-1"},{"agent":"codex-t6-r91","harness":"codex","change":"I5fd11c6cf0973dc47285d2f7aeec0c53013ef85f","fork":"weft-weft-demo-site-smoke91-t6-2"},{"agent":"hermes-t6-r91","harness":"hermes","change":"Ib9831d4a304f4a5fad8d484a6cc4fdd4fb2f9ae8","fork":"weft-weft-demo-site-smoke91-t6-3"}]
+[lane t6 run-91 +18.7s] agents_ready 
+[lane t6 run-91 +18.7s] working 
+[lane t6 run-91 +56.8s] pushed claude-t6-r91 {"sha":"50f934a8dea5f4a5e8faee78ae097faad3b7d8af"}
+[lane t6 run-91 +58.2s] pushed codex-t6-r91 {"sha":"38813eaf174428b249cc721b7ba54d6f1d09ea41"}
+[lane t6 run-91 +59.3s] pushed hermes-t6-r91 {"sha":"fbb46068f02a39cb6981fce4e72dabe5330e344a"}
+[lane t6 run-91 +59.3s] evidence 
+[lane t6 run-91 +202.9s] evidence_done 
+[lane t6 run-91 +203.3s] selecting {"workflow":"bestofn-weft-demo-site-smoke91-t6"}
+[lane t6 run-91 +219.7s] awaiting_approval {"since":"2026-10-20T05:22:37.212Z","ranking":[{"agent":"claude-t6-r91","harness":"claude","change":"Ia2d051fa72aab761a97d8364f0510c67919ee913","score":1180,"eligible":true},{"agent":"codex-t6-r91","harness":"codex","change":"I5fd11c6cf0973dc47285d2f7aeec0c53013ef85f","score":1180,"eligible":true},{"agent":"hermes-t6-r91","harness":"hermes","change":"Ib9831d4a304f4a5fad8d484a6cc4fdd4fb2f9ae8","score":1180,"eligible":true}],"suggest":{"agent":"claude-t6-r91","change":"Ia2d051fa72aab761a97d8364f0510c67919ee913","why":"highest-ranked eligible"}}
+[lane t6 run-91 +240.5s] approved_by_fallback {"by":"scripted fallback (John's human token, same action as Otto's Approve)","change":"Ia2d051fa72aab761a97d8364f0510c67919ee913","agent":"claude-t6-r91","forwarded_to":"bestofn-weft-demo-site-smoke91-t6","at":"2026-10-20T05:22:58.030Z"}
+[lane t6 run-91 +244.8s] selected {"status":"complete","result":"landing","winner":"Ia2d051fa72aab761a97d8364f0510c67919ee913","approved_by":"john","ranking":[{"agent":"claude-t6-r91","score":1180,"eligible":true,"layer":"none","reasons":["tests pass","rebase: none","churn 2","review pass 100","risk low"]},{"agent":"codex-t6-r91","score":1180,"eligible":true,"layer":"none","reasons":["tests pass","rebase: none","churn 2","review pass 100","risk low"]},{"agent":"hermes-t6-r91","score":1180,"eligible":true,"layer":"none","reasons":["tests pass","rebase: none","churn 2","review pass 100","risk low"]}],"winner_agent":"claude-t6-r91"}
+[lane t6 run-91 +260s] final {"status":"landed","winner":"claude-t6-r91","harness":"claude","approved_by":"scripted fallback (John's human token, same action as Otto's Approve)","land_op":"op-3cad99b406dd8b239813f511","layer":"git","trunk":null,"at":"2026-10-20T05:23:17.463Z"}

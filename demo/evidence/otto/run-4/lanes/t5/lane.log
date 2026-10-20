@@ -1,0 +1,10 @@
+[lane t5 run-4 +10.4s] candidates [{"agent":"claude-t5-r4","harness":"claude","change":"Ibe090266704993d4bf2dd7c5bd4f85ed183e3d14","fork":"weft-weft-demo-site-t_4ec5a04f-1"},{"agent":"gemini-t5-r4","harness":"gemini","change":"I4c8f8b215d4e06f065439a8fbc1a86ea27c95956","fork":"weft-weft-demo-site-t_4ec5a04f-2"}]
+[lane t5 run-4 +13s] agents_ready 
+[lane t5 run-4 +13s] working 
+[lane t5 run-4 +622s] pushed claude-t5-r4 {"sha":"a911e80efbeb1e8753600348442035b98b1d2d32"}
+[lane t5 run-4 +622s] pushed gemini-t5-r4 {"ok":false,"reason":"no changes"}
+[lane t5 run-4 +622s] evidence 
+[lane t5 run-4 +685.6s] evidence_done 
+[lane t5 run-4 +686.6s] selecting {"workflow":"bestofn-weft-demo-site-t_4ec5a04f"}
+[lane t5 run-4 +698.1s] selected {"status":"complete","result":"landing","winner":"Ibe090266704993d4bf2dd7c5bd4f85ed183e3d14","approved_by":null,"ranking":[{"agent":"claude-t5-r4","score":1137,"eligible":true,"layer":"mergiraf","reasons":["tests pass","rebase: mergiraf","churn 15","review pass 100","risk low"]},{"agent":"gemini-t5-r4","score":-1,"eligible":false,"layer":"git","reasons":["revision missing","no tests","rebase: git"]}],"winner_agent":"claude-t5-r4"}
+[lane t5 run-4 +709.4s] final {"status":"landed","winner":"claude-t5-r4","harness":"claude","approved_by":null,"land_op":"op-9eebf087c693758dd251520c","layer":"mergiraf","trunk":null,"at":"2026-10-20T12:58:48.040Z"}

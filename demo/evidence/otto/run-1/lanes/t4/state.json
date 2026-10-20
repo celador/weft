@@ -1,0 +1,453 @@
+{
+  "run": 1,
+  "task": "t4",
+  "card": "r1-t4",
+  "title": "Bulk discount: 10% off 10+ bags",
+  "harnesses": [
+    "codex",
+    "hermes"
+  ],
+  "beat": "adjacent one-line edit in src/pricing.ts (git conflicts; Weft merges structurally)",
+  "started_at": "2026-10-20T06:07:02.356Z",
+  "phase": "final",
+  "marks": {
+    "candidates": 11.8,
+    "agents_ready": 14.5,
+    "working": 14.5,
+    "pushed codex-t4-r1": 125,
+    "pushed hermes-t4-r1": 126.3,
+    "evidence": 126.3,
+    "evidence_done": 168.7,
+    "selecting": 169.5,
+    "selected": 174.9,
+    "final": 193.8
+  },
+  "steps": [
+    {
+      "name": "candidates",
+      "at_s": 11.8,
+      "at": "2026-10-20T06:07:14.205Z",
+      "data": [
+        {
+          "agent": "codex-t4-r1",
+          "harness": "codex",
+          "change": "I48bf5bee006db3c9399acaf5207b03a8a3908552",
+          "fork": "weft-weft-demo-site-r1-t4-1"
+        },
+        {
+          "agent": "hermes-t4-r1",
+          "harness": "hermes",
+          "change": "Id129e239ab9064946d870333ba890e6f7478c708",
+          "fork": "weft-weft-demo-site-r1-t4-2"
+        }
+      ]
+    },
+    {
+      "name": "agents_ready",
+      "at_s": 14.5,
+      "at": "2026-10-20T06:07:16.888Z"
+    },
+    {
+      "name": "working",
+      "at_s": 14.5,
+      "at": "2026-10-20T06:07:16.889Z"
+    },
+    {
+      "name": "pushed codex-t4-r1",
+      "at_s": 125,
+      "at": "2026-10-20T06:09:07.353Z",
+      "data": {
+        "sha": "c1f460e04b8d8e7c8b92803205b0d4cf6dd28bc4"
+      }
+    },
+    {
+      "name": "pushed hermes-t4-r1",
+      "at_s": 126.3,
+      "at": "2026-10-20T06:09:08.706Z",
+      "data": {
+        "sha": "4496341539745fd94bcbeb4e8338bd2c10ae5e72"
+      }
+    },
+    {
+      "name": "evidence",
+      "at_s": 126.3,
+      "at": "2026-10-20T06:09:08.706Z"
+    },
+    {
+      "name": "evidence_done",
+      "at_s": 168.7,
+      "at": "2026-10-20T06:09:51.020Z"
+    },
+    {
+      "name": "selecting",
+      "at_s": 169.5,
+      "at": "2026-10-20T06:09:51.834Z",
+      "data": {
+        "workflow": "bestofn-weft-demo-site-r1-t4"
+      }
+    },
+    {
+      "name": "selected",
+      "at_s": 174.9,
+      "at": "2026-10-20T06:09:57.224Z",
+      "data": {
+        "status": "complete",
+        "result": "landing",
+        "winner": "I48bf5bee006db3c9399acaf5207b03a8a3908552",
+        "approved_by": null,
+        "ranking": [
+          {
+            "agent": "codex-t4-r1",
+            "score": 1175,
+            "eligible": true,
+            "layer": "none",
+            "reasons": [
+              "tests pass",
+              "rebase: none",
+              "churn 25",
+              "review pass 100",
+              "risk low"
+            ]
+          },
+          {
+            "agent": "hermes-t4-r1",
+            "score": 1175,
+            "eligible": true,
+            "layer": "none",
+            "reasons": [
+              "tests pass",
+              "rebase: none",
+              "churn 24",
+              "review pass 100",
+              "risk low"
+            ]
+          }
+        ],
+        "winner_agent": "codex-t4-r1",
+        "land": {
+          "workflow_status": "complete",
+          "status": "landed",
+          "op_id": "op-40b361da0d84f1ad94b9142b",
+          "seq": 178,
+          "before": "e4b387d833438437840213f4f8290ad3ec08214b",
+          "after": "c1f460e04b8d8e7c8b92803205b0d4cf6dd28bc4",
+          "layer": "none",
+          "attempts": 1,
+          "queue_id": 5
+        }
+      }
+    },
+    {
+      "name": "final",
+      "at_s": 193.8,
+      "at": "2026-10-20T06:10:16.166Z",
+      "data": {
+        "status": "landed",
+        "winner": "codex-t4-r1",
+        "harness": "codex",
+        "approved_by": null,
+        "land_op": "op-40b361da0d84f1ad94b9142b",
+        "layer": "none",
+        "trunk": null,
+        "at": "2026-10-20T06:10:16.166Z"
+      }
+    }
+  ],
+  "pid": 41619,
+  "first_seq": 83,
+  "agents": [
+    {
+      "agent": "codex-t4-r1",
+      "harness": "codex",
+      "change": "I48bf5bee006db3c9399acaf5207b03a8a3908552",
+      "fork": "weft-weft-demo-site-r1-t4-1",
+      "turns": [
+        {
+          "name": "work",
+          "code": 0,
+          "ms": 39246
+        }
+      ],
+      "push": {
+        "ok": true,
+        "sha": "c1f460e04b8d8e7c8b92803205b0d4cf6dd28bc4"
+      }
+    },
+    {
+      "agent": "hermes-t4-r1",
+      "harness": "hermes",
+      "change": "Id129e239ab9064946d870333ba890e6f7478c708",
+      "fork": "weft-weft-demo-site-r1-t4-2",
+      "turns": [
+        {
+          "name": "work",
+          "code": 0,
+          "ms": 109106
+        }
+      ],
+      "push": {
+        "ok": true,
+        "sha": "4496341539745fd94bcbeb4e8338bd2c10ae5e72"
+      }
+    }
+  ],
+  "evidence": {
+    "codex-t4-r1": {
+      "revision": {
+        "status": "processed",
+        "layer": "none"
+      },
+      "rows": [
+        {
+          "kind": "rebase",
+          "status": "pass",
+          "data": {
+            "status": "up_to_date",
+            "layer": "none"
+          }
+        },
+        {
+          "kind": "test",
+          "status": "pass",
+          "data": {
+            "status": "pass",
+            "summary": {
+              "pass": 11,
+              "fail": 0
+            }
+          }
+        },
+        {
+          "kind": "preview",
+          "status": "pass",
+          "data": {
+            "url": "https://weft-previews-preview.elier.ai/p/weft-weft-demo-site-r1-t4-1/c1f460e04b8d8e7c8b92803205b0d4cf6dd28bc4/3ZnEUW8xyyGPmhA7yehGzw/",
+            "trunk_url": "https://weft-previews-preview.elier.ai/p/weft-demo-site/e4b387d833438437840213f4f8290ad3ec08214b/RDWj5_I7nLgJQfMNfjiBbA/",
+            "routes": [
+              "/",
+              "/menu.html"
+            ],
+            "provider": "weft-previews (Artifacts)",
+            "sha": "c1f460e04b8d8e7c8b92803205b0d4cf6dd28bc4",
+            "onto": "e4b387d833438437840213f4f8290ad3ec08214b"
+          }
+        },
+        {
+          "kind": "screenshot",
+          "status": "pass",
+          "data": {
+            "route": "/",
+            "ratio": 0
+          }
+        },
+        {
+          "kind": "screenshot",
+          "status": "pass",
+          "data": {
+            "route": "/menu.html",
+            "ratio": 0
+          }
+        },
+        {
+          "kind": "visual_diff",
+          "status": "info",
+          "data": {
+            "routes": [
+              {
+                "route": "/",
+                "ratio": 0,
+                "pixels": 0,
+                "uri": null
+              },
+              {
+                "route": "/menu.html",
+                "ratio": 0,
+                "pixels": 0,
+                "uri": null
+              }
+            ],
+            "max_ratio": 0,
+            "changed": false,
+            "baseline": "e4b387d833438437840213f4f8290ad3ec08214b"
+          }
+        },
+        {
+          "kind": "risk",
+          "status": "info",
+          "data": {
+            "risk": "low"
+          }
+        },
+        {
+          "kind": "review",
+          "status": "pass",
+          "data": {
+            "verdict": "pass",
+            "score": 100,
+            "summary": "The candidate change implements a 10% discount for 10 or more units, leaves the shipping fee unchanged, and passes all tests."
+          }
+        }
+      ],
+      "waited_s": 37
+    },
+    "hermes-t4-r1": {
+      "revision": {
+        "status": "processed",
+        "layer": "none"
+      },
+      "rows": [
+        {
+          "kind": "rebase",
+          "status": "pass",
+          "data": {
+            "status": "up_to_date",
+            "layer": "none"
+          }
+        },
+        {
+          "kind": "test",
+          "status": "pass",
+          "data": {
+            "status": "pass",
+            "summary": {
+              "pass": 12,
+              "fail": 0
+            }
+          }
+        },
+        {
+          "kind": "preview",
+          "status": "pass",
+          "data": {
+            "url": "https://weft-previews-preview.elier.ai/p/weft-weft-demo-site-r1-t4-2/4496341539745fd94bcbeb4e8338bd2c10ae5e72/wT_-YI04Kp4vu8fmGNB_2Q/",
+            "trunk_url": "https://weft-previews-preview.elier.ai/p/weft-demo-site/e4b387d833438437840213f4f8290ad3ec08214b/RDWj5_I7nLgJQfMNfjiBbA/",
+            "routes": [
+              "/",
+              "/menu.html"
+            ],
+            "provider": "weft-previews (Artifacts)",
+            "sha": "4496341539745fd94bcbeb4e8338bd2c10ae5e72",
+            "onto": "e4b387d833438437840213f4f8290ad3ec08214b"
+          }
+        },
+        {
+          "kind": "screenshot",
+          "status": "pass",
+          "data": {
+            "route": "/",
+            "ratio": 0
+          }
+        },
+        {
+          "kind": "screenshot",
+          "status": "pass",
+          "data": {
+            "route": "/menu.html",
+            "ratio": 0
+          }
+        },
+        {
+          "kind": "visual_diff",
+          "status": "info",
+          "data": {
+            "routes": [
+              {
+                "route": "/",
+                "ratio": 0,
+                "pixels": 0,
+                "uri": null
+              },
+              {
+                "route": "/menu.html",
+                "ratio": 0,
+                "pixels": 0,
+                "uri": null
+              }
+            ],
+            "max_ratio": 0,
+            "changed": false,
+            "baseline": "e4b387d833438437840213f4f8290ad3ec08214b"
+          }
+        },
+        {
+          "kind": "risk",
+          "status": "info",
+          "data": {
+            "risk": "low"
+          }
+        },
+        {
+          "kind": "review",
+          "status": "pass",
+          "data": {
+            "verdict": "pass",
+            "score": 100,
+            "summary": "The candidate change implements a 10% discount for 10 or more units, does not modify the shipping fee, and all tests pass, including new tests for the discount functionality."
+          }
+        }
+      ],
+      "waited_s": 42
+    }
+  },
+  "selection": {
+    "workflow": "bestofn-weft-demo-site-r1-t4",
+    "n": 2,
+    "risk": "low",
+    "status": "complete",
+    "result": "landing",
+    "winner": "I48bf5bee006db3c9399acaf5207b03a8a3908552",
+    "approved_by": null,
+    "ranking": [
+      {
+        "agent": "codex-t4-r1",
+        "score": 1175,
+        "eligible": true,
+        "layer": "none",
+        "reasons": [
+          "tests pass",
+          "rebase: none",
+          "churn 25",
+          "review pass 100",
+          "risk low"
+        ]
+      },
+      {
+        "agent": "hermes-t4-r1",
+        "score": 1175,
+        "eligible": true,
+        "layer": "none",
+        "reasons": [
+          "tests pass",
+          "rebase: none",
+          "churn 24",
+          "review pass 100",
+          "risk low"
+        ]
+      }
+    ],
+    "winner_agent": "codex-t4-r1",
+    "land": {
+      "workflow_status": "complete",
+      "status": "landed",
+      "op_id": "op-40b361da0d84f1ad94b9142b",
+      "seq": 178,
+      "before": "e4b387d833438437840213f4f8290ad3ec08214b",
+      "after": "c1f460e04b8d8e7c8b92803205b0d4cf6dd28bc4",
+      "layer": "none",
+      "attempts": 1,
+      "queue_id": 5
+    }
+  },
+  "final": {
+    "status": "landed",
+    "winner": "codex-t4-r1",
+    "harness": "codex",
+    "approved_by": null,
+    "land_op": "op-40b361da0d84f1ad94b9142b",
+    "layer": "none",
+    "trunk": null,
+    "at": "2026-10-20T06:10:16.166Z"
+  },
+  "finished_at": "2026-10-20T06:10:16.166Z",
+  "duration_s": 193.8
+}

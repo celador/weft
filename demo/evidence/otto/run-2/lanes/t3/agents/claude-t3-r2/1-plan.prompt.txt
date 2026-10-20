@@ -1,0 +1,3 @@
+claude
+
+Task (session refresh): add a new file src/auth/refresh.ts exporting `refreshSession(token: string): Session | undefined`. It looks up the live session with getSession, returns undefined if there is none, otherwise revokes it with revokeSession and starts a fresh session for the same user with createSession from src/auth/session.ts (start it exactly the way login in src/api/routes.ts does), returning the new session. Add test/refresh.test.ts (node:test, like test/session.test.ts). Only create those two files. For now ONLY read the relevant files and reply with a short plan that includes the exact code you will write. Do not create or edit any file yet.

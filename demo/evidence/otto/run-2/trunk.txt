@@ -1,0 +1,113 @@
+head 5568f7e8ca9ced204d5f67870f5d9b37e57791b5
+5568f7e weft-revert Revert change I8a1d1f1241ea822f17ddcfc3cc7e30878da4ca2f
+8b741f5 planted-t8-r2 quote: price by the gram (?unit=g)
+abbc153 opencode-t2-r2 Gift signup: create the account and sign in (opencode-t2-r2)
+52ba16e claude-t1-r2 Member sessions expire after an hour (claude-t1-r2)
+3016f5e claude-t3-r2 Remember me: refresh a member's session (claude-t3-r2)
+8626132 codex-t6-r2 Add Ethiopia Guji to the menu (codex-t6-r2)
+38fa5f0 hermes-t4-r2 Bulk discount: 10% off 10+ bags (hermes-t4-r2)
+a1909f8 claude-t5-r2 Free shipping on orders of $50+ (claude-t5-r2)
+1e93dff opencode-t7-r2 Roast-date freshness helper (opencode-t7-r2)
+778ff73 weft-otto-seed demo: seed Northbound Coffee (otto run 2)
+f9a3d72 weft-revert Revert change Ib3fe22557d8bb12854a7f336bd2f1c923d0ca259
+96ac8b9 weft-revert Revert change Ie994b7adaddaf96075eaa3d67e00ce3a7b462d54
+a3aece6 planted-t8-r1 quote: price by the gram (?unit=g)
+00a79f7 gemini-t2-r1 Gift signup: create the account and sign in (gemini-t2-r1)
+7a8c5f9 gemini-t7-r1 Roast-date freshness helper (gemini-t7-r1)
+fe961d9 claude-t5-r1 Free shipping on orders of $50+ (claude-t5-r1)
+9b16e8e claude-t6-r1 Add Ethiopia Guji to the menu (claude-t6-r1)
+bab3b0a codex-t1-r1 Member sessions expire after an hour (codex-t1-r1)
+c1f460e codex-t4-r1 Bulk discount: 10% off 10+ bags (codex-t4-r1)
+e4b387d weft-otto-seed demo: seed Northbound Coffee (otto run 1)
+--- tsc
+
+--- node --test
+✔ login with valid credentials returns a token that works for /api/me (71.41875ms)
+✔ login rejects a wrong password and missing fields (67.310083ms)
+✔ logout revokes the token (67.770125ms)
+✔ pages render and unknown routes 404 (33.103625ms)
+✔ calcTotal: no discount under 10 units (0.632833ms)
+✔ calcTotal: 10% off at exactly 10 units (0.090375ms)
+✔ calcTotal: 10% off above 10 units (0.062625ms)
+✔ day 0: roast day is 0 days old and fresh (0.528541ms)
+✔ day 14: last fresh day (0.158417ms)
+✔ day 15: past freshness (0.093084ms)
+✔ refreshSession revokes the old token and issues a new one for the same user (0.89725ms)
+✔ refreshSession returns undefined for an unknown token (0.188208ms)
+✔ refreshSession returns undefined for a revoked token (0.285083ms)
+✔ createSession issues a unique token bound to the user (0.8855ms)
+✔ revokeSession ends the session (0.1715ms)
+✔ getSession forgets a session once it expires (0.455666ms)
+✔ shipping is free when the cart total is $50 or more (0.494417ms)
+✔ shipping is unchanged when the cart total is under $50 (0.102083ms)
+✔ calcTotal sums price x qty (0.468041ms)
+✔ shippingFee is flat for a non-empty cart (0.078125ms)
+✔ every catalog price is positive (0.103875ms)
+✔ signup creates the account and signs the user in (38.210875ms)
+✔ signup reports UserErrors as 400 (34.03575ms)
+ℹ tests 23
+ℹ suites 0
+ℹ pass 23
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 337.703667
+
+--- src/auth/session.ts
+import { randomBytes } from "node:crypto";
+
+export type SessionOptions = { ttlMs: number };
+
+export type Session = { token: string; userId: string; createdAt: number; expiresAt: number };
+
+const sessions = new Map<string, Session>();
+
+/** Platform default session lifetime, used when no options are given. */
+export const DEFAULT_SESSION_OPTIONS: SessionOptions = { ttlMs: 60 * 60 * 1000 };
+
+/** Start a session for a user and return it (the token is the bearer credential). */
+export function createSession(userId: string, opts: SessionOptions): Session;
+/** @deprecated Pass SessionOptions; kept for callers that use the platform default lifetime. */
+export function createSession(userId: string): Session;
+export function createSession(userId: string, opts: SessionOptions = DEFAULT_SESSION_OPTIONS): Session {
+  const createdAt = Date.now();
+  const session: Session = {
+    token: randomBytes(24).toString("base64url"),
+    userId,
+    createdAt,
+    expiresAt: createdAt + opts.ttlMs,
+  };
+  sessions.set(session.token, session);
+  return session;
+}
+
+/** The live session for a token, or undefined (expired sessions are forgotten). */
+export function getSession(token: string): Session | undefined {
+  const session = sessions.get(token);
+  if (session && Date.now() >= session.expiresAt) {
+    sessions.delete(token);
+    return undefined;
+  }
+  return session;
+}
+
+export function revokeSession(token: string): boolean {
+  return sessions.delete(token);
+}
+
+/** Test helper: forget every session. */
+export function resetSessions(): void {
+  sessions.clear();
+}
+
+--- src/pricing.ts
+export type Item = { sku: string; price: number; qty: number };
+
+/** calcTotal: sum of price × quantity over the cart. shippingFee: shipping for the cart, in dollars. */
+export function calcTotal(items: Item[]): number {
+  const subtotal = items.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const units = items.reduce((n, item) => n + item.qty, 0);
+  return units >= 10 ? Math.round(subtotal * 90) / 100 : subtotal; // 10% bulk discount at 10+ units
+}
+export function shippingFee(items: Item[]): number { return calcTotal(items) >= 50 ? 0 : items.length ? 6 : 0; }

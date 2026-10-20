@@ -1,0 +1,3 @@
+gemini
+
+Task (freshness): add a new file src/freshness.ts exporting `daysSinceRoast(roastedOn: string, today: Date): number` (whole days since the ISO date roastedOn, e.g. "2026-10-12") and `isFresh(roastedOn: string, today: Date): boolean` (true for 14 days after roasting, inclusive). Add test/freshness.test.ts (node:test) covering day 0, day 14 and day 15. Only create those two files. Run `node --test`, then reply with a one-line summary. This checkout is coordinated by Weft with other agents working on the same codebase at the same time. If a Weft hook blocks an edit or reports a conflict, read its diagnostic and follow it. 

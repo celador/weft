@@ -1,0 +1,10 @@
+[lane t4 run-4 +10.6s] candidates [{"agent":"codex-t4-r4","harness":"codex","change":"I44ee8d995add460ac5352ab70a4ddab09d213de2","fork":"weft-weft-demo-site-t_23d314c0-1"},{"agent":"hermes-t4-r4","harness":"hermes","change":"I281abae11498e556d3e6e989fb9bd45beaf738b3","fork":"weft-weft-demo-site-t_23d314c0-2"}]
+[lane t4 run-4 +13.6s] agents_ready 
+[lane t4 run-4 +13.6s] working 
+[lane t4 run-4 +59.1s] pushed codex-t4-r4 {"sha":"902799ebacda299edd38d88b8736824e7a752075"}
+[lane t4 run-4 +60.5s] pushed hermes-t4-r4 {"sha":"dca53bdca7a433314f0e4d6a2b16c2de4ff4d7c9"}
+[lane t4 run-4 +60.5s] evidence 
+[lane t4 run-4 +192.6s] evidence_done 
+[lane t4 run-4 +196s] selecting {"workflow":"bestofn-weft-demo-site-t_23d314c0"}
+[lane t4 run-4 +201.6s] selected {"status":"complete","result":"landing","winner":"I281abae11498e556d3e6e989fb9bd45beaf738b3","approved_by":null,"ranking":[{"agent":"hermes-t4-r4","score":1176,"eligible":true,"layer":"none","reasons":["tests pass","rebase: none","churn 21","review pass 100","risk low"]},{"agent":"codex-t4-r4","score":1175,"eligible":true,"layer":"none","reasons":["tests pass","rebase: none","churn 25","review pass 100","risk medium"]}],"winner_agent":"hermes-t4-r4"}
+[lane t4 run-4 +216.3s] final {"status":"landed","winner":"hermes-t4-r4","harness":"hermes","approved_by":null,"land_op":"op-98ec8b92352f80d8eee43352","layer":"git","trunk":null,"at":"2026-10-20T12:50:26.857Z"}

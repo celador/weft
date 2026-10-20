@@ -1,0 +1,288 @@
+{
+  "run": 1,
+  "task": "t3",
+  "card": "r1-t3",
+  "title": "Remember me: refresh a member's session",
+  "harnesses": [
+    "claude",
+    "codex"
+  ],
+  "beat": "negotiation: asks the other agent for an overload instead of adapting",
+  "started_at": "2026-10-20T06:07:02.305Z",
+  "phase": "final",
+  "marks": {
+    "candidates": 11.2,
+    "agents_ready": 14.2,
+    "planning": 14.2,
+    "waiting_for_cue": 41.5,
+    "implementing": 41.7,
+    "pushed claude-t3-r1": 658.1,
+    "pushed codex-t3-r1": 658.1,
+    "evidence": 658.1,
+    "evidence_done": 684.5,
+    "selecting": 685,
+    "selected": 690.2,
+    "final": 691.2
+  },
+  "steps": [
+    {
+      "name": "candidates",
+      "at_s": 11.2,
+      "at": "2026-10-20T06:07:13.478Z",
+      "data": [
+        {
+          "agent": "claude-t3-r1",
+          "harness": "claude",
+          "change": "Ica98c3db4cae958a7c7fa2ca3258666d55eb18a8",
+          "fork": "weft-weft-demo-site-r1-t3-1"
+        },
+        {
+          "agent": "codex-t3-r1",
+          "harness": "codex",
+          "change": "I270f6f566c68c5be3b4d3fec48be43506488bf30",
+          "fork": "weft-weft-demo-site-r1-t3-2"
+        }
+      ]
+    },
+    {
+      "name": "agents_ready",
+      "at_s": 14.2,
+      "at": "2026-10-20T06:07:16.514Z"
+    },
+    {
+      "name": "planning",
+      "at_s": 14.2,
+      "at": "2026-10-20T06:07:16.515Z"
+    },
+    {
+      "name": "waiting_for_cue",
+      "at_s": 41.5,
+      "at": "2026-10-20T06:07:43.830Z"
+    },
+    {
+      "name": "implementing",
+      "at_s": 41.7,
+      "at": "2026-10-20T06:07:43.978Z",
+      "data": {
+        "seq": 95,
+        "agent": "claude-t1-r1",
+        "waited_s": 0
+      }
+    },
+    {
+      "name": "pushed claude-t3-r1",
+      "at_s": 658.1,
+      "at": "2026-10-20T06:18:00.402Z",
+      "data": {
+        "sha": "db317a5348083491f6a69aad0d51dbfd0f5da369"
+      }
+    },
+    {
+      "name": "pushed codex-t3-r1",
+      "at_s": 658.1,
+      "at": "2026-10-20T06:18:00.430Z",
+      "data": {
+        "ok": false,
+        "reason": "no changes"
+      }
+    },
+    {
+      "name": "evidence",
+      "at_s": 658.1,
+      "at": "2026-10-20T06:18:00.430Z"
+    },
+    {
+      "name": "evidence_done",
+      "at_s": 684.5,
+      "at": "2026-10-20T06:18:26.817Z"
+    },
+    {
+      "name": "selecting",
+      "at_s": 685,
+      "at": "2026-10-20T06:18:27.331Z",
+      "data": {
+        "workflow": "bestofn-weft-demo-site-r1-t3"
+      }
+    },
+    {
+      "name": "selected",
+      "at_s": 690.2,
+      "at": "2026-10-20T06:18:32.479Z",
+      "data": {
+        "status": "complete",
+        "result": "no_candidates",
+        "winner": null,
+        "approved_by": null,
+        "ranking": [
+          {
+            "agent": "claude-t3-r1",
+            "score": -1,
+            "eligible": false,
+            "layer": "git",
+            "reasons": [
+              "tests fail",
+              "rebase: git",
+              "churn 32"
+            ]
+          },
+          {
+            "agent": "codex-t3-r1",
+            "score": -1,
+            "eligible": false,
+            "layer": "git",
+            "reasons": [
+              "revision missing",
+              "no tests",
+              "rebase: git"
+            ]
+          }
+        ],
+        "winner_agent": null
+      }
+    },
+    {
+      "name": "final",
+      "at_s": 691.2,
+      "at": "2026-10-20T06:18:33.508Z",
+      "data": {
+        "status": "no_candidates",
+        "winner": null,
+        "harness": null,
+        "approved_by": null,
+        "land_op": null,
+        "layer": null,
+        "trunk": null,
+        "at": "2026-10-20T06:18:33.508Z"
+      }
+    }
+  ],
+  "pid": 41615,
+  "first_seq": 83,
+  "agents": [
+    {
+      "agent": "claude-t3-r1",
+      "harness": "claude",
+      "change": "Ica98c3db4cae958a7c7fa2ca3258666d55eb18a8",
+      "fork": "weft-weft-demo-site-r1-t3-1",
+      "turns": [
+        {
+          "name": "plan",
+          "code": 0,
+          "ms": 17256
+        },
+        {
+          "name": "implement",
+          "code": 0,
+          "ms": 49954
+        }
+      ],
+      "push": {
+        "ok": true,
+        "sha": "db317a5348083491f6a69aad0d51dbfd0f5da369"
+      }
+    },
+    {
+      "agent": "codex-t3-r1",
+      "harness": "codex",
+      "change": "I270f6f566c68c5be3b4d3fec48be43506488bf30",
+      "fork": "weft-weft-demo-site-r1-t3-2",
+      "turns": [
+        {
+          "name": "plan",
+          "code": 0,
+          "ms": 26903
+        },
+        {
+          "name": "implement",
+          "code": 0,
+          "ms": 614847
+        }
+      ],
+      "push": {
+        "ok": false,
+        "reason": "no changes"
+      }
+    }
+  ],
+  "cue": {
+    "seq": 95,
+    "agent": "claude-t1-r1",
+    "waited_s": 0
+  },
+  "evidence": {
+    "claude-t3-r1": {
+      "revision": {
+        "status": "processed",
+        "layer": "git"
+      },
+      "rows": [
+        {
+          "kind": "rebase",
+          "status": "pass",
+          "data": {
+            "status": "clean",
+            "layer": "git"
+          }
+        },
+        {
+          "kind": "test",
+          "status": "fail",
+          "data": {
+            "status": "fail",
+            "summary": {
+              "pass": 17,
+              "fail": 2
+            }
+          }
+        }
+      ],
+      "waited_s": 26
+    }
+  },
+  "selection": {
+    "workflow": "bestofn-weft-demo-site-r1-t3",
+    "n": 1,
+    "risk": "low",
+    "status": "complete",
+    "result": "no_candidates",
+    "winner": null,
+    "approved_by": null,
+    "ranking": [
+      {
+        "agent": "claude-t3-r1",
+        "score": -1,
+        "eligible": false,
+        "layer": "git",
+        "reasons": [
+          "tests fail",
+          "rebase: git",
+          "churn 32"
+        ]
+      },
+      {
+        "agent": "codex-t3-r1",
+        "score": -1,
+        "eligible": false,
+        "layer": "git",
+        "reasons": [
+          "revision missing",
+          "no tests",
+          "rebase: git"
+        ]
+      }
+    ],
+    "winner_agent": null
+  },
+  "final": {
+    "status": "no_candidates",
+    "winner": null,
+    "harness": null,
+    "approved_by": null,
+    "land_op": null,
+    "layer": null,
+    "trunk": null,
+    "at": "2026-10-20T06:18:33.508Z"
+  },
+  "finished_at": "2026-10-20T06:18:33.508Z",
+  "duration_s": 691.2
+}

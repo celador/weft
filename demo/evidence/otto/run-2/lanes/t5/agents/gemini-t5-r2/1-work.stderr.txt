@@ -1,0 +1,38 @@
+Warning: 256-color support not detected. Using a terminal with at least 256-color support is recommended for a better visual experience.
+YOLO mode is enabled. All tool calls will be automatically approved.
+YOLO mode is enabled. All tool calls will be automatically approved.
+Attempt 1 failed with status 503. Retrying with backoff... _ApiError: {"error":{"message":"{\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\n    \"status\": \"UNAVAILABLE\"\n  }\n}\n","code":503,"status":"Service Unavailable"}}
+    at throwErrorIfNotOK (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:267862:24)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:267625:7
+    at async Models.generateContentStream (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:268721:16)
+    at async file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:311569:19
+    at async file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:288130:23
+    at async retryWithBackoff (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:308151:23)
+    at async GeminiChat.makeApiCallAndProcessStream (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:332718:28)
+    at async GeminiChat.streamWithRetries (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:332471:29)
+    at async Turn.run (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:333393:24) {
+  status: 503
+}
+Error when talking to Gemini API Full report available at: /var/folders/h7/fpctn9ss3d72g2gn83vfhfdr0000gn/T/gemini-client-error-Turn.run-sendMessageStream-2026-10-20T06-31-40-667Z.json TerminalQuotaError: You have exhausted your daily quota on this model.
+    at classifyGoogleError (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:307456:16)
+    at retryWithBackoff (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:308174:29)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async GeminiChat.makeApiCallAndProcessStream (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:332718:28)
+    at async GeminiChat.streamWithRetries (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:332471:29)
+    at async Turn.run (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:333393:24)
+    at async GeminiClient.processTurn (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:347067:22)
+    at async GeminiClient.sendMessageStream (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:347164:14)
+    at async file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/gemini-J6X2T2ZI.js:12198:26
+    at async main (file:///usr/local/lib/node_modules/@google/gemini-cli/bundle/gemini-J6X2T2ZI.js:17726:5) {
+  cause: {
+    code: 429,
+    message: 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n' +
+      '* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.8-flash\n' +
+      'Please retry in 28m19.374297855s.',
+    details: [ [Object], [Object], [Object] ]
+  },
+  retryDelayMs: undefined,
+  reason: undefined,
+  status: 429
+}

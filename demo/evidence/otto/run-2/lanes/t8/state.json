@@ -1,0 +1,197 @@
+{
+  "run": 2,
+  "task": "t8",
+  "card": "r2-t8",
+  "title": "Quote API: price by the gram (?unit=g)",
+  "harnesses": [
+    "planted"
+  ],
+  "beat": "planted bug: lands, errors in production, Weft reverts it and reopens the card",
+  "started_at": "2026-10-20T06:53:02.087Z",
+  "phase": "final",
+  "marks": {
+    "preflight": 0.4,
+    "candidate": 6.9,
+    "planted_pushed": 54.2,
+    "processed": 164,
+    "landed": 183.1,
+    "production_broken": 188.3,
+    "production_traffic": 188.7,
+    "revert_started": 199.3,
+    "reverted": 215,
+    "production_healed": 215.1,
+    "final": 215.8
+  },
+  "steps": [
+    {
+      "name": "preflight",
+      "at_s": 0.4,
+      "at": "2026-10-20T06:53:02.502Z",
+      "data": {
+        "quote": {
+          "status": 200,
+          "ms": 413,
+          "body": "{\"sku\":\"house-blend\",\"qty\":2,\"total\":32}",
+          "waited_s": 0.414
+        }
+      }
+    },
+    {
+      "name": "candidate",
+      "at_s": 6.9,
+      "at": "2026-10-20T06:53:09.027Z",
+      "data": {
+        "agent": "planted-t8-r2",
+        "harness": "planted",
+        "change": "I8a1d1f1241ea822f17ddcfc3cc7e30878da4ca2f",
+        "fork": "weft-weft-demo-site-r2-t8-1"
+      }
+    },
+    {
+      "name": "planted_pushed",
+      "at_s": 54.2,
+      "at": "2026-10-20T06:53:56.330Z",
+      "data": {
+        "sha": "8b741f5ae220340504b4ec65acbfbe298e3db934",
+        "diff": [
+          "+      const unit = url.searchParams.get(\"unit\")!.toLowerCase(); // throws when ?unit is absent",
+          "+      if (unit === \"g\") return Response.json({ sku, qty, total: calcTotal([{ sku, price: priceOf(sku) / 340, qty }]) });"
+        ]
+      }
+    },
+    {
+      "name": "processed",
+      "at_s": 164,
+      "at": "2026-10-20T06:55:46.074Z",
+      "data": {
+        "revision": "processed"
+      }
+    },
+    {
+      "name": "landed",
+      "at_s": 183.1,
+      "at": "2026-10-20T06:56:05.211Z",
+      "data": {
+        "op": "op-a8320fc0339db7da6053659a",
+        "workflow": "land-I8a1d1f1241ea-1792479346233"
+      }
+    },
+    {
+      "name": "production_broken",
+      "at_s": 188.3,
+      "at": "2026-10-20T06:56:10.401Z",
+      "data": {
+        "land_to_broken_s": 5.19,
+        "sample": {
+          "status": 500,
+          "ms": 98,
+          "body": "<!DOCTYPE html>\n<!--[if lt IE 7]> <html class=\"no-js ie6 oldie\" lang=\"en-US\"> <![endif]-->\n<!--[if IE 7]>    <html class=\"no-js ie7 oldie\" lang=\"en-US\"> <![endif]-->\n<!--[if IE 8]>    <html class=\"no-",
+          "waited_s": 5.189
+        }
+      }
+    },
+    {
+      "name": "production_traffic",
+      "at_s": 188.7,
+      "at": "2026-10-20T06:56:10.740Z",
+      "data": {
+        "statuses": [
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          500,
+          500
+        ]
+      }
+    },
+    {
+      "name": "revert_started",
+      "at_s": 199.3,
+      "at": "2026-10-20T06:56:21.356Z",
+      "data": {
+        "workflow": "prod-revert-op-a8320fc0339db7da6053659a",
+        "land_to_trigger_s": 16.145
+      }
+    },
+    {
+      "name": "reverted",
+      "at_s": 215,
+      "at": "2026-10-20T06:56:37.113Z",
+      "data": {
+        "output": {
+          "status": "reverted",
+          "op_id": "op-04eeffb838e2c7cb939d4645",
+          "reverts_op_id": "op-a8320fc0339db7da6053659a",
+          "seq": 459,
+          "sha": "5568f7e8ca9ced204d5f67870f5d9b37e57791b5"
+        }
+      }
+    },
+    {
+      "name": "production_healed",
+      "at_s": 215.1,
+      "at": "2026-10-20T06:56:37.218Z",
+      "data": {
+        "land_to_healed_s": 32.007,
+        "sample": {
+          "status": 200,
+          "ms": 103,
+          "body": "{\"sku\":\"house-blend\",\"qty\":2,\"total\":32}",
+          "waited_s": 0.104
+        }
+      }
+    },
+    {
+      "name": "final",
+      "at_s": 215.8,
+      "at": "2026-10-20T06:56:37.847Z",
+      "data": {
+        "status": "reverted",
+        "land_op": "op-a8320fc0339db7da6053659a",
+        "revert_op": "op-04eeffb838e2c7cb939d4645",
+        "change_status": "reverted",
+        "weft_task_status": "open",
+        "stack": "",
+        "timings": {
+          "land_to_broken_s": 5.19,
+          "land_to_healed_s": 32.635
+        },
+        "at": "2026-10-20T06:56:37.847Z"
+      }
+    }
+  ],
+  "pid": 39244,
+  "agents": [
+    {
+      "agent": "planted-t8-r2",
+      "harness": "planted",
+      "change": "I8a1d1f1241ea822f17ddcfc3cc7e30878da4ca2f",
+      "fork": "weft-weft-demo-site-r2-t8-1"
+    }
+  ],
+  "push_events_replayed": [
+    {
+      "agent": "planted-t8-r2",
+      "sha": "8b741f5ae220340504b4ec65acbfbe298e3db934",
+      "after_push_s": 91
+    }
+  ],
+  "final": {
+    "status": "reverted",
+    "land_op": "op-a8320fc0339db7da6053659a",
+    "revert_op": "op-04eeffb838e2c7cb939d4645",
+    "change_status": "reverted",
+    "weft_task_status": "open",
+    "stack": "",
+    "timings": {
+      "land_to_broken_s": 5.19,
+      "land_to_healed_s": 32.635
+    },
+    "at": "2026-10-20T06:56:37.847Z"
+  },
+  "finished_at": "2026-10-20T06:56:37.847Z",
+  "duration_s": 215.8
+}

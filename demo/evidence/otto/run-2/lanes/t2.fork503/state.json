@@ -1,0 +1,35 @@
+{
+  "run": 2,
+  "task": "t2",
+  "card": "r2-t2",
+  "title": "Gift signup: create the account and sign in",
+  "harnesses": [
+    "claude",
+    "opencode",
+    "gemini"
+  ],
+  "beat": "stale call caught mid-edit (squiggle) and rerouted",
+  "started_at": "2026-10-20T06:31:16.656Z",
+  "phase": "final",
+  "marks": {
+    "final": 6.3
+  },
+  "steps": [
+    {
+      "name": "final",
+      "at_s": 6.3,
+      "at": "2026-10-20T06:31:22.992Z",
+      "data": {
+        "status": "error",
+        "error": "POST /v1/repos/weft-demo-site/tasks/r2-t2/candidates -> 503: {\"type\":\"error\",\"error\":{\"code\":\"unavailable\",\"message\":\"fork weft-demo-site -> weft-weft-demo-site-r2-t2-1 failed: ArtifactsError: An internal error occurred.\",\"retryable\":true}}"
+      }
+    }
+  ],
+  "pid": 45491,
+  "first_seq": 270,
+  "error": "POST /v1/repos/weft-demo-site/tasks/r2-t2/candidates -> 503: {\"type\":\"error\",\"error\":{\"code\":\"unavailable\",\"message\":\"fork weft-demo-site -> weft-weft-demo-site-r2-t2-1 failed: ArtifactsError: An internal error occurred.\",\"retryable\":true}}",
+  "final": {
+    "status": "error",
+    "error": "POST /v1/repos/weft-demo-site/tasks/r2-t2/candidates -> 503: {\"type\":\"error\",\"error\":{\"code\":\"unavailable\",\"message\":\"fork weft-demo-site -> weft-weft-demo-site-r2-t2-1 failed: ArtifactsError: An internal error occurred.\",\"retryable\":true}}"
+  }
+}

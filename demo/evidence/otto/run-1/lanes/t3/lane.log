@@ -1,0 +1,12 @@
+[lane t3 run-1 +11.2s] candidates [{"agent":"claude-t3-r1","harness":"claude","change":"Ica98c3db4cae958a7c7fa2ca3258666d55eb18a8","fork":"weft-weft-demo-site-r1-t3-1"},{"agent":"codex-t3-r1","harness":"codex","change":"I270f6f566c68c5be3b4d3fec48be43506488bf30","fork":"weft-weft-demo-site-r1-t3-2"}]
+[lane t3 run-1 +14.2s] agents_ready 
+[lane t3 run-1 +14.2s] planning 
+[lane t3 run-1 +41.5s] waiting_for_cue 
+[lane t3 run-1 +41.7s] implementing {"seq":95,"agent":"claude-t1-r1","waited_s":0}
+[lane t3 run-1 +658.1s] pushed claude-t3-r1 {"sha":"db317a5348083491f6a69aad0d51dbfd0f5da369"}
+[lane t3 run-1 +658.1s] pushed codex-t3-r1 {"ok":false,"reason":"no changes"}
+[lane t3 run-1 +658.1s] evidence 
+[lane t3 run-1 +684.5s] evidence_done 
+[lane t3 run-1 +685s] selecting {"workflow":"bestofn-weft-demo-site-r1-t3"}
+[lane t3 run-1 +690.2s] selected {"status":"complete","result":"no_candidates","winner":null,"approved_by":null,"ranking":[{"agent":"claude-t3-r1","score":-1,"eligible":false,"layer":"git","reasons":["tests fail","rebase: git","churn 32"]},{"agent":"codex-t3-r1","score":-1,"eligible":false,"layer":"git","reasons":["revision missing","no tests","rebase: git"]}],"winner_agent":null}
+[lane t3 run-1 +691.2s] final {"status":"no_candidates","winner":null,"harness":null,"approved_by":null,"land_op":null,"layer":null,"trunk":null,"at":"2026-10-20T06:18:33.508Z"}

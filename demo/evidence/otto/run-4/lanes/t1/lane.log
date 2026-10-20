@@ -1,0 +1,13 @@
+[lane t1 run-4 +11.3s] candidates [{"agent":"claude-t1-r4","harness":"claude","change":"I58baafbf21d4fe993166aaab016d5cfbadea7d72","fork":"weft-weft-demo-site-t_a9c85828-1"},{"agent":"codex-t1-r4","harness":"codex","change":"I4978dcdc8a7fd5a1140535dc0f760f7b83a36c92","fork":"weft-weft-demo-site-t_a9c85828-2"}]
+[lane t1 run-4 +14s] agents_ready 
+[lane t1 run-4 +14s] working 
+[lane t1 run-4 +64.8s] answering 
+[lane t1 run-4 +73.2s] resume_for_proposal {"owner":"codex-t1-r4","proposal_seq":655,"from":"claude-t3-r4"}
+[lane t1 run-4 +234.7s] pushed claude-t1-r4 {"sha":"94779b546b8b56e06549b4a87f4f60d5ae2ccee8"}
+[lane t1 run-4 +236.1s] pushed codex-t1-r4 {"sha":"91f6be55477b89c6eecf4f02fc6a174bef5b3b24"}
+[lane t1 run-4 +236.1s] evidence 
+[lane t1 run-4 +278.8s] evidence_done 
+[lane t1 run-4 +279.3s] selecting {"workflow":"bestofn-weft-demo-site-t_a9c85828"}
+[lane t1 run-4 +295.7s] awaiting_approval {"since":"2026-10-20T12:51:41.721Z","ranking":[{"agent":"claude-t1-r4","harness":"claude","change":"I58baafbf21d4fe993166aaab016d5cfbadea7d72","score":1151,"eligible":true},{"agent":"codex-t1-r4","harness":"codex","change":"I4978dcdc8a7fd5a1140535dc0f760f7b83a36c92","score":1152,"eligible":true}],"suggest":{"agent":"codex-t1-r4","change":"I4978dcdc8a7fd5a1140535dc0f760f7b83a36c92","why":"accepted the overload another card relies on"}}
+[lane t1 run-4 +463.7s] selected {"status":"complete","result":"landing","winner":"I4978dcdc8a7fd5a1140535dc0f760f7b83a36c92","approved_by":"john","ranking":[{"agent":"codex-t1-r4","score":1152,"eligible":true,"layer":"git","reasons":["tests pass","rebase: git","churn 41","review pass 100","risk high"]},{"agent":"claude-t1-r4","score":1151,"eligible":true,"layer":"git","reasons":["tests pass","rebase: git","churn 45","review pass 100","risk high"]}],"winner_agent":"codex-t1-r4"}
+[lane t1 run-4 +477.3s] final {"status":"landed","winner":"codex-t1-r4","harness":"codex","approved_by":"john","land_op":"op-c5a82671aaf8a6f315d5de9e","layer":"git","trunk":null,"at":"2026-10-20T12:54:43.400Z"}

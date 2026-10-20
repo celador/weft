@@ -1,0 +1,13 @@
+[lane t6 run-2 +15.2s] candidates [{"agent":"claude-t6-r2","harness":"claude","change":"I311b8640a1c463cac78680adaa5acf57d988a9f3","fork":"weft-weft-demo-site-r2-t6-1"},{"agent":"codex-t6-r2","harness":"codex","change":"I4fe1028c20bd8958ca99932abc81023caac24ca6","fork":"weft-weft-demo-site-r2-t6-2"},{"agent":"hermes-t6-r2","harness":"hermes","change":"Ida5df10982693c3792071ab8bf64398c5bbf16f4","fork":"weft-weft-demo-site-r2-t6-3"}]
+[lane t6 run-2 +19.3s] agents_ready 
+[lane t6 run-2 +19.3s] working 
+[lane t6 run-2 +58.3s] pushed claude-t6-r2 {"sha":"8b3b8841f35c3f84d8dc59e8cd20960b5c409673"}
+[lane t6 run-2 +59.4s] pushed codex-t6-r2 {"sha":"027b6a5424b84dbd7d6f49111978286732536297"}
+[lane t6 run-2 +60.6s] pushed hermes-t6-r2 {"sha":"7ef6b42807a699951f17742eeae4b77658b4ff94"}
+[lane t6 run-2 +60.6s] evidence 
+[lane t6 run-2 +197.9s] evidence_done 
+[lane t6 run-2 +198.5s] selecting {"workflow":"bestofn-weft-demo-site-r2-t6"}
+[lane t6 run-2 +209.8s] awaiting_approval {"since":"2026-10-20T06:34:46.611Z","ranking":[{"agent":"codex-t6-r2","harness":"codex","change":"I4fe1028c20bd8958ca99932abc81023caac24ca6","score":1180,"eligible":true},{"agent":"hermes-t6-r2","harness":"hermes","change":"Ida5df10982693c3792071ab8bf64398c5bbf16f4","score":1160,"eligible":true}],"suggest":{"agent":"codex-t6-r2","change":"I4fe1028c20bd8958ca99932abc81023caac24ca6","why":"highest-ranked eligible"}}
+[lane t6 run-2 +274.2s] approved_by_fallback {"by":"scripted fallback (John's human token, same action as Otto's Approve)","change":"I4fe1028c20bd8958ca99932abc81023caac24ca6","agent":"codex-t6-r2","forwarded_to":"bestofn-weft-demo-site-r2-t6","at":"2026-10-20T06:35:51.007Z"}
+[lane t6 run-2 +278.4s] selected {"status":"complete","result":"landing","winner":"I4fe1028c20bd8958ca99932abc81023caac24ca6","approved_by":"john","ranking":[{"agent":"codex-t6-r2","score":1180,"eligible":true,"layer":"none","reasons":["tests pass","rebase: none","churn 2","review pass 100","risk low"]},{"agent":"claude-t6-r2","score":1160,"eligible":true,"layer":"git","reasons":["tests pass","rebase: git","churn 2","review pass 100","risk low"]},{"agent":"hermes-t6-r2","score":1160,"eligible":true,"layer":"git","reasons":["tests pass","rebase: git","churn 2","review pass 100","risk low"]}],"winner_agent":"codex-t6-r2"}
+[lane t6 run-2 +301.9s] final {"status":"landed","winner":"codex-t6-r2","harness":"codex","approved_by":"scripted fallback (John's human token, same action as Otto's Approve)","land_op":"op-e19ac3931b866bee7f35ebfa","layer":"git","trunk":null,"at":"2026-10-20T06:36:18.754Z"}

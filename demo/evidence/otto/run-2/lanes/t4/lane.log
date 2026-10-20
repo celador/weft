@@ -1,0 +1,12 @@
+[lane t4 run-2 +10.9s] candidates [{"agent":"codex-t4-r2","harness":"codex","change":"Ief9a5440e0a71431bdcc4a3627f814137d73546c","fork":"weft-weft-demo-site-r2-t4-1"},{"agent":"hermes-t4-r2","harness":"hermes","change":"Ie64810d8d9326b4982a3b723f5eea2993fd7f6c8","fork":"weft-weft-demo-site-r2-t4-2"}]
+[lane t4 run-2 +13.4s] agents_ready 
+[lane t4 run-2 +13.4s] working 
+[lane t4 run-2 +58.7s] pushed codex-t4-r2 {"sha":"5c3a04ad3e10297f5387e1ec80a5d10f41ac41b6"}
+[lane t4 run-2 +59.5s] pushed hermes-t4-r2 {"sha":"343ce0c4113cd13bc57c1ad96b1f517e78a65d4c"}
+[lane t4 run-2 +59.5s] evidence 
+[lane t4 run-2 +191.1s] evidence_done 
+[lane t4 run-2 +191.7s] selecting {"workflow":"bestofn-weft-demo-site-r2-t4"}
+[lane t4 run-2 +202.7s] awaiting_approval {"since":"2026-10-20T06:34:39.460Z","ranking":[{"agent":"hermes-t4-r2","harness":"hermes","change":"Ie64810d8d9326b4982a3b723f5eea2993fd7f6c8","score":1155,"eligible":true}],"suggest":{"agent":"hermes-t4-r2","change":"Ie64810d8d9326b4982a3b723f5eea2993fd7f6c8","why":"highest-ranked eligible"}}
+[lane t4 run-2 +265s] approved_by_fallback {"by":"scripted fallback (John's human token, same action as Otto's Approve)","change":"Ie64810d8d9326b4982a3b723f5eea2993fd7f6c8","agent":"hermes-t4-r2","forwarded_to":"bestofn-weft-demo-site-r2-t4","at":"2026-10-20T06:35:41.777Z"}
+[lane t4 run-2 +269.5s] selected {"status":"complete","result":"landing","winner":"Ie64810d8d9326b4982a3b723f5eea2993fd7f6c8","approved_by":"john","ranking":[{"agent":"codex-t4-r2","score":1175,"eligible":true,"layer":"none","reasons":["tests pass","rebase: none","churn 25","review pass 100","risk medium"]},{"agent":"hermes-t4-r2","score":1155,"eligible":true,"layer":"git","reasons":["tests pass","rebase: git","churn 24","review pass 100","risk low"]}],"winner_agent":"hermes-t4-r2"}
+[lane t4 run-2 +283.7s] final {"status":"landed","winner":"hermes-t4-r2","harness":"hermes","approved_by":"scripted fallback (John's human token, same action as Otto's Approve)","land_op":"op-e85cdba78c15b2a20bfcee91","layer":"mergiraf","trunk":null,"at":"2026-10-20T06:36:00.412Z"}

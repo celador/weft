@@ -1,0 +1,47 @@
+{
+  "head": "5568f7e8ca9ced204d5f67870f5d9b37e57791b5",
+  "log": [
+    "5568f7e weft-revert Revert change I8a1d1f1241ea822f17ddcfc3cc7e30878da4ca2f",
+    "8b741f5 planted-t8-r2 quote: price by the gram (?unit=g)",
+    "abbc153 opencode-t2-r2 Gift signup: create the account and sign in (opencode-t2-r2)",
+    "52ba16e claude-t1-r2 Member sessions expire after an hour (claude-t1-r2)",
+    "3016f5e claude-t3-r2 Remember me: refresh a member's session (claude-t3-r2)",
+    "8626132 codex-t6-r2 Add Ethiopia Guji to the menu (codex-t6-r2)",
+    "38fa5f0 hermes-t4-r2 Bulk discount: 10% off 10+ bags (hermes-t4-r2)",
+    "a1909f8 claude-t5-r2 Free shipping on orders of $50+ (claude-t5-r2)",
+    "1e93dff opencode-t7-r2 Roast-date freshness helper (opencode-t7-r2)",
+    "778ff73 weft-otto-seed demo: seed Northbound Coffee (otto run 2)",
+    "f9a3d72 weft-revert Revert change Ib3fe22557d8bb12854a7f336bd2f1c923d0ca259",
+    "96ac8b9 weft-revert Revert change Ie994b7adaddaf96075eaa3d67e00ce3a7b462d54",
+    "a3aece6 planted-t8-r1 quote: price by the gram (?unit=g)",
+    "00a79f7 gemini-t2-r1 Gift signup: create the account and sign in (gemini-t2-r1)",
+    "7a8c5f9 gemini-t7-r1 Roast-date freshness helper (gemini-t7-r1)",
+    "fe961d9 claude-t5-r1 Free shipping on orders of $50+ (claude-t5-r1)",
+    "9b16e8e claude-t6-r1 Add Ethiopia Guji to the menu (claude-t6-r1)",
+    "bab3b0a codex-t1-r1 Member sessions expire after an hour (codex-t1-r1)",
+    "c1f460e codex-t4-r1 Bulk discount: 10% off 10+ bags (codex-t4-r1)",
+    "e4b387d weft-otto-seed demo: seed Northbound Coffee (otto run 1)"
+  ],
+  "tsc": {
+    "exit": 0,
+    "out": [
+      ""
+    ]
+  },
+  "test": {
+    "exit": 0,
+    "summary": [
+      "ℹ tests 23",
+      "ℹ pass 23",
+      "ℹ fail 0"
+    ]
+  },
+  "files": {
+    "src/auth/session.ts": "import { randomBytes } from \"node:crypto\";\n\nexport type SessionOptions = { ttlMs: number };\n\nexport type Session = { token: string; userId: string; createdAt: number; expiresAt: number };\n\nconst sessions = new Map<string, Session>();\n\n/** Platform default session lifetime, used when no options are given. */\nexport const DEFAULT_SESSION_OPTIONS: SessionOptions = { ttlMs: 60 * 60 * 1000 };\n\n/** Start a session for a user and return it (the token is the bearer credential). */\nexport function createSession(userId: string, opts: SessionOptions): Session;\n/** @deprecated Pass SessionOptions; kept for callers that use the platform default lifetime. */\nexport function createSession(userId: string): Session;\nexport function createSession(userId: string, opts: SessionOptions = DEFAULT_SESSION_OPTIONS): Session {\n  const createdAt = Date.now();\n  const session: Session = {\n    token: randomBytes(24).toString(\"base64url\"),\n    userId,\n    createdAt,\n    expiresAt: createdAt + opts.ttlMs,\n  };\n  sessions.set(session.token, session);\n  return session;\n}\n\n/** The live session for a token, or undefined (expired sessions are forgotten). */\nexport function getSession(token: string): Session | undefined {\n  const session = sessions.get(token);\n  if (session && Date.now() >= session.expiresAt) {\n    sessions.delete(token);\n    return undefined;\n  }\n  return session;\n}\n\nexport function revokeSession(token: string): boolean {\n  return sessions.delete(token);\n}\n\n/** Test helper: forget every session. */\nexport function resetSessions(): void {\n  sessions.clear();\n}\n",
+    "src/auth/refresh.ts": "import { createSession, getSession, revokeSession, type Session } from \"./session.ts\";\n\n/** Swap a live session for a fresh one for the same user; undefined if the token isn't live. */\nexport function refreshSession(token: string): Session | undefined {\n  const current = getSession(token);\n  if (!current) return undefined;\n  revokeSession(current.token);\n  return createSession(current.userId);\n}\n",
+    "src/pricing.ts": "export type Item = { sku: string; price: number; qty: number };\n\n/** calcTotal: sum of price × quantity over the cart. shippingFee: shipping for the cart, in dollars. */\nexport function calcTotal(items: Item[]): number {\n  const subtotal = items.reduce((sum, item) => sum + item.price * item.qty, 0);\n  const units = items.reduce((n, item) => n + item.qty, 0);\n  return units >= 10 ? Math.round(subtotal * 90) / 100 : subtotal; // 10% bulk discount at 10+ units\n}\nexport function shippingFee(items: Item[]): number { return calcTotal(items) >= 50 ? 0 : items.length ? 6 : 0; }\n",
+    "src/freshness.ts": true,
+    "public/menu.html#guji": true,
+    "src/worker.ts": "import { calcTotal } from \"./pricing.ts\";\nimport { PRICES, priceOf } from \"./catalog.ts\";\n\ntype Env = { ASSETS: { fetch(request: Request): Promise<Response> } };\n\n/** Northbound Coffee: the storefront (static assets) plus the quote API. */\nexport default {\n  async fetch(request: Request, env: Env): Promise<Response> {\n    const url = new URL(request.url);\n    if (url.pathname === \"/health\") return Response.json({ ok: true });\n    if (url.pathname === \"/quote\") {\n      const sku = url.searchParams.get(\"sku\") ?? \"house-blend\";\n      const qty = Number(url.searchParams.get(\"qty\") ?? \"1\");\n      if (!(sku in PRICES)) return Response.json({ error: `unknown sku ${sku}` }, { status: 404 });\n      return Response.json({ sku, qty, total: calcTotal([{ sku, price: priceOf(sku), qty }]) });\n    }\n    return env.ASSETS.fetch(request);\n  },\n};\n"
+  }
+}

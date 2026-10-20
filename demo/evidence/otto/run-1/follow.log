@@ -1,0 +1,40 @@
+[2026-10-20T06:04:24.210Z] trunk e4b387d83 demo: seed Northbound Coffee (otto run 1)
+  deploy exit 0 Deployed weft-demo-site triggers (1.27 sec) | Current Version ID: a1078897-7c3e-4cd0-846d-476a5cef2543
+[2026-10-20T06:10:06.594Z] trunk c1f460e04 Bulk discount: 10% off 10+ bags (codex-t4-r1)
+  deploy exit 0 Deployed weft-demo-site triggers (1.76 sec) | Current Version ID: 8cd77d62-c0c2-4bb4-9aff-f9143c6d2aed
+[2026-10-20T06:10:33.921Z] trunk bab3b0a32 Member sessions expire after an hour (codex-t1-r1)
+  deploy exit 0 Deployed weft-demo-site triggers (1.56 sec) | Current Version ID: 995141d8-f3c8-4f1d-a161-62a68c04dbc5
+[2026-10-20T06:10:59.286Z] trunk 9b16e8e38 Add Ethiopia Guji to the menu (claude-t6-r1)
+  deploy exit 0 Deployed weft-demo-site triggers (0.97 sec) | Current Version ID: eed96494-9ac3-4a08-8c19-1e9bc9c8688d
+[2026-10-20T06:11:19.370Z] trunk fe961d95a Free shipping on orders of $50+ (claude-t5-r1)
+  deploy exit 0 Deployed weft-demo-site triggers (1.06 sec) | Current Version ID: 12181a13-9fd8-42c6-b458-358e3f4faa35
+[2026-10-20T06:11:43.916Z] trunk 7a8c5f994 Roast-date freshness helper (gemini-t7-r1)
+  deploy exit 0 Deployed weft-demo-site triggers (1.36 sec) | Current Version ID: b8121ff4-735c-4a90-86f4-abde7c35b898
+[2026-10-20T06:26:36.256Z] trunk 00a79f79a Gift signup: create the account and sign in (gemini-t2-r1)
+  deploy exit 0 Deployed weft-demo-site triggers (1.25 sec) | Current Version ID: e5ddb339-f3fb-4087-8782-2e3fac699d47
+[2026-10-20T06:29:55.253Z] trunk a3aece699 quote: price by the gram (?unit=g)
+  deploy exit 0 Deployed weft-demo-site triggers (1.16 sec) | Current Version ID: f4127ed0-c85f-48c9-97d5-354cb3ee2587
+[2026-10-20T06:30:28.391Z] trunk 96ac8b927 Revert change Ie994b7adaddaf96075eaa3d67e00ce3a7b462d54
+  deploy exit 0 Deployed weft-demo-site triggers (2.35 sec) | Current Version ID: cfa40189-cd51-4405-9d00-4adf64f23111
+[2026-10-20T06:30:49.128Z] trunk f9a3d7243 Revert change Ib3fe22557d8bb12854a7f336bd2f1c923d0ca259
+  deploy exit 0 Deployed weft-demo-site triggers (0.90 sec) | Current Version ID: f43e3879-5f42-44a5-a044-e8c7c21cf4dd
+[2026-10-20T06:31:20.838Z] trunk 778ff73d1 demo: seed Northbound Coffee (otto run 2)
+  deploy exit 0 Deployed weft-demo-site triggers (1.11 sec) | Current Version ID: 49ea98a3-86b7-4d0b-8a39-6c4082d80846
+[2026-10-20T06:34:00.655Z] trunk 1e93dff52 Roast-date freshness helper (opencode-t7-r2)
+  deploy exit 0 Deployed weft-demo-site triggers (0.87 sec) | Current Version ID: d4645b25-1d75-4c9b-9f27-9120bd1ad01e
+[2026-10-20T06:34:19.275Z] trunk a1909f86e Free shipping on orders of $50+ (claude-t5-r2)
+  deploy exit 0 Deployed weft-demo-site triggers (1.06 sec) | Current Version ID: 63384c78-ba7e-4228-a816-2bbb03b3e534
+[2026-10-20T06:35:51.810Z] trunk 38fa5f0f7 Bulk discount: 10% off 10+ bags (hermes-t4-r2)
+  deploy exit 0 Deployed weft-demo-site triggers (1.11 sec) | Current Version ID: e5b19df8-b57c-4fe3-a9c9-03602559ebeb
+[2026-10-20T06:36:10.303Z] trunk 862613202 Add Ethiopia Guji to the menu (codex-t6-r2)
+  deploy exit 0 Deployed weft-demo-site triggers (0.88 sec) | Current Version ID: 31f269e4-871c-440e-be1b-68d9a0bc919a
+[2026-10-20T06:39:01.703Z] trunk 3016f5e52 Remember me: refresh a member's session (claude-t3-r2)
+  deploy exit 0 Deployed weft-demo-site triggers (1.73 sec) | Current Version ID: 4bd14491-372e-47d7-9ea9-4d885e2d5cf7
+[2026-10-20T06:41:33.731Z] trunk 52ba16e35 Member sessions expire after an hour (claude-t1-r2)
+  deploy exit 0 Deployed weft-demo-site triggers (1.22 sec) | Current Version ID: 20df5029-d142-474c-a8a8-a29462f4f9c7
+[2026-10-20T06:52:44.190Z] trunk abbc15325 Gift signup: create the account and sign in (opencode-t2-r2)
+  deploy exit 0 Deployed weft-demo-site triggers (1.24 sec) | Current Version ID: 15d125ae-2a3f-4c74-bb33-7a81bc5bf335
+[2026-10-20T06:56:05.807Z] trunk 8b741f5ae quote: price by the gram (?unit=g)
+  deploy exit 0 Deployed weft-demo-site triggers (1.19 sec) | Current Version ID: 38343238-0188-460b-a41e-66f8975a4322
+[2026-10-20T06:56:31.316Z] trunk 5568f7e8c Revert change I8a1d1f1241ea822f17ddcfc3cc7e30878da4ca2f
+  deploy exit 0 Deployed weft-demo-site triggers (1.01 sec) | Current Version ID: f3cec6f4-dff2-4ded-840b-f7a00d8d1a2f
