@@ -21,19 +21,23 @@ Sources for every number (do not mix windows):
 - Platform: `apps/*/wrangler.toml` (Durable Objects, Artifacts, Workflows, Queues).
 - AAIF: `docs/proposal-aaif.md` and aaif/project-proposals#53, an open discussion proposal.
   WCP is a draft, v0.1. Not a standard.
+- Hooks, 18 agents, three harnesses: `demo/evidence/m2-report.md` (18 live agents, 6 tasks x
+  Claude Code, Codex, OpenCode, one coordinator; four valid runs passed, run 1 aborted).
+- "Just over half a second": `demo/evidence/m1-report.md`, pre-edit checks n=18, p50 558 ms.
+- Credits plan (hosted coordinator, public benchmark): same ask as the story version; a plan only.
 - Beads: conversations with people on the Beads team. No integration exists. Say "interest", not
   "partnership".
 
 ---
 
-## 0:00-0:40 · Slide 1: "I didn't write the code. Agents did."
+## 0:00-0:25 · Slide 1: "I didn't write the code. Agents did."
 
 "I'm John Nelson. This red line is a squiggle. It's what your editor shows you when your code is
 wrong.
 Here's the honest part, up front: I didn't write Weft's code. Agents did. I asked the questions, I
 made the decisions, and I directed the work."
 
-## 0:40-1:25 · Slide 2: the numbers
+## 0:25-0:55 · Slide 2: the numbers
 
 "On October 3rd, a Saturday night, I read Cloudflare's post about the next Git platform, and I
 started asking questions. Eighty minutes later, the first commit landed.
@@ -42,13 +46,19 @@ agent.
 And in the first eleven hours alone, Weft's log recorded 627 events and 460 edits. 59 times, Weft
 told one agent to wait for another."
 
-## 1:25-2:00 · Slide 3: the product
+## 0:55-1:50 · Slide 3: the product
 
 "This is Weft. It's a live feed of every edit every agent makes to a repo, in order, as it
 happens. Not after the merge. While they type.
-On the right are the squiggles: the edits that would have broken someone else's work."
+Every row is one event: which agent, which file, what it was doing, and which task on the board
+it was for. Across the top: how many agents are live, how many squiggles, how many edits landed
+on main.
+On the right are the squiggles: the edits that would have broken someone else's work. Each one
+names the function, the file, and the event that caused it. And it tells the agent what to do
+next: read the new version, and update your call.
+It's public and read-only. You can watch it from your seat."
 
-## 2:00-3:05 · Slides 4-5: how it works
+## 1:50-3:20 · Slides 4-5: how it works
 
 "Here's how it works. Every time an agent edits a file, that edit goes to one place first: a
 checkpoint for the repo. Cloudflare runs exactly one copy of it, a Durable Object, so there is one
@@ -59,9 +69,13 @@ and tries again. The conflict is settled before either commit exists.
 
 Under the hood: Workers serve the API and the site. A Durable Object per repo keeps the order.
 Artifacts stores the git. Workflows and Queues land the work on main.
-And the rules are an open protocol, WCP. It's a draft, version 0.1, and it can run anywhere."
+And the rules are an open protocol, WCP. It's a draft, version 0.1, and it can run anywhere.
+Weft plugs in where the agents already are. Claude Code, Codex and OpenCode can all run a hook
+on every tool call, and that's where the check happens. In our test runs, eighteen agents across
+those three tools worked on one repo at the same time, through one checkpoint. A typical check
+takes just over half a second, so the agent barely notices."
 
-## 3:05-3:55 · Slide 6: the clip (47 seconds, muted, narrate over it)
+## 3:20-4:10 · Slide 6: the clip (47 seconds, muted, narrate over it)
 
 "Here are two agents on the same repo. Claude Code on the left, Codex on the right.
 Claude Code changes a function called createSession.
@@ -71,7 +85,7 @@ It tries again, and it's accepted.
 No human stepped in. No merge conflict. Nobody found out at review time."
 (Pause until the clip ends.)
 
-## 3:55-4:50 · Slide 7: how it was built
+## 4:10-5:00 · Slide 7: how it was built
 
 "That's not only a demo. Weft coordinated the agents building Weft. By Monday its log had 918
 events, 679 edits and 27 landings on main. Sixty waits. Five edits refused before they could land.
@@ -82,20 +96,26 @@ alternatives, decide, reason through edge cases. Then delegate, build the system
 agents, hand over authority but keep sign-off, verify and steer. Then use it, find the gaps, and
 go back to step one."
 
-## 4:50-5:40 · Slide 8: why it matters
+## 5:00-6:20 · Slide 8: why it matters
 
 "Why does this matter? One agent is a tool. Ten agents on one repo is a team, and teams step on
 each other. Today they find out at merge time. That's too late, and it's expensive.
+Picture it. Two agents both pass their tests. Both open a pull request. The second one breaks at
+merge, and now a person has to read both, work out who was right, and redo the work. Weft moves
+that moment from merge time to edit time, where the fix is cheap: the agent is still holding the
+task.
 So the protocol is open. I've opened a discussion proposal with the Agentic AI Foundation, and
 people on the Beads team have been talking with me about it.
 It's a prototype. It understands TypeScript and JavaScript today. Nobody runs it in production yet.
-That's the next step."
+That's the next step. With the credits, I'd run a free hosted coordinator for outside teams. And a
+public benchmark: many agents on real repos, with and without Weft, measuring the rework it
+saves."
 
-## 5:40-6:00 · Slide 9: thesis
+## 6:20-6:25 · Slide 9: thesis
 
 "So that's Weft. Red squiggles, for teams of coding agents."
 
-## 6:00-6:30 · Slide 10: takeaway
+## 6:25-6:45 · Slide 10: takeaway
 
 "We have to assume the code editor disappears. If it does, agents still need squiggles.
 It's live right now at weft.elier.ai. Scan it, watch the agents.
@@ -103,6 +123,7 @@ And I'm looking for my next builder role. Thank you."
 
 ---
 
-Word count (spoken text only, counted by `build_slides.py --count`): see the build output; target
-815-875 words at 130 wpm = 6:15-6:45 with the clip narrated. If you run long, cut the twelve
-steps list on slide 7 to "explore, decide, delegate, verify, repeat" (-20 s).
+Word count (spoken text only, counted by `build_slides.py --count`, Oct 19): 833 words = 6:24 at
+130 wpm; the clip runs ~15 s longer than its narration, so about 6:40 total, 20 s under 7:00.
+If you run long, cut the twelve steps list on slide 7 to "explore, decide, delegate, verify,
+repeat" (-20 s), then the "Picture it" lines on slide 8 (-20 s).
