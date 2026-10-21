@@ -143,3 +143,7 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-10-21 11:10 — Weft land for t_49fb8a75
 - WCP slide 3 (t_49fb8a75) already merged + pushed (436251f). Posted Weft land (seq #1184) to release claims; removed worktree. t_03b89786 now ready.
 - wt/local still HELD (Omer-code question, flagged 10-13). wt/t_be804fb4 intentionally unmerged.
+
+## 2026-10-21 13:20 — Weft lands for t_03b89786, t_26e387d8, t_b7f1aa93
+- WCP QR, site-driven deck changes and remote-key support already merged + pushed (0b61a4b, 9a51194, 241c6ae; banner 64fdd7b CI Gate green). Posted Weft lands (seq #1221–#1223); removed worktrees (t_26e387d8's uncommitted banner edit was already on main via 6173da8, discarded).
+- wt/local still HELD (Omer-code question, flagged 10-13). wt/t_be804fb4 intentionally unmerged.
