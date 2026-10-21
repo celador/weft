@@ -14,7 +14,7 @@ reused from slides-story-v1.html (data:video/mp4), and the 58 s Otto clip
 (demo/video/connect-2026/otto-weft-demo-cut.mp4 = demo/otto/video/cut.py output, run-4, card t_83def502;
 also on R2 under connect-2026/review-.../otto-demo/). The mp4s are gitignored; slides.html embeds them. The story version build is
 build_slides-story-v1.py. `--count` prints the spoken word count of pitch.md and talk time incl. clips.
-Keys: right/left (or tap right/left quarter) to move, F full screen, M toggles clip sound (clips start muted).
+Keys: right/left (or tap: left quarter = back, else forward; or swipe left/right on touch) to move, F full screen, M toggles clip sound (clips start muted).
 """
 import base64, pathlib, re, sys
 
@@ -154,6 +154,7 @@ Agent-Id:  wt-4-agent-issue-4-continue</pre>
     ]
 
 CSS = """*{box-sizing:border-box;margin:0}html,body{height:100%;background:#0a0a10;color:#f2f2f5;font-family:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",sans-serif;overflow:hidden}
+html,body{touch-action:manipulation}section{cursor:pointer;-webkit-tap-highlight-color:transparent}
 section{position:absolute;inset:0;display:none;flex-direction:column;justify-content:center;padding:6vh 7vw;gap:3.2vh}
 section.on{display:flex}.bg{background-size:cover;background-position:center}
 .huge{font-size:7.4vw;line-height:1.02;font-weight:800;letter-spacing:-.02em}.mid{font-size:5vw;line-height:1.08;font-weight:800}.nov{font-size:4.1vw;line-height:1.12;font-weight:800;letter-spacing:-.01em}
@@ -231,7 +232,13 @@ S[i].classList.add('on');S[i].querySelectorAll('video').forEach(v=>{v.muted=true
 addEventListener('keydown',e=>{if(['ArrowRight','PageDown',' ','Enter'].includes(e.key))go(i+1);else if(['ArrowLeft','PageUp','Backspace'].includes(e.key))go(i-1);
 else if(e.key==='m'||e.key==='M'){S[i].querySelectorAll('video').forEach(v=>{v.muted=!v.muted})}
 else if(e.key==='f'||e.key==='F'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen().catch(()=>{})}});
-addEventListener('click',e=>{if(e.target.closest('a'))return;if(e.target.tagName==='VIDEO'&&e.target.paused){e.target.play();return}go(e.clientX<innerWidth/4?i-1:i+1)});go(i);"""
+let tapT=0,P=null,T=null;function tap(e){if(e.target.closest('a'))return;tapT=Date.now();if(e.target.tagName==='VIDEO'&&e.target.paused){e.target.play().catch(()=>{});return}go(e.clientX<innerWidth/4?i-1:i+1)}
+addEventListener('pointerdown',e=>{P=e.isPrimary&&e.button===0?{x:e.clientX,y:e.clientY}:null});
+addEventListener('pointerup',e=>{if(!P||!e.isPrimary||e.button!==0)return;const m=Math.hypot(e.clientX-P.x,e.clientY-P.y);P=null;if(m<12)tap(e)});
+addEventListener('pointercancel',()=>{P=null});
+addEventListener('click',e=>{if(Date.now()-tapT<800)return;tap(e)});
+addEventListener('touchstart',e=>{T=e.touches.length===1?{x:e.touches[0].clientX,y:e.touches[0].clientY}:null},{passive:true});
+addEventListener('touchend',e=>{if(!T||e.touches.length)return;const t=e.changedTouches[0],dx=t.clientX-T.x,dy=t.clientY-T.y;T=null;if(Math.abs(dx)>40&&Math.abs(dx)>1.5*Math.abs(dy)){tapT=Date.now();P=null;go(dx<0?i+1:i-1)}},{passive:true});go(i);"""
 
 def build():
     body = "\n".join(slides())
