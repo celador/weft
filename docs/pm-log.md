@@ -131,3 +131,7 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-10-21 00:55 — Weft lands for squiggle fixes
 - t_ef20c6a9 and t_00677524 already merged + pushed (494bef9, b7b4eeb; CI Gate green). Posted Weft lands (seq #1144, #1145) to release claims; removed both worktrees.
 - wt/local still HELD (Omer-code question, flagged 10-13). wt/t_be804fb4 intentionally unmerged.
+
+## 2026-10-21 01:57 — Weft land for t_f2cecc5c
+- Phone tap/swipe nav (t_f2cecc5c) already merged + pushed (15d9345, CI Gate green). Posted Weft land (seq #1152) to release claims; removed worktree.
+- wt/local still HELD (Omer-code question, flagged 10-13). wt/t_be804fb4 intentionally unmerged.
