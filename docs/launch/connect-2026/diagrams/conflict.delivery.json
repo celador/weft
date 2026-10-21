@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "127074e9-8df7-4591-9f41-08dddba708c9",
+  "status": "current",
+  "command": "deliver",
+  "type": "sequence",
+  "input": "/Users/john/github/weft/.worktrees/t_d28190c3/docs/launch/connect-2026/diagrams/conflict.json",
+  "output": "/Users/john/github/weft/.worktrees/t_d28190c3/docs/launch/connect-2026/diagrams/conflict.html",
+  "specification": {
+    "sha256": "8d9e57c2a9e557967a0fbf7c4d5aa84b1def9cceec0ae1a09e028d967ea8c6bb",
+    "bytes": 6358
+  },
+  "artifact": {
+    "sha256": "5b872a16b7b89bf722f21620f843f6aac8098cf175d037f1f8f5c68fc2913ea6",
+    "bytes": 823433
+  }
+}

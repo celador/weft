@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Build the visual Connect 2026 deck (slides.html), offline, single file, stdlib only.
 
+Rev 7.1 (card t_d28190c3) = rev 7 + two Archify diagrams (diagrams/*.json -> *.html, static *.png
+embedded here): the system architecture beside the live feed on slide 2, and the conflict sequence
+beside the five steps on slide 9. Each slide links its interactive diagram (opens in a new tab, in
+Archify's presentation view on the highlighted path); clicking a link does not advance the deck.
 Slide order (rev 7 = rev 6 + the Otto clip): 1 headline, 2 what I built (criterion 1), 3-4 why it's new
 (criterion 2), 5-11 the four questions (criterion 3: Q1 slide 5, Q2 slides 6-9 with the without-Weft,
 with-Weft and Otto team-run clips, Q3 slide 10, Q4 slide 11), 12 why Artifacts + Cloudflare, 13 close.
@@ -35,6 +39,15 @@ def count_words():
 def img(name):
     return "data:image/png;base64," + base64.b64encode((STILLS / name).read_bytes()).decode()
 
+DIAG = HERE / "diagrams"
+
+def diag(name):
+    return "data:image/png;base64," + base64.b64encode((DIAG / f"{name}.png").read_bytes()).decode()
+
+# Interactive views (relative: the deck and diagrams/ are published side by side on the review page).
+ARCH_URL = "diagrams/architecture.html?present=1&theme=dark#route=agents~land"
+CONFLICT_URL = "diagrams/conflict.html?present=1&theme=dark#route=coord~codex"
+
 def baseline_clip():
     return "data:video/mp4;base64," + base64.b64encode((ROOT / "demo/video/connect-2026/baseline.mp4").read_bytes()).decode()
 
@@ -68,7 +81,10 @@ def slides():
 <h1 class="huge">Red squiggles<br>for teams of<br>coding <span class="red sq">agents</span>.</h1>
 <p class="sub lede">Weft checks every agent edit against what the other agents just changed, and tells the agent <b>before the conflict exists</b>.</p>
 <p class="src">John Nelson · Weft</p></section>''',
-        f'''<section class="hero"><p class="kicker">1 · What I built: an open protocol (WCP) + a platform on Cloudflare</p><img src="{img("02-live-log.png")}" alt="Weft live feed">
+        f'''<section class="hero"><p class="kicker">1 · What I built: an open protocol (WCP) + a platform on Cloudflare</p>
+<div class="built"><figure class="dg"><img src="{diag("architecture")}" alt="Weft architecture: agent hooks to the gateway and one Durable Object per repo; pushes to Artifacts are rebased, get evidence, and land by compare-and-swap on trunk">
+<figcaption>WCP: every agent edit goes through one Durable Object per repo · <a href="{ARCH_URL}" target="_blank" rel="noopener">interactive ↗</a></figcaption></figure>
+<img class="feed" src="{img("02-live-log.png")}" alt="Weft live feed"></div>
 <p class="cap">weft.elier.ai · every agent edit, in order, live · Weft coordinated the agents that built Weft: <b>918</b> events · <b>27</b> landings</p></section>''',
         '''<section><p class="kicker">2 · Why it's new</p>
 <h1 class="nov">Agents message each other <span class="red">in squiggles</span>.</h1>
@@ -104,7 +120,9 @@ changed in #3 by agent-a after your base #1.</span>
 <p class="cap">7 cards at once · candidates on 5 harnesses · <b>no agent in charge</b> · 6 squiggles, all rerouted · all 7 landed</p></section>''',
         f'''<section><p class="kicker">3 · Question 2 of 4 · How Weft resolves it</p>
 <h2 class="q">What happens when they make conflicting changes?</h2>
-<ol class="steps">{resolve}</ol></section>''',
+<div class="q2r"><ol class="steps v">{resolve}</ol>
+<figure class="dg"><img src="{diag("conflict")}" alt="Conflict sequence: B's check is rejected with stale_assumption, the adapter denies the edit with a squiggle quoting A's hunk, B reroutes or negotiates, Workflows rebase with Mergiraf and land by CAS on trunk">
+<figcaption>Traced from the code · deny → reroute as in the M1 run (Claude Code vs Codex) · <a href="{CONFLICT_URL}" target="_blank" rel="noopener">interactive ↗</a></figcaption></figure></div></section>''',
         f'''<section><p class="kicker">3 · Question 3 of 4</p>
 <h2 class="q">How do you review everything they produce?</h2>
 <p class="sub">An evidence pipeline for every candidate:</p>
@@ -194,6 +212,13 @@ section.on .pipe li{animation:in .3s calc(var(--i)*.15s) forwards}
 .shot figcaption{font-size:1.45vw;color:#9a9aab;margin-top:.8vh;line-height:1.25}
 .q3{display:grid;grid-template-columns:1fr 44vw;gap:2.4vw;align-items:center}.q3 img{width:100%;max-height:42vh;object-fit:contain;border-radius:12px;box-shadow:0 0 0 1px #333}
 .why .dim b{color:#c9c9d6}
+.built{display:grid;grid-template-columns:1.35fr 1fr;gap:1.6vw;align-items:center;width:100%}.built .feed{width:100%;max-height:70vh;object-fit:contain}
+.dg{margin:0;text-align:center}.dg img{width:100%;max-height:68vh;object-fit:contain;border-radius:12px;box-shadow:0 0 0 1px #333;background:#0b0f1a}
+.dg figcaption{font-size:1.4vw;color:#9a9aab;margin-top:.8vh}.dg a{color:#7aa2ff;text-decoration:none}
+.q2r{display:grid;grid-template-columns:27vw 1fr;gap:2vw;align-items:center}.q2r .dg img{max-height:62vh}
+.steps.v{grid-template-columns:1fr;gap:1vh;margin-top:0}.steps.v li{min-height:auto;padding:1.2vh 1vw;font-size:1.45vw;border-top:0;border-left:7px solid #ff4d5e}
+.steps.v li:last-child{border-left-color:#4ade80}.steps.v b{display:inline;font-size:2vw;margin-right:.8vw}.steps.v em{display:inline;font-size:1.75vw;margin:0}.steps.v em::after{content:"";display:block;height:.4vh}
+@media (orientation:portrait){.built,.q2r{grid-template-columns:1fr}.dg img,.q2r .dg img{max-height:30vh}.dg figcaption{font-size:2.8vw}.built .feed{max-height:28vh}.steps.v li{font-size:3vw}.steps.v em{font-size:3.4vw}}
 @media (orientation:portrait){.q1,.q3{grid-template-columns:1fr}.shot img{max-height:24vh}.shot figcaption{font-size:2.8vw}.q3 img{max-height:22vh}}
 @media (orientation:portrait){.huge2{font-size:10vw}.q{font-size:6vw}.lede{max-width:none}.tag{font-size:6vw}.code{font-size:2.15vw;padding:1.2vh 2vw;white-space:pre-wrap;word-break:break-all}.code.tr{font-size:2.3vw}.chip{font-size:3.6vw}.lg{width:2.4vw;height:2.4vw}
 .steps{grid-template-columns:1fr}.steps li{min-height:auto;font-size:3.2vw;padding:1vh 2vw}.steps b{font-size:4.4vw;display:inline;margin-right:2vw}.steps em{display:inline;font-size:3.6vw}
@@ -206,7 +231,7 @@ S[i].classList.add('on');S[i].querySelectorAll('video').forEach(v=>{v.muted=true
 addEventListener('keydown',e=>{if(['ArrowRight','PageDown',' ','Enter'].includes(e.key))go(i+1);else if(['ArrowLeft','PageUp','Backspace'].includes(e.key))go(i-1);
 else if(e.key==='m'||e.key==='M'){S[i].querySelectorAll('video').forEach(v=>{v.muted=!v.muted})}
 else if(e.key==='f'||e.key==='F'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen().catch(()=>{})}});
-addEventListener('click',e=>{if(e.target.tagName==='VIDEO'&&e.target.paused){e.target.play();return}go(e.clientX<innerWidth/4?i-1:i+1)});go(i);"""
+addEventListener('click',e=>{if(e.target.closest('a'))return;if(e.target.tagName==='VIDEO'&&e.target.paused){e.target.play();return}go(e.clientX<innerWidth/4?i-1:i+1)});go(i);"""
 
 def build():
     body = "\n".join(slides())
