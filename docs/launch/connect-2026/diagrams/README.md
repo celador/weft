@@ -6,8 +6,11 @@ cites the Weft source lines it was drawn from, pinned to commit d812219.
 
 | Diagram | Source | Deck | Presentation view |
 |---|---|---|---|
-| Architecture | `architecture.json` | slide 2 (`architecture.png`) | `architecture.html?present=1&theme=dark#route=agents~land` |
+| Architecture | `architecture.json` | review page only (was slide 2 until card t_26e387d8; slide 3 now shows the site's `site-architecture.webp`) | `architecture.html?present=1&theme=dark#route=agents~land` |
 | Conflict sequence | `conflict.json` | slide 10 (`conflict.png`) | `conflict.html?present=1&theme=dark#route=coord~codex` |
+
+`site-architecture.webp` is not Archify: it is the website's `site/public/assets/img/architecture.webp` with
+the empty margins cropped (1708x600), shown on slide 3 since card t_26e387d8.
 
 Other views: `#route=agents~coordinator` (edit time), `#focus=<id>` (one box and its neighbours),
 `#focus=<id>&reach=upstream|downstream`. Without `?theme=dark` the page follows the OS theme.

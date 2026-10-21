@@ -112,11 +112,12 @@ real costs are container minutes for rebases and tests and model calls for revie
 with how much work lands, not with how many agents are connected.
 <!-- notes: docs/pm-log.md lines 12,16 (Workers Paid $5/mo); apps/gateway/wrangler.toml (containers, workflows); no cost measurement in repo -->
 
-**12. What does WCP standardize, what's Weft-specific, and what's next?** [slides 2, 3, 5]
+**12. What does WCP standardize, what's Weft-specific, and what's next?** [slides 3, 5]
 WCP is the wire protocol: the event format, the conflict rules, the arbitration rules and auth
 scopes, so any agent and any coordinator can interoperate. Weft is one implementation on
-Cloudflare, plus the analyzer, adapters, web UI and land pipeline. We proposed the hook layer to
-the Agentic AI Foundation as a discussion item; it's a draft, not a standard. Next is a second
+Cloudflare, plus the analyzer, adapters, web UI and land pipeline. We're proposing Agent Hooks
+Core and WCP to the Agentic AI Foundation in collaboration with members of Gas Town; the Agent
+Hooks Core discussion item is open (aaif/project-proposals#53). Both are v0 drafts, not standards. Next is a second
 implementation that isn't on Cloudflare, and working with tools like Beads that already track
 agent tasks: Beads decides what each agent works on, Weft checks the edits as they happen. There's
 no Beads integration yet.
@@ -196,8 +197,9 @@ Say it only if asked how it was built, or how fast.
 - 64 hours later I submitted: 231 files, 38,593 lines. Every commit was written by an agent; I
   asked the questions and made the decisions. My loop: explore, decide, delegate, verify, repeat.
 - Weft coordinated its own build from about its third hour. In the first 11.3 hours its log recorded
-  627 events and 460 edits, and 59 times it told one agent to wait for another. To Oct 19: 918
-  events, 679 edits, 60 waits, 27 landings, 5 edits refused. Event 834 was refused because event
+  627 events, 460 edits from three agent profiles, 18 landings with zero reverts, and 59 times it
+  told one agent to wait for another (the numbers on slide 2 and the site). If asked for a later
+  count: to Oct 19, 918 events, 679 edits, 60 waits, 27 landings, 5 edits refused. Event 834 was refused because event
   813 changed a type it used; the next try was accepted.
 <!-- notes: qa.md (first commit Oct 3 22:00 -03, submitted Oct 6 13:40 -03, 231 files, 38,593 lines); demo/video/dogfood-stats.json (627/460/59, first 11.3 h); log-stats-2026-10-19.json (918/679/60/27/5, refused seqs incl. 834); pitch-story-v1.md slide 13 (834 <- 813) -->
 

@@ -99,9 +99,11 @@ Cloudflare apps (`LICENSE`, `README.md`). The protocol (WCP) and the hook rules 
 are written up separately so others can implement them without Weft.
 
 **16. Is WCP a standard?**
-No. Both specs are v0 drafts. We've proposed Agent Hooks Core to the Agentic AI Foundation as a
-discussion item (aaif/project-proposals#53, open). The roadmap's goal is a second, independent
-implementation not built on Cloudflare.
+No, both are v0 drafts. We're proposing Agent Hooks Core and WCP to the Agentic AI Foundation in
+collaboration with members of Gas Town; the Agent Hooks Core discussion item is open
+(aaif/project-proposals#53). The roadmap's goal is a second, independent implementation not built
+on Cloudflare. And WCP v0.1 is a draft, Weft is a research prototype, and the analyzer understands
+TypeScript today.
 
 **17. What breaks today?**
 Four things: the analysis is TypeScript-only; Weft fails open when the gateway is unreachable;

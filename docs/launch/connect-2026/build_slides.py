@@ -9,7 +9,13 @@ Slide order (rev 7.1, Oct 21 + the WCP slide, card t_49fb8a75): 1 headline, 2-3 
 3 = WCP, the protocol, from docs/protocol/wcp-explained.md), 4-5 why it's new (criterion 2), 6-12 the four
 questions (criterion 3: Q1 slide 6, Q2 slides 7-10 with the without-Weft, with-Weft and Otto team-run
 clips, Q3 slide 11, Q4 slide 12), 13 why Artifacts + Cloudflare, 14 close.
-Inputs: demo/video/connect-2026/stills/*.png, qr-weft.svg, qr-wcp-explained.svg (slide 3 QR to the one-pager), the 22 s "without Weft" clip
+Card t_26e387d8 (Oct 21, from the site weft-site.elier.ai, wording verbatim from site/public/index.html): slide 2 =
+"Merge time is too late." + the dogfood numbers (demo/video/dogfood-stats.json); slide 3 = the site's Hook / Sequence /
+Answer + its architecture diagram (diagrams/site-architecture.webp) + AAIF line + honesty note + one-pager QR; slide 4 = the
+site's real Codex tool result; slide 11 + "Humans get a feed, not a merge queue."; slide 13 = the site's product list;
+slide 14 QR -> weft-site.elier.ai + the five-minute call to action. The Archify architecture diagram left the deck (still
+on the review page's Diagrams section).
+Inputs: demo/video/connect-2026/stills/*.png, qr-weft-site.svg (closing QR), qr-wcp-explained.svg (slide 3 QR to the one-pager), the 22 s "without Weft" clip
 (demo/video/connect-2026/baseline.mp4, recorded from baseline.tape), the 47 s squiggle clip, which is
 reused from slides-story-v1.html (data:video/mp4), and the 58 s Otto clip
 (demo/video/connect-2026/otto-weft-demo-cut.mp4 = demo/otto/video/cut.py output, run-4, card t_83def502;
@@ -49,6 +55,11 @@ def diag(name):
 ARCH_URL = "diagrams/architecture.html?present=1&theme=dark#route=agents~land"
 CONFLICT_URL = "diagrams/conflict.html?present=1&theme=dark#route=coord~codex"
 
+def site_arch():
+    """The site's architecture diagram (site/public/assets/img/architecture.webp), margins cropped to
+    diagrams/site-architecture.webp (1708x600, no redraw), on the WCP slide (card t_26e387d8)."""
+    return "data:image/webp;base64," + base64.b64encode((DIAG / "site-architecture.webp").read_bytes()).decode()
+
 def baseline_clip():
     return "data:video/mp4;base64," + base64.b64encode((ROOT / "demo/video/connect-2026/baseline.mp4").read_bytes()).decode()
 
@@ -66,7 +77,8 @@ def chips(items):
     return "".join(f'<span class="chip {c}">{t}</span>' for t, c in items)
 
 def slides():
-    qr = (HERE / "qr-weft.svg").read_text() if (HERE / "qr-weft.svg").exists() else ""
+    # closing QR -> https://weft-site.elier.ai/ (qrcode SvgPathImage, EC M; card t_26e387d8). qr-weft.svg (weft.elier.ai) is kept for older revs.
+    qr = (HERE / "qr-weft-site.svg").read_text().split("?>", 1)[-1].strip()
     # QR to the full one-pager (docs/protocol/wcp-explained.md) on the WCP slide; qrcode SvgPathImage, EC M (card t_03b89786)
     qr_wcp = (HERE / "qr-wcp-explained.svg").read_text().split("?>", 1)[-1].strip().replace('id="qr-path"', 'id="qr-wcp-path"')
     harness = chips([("Claude Code", "live"), ("Codex", "live"), ("OpenCode", "live"), ("Hermes", "live"),
@@ -84,30 +96,33 @@ def slides():
 <h1 class="huge">Red squiggles<br>for teams of<br>coding <span class="red sq">agents</span>.</h1>
 <p class="sub lede">Weft checks every agent edit against what the other agents just changed, and tells the agent <b>before the conflict exists</b>.</p>
 <p class="src">John Nelson · Weft</p></section>''',
-        f'''<section class="hero"><p class="kicker">1 · What I built: an open protocol (WCP) + a platform on Cloudflare</p>
-<div class="built"><figure class="dg"><img src="{diag("architecture")}" alt="Weft architecture: agent hooks to the gateway and one Durable Object per repo; pushes to Artifacts are rebased, get evidence, and land by compare-and-swap on trunk">
-<figcaption>WCP: every agent edit goes through one Durable Object per repo · <a href="{ARCH_URL}" target="_blank" rel="noopener">interactive ↗</a></figcaption></figure>
-<img class="feed" src="{img("02-live-log.png")}" alt="Weft live feed"></div>
-<p class="cap">weft.elier.ai · every agent edit, in order, live · Weft coordinated the agents that built Weft: <b>918</b> events · <b>27</b> landings</p></section>''',
-        f'''<section><p class="kicker">1 · What I built · the protocol</p>
-<h1 class="nov">WCP, the <span class="red">Weft Coordination Protocol</span></h1>
-<div class="wcpg"><div class="wcpm"><ol class="wcp">
-<li style="--i:0"><b>1</b><span><em>One ordered log per repo.</em> Every agent edit is a numbered event.</span></li>
-<li style="--i:1"><b>2</b><span><em>Symbol-level.</em> Who changed which function, not just which file.</span></li>
-<li style="--i:2"><b>3</b><span><em>Checked like a database transaction.</em> &ldquo;I've seen up to #N&rdquo; &rarr; checked against what other agents did since.</span></li>
-<li style="--i:3"><b>4</b><span><em>Conflicts come back as compiler errors</em> (red squiggles), through the hooks every agent tool already has.</span></li></ol>
-<div class="log"><span class="ev"><b>#3</b>codex-b edits fetchWithAuth ✓</span><span class="ev"><b>#4</b>claude-a changes refreshToken signature ✓</span><span class="ev no"><b>#5</b>codex-b, base #3: rejected, stale_assumption ← #4</span></div></div>
-<figure class="qrw"><div class="qr">{qr_wcp}</div><figcaption><b>Full one-pager</b>github.com/celador/weft<br>wcp-explained.md</figcaption></figure></div>
-<p class="src">Open spec + JSON schema + conformance tests · runs anywhere, Cloudflare or local · fail-open</p></section>''',
+        f'''<section><p class="kicker">1 · What I built · the problem it solves</p>
+<h1 class="nov">Merge time is <span class="red">too late.</span></h1>
+<div class="prob"><p class="sub">Git coordinates people when they open a pull request. Agents in parallel worktrees break each other's assumptions every few minutes. By the time the PR shows a conflict, an agent has spent an hour building on a function signature that no longer exists.</p>
+<figure class="shot"><img src="{img("02-live-log.png")}" alt="Weft live feed"><figcaption>weft.elier.ai · every agent edit, in order, live</figcaption></figure></div>
+<p class="src nums">Built by agents, under Weft · first 11 hours: <b>627</b> events · <b>460</b> edits from three agent profiles · <b>18</b> landings, zero reverts · <b>59</b> &ldquo;wait for the other agent&rdquo; warnings <span class="fine">(repo weft, 2026-10-04, 03:24&ndash;14:40 UTC · dogfood-stats.json)</span></p></section>''',
+        f'''<section class="wcps"><p class="kicker">1 · What I built · the protocol</p>
+<h1 class="nov h3l">One ordered log per repo.<br><span class="red">The verdict goes back to the agent.</span></h1>
+<div class="how"><ol class="hsa">
+<li style="--i:0"><em>Hook</em>An adapter catches each Edit, Write or apply_patch call before it touches disk, and records the symbols it reads and writes.</li>
+<li style="--i:1"><em>Sequence</em>One Durable Object per repo orders every edit and checks it against everything that landed since the agent's base, down to the symbol.</li>
+<li style="--i:2"><em>Answer</em>Allow, advise or deny. A denied agent gets a compiler-style diagnostic in its tool result, and exactly one side is told to adapt.</li></ol>
+<div class="howr"><figure class="arch"><img src="{site_arch()}" alt="Diagram: Claude Code, Codex, OpenCode, a file watcher and Hermes send edits through adapters to the Weft gateway (WCP over HTTP/WebSocket), which forwards them to a per-repo sequencer Durable Object that checks each edit against everything that landed since the agent's base; a strictly ordered log #1 to #8"></figure>
+<div class="foot"><div class="ft"><p class="aaif">Proposed to the AAIF (Agentic AI Foundation): <b>Agent Hooks Core + WCP</b>, in collaboration with members of Gas Town.</p>
+<p class="fine">WCP v0.1 is a draft and Weft is a research prototype. The analyzer understands TypeScript today.</p></div>
+<figure class="qrw"><div class="qr">{qr_wcp}</div><figcaption><b>Full one-pager</b>wcp-explained.md</figcaption></figure></div></div></div></section>''',
         '''<section><p class="kicker">2 · Why it's new</p>
 <h1 class="nov">Agents message each other <span class="red">in squiggles</span>.</h1>
-<pre class="code"><span class="ln">src/cart.ts  4</span>  const total = <span class="sqe">calcTotal(items)</span>;
-<span class="err">[weft error] stale_assumption src/cart.ts:4:42
-You use src/pricing.ts#calcTotal, whose signature
-changed in #3 by agent-a after your base #1.</span>
-<span class="del">-export function calcTotal(items: Item[]): number {</span>
-<span class="add">+export function calcTotal(items: Item[], opts: PriceOptions): number {</span></pre>
-<p class="sub">Delivered into the agent's own run, <b>mid-edit</b>, carrying the other agent's code.<br>Others check a change <span class="dim">when it lands</span>. Weft checks every edit <span class="red">while it's being written</span>.</p></section>''',
+<div class="term"><div class="tbar">codex-b (Codex CLI), tool result from the Weft pre-edit hook</div><pre class="code tres"><span class="err">[weft] Edit to src/api/account.ts, test/signup.test.ts blocked: it conflicts with another agent's change
+  (Weft edit-time coordination, log #9).
+[weft error] stale_assumption src/api/account.ts:17:25: You use <span class="sqe">src/auth/session.ts#createSession</span>, whose
+  signature changed in #3 by claude-a after your base #1. (caused by claude-a, task T-1, event #3).
+  Suggestion: Read the new src/auth/session.ts#createSession (event #3) and update this call site, or
+  negotiate with claude-a.</span>
+<span class="inf">  ↳ event #3 by claude-a changed src/auth/session.ts (their change is not in your checkout yet):</span>
+<span class="del">    -export function createSession(userId: string): Session {</span>
+<span class="add">    +export function createSession(userId: string, opts: SessionOptions): Session {</span></pre></div>
+<p class="sub"><b>The agent reads the diagnostic. You don't have to.</b><br>Others check a change <span class="dim">when it lands</span>. Weft checks every edit <span class="red">while it's being written</span>.</p></section>''',
         f'''<section><p class="kicker">2 · Why it's new</p>
 <h1 class="huge2">Coordination,<br><span class="red">not Orchestration</span></h1>
 <p class="sub">No agent on top splitting the work. <b>Agents are peers.</b></p>
@@ -138,6 +153,7 @@ changed in #3 by agent-a after your base #1.</span>
 <figcaption>Traced from the code · deny → reroute as in the M1 run (Claude Code vs Codex) · <a href="{CONFLICT_URL}" target="_blank" rel="noopener">interactive ↗</a></figcaption></figure></div></section>''',
         f'''<section><p class="kicker">3 · Question 3 of 4</p>
 <h2 class="q">How do you review everything they produce?</h2>
+<p class="hl">Humans get a feed, not a merge queue.</p>
 <p class="sub">An evidence pipeline for every candidate:</p>
 <ol class="pipe">{review}</ol>
 <div class="q3"><ul class="why sm"><li>Low risk lands on its own. <b>Higher risk waits for a human.</b></li>
@@ -155,15 +171,16 @@ Agent-Id:  wt-4-agent-issue-4-continue</pre>
 <li>A revert names the operation it undoes, and why.</li></ul></section>''',
         '''<section><p class="kicker">Why Artifacts + Cloudflare</p>
 <p class="sub">Weft doesn't need Artifacts to work. <b>Artifacts is how it scales.</b></p>
-<div class="stack">
-<div class="layer l1"><b>Artifacts</b>a fork + a scoped token per agent, in one call · millions of repos</div>
-<div class="layer l2"><b>Queues</b>every push arrives as an event</div>
-<div class="layer l3"><b>Atomic landing</b>a lease push: trunk moves only if nothing moved</div>
-<div class="layer l4"><b>Durable Objects</b>exactly one authoritative log per repo</div>
+<div class="stack s5">
+<div class="layer l1"><b>Durable Objects</b>One authoritative, ordered log and submit queue per repo.</div>
+<div class="layer l2"><b>Artifacts</b>The trunk, plus an isolated fork for every candidate change.</div>
+<div class="layer l3"><b>Queues and Workflows</b>Durable, retryable processing, selection, landing and auto-revert.</div>
+<div class="layer l4"><b>Containers</b>Git, builds and tests in a sandbox, with credentials kept outside.</div>
+<div class="layer l5"><b>D1 and R2</b>An index of tasks and changes, and the evidence behind each one.</div>
 </div></section>''',
         f'''<section class="center"><h1 class="mid">Red squiggles<br>for teams of coding <span class="red sq">agents</span>.</h1>
 <p class="tag">Coordination, not Orchestration</p>
-<div class="close"><div class="qr">{qr}</div><div><p class="url">weft.elier.ai</p><p class="sub">John Nelson · johnaaronnelson.com · github.com/celador</p></div></div></section>''',
+<div class="close"><div class="qr">{qr}</div><div><p class="cta">Two agents, one repo, five minutes.<br><span>No Cloudflare account needed.</span></p><p class="url">weft-site.elier.ai</p><p class="sub">John Nelson · johnaaronnelson.com · github.com/celador</p></div></div></section>''',
     ]
 
 CSS = """*{box-sizing:border-box;margin:0}html,body{height:100%;background:#0a0a10;color:#f2f2f5;font-family:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",sans-serif;overflow:hidden}
@@ -187,7 +204,7 @@ section.on .back{animation:draw 1.6s 1.4s ease-out forwards}
 @keyframes dash{to{stroke-dashoffset:-64}}@keyframes draw{to{stroke-dashoffset:0}}
 .stack{display:flex;flex-direction:column;gap:1.6vh}.layer{font-size:2.2vw;padding:2.2vh 2vw;border-radius:14px;background:#171722;border-left:10px solid #f6821f;color:#c9c9d6;opacity:0;transform:translateX(-30px)}
 .layer b{color:#fff;display:inline-block;width:28vw}
-section.on .layer{animation:in .5s ease-out forwards}.l2{animation-delay:.35s!important}.l3{animation-delay:.7s!important}.l4{animation-delay:1.05s!important}
+section.on .layer{animation:in .5s ease-out forwards}.l2{animation-delay:.3s!important}.l3{animation-delay:.6s!important}.l4{animation-delay:.9s!important}.l5{animation-delay:1.2s!important}
 @keyframes in{to{opacity:1;transform:none}}
 .loop{list-style:none;padding:0;display:grid;grid-template-columns:repeat(5,1fr);gap:1.2vw}
 .loop li{background:#171722;border-radius:12px;padding:1.4vh .8vw;font-size:1.7vw;color:#d6d6e0;min-height:11vh;opacity:0}
@@ -244,13 +261,31 @@ section.on .wcp li{animation:in .35s calc(var(--i)*.15s) forwards}.wcp b{color:#
 @media (orientation:portrait){.q1,.q3{grid-template-columns:1fr}.shot img{max-height:24vh}.shot figcaption{font-size:2.8vw}.q3 img{max-height:22vh}}
 @media (orientation:portrait){.huge2{font-size:10vw}.q{font-size:6vw}.lede{max-width:none}.tag{font-size:6vw}.code{font-size:2.15vw;padding:1.2vh 2vw;white-space:pre-wrap;word-break:break-all}.code.tr{font-size:2.3vw}.chip{font-size:3.6vw}.lg{width:2.4vw;height:2.4vw}
 .steps{grid-template-columns:1fr}.steps li{min-height:auto;font-size:3.2vw;padding:1vh 2vw}.steps b{font-size:4.4vw;display:inline;margin-right:2vw}.steps em{display:inline;font-size:3.6vw}
-.pipe{grid-template-columns:repeat(2,1fr)}.pipe li{font-size:3.6vw}.pipe small{font-size:2.8vw}.why.sm{font-size:4.2vw}.layer b{width:auto}}"""
+.pipe{grid-template-columns:repeat(2,1fr)}.pipe li{font-size:3.6vw}.pipe small{font-size:2.8vw}.why.sm{font-size:4.2vw}.layer b{width:auto}}
+.prob{display:grid;grid-template-columns:1fr 46vw;gap:3vw;align-items:center}.prob .sub{font-size:2.5vw;line-height:1.4}.prob .shot img{max-height:56vh}
+.nums{font-size:1.5vw;line-height:1.35}.nums b{color:#fff}.fine{font-size:1.15vw;color:#77778a}
+.wcps{gap:2.2vh;padding-top:4vh;padding-bottom:4vh}.h3l{font-size:3.2vw}
+.how{display:grid;grid-template-columns:26vw 1fr;gap:2.4vw;align-items:start}
+.hsa{list-style:none;padding:0;display:flex;flex-direction:column;gap:2.4vh}.hsa li{font-size:1.42vw;line-height:1.38;color:#c9c9d6;border-left:7px solid #ff4d5e;padding:.4vh 0 .4vh 1.3vw;opacity:0}
+.hsa li:last-child{border-left-color:#4ade80}section.on .hsa li{animation:in .35s calc(var(--i)*.18s) forwards}
+.hsa em{display:block;font-style:normal;color:#fff;font-weight:800;font-size:2vw;margin-bottom:.4vh}
+.howr{display:flex;flex-direction:column;gap:2.4vh}.arch{margin:0}.arch img{width:100%;display:block;border-radius:12px;box-shadow:0 0 0 1px #333}
+.foot{display:grid;grid-template-columns:1fr auto;gap:2vw;align-items:center}.foot .aaif{font-size:1.35vw;line-height:1.35;color:#c9c9d6}.foot .aaif b{color:#fff}.foot .fine{margin-top:1vh}
+.wcps .qrw .qr svg{width:15vh;height:15vh}.wcps .qrw figcaption{font-size:1.1vw}.wcps .qrw figcaption b{font-size:1.35vw}
+.term{border:1px solid #2c2c3c;border-radius:14px;overflow:hidden;background:#12121a}.tbar{font-size:1.25vw;color:#9a9aab;background:#1b1b26;padding:1vh 1.4vw;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.code.tres{font-size:1.18vw;line-height:1.5;border:0;border-radius:0}.code .inf{color:#9ab4ff}
+.hl{font-size:2.6vw;font-weight:800;color:#ff4d5e;margin-top:-1.4vh}
+.cta{font-size:2.6vw;font-weight:800;line-height:1.2;margin-bottom:1.4vh}.cta span{font-size:2vw;font-weight:600;color:#c9c9d6}
+.stack.s5 .layer{display:grid;grid-template-columns:24vw 1fr;align-items:center;font-size:2vw;padding:1.9vh 2vw}.stack.s5 .layer b{width:auto}
+@media (orientation:portrait){.prob,.how,.foot{grid-template-columns:1fr}.prob .sub{font-size:4vw}.prob .shot img{max-height:26vh}.nums{font-size:3vw}.fine{font-size:2.4vw}
+.h3l{font-size:5.6vw}.hsa li{font-size:3.3vw}.hsa em{font-size:4.2vw}.foot .aaif{font-size:3vw}.wcps .qrw .qr svg{width:14vh;height:14vh}.wcps .qrw figcaption{font-size:3vw}.wcps .qrw figcaption b{font-size:3.6vw}
+.tbar{font-size:2.4vw}.stack.s5 .layer{grid-template-columns:1fr;font-size:3.4vw}.code.tres{font-size:2.05vw;white-space:pre-wrap;word-break:break-all}.hl{font-size:5vw}.cta{font-size:5vw}.cta span{font-size:4vw}}"""
 
 JS = """const S=[...document.querySelectorAll('section')];let i=Math.max(0,Math.min(S.length-1,(parseInt(location.hash.slice(1))||1)-1));
 const N=document.querySelector('.n');
 function go(k){S[i].classList.remove('on');S[i].querySelectorAll('video').forEach(v=>v.pause());i=Math.max(0,Math.min(S.length-1,k));
 S[i].classList.add('on');S[i].querySelectorAll('video').forEach(v=>{v.muted=true;v.currentTime=0;v.play().catch(()=>{})});N.textContent=(i+1)+' / '+S.length;history.replaceState(null,'','#'+(i+1))}
-addEventListener('keydown',e=>{if(['ArrowRight','PageDown',' ','Enter'].includes(e.key))go(i+1);else if(['ArrowLeft','PageUp','Backspace'].includes(e.key))go(i-1);
+addEventListener('keydown',e=>{if(['ArrowUp','ArrowDown',' '].includes(e.key))e.preventDefault();if(['ArrowRight','ArrowDown','PageDown',' ','Enter'].includes(e.key))go(i+1);else if(['ArrowLeft','ArrowUp','PageUp','Backspace'].includes(e.key))go(i-1);
 else if(e.key==='m'||e.key==='M'){S[i].querySelectorAll('video').forEach(v=>{v.muted=!v.muted})}
 else if(e.key==='f'||e.key==='F'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen().catch(()=>{})}});
 let tapT=0,P=null,T=null;function tap(e){if(e.target.closest('a'))return;tapT=Date.now();if(e.target.tagName==='VIDEO'&&e.target.paused){e.target.play().catch(()=>{});return}go(e.clientX<innerWidth/4?i-1:i+1)}
