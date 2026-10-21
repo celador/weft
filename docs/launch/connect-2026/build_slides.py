@@ -9,7 +9,7 @@ Slide order (rev 7.1, Oct 21 + the WCP slide, card t_49fb8a75): 1 headline, 2-3 
 3 = WCP, the protocol, from docs/protocol/wcp-explained.md), 4-5 why it's new (criterion 2), 6-12 the four
 questions (criterion 3: Q1 slide 6, Q2 slides 7-10 with the without-Weft, with-Weft and Otto team-run
 clips, Q3 slide 11, Q4 slide 12), 13 why Artifacts + Cloudflare, 14 close.
-Inputs: demo/video/connect-2026/stills/*.png, qr-weft.svg, the 22 s "without Weft" clip
+Inputs: demo/video/connect-2026/stills/*.png, qr-weft.svg, qr-wcp-explained.svg (slide 3 QR to the one-pager), the 22 s "without Weft" clip
 (demo/video/connect-2026/baseline.mp4, recorded from baseline.tape), the 47 s squiggle clip, which is
 reused from slides-story-v1.html (data:video/mp4), and the 58 s Otto clip
 (demo/video/connect-2026/otto-weft-demo-cut.mp4 = demo/otto/video/cut.py output, run-4, card t_83def502;
@@ -67,6 +67,8 @@ def chips(items):
 
 def slides():
     qr = (HERE / "qr-weft.svg").read_text() if (HERE / "qr-weft.svg").exists() else ""
+    # QR to the full one-pager (docs/protocol/wcp-explained.md) on the WCP slide; qrcode SvgPathImage, EC M (card t_03b89786)
+    qr_wcp = (HERE / "qr-wcp-explained.svg").read_text().split("?>", 1)[-1].strip().replace('id="qr-path"', 'id="qr-wcp-path"')
     harness = chips([("Claude Code", "live"), ("Codex", "live"), ("OpenCode", "live"), ("Hermes", "live"),
                      ("Gemini CLI", "live"), ("Cursor", "wr"), ("File watcher: any editor, people too", "wt")])
     resolve = "".join(f'<li style="--i:{i}"><b>{i+1}</b><em>{h}</em>{d}</li>' for i, (h, d) in enumerate([
@@ -87,14 +89,15 @@ def slides():
 <figcaption>WCP: every agent edit goes through one Durable Object per repo · <a href="{ARCH_URL}" target="_blank" rel="noopener">interactive ↗</a></figcaption></figure>
 <img class="feed" src="{img("02-live-log.png")}" alt="Weft live feed"></div>
 <p class="cap">weft.elier.ai · every agent edit, in order, live · Weft coordinated the agents that built Weft: <b>918</b> events · <b>27</b> landings</p></section>''',
-        '''<section><p class="kicker">1 · What I built · the protocol</p>
+        f'''<section><p class="kicker">1 · What I built · the protocol</p>
 <h1 class="nov">WCP, the <span class="red">Weft Coordination Protocol</span></h1>
-<ol class="wcp">
+<div class="wcpg"><div class="wcpm"><ol class="wcp">
 <li style="--i:0"><b>1</b><span><em>One ordered log per repo.</em> Every agent edit is a numbered event.</span></li>
 <li style="--i:1"><b>2</b><span><em>Symbol-level.</em> Who changed which function, not just which file.</span></li>
 <li style="--i:2"><b>3</b><span><em>Checked like a database transaction.</em> &ldquo;I've seen up to #N&rdquo; &rarr; checked against what other agents did since.</span></li>
 <li style="--i:3"><b>4</b><span><em>Conflicts come back as compiler errors</em> (red squiggles), through the hooks every agent tool already has.</span></li></ol>
-<div class="log"><span class="ev"><b>#3</b>codex-b edits fetchWithAuth ✓</span><span class="ev"><b>#4</b>claude-a changes refreshToken signature ✓</span><span class="ev no"><b>#5</b>codex-b, base #3: rejected, stale_assumption ← #4</span></div>
+<div class="log"><span class="ev"><b>#3</b>codex-b edits fetchWithAuth ✓</span><span class="ev"><b>#4</b>claude-a changes refreshToken signature ✓</span><span class="ev no"><b>#5</b>codex-b, base #3: rejected, stale_assumption ← #4</span></div></div>
+<figure class="qrw"><div class="qr">{qr_wcp}</div><figcaption><b>Full one-pager</b>github.com/celador/weft<br>wcp-explained.md</figcaption></figure></div>
 <p class="src">Open spec + JSON schema + conformance tests · runs anywhere, Cloudflare or local · fail-open</p></section>''',
         '''<section><p class="kicker">2 · Why it's new</p>
 <h1 class="nov">Agents message each other <span class="red">in squiggles</span>.</h1>
@@ -233,7 +236,10 @@ section.on .pipe li{animation:in .3s calc(var(--i)*.15s) forwards}
 section.on .wcp li{animation:in .35s calc(var(--i)*.15s) forwards}.wcp b{color:#ff4d5e;font-size:2.6vw;font-weight:800}.wcp em{font-style:normal;color:#fff;font-weight:800}
 .log{display:grid;grid-template-columns:1fr 1.15fr 1.25fr;gap:1vw;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:1.45vw}.ev{background:#12121a;border:1px solid #2c2c3c;border-left:7px solid #4ade80;border-radius:10px;padding:1.2vh 1vw;color:#d6d6e0;line-height:1.35}
 .ev b{color:#fff;margin-right:.7vw}.ev.no{border-left-color:#ff4d5e;color:#ff8a95}
-@media (orientation:portrait){.wcp li{font-size:4vw;grid-template-columns:6.5vw 1fr}.wcp b{font-size:4.6vw}.log{grid-template-columns:1fr;font-size:3vw;gap:1vh}}
+.wcpg{display:grid;grid-template-columns:1fr auto;gap:2.6vw;align-items:center}.wcpm{display:flex;flex-direction:column;gap:3.2vh}.wcpm .log{font-size:1.3vw;grid-template-columns:.85fr 1.1fr 1.55fr}
+.qrw{margin:0;text-align:center}.qrw .qr svg{width:19vh;height:19vh;display:block;margin:0 auto}.qrw figcaption{font-size:1.25vw;color:#9a9aab;margin-top:1vh;line-height:1.3}.qrw figcaption b{display:block;color:#fff;font-size:1.6vw}
+@media (orientation:portrait){.wcp li{font-size:4vw;grid-template-columns:6.5vw 1fr}.wcp b{font-size:4.6vw}.log{grid-template-columns:1fr;font-size:3vw;gap:1vh}
+.wcpg{grid-template-columns:1fr;gap:2vh}.wcpm .log{font-size:3vw;grid-template-columns:1fr}.qrw{display:flex;align-items:center;gap:4vw;text-align:left}.qrw .qr svg{width:15vh;height:15vh}.qrw figcaption{font-size:3.2vw;margin:0}.qrw figcaption b{font-size:4vw}}
 @media (orientation:portrait){.built,.q2r{grid-template-columns:1fr}.dg img,.q2r .dg img{max-height:30vh}.dg figcaption{font-size:2.8vw}.built .feed{max-height:28vh}.steps.v li{font-size:3vw}.steps.v em{font-size:3.4vw}}
 @media (orientation:portrait){.q1,.q3{grid-template-columns:1fr}.shot img{max-height:24vh}.shot figcaption{font-size:2.8vw}.q3 img{max-height:22vh}}
 @media (orientation:portrait){.huge2{font-size:10vw}.q{font-size:6vw}.lede{max-width:none}.tag{font-size:6vw}.code{font-size:2.15vw;padding:1.2vh 2vw;white-space:pre-wrap;word-break:break-all}.code.tr{font-size:2.3vw}.chip{font-size:3.6vw}.lg{width:2.4vw;height:2.4vw}
