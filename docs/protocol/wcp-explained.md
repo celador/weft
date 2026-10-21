@@ -1,3 +1,5 @@
+Weft in three pages: **Protocol** (the rules) · [Platform](../platform-explained.md) (the referee) · [Product](../product-explained.md) (the window)
+
 # WCP explained (one page)
 
 A plain-language companion to the normative spec, [wcp-v0.md](wcp-v0.md). If they disagree, the spec wins.

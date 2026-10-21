@@ -8,6 +8,8 @@ Live demo: [weft.elier.ai](https://weft.elier.ai) — the web UI over the real e
 
 Status: research/demo implementation; WCP v0.1 is a draft, not a published standard. See [the design](docs/design.md), [protocol specification](docs/protocol/wcp-v0.md), and [try it yourself](docs/try-it.md).
 
+Plain-language one-pagers: [Protocol](docs/protocol/wcp-explained.md) · [Platform](docs/platform-explained.md) · [Product](docs/product-explained.md).
+
 ## Architecture
 
 ```mermaid
