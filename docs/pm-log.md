@@ -123,3 +123,7 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-10-20 11:20 — landed t_83def502 + t_a16b130a claims
 - Otto demo (t_83def502) and deck rev 7 (t_a16b130a) were already merged and pushed (57c9897, CI Gate green). Posted Weft lands (seq #1110, #1111) to release their claims; removed both worktrees.
 - wt/local still HELD (Omer-code question, flagged 10-13). wt/t_be804fb4 intentionally unmerged.
+
+## 2026-10-20 23:55 — Weft land for t_d28190c3
+- Deck rev 7.1 (t_d28190c3) already merged + pushed (2e5e966, CI Gate green). Posted Weft land (seq #1132) to release its claims; removed worktree.
+- wt/local still HELD (Omer-code question, flagged 10-13). wt/t_be804fb4 intentionally unmerged.
