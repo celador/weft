@@ -139,3 +139,7 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-10-21 02:59 — Weft lands for t_dadae7a9 + t_6995dc1d
 - Closing contact line (t_dadae7a9) and 'Coordination, not Orchestration' (t_6995dc1d) already merged + pushed (378a2cf, ef3ab76; CI Gate green). Posted Weft lands (seq #1164, #1165) to release claims; removed both worktrees.
 - wt/local still HELD (Omer-code question, flagged 10-13). wt/t_be804fb4 intentionally unmerged.
+
+## 2026-10-21 11:10 — Weft land for t_49fb8a75
+- WCP slide 3 (t_49fb8a75) already merged + pushed (436251f). Posted Weft land (seq #1184) to release claims; removed worktree. t_03b89786 now ready.
+- wt/local still HELD (Omer-code question, flagged 10-13). wt/t_be804fb4 intentionally unmerged.
