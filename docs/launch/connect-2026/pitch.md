@@ -1,4 +1,11 @@
-# Weft at Cloudflare Connect 2026: the criteria-led version (rev 7)
+# Weft at Cloudflare Connect 2026: the criteria-led version (rev 7.1)
+
+Rev 7.1 (card t_d28190c3, Oct 20 2026): rev 7 plus two Archify diagrams built from the source
+(`diagrams/architecture.json`, `diagrams/conflict.json` -> checked HTML + PNG). No spoken words
+changed (750 words, 6:25 with clips). Slide 2: the architecture diagram left of the live feed.
+Slide 9: the five steps on the left, the conflict sequence diagram on the right. Each slide has an
+interactive link (new tab, presentation view on the highlighted path) for Q&A. Rev 7 is kept as `*-v7`.
+
 
 Rev 7 (card t_a16b130a, Oct 20 2026): rev 6 plus the 58 s Otto clip from the run-4 team demo
 (card t_83def502, `demo/evidence/otto-report.md`): 7 kanban cards running at once on one board in
@@ -117,6 +124,8 @@ before the conflict exists."
 
 ## 0:15-0:43 · Slide 2: 1, what I built
 
+Left: the architecture diagram (protocol + platform). Right: the live feed.
+
 "One: what I built. Weft is two things. An open protocol, WCP, for agents that share one
 codebase. And a reference platform for it on Cloudflare.
 This is the live feed, public at weft.elier.ai: every edit every agent makes, in order, as they
@@ -178,6 +187,8 @@ Then a planted bug. It lands, production errors spike, and Weft reverts it thirt
 (Pause until the clip ends.)
 
 ## 4:27-4:53 · Slide 9: Q2, how Weft resolves it
+
+Left: the five steps. Right: the conflict sequence diagram, the same five beats in order.
 
 "Under the hood: a stale edit is refused. The agent reroutes, or negotiates, like that overload.
 When two agents want the same code, priority decides who adapts, every time, so they never

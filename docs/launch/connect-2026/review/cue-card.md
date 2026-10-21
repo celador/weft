@@ -1,4 +1,4 @@
-# Cue card · Weft · rev 7 · 13 slides · talk + clips 6:25 · hard cap 7:00
+# Cue card · Weft · rev 7.1 · 13 slides · talk + clips 6:25 · hard cap 7:00
 
 Judges score, in order: (1) what you built, (2) why it's novel, (3) many agents at once.
 Criterion 3 = Cloudflare's four questions, one slide each.
@@ -9,7 +9,8 @@ Budget: (1) 0:00-0:43 · (2) 0:43-1:51 · (3) Q1-Q4 1:51-5:42 · Cloudflare 5:42
 just changed · tells the agent **before the conflict exists**
 
 **0:15 · (1) WHAT I BUILT** (slide 2)
-Two things: open protocol **WCP** + reference platform on Cloudflare · live feed, weft.elier.ai ·
+Two things: open protocol **WCP** + reference platform on Cloudflare (left: architecture diagram) ·
+live feed, weft.elier.ai (right) ·
 squiggles on the right · built with itself: **918 events · 27 landings**
 
 **0:43 · (2) WHY IT'S NEW: SQUIGGLES** (slide 3)
@@ -42,7 +43,8 @@ click in Otto · menu change: preview + screenshots + pixel diff · overload pro
 
 **4:27 · Q2 · HOW IT RESOLVES** (slide 9)
 Stale edit refused · reroute or **negotiate** ("like that overload") · **priority decides who
-adapts**, no deadlocks · **Mergiraf** for adjacent edits · land = **compare-and-swap** on trunk
+adapts**, no deadlocks · **Mergiraf** for adjacent edits · land = **compare-and-swap** on trunk ·
+(right: the conflict sequence diagram; same words)
 
 **4:53 · Q3 · REVIEW** (slide 10)
 "You just saw it." Tests · preview · screenshots + pixel diff · risk tier · review agent vs
