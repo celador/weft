@@ -140,7 +140,7 @@ that plans the merge order up front and shows which change is blocked by or depe
 
 ## Rev 6 talk claims, in case a judge pushes
 
-- **"Coordinates, doesn't orchestrate": isn't the coordinator an orchestrator?** No. It doesn't
+- **"Coordination, not Orchestration": isn't the coordinator an orchestrator?** No. It doesn't
   assign or split work; it's an ordered log plus rules that check each edit. Agents pick their
   own work (from a board, a person, or another tool) and decide how to react to a squiggle.
   Arbitration is between peers: one rule decides which side adapts. When two tasks turn out to be

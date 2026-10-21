@@ -23,7 +23,7 @@ criteria, in her order, and criterion 3 is answered through the four questions f
 competition post (blog.cloudflare.com/next-git-platform-on-cloudflare), one slide each:
 
 1. What I built: slides 1-2 (0:00-0:43)
-2. Why it's new: slides 3-4 (0:43-1:51), including John's line "Coordinates, doesn't orchestrate."
+2. Why it's new: slides 3-4 (0:43-1:51), including John's line "Coordination, not Orchestration"
 3. How it solves many agents changing code at once: slides 5-10 (1:51-4:50)
    - Q1 How do agents know what other agents are working on? (slide 5)
    - Q2 What happens when they make conflicting changes? (slides 6-8: without-Weft clip,
@@ -60,7 +60,7 @@ Sources for every claim (nothing unbuilt is presented as built):
 - Edit time vs landing time: the check runs in the harness's pre-tool hook (Claude Code
   PreToolUse deny; Codex; OpenCode `tool.execute.before`), so a stale edit is refused before it
   applies. Do not name other finalists.
-- Coordinates, doesn't orchestrate: there is no planner agent in the coordination path; the
+- Coordination, not Orchestration: there is no planner agent in the coordination path; the
   coordinator is a log plus validation rules, and arbitration is between peers (`design.md` §2.6,
   §4). Escalation can merge two tasks (B11), still without a lead agent splitting work.
 - Harnesses: live-verified Claude Code, Codex, OpenCode (`demo/evidence/m1-report.md`,
@@ -140,7 +140,7 @@ code: this function changed, here's the diff, update your call.
 Other systems check a change when it lands. Weft checks every edit while the agent is still
 writing it, so no finished work gets thrown away."
 
-## 1:14-1:51 · Slide 4: Coordinates, doesn't orchestrate.
+## 1:14-1:51 · Slide 4: Coordination, not Orchestration
 
 "Weft coordinates; it doesn't orchestrate. There's no agent on top splitting up the work. Agents
 are peers, and each one hears only about what touches its own edit.

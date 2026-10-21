@@ -96,7 +96,7 @@ changed in #3 by agent-a after your base #1.</span>
 <span class="add">+export function calcTotal(items: Item[], opts: PriceOptions): number {</span></pre>
 <p class="sub">Delivered into the agent's own run, <b>mid-edit</b>, carrying the other agent's code.<br>Others check a change <span class="dim">when it lands</span>. Weft checks every edit <span class="red">while it's being written</span>.</p></section>''',
         f'''<section><p class="kicker">2 · Why it's new</p>
-<h1 class="huge2">Coordinates,<br><span class="red">doesn't orchestrate.</span></h1>
+<h1 class="huge2">Coordination,<br><span class="red">not Orchestration</span></h1>
 <p class="sub">No agent on top splitting the work. <b>Agents are peers.</b></p>
 <div class="chips">{harness}</div>
 <p class="src"><span class="lg live"></span>live today &nbsp; <span class="lg wr"></span>adapter written &nbsp; <span class="lg wt"></span>observes, can't refuse</p>
@@ -149,7 +149,7 @@ Agent-Id:  wt-4-agent-issue-4-continue</pre>
 <div class="layer l4"><b>Durable Objects</b>exactly one authoritative log per repo</div>
 </div></section>''',
         f'''<section class="center"><h1 class="mid">Red squiggles<br>for teams of coding <span class="red sq">agents</span>.</h1>
-<p class="tag">Coordinates, doesn't orchestrate.</p>
+<p class="tag">Coordination, not Orchestration</p>
 <div class="close"><div class="qr">{qr}</div><div><p class="url">weft.elier.ai</p><p class="sub">John Nelson · johnaaronnelson.com · github.com/celador</p></div></div></section>''',
     ]
 
