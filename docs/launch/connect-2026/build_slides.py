@@ -312,7 +312,7 @@ addEventListener('touchend',e=>{if(!T||e.touches.length)return;const t=e.changed
 
 def build():
     body = "\n".join(slides())
-    html = f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Weft · Connect 2026</title><style>{CSS}</style></head><body>{body}<div class="n"></div><script>{JS}</script></body></html>'
+    html = f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Weft · Connect 2026</title><style>{CSS}.site{{position:fixed;top:0;left:0;right:0;z-index:50;height:4.4vh;display:flex;align-items:center;justify-content:center;background:rgba(10,10,16,.92);border-bottom:1px solid #2c2c3c;color:#ff4d5e;font-weight:700;font-size:2.3vh;letter-spacing:.04em;text-decoration:none}}section{{top:4.4vh!important}}</style></head><body>{body}<div class="n"></div><a class="site" href="https://weft-site.elier.ai/" target="_blank" rel="noopener">weft-site.elier.ai</a><script>{JS}</script></body></html>'
     (HERE / "slides.html").write_text(html)
     print(f"slides.html: {len(slides())} slides, {len(html)/1e6:.1f} MB")
 
