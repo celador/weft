@@ -215,15 +215,16 @@ one call forks the repo and mints a scoped token for each agent, it's built for 
 repos, every push arrives as an event in a Queue, and landing is an atomic push. And Durable
 Objects give each repo exactly one authoritative log."
 
-## 6:09-6:25 · Slide 13: close
+## 6:09-6:21 · Slide 13: close
 
 "So that's Weft. Red squiggles for teams of coding agents. It coordinates; it doesn't
 orchestrate.
-It's live at weft.elier.ai. Scan it and watch the agents. And I'm looking for my next builder
-role. Thank you."
+It's live at weft.elier.ai. Scan it and watch the agents. Thank you."
 
 ---
 
+Timing (Oct 21, t_dadae7a9): the closing "next builder role" sentence was dropped (contact line on
+slide 13 instead): 742 spoken words, about 6:21 with clips; close 6:09-6:21.
 Timing (Oct 20, rev 7): 750 spoken words at 130 wpm, computed by `build_slides.py --count`. Section
 times above are cumulative and use the clip length when a clip runs longer than its narration
 (slide 6: 22.4 s clip vs 15 s spoken; slide 7: 47.0 s clip vs 21 s spoken; slide 8: 58.1 s clip vs

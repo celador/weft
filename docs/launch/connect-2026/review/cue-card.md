@@ -1,8 +1,8 @@
-# Cue card · Weft · rev 7.1 · 13 slides · talk + clips 6:25 · hard cap 7:00
+# Cue card · Weft · rev 7.1 · 13 slides · talk + clips 6:21 · hard cap 7:00
 
 Judges score, in order: (1) what you built, (2) why it's novel, (3) many agents at once.
 Criterion 3 = Cloudflare's four questions, one slide each.
-Budget: (1) 0:00-0:43 · (2) 0:43-1:51 · (3) Q1-Q4 1:51-5:42 · Cloudflare 5:42-6:09 · close 6:09-6:25.
+Budget: (1) 0:00-0:43 · (2) 0:43-1:51 · (3) Q1-Q4 1:51-5:42 · Cloudflare 5:42-6:09 · close 6:09-6:21.
 
 **0:00 · HEADLINE** (slide 1)
 **"Red squiggles for teams of coding agents."** Checks every agent edit against what the others
@@ -60,7 +60,7 @@ for byte · transcript per run · revert names the op + reason
 agent, one call · millions of repos · push → Queue event · atomic landing · DO = one log per repo
 
 **6:09 · CLOSE** (slide 13): "Red squiggles for teams of coding agents. It coordinates; it doesn't
-orchestrate." weft.elier.ai QR · next builder role · Thank you.
+orchestrate." weft.elier.ai QR · Thank you.
 
 Never say: "Cursor runs live", "I approved" (the Otto clicks were scripted on my account), "file
 watcher blocks edits", "preview deploy" (it's a preview served from Artifacts), any competitor's name.
