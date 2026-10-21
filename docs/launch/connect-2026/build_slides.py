@@ -150,7 +150,7 @@ Agent-Id:  wt-4-agent-issue-4-continue</pre>
 </div></section>''',
         f'''<section class="center"><h1 class="mid">Red squiggles<br>for teams of coding <span class="red sq">agents</span>.</h1>
 <p class="tag">Coordinates, doesn't orchestrate.</p>
-<div class="close"><div class="qr">{qr}</div><div><p class="url">weft.elier.ai</p><p class="sub">I'm looking for my next builder role.<br>John Nelson</p></div></div></section>''',
+<div class="close"><div class="qr">{qr}</div><div><p class="url">weft.elier.ai</p><p class="sub">John Nelson · johnaaronnelson.com · github.com/celador</p></div></div></section>''',
     ]
 
 CSS = """*{box-sizing:border-box;margin:0}html,body{height:100%;background:#0a0a10;color:#f2f2f5;font-family:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",sans-serif;overflow:hidden}
