@@ -11,7 +11,10 @@ moved out of the talk and into the sections at the end of this file: "Origin sto
 and "What's next". Questions 1-12 still match the talk; slide pointers are in brackets.
 
 Rev 7 (Oct 20): slide 8 is the 58 s Otto clip (run-4 of the team demo); old slides 8-12 are now
-9-13. Pointers below use rev 7 numbers. The Otto run, with its honest failures, is in "The Otto run".
+9-13.
+
+Rev 7.1 + WCP slide (Oct 21, t_49fb8a75): slide 3 is now "WCP, the Weft Coordination Protocol"; old
+slides 3-13 are now 4-14. Pointers below use these numbers (14 slides). The Otto run, with its honest failures, is in "The Otto run".
 
 Cloudflare terms in plain words: a **Worker** is a stateless web service. A **Durable
 Object (DO)** is one single-threaded server with its own small SQLite database; there is exactly
@@ -20,7 +23,7 @@ one per name. **Queues** is a message queue, **Workflows** is a job runner with 
 
 ---
 
-**1. How does conflict detection work, exactly?** [slides 3, 5, 9]
+**1. How does conflict detection work, exactly?** [slides 3, 4, 6, 10]
 When an agent starts a change, it gets the log position it started from, its "base". Every edit
 it sends says what it changed and which functions and types it relied on, its read set. The
 coordinator looks only at what other changes wrote after that base. If one of them landed a write
@@ -30,7 +33,7 @@ read is just a warning. It's the same idea as optimistic concurrency in a databa
 what changed since you read, don't lock.
 <!-- notes: docs/protocol/wcp-v0.md §6.1-6.2 (W = records with seq > base, rules R1 stale_overwrite, R2 stale_assumption/stale_read, R3 claims); packages/sequencer/src/coordinator.ts (validate); packages/analyzer/src/index.ts (reads/writes, keys path#qualified.name) -->
 
-**2. And when two agents are editing the same thing at the same time, before either lands?** [slide 9: "priority decides who adapts"]
+**2. And when two agents are editing the same thing at the same time, before either lands?** [slide 10: "priority decides who adapts"]
 Agents can claim a function for a short time, like a lease. If two claims collide, the more senior
 change wins: higher task priority first, then whoever started first. The default rule is
 wound-wait: a senior agent proceeds and the junior one is told to back off; the alternative is
@@ -39,7 +42,7 @@ or keep backing off from each other. By default this is advice, a warning; a rep
 "block" so the losing edit is refused.
 <!-- notes: docs/protocol/wcp-v0.md §7.1 seniority (priority, birth seq, change id), §7.2 wound-wait default / wait-die, enforcement advise|block (default advise); claim TTLs expired by the DO alarm, packages/sequencer/src/do.ts:4,210-218 -->
 
-**3. The sequencer is one Durable Object per repo. Isn't that a bottleneck, and what if it goes down?** [slides 5, 12]
+**3. The sequencer is one Durable Object per repo. Isn't that a bottleneck, and what if it goes down?** [slides 3, 6, 13]
 Yes, by design: one object per repo is what gives a single, ordered log, the way a database
 primary does. Repos don't share anything, so a thousand repos are a thousand independent objects.
 The log is in that object's own SQLite storage, so if it restarts, Cloudflare brings it back with
@@ -77,7 +80,7 @@ danger is the opposite: two edits that merge cleanly as text and still break the
 calling a function whose signature just changed. We want that conflict reported, not merged away.
 <!-- notes: README.md:5 (without file locks); docs/design.md:199-200,277 (worktrees share repo-relative keys); wcp-v0.md §6.2 R2 stale_assumption; no CRDT anywhere in repo -->
 
-**8. How do agents hook in? Which ones work today?** [slide 4]
+**8. How do agents hook in? Which ones work today?** [slide 5]
 Each coding agent has hooks that run before and after a tool call. Our adapter is a small program
 those hooks call: before an edit it asks the coordinator, and if the answer is reject, the agent
 sees the reason and adjusts. Live today: Claude Code, Codex, OpenCode, Hermes and Gemini CLI
@@ -109,7 +112,7 @@ real costs are container minutes for rebases and tests and model calls for revie
 with how much work lands, not with how many agents are connected.
 <!-- notes: docs/pm-log.md lines 12,16 (Workers Paid $5/mo); apps/gateway/wrangler.toml (containers, workflows); no cost measurement in repo -->
 
-**12. What does WCP standardize, what's Weft-specific, and what's next?** [slides 2, 4]
+**12. What does WCP standardize, what's Weft-specific, and what's next?** [slides 2, 3, 5]
 WCP is the wire protocol: the event format, the conflict rules, the arbitration rules and auth
 scopes, so any agent and any coordinator can interoperate. Weft is one implementation on
 Cloudflare, plus the analyzer, adapters, web UI and land pipeline. We proposed the hook layer to
@@ -159,7 +162,7 @@ that plans the merge order up front and shows which change is blocked by or depe
 - **"A preview" for every candidate?** Static sites, served straight from Artifacts at that exact
   commit. Server-rendered apps would need a Worker Loader variant, not built.
 
-## The Otto run (slide 8), in case a judge asks
+## The Otto run (slide 9), in case a judge asks
 
 Source: `demo/evidence/otto-report.md`, `demo/evidence/otto/run-4/run.json` (card t_83def502).
 The clip is cut from a 26:54 screen recording of Otto by `demo/otto/video/cut.py`: trims, crops and
