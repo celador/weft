@@ -97,7 +97,7 @@ def slides():
 <p class="sub lede">Weft checks every agent edit against what the other agents just changed, and tells the agent <b>before the conflict exists</b>.</p>
 <p class="src">John Nelson · Weft</p></section>''',
         f'''<section><p class="kicker">1 · What I built · the problem it solves</p>
-<h1 class="nov">Merge time is <span class="red">too late.</span></h1>
+<h1 class="nov">Merge time is too late.</h1>
 <div class="prob"><p class="sub">Git coordinates people when they open a pull request. Agents in parallel worktrees break each other's assumptions every few minutes. By the time the PR shows a conflict, an agent has spent an hour building on a function signature that no longer exists.</p>
 <figure class="shot"><img src="{img("02-live-log.png")}" alt="Weft live feed"><figcaption>weft.elier.ai · every agent edit, in order, live</figcaption></figure></div>
 <p class="src nums">Built by agents, under Weft · first 11 hours: <b>627</b> events · <b>460</b> edits from three agent profiles · <b>18</b> landings, zero reverts · <b>59</b> &ldquo;wait for the other agent&rdquo; warnings <span class="fine">(repo weft, 2026-10-04, 03:24&ndash;14:40 UTC · dogfood-stats.json)</span></p></section>''',
