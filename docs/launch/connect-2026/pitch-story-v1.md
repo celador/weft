@@ -179,7 +179,9 @@ sequence. Slide labels use the step that best fits each moment.
 - Don't say it was built in 11 days. Eleven days was the time left to the deadline when you
   started; the entry was submitted after three (Oct 3 → Oct 6). Work continued after that.
 - Don't say the local mode is done. It is on branch `wt/local` (card LOC1), not merged to main.
-- Don't call WCP a standard. It's a v0.1 draft; the AAIF item is an open discussion proposal.
+- Don't call WCP a standard. It's a v0.1 draft. We're proposing Agent Hooks Core and WCP to the
+  AAIF in collaboration with members of Gas Town; the Agent Hooks Core item (#53) is an open
+  discussion proposal. Never "adopted" or "AAIF-backed".
 - Don't claim production users, revenue or a cost per repo. None exist or are measured.
 - Don't say the analysis understands Swift or Python. TypeScript/JavaScript only.
 - Don't say you named it. The agent proposed "Weft" as a working name (Oct 3 22:04) and you kept it.

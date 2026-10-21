@@ -1,5 +1,17 @@
 # Weft at Cloudflare Connect 2026: the criteria-led version (rev 7.1)
 
+Rev 7.1 + site wording (card t_26e387d8, Oct 21 2026): the deck now uses the website's wording
+(weft-site.elier.ai, source `site/public/index.html`, quoted verbatim). Slide 2: the problem up front,
+"Merge time is too late." (the Archify architecture diagram left the deck; it stays on the review
+page), with the dogfood numbers from `demo/video/dogfood-stats.json` (627 events, 460 edits from
+three agent profiles, 18 landings with zero reverts, 59 wait warnings, Weft's first 11 hours) as
+one small line instead of 918/27. Slide 3: the site's Hook / Sequence / Answer and its architecture
+diagram; the AAIF line (proposed, with members of Gas Town; never adopted or a standard), the
+honesty note and the one-pager QR. Slide 4: the site's real Codex tool result replaces the made-up
+cart.ts example. Slide 11: "Humans get a feed, not a merge queue." Slide 13: the site's
+product-to-job list. Slide 14: QR to weft-site.elier.ai and the five-minute call to action.
+789 spoken words, about 6:43 with clips.
+
 Rev 7.1 + WCP slide (card t_49fb8a75, Oct 21 2026): new slide 3, "WCP, the Weft Coordination
 Protocol", between "what I built" and "why it's new", summarised from `docs/protocol/wcp-explained.md`
 (spec `wcp-v0.md` wins): one ordered log, symbol-level, checked like a database transaction,
@@ -46,7 +58,8 @@ slides 6-9, Q3 slide 10, Q4 slide 11, Artifacts slide 12, close slide 13.)
 Dropped as the frame: "I didn't write the code. I directed the agents that did." and the
 Oct 3 origin arc. The origin numbers (64 hours, 231 files, 38,593 lines, 627 events) now live in
 `review/deep-qa.md` under "Origin story" for Q&A. One proof line stays on slide 2: Weft
-coordinated the agents that built Weft (918 events, 27 landings).
+coordinated the agents that built Weft (918 events, 27 landings; since t_26e387d8 the site's
+set instead: 627 events, 18 landings, first 11 hours).
 Rev 5 is kept as `*-visual-v5` (pitch, build script, slides html/pdf/pptx, cue card, deep-qa).
 
 Format: 7 minutes per finalist, demo included, hard cap; then 3 minutes Q&A. Wed Oct 21, 1:35 PM PT.
@@ -62,21 +75,29 @@ Sources for every claim (nothing unbuilt is presented as built):
 - Headline and lede: `site/public/index.html` (h1 and .lede), verbatim.
 - Protocol + platform: WCP draft v0.1, `docs/protocol/wcp-v0.md`; platform `apps/*/wrangler.toml`
   (Workers, Durable Objects, Artifacts, Workflows, Queues, Containers).
-- 918 events, 27 landings: `log-stats-2026-10-19.json` (Weft's own log, to Oct 19).
+- Dogfood numbers (slide 2, on the slide, not spoken): `demo/video/dogfood-stats.json`, repo weft,
+  2026-10-04 03:24-14:40 UTC (11.3 h): records 627, edits 460, agents 3, lands 18, reverts 0,
+  `warning:claim_wait` 59. Same set as the site. (The Oct 19 count, 918/27, is in
+  `review/deep-qa.md` for Q&A only.)
+- Site wording (slides 2, 3, 4, 11, 13, 14): `site/public/index.html`, verbatim; slide 3's
+  diagram is `site/public/assets/img/architecture.webp`, margins cropped to
+  `diagrams/site-architecture.webp`, not redrawn. Slide 4's tool result is the site's
+  createSession example (codex-b, Codex CLI).
+- AAIF (slide 3): "proposing", with members of Gas Town; both specs are v0 drafts; the Agent Hooks
+  Core discussion item is aaif/project-proposals#53 (open). Never say adopted, standard or
+  AAIF-backed; don't name individuals.
 - Squiggles carry the other agent's code: `docs/design.md` B4 update (the adapter fetches the
   causing event and quotes its hunks); positioned `stale_assumption` text in `docs/try-it.md` §4a.
 - Edit time vs landing time: the check runs in the harness's pre-tool hook (Claude Code
   PreToolUse deny; Codex; OpenCode `tool.execute.before`), so a stale edit is refused before it
   applies. Do not name other finalists.
-- WCP slide (3): every line is from `docs/protocol/wcp-explained.md` (commit b6a8377), checked
-  against the spec `docs/protocol/wcp-v0.md`, which names it "Weft Coordination Protocol (WCP)".
-  Log and `seq`: §5.1; symbol keys and write kinds: §4.1; `base_seq`: §5.2; validation against
-  what entered the log after the base: §6; diagnostics delivered through the core hooks: §8.3;
-  schema `packages/protocol/schema/wcp-v0.schema.json`; conformance: §12; fail-open: §8.3
-  (adapters, `on_failure: "open"`). The log strip is Appendix A:
-  #3 codex-b edit accepted, #4 claude-a signature change accepted, #5 codex-b check (base 3)
-  rejected, `stale_assumption`, `caused_by_seq` 4. Say "not just which file": non-TS/JS falls
-  back to file granularity.
+- WCP slide (3), from card t_26e387d8: title and Hook / Sequence / Answer are the site's
+  how-it-works section verbatim (`site/public/index.html`); they match the spec (`wcp-v0.md`:
+  log and `seq` §5.1, symbol keys §4.1, `base_seq` §5.2, validation since the base §6,
+  allow/advise/deny envelope from Agent Hooks Core, diagnostics through the core hooks §8.3).
+  "Down to the symbol": non-TS/JS falls back to file granularity (the honesty note on the slide
+  says the analyzer understands TypeScript today). The rev 7.1 four-point version and its
+  Appendix A log strip (#3/#4/#5) are in git history (commit 6646f90).
 - Coordination, not Orchestration: there is no planner agent in the coordination path; the
   coordinator is a log plus validation rules, and arbitration is between peers (`design.md` §2.6,
   §4). Escalation can merge two tasks (B11), still without a lead agent splitting work.
@@ -109,11 +130,12 @@ Sources for every claim (nothing unbuilt is presented as built):
   transcripts per sandbox run shipped to R2 (`apps/sandbox/src/runner.ts`, agent.stdout.log);
   revert = one commit with a `Weft-Reverts-Op:` trailer and a `revert {reverts_op_id, reason}`
   event (B8).
-- Why Artifacts: the gateway's candidates endpoint forks trunk and mints a repo-scoped write token
-  per candidate in one call (B6); "millions of repositories" is Cloudflare's own description of
-  Artifacts (the competition post); `pushed` events go to Queue `weft-artifacts-events` (B6);
-  landing is an atomic lease push (`--force-with-lease`). Durable Objects: one authoritative
-  log per repo.
+- Why Artifacts (slide 13): the site's product-to-job list (`site/public/index.html`, Runs on
+  Cloudflare): Durable Objects (ordered log + submit queue per repo), Artifacts (trunk + an
+  isolated fork per candidate; the candidates endpoint forks trunk and mints a repo-scoped token,
+  B6), Queues and Workflows (processing, selection, landing, auto-revert; `pushed` events on Queue
+  `weft-artifacts-events`), Containers (Git, builds and tests in a sandbox, credentials outside),
+  D1 and R2 (task/change index, evidence). Bindings: `apps/*/wrangler.toml`.
 - Without-Weft clip (slide 7): a real run, `demo/m1-baseline.mjs`, evidence in
   `demo/evidence/m1-baseline/` (each branch green alone, clean git merge, main tsc TS2554 + 1 test
   failing). Both agents ran on Codex in that run; say "two agents", not "Claude Code".
@@ -139,44 +161,48 @@ Sources for every claim (nothing unbuilt is presented as built):
 Weft checks every agent edit against what the other agents just changed, and tells the agent
 before the conflict exists."
 
-## 0:15-0:43 · Slide 2: 1, what I built
+## 0:15-0:37 · Slide 2: 1, what I built: the problem it solves
 
-Left: the architecture diagram (protocol + platform). Right: the live feed.
+Headline: Merge time is too late, with the site's three sentences (`site/public/index.html`, manifesto),
+the live feed on the right, and one small line with the dogfood numbers
+(`demo/video/dogfood-stats.json`). The numbers are on the slide, not spoken.
 
-"One: what I built. Weft is two things. An open protocol, WCP, for agents that share one
-codebase. And a reference platform for it on Cloudflare.
-This is the live feed, public at weft.elier.ai: every edit every agent makes, in order, as they
-work. On the right, the squiggles.
-Weft coordinated the agents that built Weft: 918 events, 27 landings."
+"One: the problem, and what I built. Merge time is too late. Agents in parallel worktrees break each
+other's assumptions every few minutes. By the time the pull request shows a conflict, an agent has
+spent an hour building on a function signature that no longer exists."
 
-## 0:43-1:02 · Slide 3: 1, what I built: WCP, the Weft Coordination Protocol
+## 0:37-1:12 · Slide 3: 1, what I built: one ordered log per repo (Hook, Sequence, Answer)
 
-Four lines from `docs/protocol/wcp-explained.md` (spec: `wcp-v0.md`) and the Appendix A log strip
-(#3 accepted, #4 signature change accepted, #5 rejected as stale_assumption caused by #4).
+The site's how-it-works section, verbatim: Hook, Sequence, Answer on the left, the site's architecture
+diagram on the right; small footer: the AAIF line, the honesty note, the QR to the one-pager.
 
-"WCP, the Weft Coordination Protocol, in one line: a shared, ordered log of who changed which
-function, checked like database transactions, with conflicts delivered back to each agent as
-compiler-style errors. It's an open spec, with a JSON schema and conformance tests."
+"I built an open protocol, WCP, and a platform for it on Cloudflare. Hook: an adapter catches
+each agent edit before it touches disk. Sequence: one Durable Object per repo orders every edit
+and checks it against everything that landed since the agent's base. Answer: allow, advise or
+deny, as a compiler-style diagnostic in the agent's own tool result.
+We're proposing Agent Hooks Core and WCP to the AAIF, in collaboration with members of Gas Town."
 
-## 1:02-1:34 · Slide 4: 2, why it's new: agents message each other in squiggles
+## 1:12-1:41 · Slide 4: 2, why it's new: agents message each other in squiggles
 
-"Two: why it's new. Agents message each other through those errors: the same red squiggle your
-editor shows you, delivered into the agent's own run, mid-edit. And it carries the other agent's
-code: this function changed, here's the diff, update your call.
-Other systems check a change when it lands. Weft checks every edit while the agent is still
-writing it, so no finished work gets thrown away."
+The site's real Codex tool result (`codex-b (Codex CLI), tool result from the Weft pre-edit hook`)
+and its line: The agent reads the diagnostic. You don't have to.
 
-## 1:34-2:10 · Slide 5: Coordination, not Orchestration
+"Two: why it's new. Agents message each other in squiggles: the same red squiggle your editor
+shows you, delivered into the agent's own run, mid-edit, with the other agent's diff. This is a
+real Codex tool result. The agent reads the diagnostic. You don't have to.
+Other systems check a change when it lands. Weft checks every edit while it's being written."
+
+## 1:41-2:13 · Slide 5: Coordination, not Orchestration
 
 "Weft coordinates; it doesn't orchestrate. There's no agent on top splitting up the work. Agents
 are peers, and each one hears only about what touches its own edit.
-Any harness works with any other in one codebase. Claude Code, Codex, OpenCode, Hermes and Gemini
+Claude Code, Codex, OpenCode, Hermes and Gemini
 run live today; a Cursor adapter is written. A file watcher lets anything else join, people
 included.
 And the protocol doesn't need Cloudflare: it runs on a laptop, no account. Cloudflare is how it
 scales."
 
-## 2:10-2:39 · Slide 6: 3, Q1: how do agents know what other agents are working on?
+## 2:13-2:42 · Slide 6: 3, Q1: how do agents know what other agents are working on?
 
 "Three: many agents changing code at once. Cloudflare's post asked four questions. Here are
 Weft's answers.
@@ -184,13 +210,13 @@ How do agents know what the others are working on? One ordered log per repo, hel
 Object. Every intent, claim, edit and checkpoint is an event in it. And every edit is checked
 against the functions and types the other agents just changed."
 
-## 2:39-3:01 · Slide 7: Q2: what happens when they make conflicting changes? Without Weft (22 seconds, muted, a real recorded run, narrate over it)
+## 2:42-3:04 · Slide 7: Q2: what happens when they make conflicting changes? Without Weft (22 seconds, muted, a real recorded run, narrate over it)
 
 "What happens when they conflict? First, without Weft. One agent changes createSession. The other
 keeps calling the old version. Each branch passes its own tests. Git merges both, no conflict.
 Then main breaks."
 
-## 3:01-3:48 · Slide 8: Q2, with Weft (47 seconds, muted, narrate over it)
+## 3:04-3:51 · Slide 8: Q2, with Weft (47 seconds, muted, narrate over it)
 
 "Now with Weft. Claude Code changes createSession.
 Codex tries to edit a caller. Refused, before the edit is written. There's the squiggle, quoting
@@ -199,7 +225,7 @@ Codex reads it, adapts its call, and tries again. Accepted. A check takes about 
 No human stepped in."
 (Pause until the clip ends.)
 
-## 3:48-4:46 · Slide 9: Q2, a whole team in Otto (58 seconds, muted, a real run, narrate over it)
+## 3:51-4:49 · Slide 9: Q2, a whole team in Otto (58 seconds, muted, a real run, narrate over it)
 
 "Now a whole team: a real run, on one board in Otto. Seven cards running at once, with candidates
 on five harnesses: Claude Code, Codex, OpenCode, Gemini and Hermes. No agent is in charge.
@@ -212,7 +238,7 @@ All seven cards landed.
 Then a planted bug. It lands, production errors spike, and Weft reverts it thirty-two seconds later."
 (Pause until the clip ends.)
 
-## 4:46-5:12 · Slide 10: Q2, how Weft resolves it
+## 4:49-5:15 · Slide 10: Q2, how Weft resolves it
 
 Left: the five steps. Right: the conflict sequence diagram, the same five beats in order.
 
@@ -221,34 +247,42 @@ When two agents want the same code, priority decides who adapts, every time, so 
 deadlock. Adjacent edits get a structural merge with Mergiraf. And landing is a compare-and-swap on
 trunk: main only moves if nothing moved under it."
 
-## 5:12-5:39 · Slide 11: Q3: how do you review everything they produce?
+## 5:15-5:42 · Slide 11: Q3: how do you review everything they produce?
 
 "How do you review everything they produce? You just saw it: every candidate gets tests, a preview,
 screenshots with a pixel diff, a risk tier, and a review agent that checks the task's acceptance
 criteria and fails closed. Low risk lands on its own; higher risk waits for a human. And if
 production errors spike, Weft reverts the landing."
 
-## 5:39-6:01 · Slide 12: Q4: how do you keep track of why?
+## 5:42-6:04 · Slide 12: Q4: how do you keep track of why?
 
 "How do you keep track of why? Every commit carries a Change-Id, a Task-Id and an Agent-Id. Every
 squiggle cites the event that caused it. The log replays byte for byte, each run's model
 transcript is stored, and a revert names the operation it undoes, and why."
 
-## 6:01-6:28 · Slide 13: why Artifacts and Cloudflare
+## 6:04-6:28 · Slide 13: why Artifacts and Cloudflare
 
-"Why Cloudflare? Honestly, Weft doesn't need Artifacts to work. Artifacts is what lets it scale:
-one call forks the repo and mints a scoped token for each agent, it's built for millions of
-repos, every push arrives as an event in a Queue, and landing is an atomic push. And Durable
-Objects give each repo exactly one authoritative log."
+The site's product-to-job list (`site/public/index.html`, section Runs on Cloudflare, end to end).
 
-## 6:28-6:41 · Slide 14: close
+"Why Cloudflare? Honestly, Weft doesn't need Artifacts to work. Artifacts is how it scales: the
+trunk, plus an isolated fork for every candidate change. Durable Objects hold one ordered log per
+repo. Queues and Workflows land and revert. Containers run builds and tests in a sandbox. And D1
+and R2 keep the evidence."
+
+## 6:28-6:43 · Slide 14: close
+
+QR to https://weft-site.elier.ai/ (was weft.elier.ai, the live app).
 
 "So that's Weft. Red squiggles for teams of coding agents. It coordinates; it doesn't
 orchestrate.
-It's live at weft.elier.ai. Scan it and watch the agents. Thank you."
+Two agents, one repo, five minutes, no Cloudflare account needed. Scan it to try it. Thank you."
 
 ---
 
+Timing (Oct 21, t_26e387d8, site wording): 789 spoken words, about 6:43 with clips, 17 s under the
+7:00 hard cap; close 6:28-6:43. Slide 2 is now the problem (the numbers moved to the slide, not
+spoken), slide 3 walks Hook, Sequence, Answer (about 21 s) and ends with the AAIF sentence, slide 5
+lost "Any harness works with any other in one codebase.", slide 13 reads the site's product list.
 Timing (Oct 21, t_49fb8a75): new WCP slide 3 adds 42 spoken words (19 s): 784 spoken words,
 about 6:41 with clips, 19 s under the 7:00 hard cap; close 6:28-6:41.
 Timing (Oct 21, t_dadae7a9): the closing "next builder role" sentence was dropped (contact line on
@@ -271,8 +305,8 @@ Moved to Q&A (`review/deep-qa.md`, "Origin story"): Oct 3 start, 80 minutes to f
 traction (39 stars, 22 issues/PRs from one outside user, Beads asked), Time Machine (next, not
 built), credits plan, prototype status. Otto run details and honest failures: `review/deep-qa.md`,
 "The Otto run".
-If you run long: on slide 5, drop "a Cursor adapter is written" (-2 s); on slide 13, drop "every
-push arrives as an event in a Queue" (-4 s); on slide 2, drop the 918/27 line (-5 s); on slide 11,
-drop "You just saw it:" (-1 s); on slide 3, drop "It's an open spec, with a JSON schema and
-conformance tests." (-5 s). Worst case, skip slide 10 (-26 s): the Otto clip already showed the
-reroute, the negotiation and the landings.
+If you run long: on slide 5, drop "a Cursor adapter is written" (-2 s); on slide 13, drop "Queues and
+Workflows land and revert." (-3 s); on slide 4, drop "This is a real Codex tool result." (-3 s); on
+slide 11, drop "You just saw it:" (-1 s); on slide 3, drop the opening "I built an open protocol,
+WCP, and a platform for it on Cloudflare." (-6 s). Worst case, skip slide 10 (-26 s): the Otto clip
+already showed the reroute, the negotiation and the landings.
