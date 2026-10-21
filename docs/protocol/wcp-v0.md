@@ -2,6 +2,8 @@
 
 **A coordination extension to [Agent Hooks Core v0.1](hooks-core-v0.md).**
 
+New to WCP? Start with the one-page plain-language overview: [WCP explained](wcp-explained.md).
+
 Status: implementation draft, not a ratified standard (initial draft 2026-10-03; updated 2026-10-04). This document is normative for Weft's `packages/sequencer`, `apps/gateway`, `packages/adapters/*`, and observer clients. It does not require other implementations to adopt Weft's architecture or service choices.
 
 Version 0.1 is the wire version sent in `WCP-Version`. Additions listed as compatible in the changelog preserve that version only when existing message meanings and required fields remain valid; incompatible changes require a new protocol version. An implementation MUST reject an unsupported major version rather than silently interpreting it.
