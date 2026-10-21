@@ -18,7 +18,7 @@ Agents message each other as **diagnostics**, into the agent's own run, mid-edit
 other agent's code (diff) · others check **when it lands**, Weft **while it's being written** ·
 no finished work thrown away
 
-**1:14 · "COORDINATES, DOESN'T ORCHESTRATE."** (slide 4)
+**1:14 · "COORDINATION, NOT ORCHESTRATION"** (slide 4)
 No agent on top · **peers** · any harness with any harness · **live:** Claude Code, Codex,
 OpenCode, Hermes, Gemini · **written:** Cursor · file watcher: anything else *joins*, people too ·
 runs on a laptop, no account · **Cloudflare is how it scales**
