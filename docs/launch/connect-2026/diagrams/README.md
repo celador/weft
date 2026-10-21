@@ -7,7 +7,7 @@ cites the Weft source lines it was drawn from, pinned to commit d812219.
 | Diagram | Source | Deck | Presentation view |
 |---|---|---|---|
 | Architecture | `architecture.json` | slide 2 (`architecture.png`) | `architecture.html?present=1&theme=dark#route=agents~land` |
-| Conflict sequence | `conflict.json` | slide 9 (`conflict.png`) | `conflict.html?present=1&theme=dark#route=coord~codex` |
+| Conflict sequence | `conflict.json` | slide 10 (`conflict.png`) | `conflict.html?present=1&theme=dark#route=coord~codex` |
 
 Other views: `#route=agents~coordinator` (edit time), `#focus=<id>` (one box and its neighbours),
 `#focus=<id>&reach=upstream|downstream`. Without `?theme=dark` the page follows the OS theme.

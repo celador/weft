@@ -3,11 +3,12 @@
 
 Rev 7.1 (card t_d28190c3) = rev 7 + two Archify diagrams (diagrams/*.json -> *.html, static *.png
 embedded here): the system architecture beside the live feed on slide 2, and the conflict sequence
-beside the five steps on slide 9. Each slide links its interactive diagram (opens in a new tab, in
+beside the five steps on slide 9 (slide 10 since the WCP slide). Each slide links its interactive diagram (opens in a new tab, in
 Archify's presentation view on the highlighted path); clicking a link does not advance the deck.
-Slide order (rev 7 = rev 6 + the Otto clip): 1 headline, 2 what I built (criterion 1), 3-4 why it's new
-(criterion 2), 5-11 the four questions (criterion 3: Q1 slide 5, Q2 slides 6-9 with the without-Weft,
-with-Weft and Otto team-run clips, Q3 slide 10, Q4 slide 11), 12 why Artifacts + Cloudflare, 13 close.
+Slide order (rev 7.1, Oct 21 + the WCP slide, card t_49fb8a75): 1 headline, 2-3 what I built (criterion 1;
+3 = WCP, the protocol, from docs/protocol/wcp-explained.md), 4-5 why it's new (criterion 2), 6-12 the four
+questions (criterion 3: Q1 slide 6, Q2 slides 7-10 with the without-Weft, with-Weft and Otto team-run
+clips, Q3 slide 11, Q4 slide 12), 13 why Artifacts + Cloudflare, 14 close.
 Inputs: demo/video/connect-2026/stills/*.png, qr-weft.svg, the 22 s "without Weft" clip
 (demo/video/connect-2026/baseline.mp4, recorded from baseline.tape), the 47 s squiggle clip, which is
 reused from slides-story-v1.html (data:video/mp4), and the 58 s Otto clip
@@ -22,7 +23,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 STILLS = ROOT / "demo/video/connect-2026/stills"
 
-CLIPS = {6: 22.44, 7: 47.03, 8: 58.1}  # slide number -> clip seconds (narration runs over the clip)
+CLIPS = {7: 22.44, 8: 47.03, 9: 58.1}  # slide number -> clip seconds (narration runs over the clip)
 
 def count_words():
     """Spoken words (quoted text in section bodies) and talk time incl. clips at 130 wpm."""
@@ -86,6 +87,15 @@ def slides():
 <figcaption>WCP: every agent edit goes through one Durable Object per repo · <a href="{ARCH_URL}" target="_blank" rel="noopener">interactive ↗</a></figcaption></figure>
 <img class="feed" src="{img("02-live-log.png")}" alt="Weft live feed"></div>
 <p class="cap">weft.elier.ai · every agent edit, in order, live · Weft coordinated the agents that built Weft: <b>918</b> events · <b>27</b> landings</p></section>''',
+        '''<section><p class="kicker">1 · What I built · the protocol</p>
+<h1 class="nov">WCP, the <span class="red">Weft Coordination Protocol</span></h1>
+<ol class="wcp">
+<li style="--i:0"><b>1</b><span><em>One ordered log per repo.</em> Every agent edit is a numbered event.</span></li>
+<li style="--i:1"><b>2</b><span><em>Symbol-level.</em> Who changed which function, not just which file.</span></li>
+<li style="--i:2"><b>3</b><span><em>Checked like a database transaction.</em> &ldquo;I've seen up to #N&rdquo; &rarr; checked against what other agents did since.</span></li>
+<li style="--i:3"><b>4</b><span><em>Conflicts come back as compiler errors</em> (red squiggles), through the hooks every agent tool already has.</span></li></ol>
+<div class="log"><span class="ev"><b>#3</b>codex-b edits fetchWithAuth ✓</span><span class="ev"><b>#4</b>claude-a changes refreshToken signature ✓</span><span class="ev no"><b>#5</b>codex-b, base #3: rejected, stale_assumption ← #4</span></div>
+<p class="src">Open spec + JSON schema + conformance tests · runs anywhere, Cloudflare or local · fail-open</p></section>''',
         '''<section><p class="kicker">2 · Why it's new</p>
 <h1 class="nov">Agents message each other <span class="red">in squiggles</span>.</h1>
 <pre class="code"><span class="ln">src/cart.ts  4</span>  const total = <span class="sqe">calcTotal(items)</span>;
@@ -219,6 +229,11 @@ section.on .pipe li{animation:in .3s calc(var(--i)*.15s) forwards}
 .q2r{display:grid;grid-template-columns:27vw 1fr;gap:2vw;align-items:center}.q2r .dg img{max-height:62vh}
 .steps.v{grid-template-columns:1fr;gap:1vh;margin-top:0}.steps.v li{min-height:auto;padding:1.2vh 1vw;font-size:1.45vw;border-top:0;border-left:7px solid #ff4d5e}
 .steps.v li:last-child{border-left-color:#4ade80}.steps.v b{display:inline;font-size:2vw;margin-right:.8vw}.steps.v em{display:inline;font-size:1.75vw;margin:0}.steps.v em::after{content:"";display:block;height:.4vh}
+.wcp{list-style:none;padding:0;display:flex;flex-direction:column;gap:1.8vh}.wcp li{display:grid;grid-template-columns:3.6vw 1fr;align-items:baseline;font-size:2.25vw;line-height:1.25;color:#c9c9d6;opacity:0}
+section.on .wcp li{animation:in .35s calc(var(--i)*.15s) forwards}.wcp b{color:#ff4d5e;font-size:2.6vw;font-weight:800}.wcp em{font-style:normal;color:#fff;font-weight:800}
+.log{display:grid;grid-template-columns:1fr 1.15fr 1.25fr;gap:1vw;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:1.45vw}.ev{background:#12121a;border:1px solid #2c2c3c;border-left:7px solid #4ade80;border-radius:10px;padding:1.2vh 1vw;color:#d6d6e0;line-height:1.35}
+.ev b{color:#fff;margin-right:.7vw}.ev.no{border-left-color:#ff4d5e;color:#ff8a95}
+@media (orientation:portrait){.wcp li{font-size:4vw;grid-template-columns:6.5vw 1fr}.wcp b{font-size:4.6vw}.log{grid-template-columns:1fr;font-size:3vw;gap:1vh}}
 @media (orientation:portrait){.built,.q2r{grid-template-columns:1fr}.dg img,.q2r .dg img{max-height:30vh}.dg figcaption{font-size:2.8vw}.built .feed{max-height:28vh}.steps.v li{font-size:3vw}.steps.v em{font-size:3.4vw}}
 @media (orientation:portrait){.q1,.q3{grid-template-columns:1fr}.shot img{max-height:24vh}.shot figcaption{font-size:2.8vw}.q3 img{max-height:22vh}}
 @media (orientation:portrait){.huge2{font-size:10vw}.q{font-size:6vw}.lede{max-width:none}.tag{font-size:6vw}.code{font-size:2.15vw;padding:1.2vh 2vw;white-space:pre-wrap;word-break:break-all}.code.tr{font-size:2.3vw}.chip{font-size:3.6vw}.lg{width:2.4vw;height:2.4vw}
