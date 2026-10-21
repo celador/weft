@@ -308,12 +308,20 @@ addEventListener('pointerup',e=>{if(!P||!e.isPrimary||e.button!==0)return;const 
 addEventListener('pointercancel',()=>{P=null});
 addEventListener('click',e=>{if(Date.now()-tapT<800)return;tap(e)});
 addEventListener('touchstart',e=>{T=e.touches.length===1?{x:e.touches[0].clientX,y:e.touches[0].clientY}:null},{passive:true});
-addEventListener('touchend',e=>{if(!T||e.touches.length)return;const t=e.changedTouches[0],dx=t.clientX-T.x,dy=t.clientY-T.y;T=null;if(Math.abs(dx)>40&&Math.abs(dx)>1.5*Math.abs(dy)){tapT=Date.now();P=null;go(dx<0?i+1:i-1)}},{passive:true});go(i);"""
+addEventListener('touchend',e=>{if(!T||e.touches.length)return;const t=e.changedTouches[0],dx=t.clientX-T.x,dy=t.clientY-T.y;T=null;if(Math.abs(dx)>40&&Math.abs(dx)>1.5*Math.abs(dy)){tapT=Date.now();P=null;go(dx<0?i+1:i-1)}},{passive:true});go(i);
+// pacing bar: planned seconds per slide (from pitch.md timings); video slides track the clip itself
+const PLAN=[15,22,35,29,32,29,22,47,58,26,27,22,24,15];
+const PB=document.createElement('div');PB.className='pace';PB.innerHTML='<i></i>';document.body.appendChild(PB);const PI=PB.firstChild;
+let t0=performance.now(),si=-1;
+(function tick(){if(si!==i){si=i;t0=performance.now()}const v=S[i].querySelector('video');let f;
+if(v&&v.duration){f=v.currentTime/v.duration;if(v.ended)f=1}else{f=(performance.now()-t0)/1000/(PLAN[i]||30)}
+PI.style.width=Math.min(f,1)*100+'%';PB.classList.toggle('over',f>=1);requestAnimationFrame(tick)})();
+addEventListener('keydown',e=>{if(e.key==='t'||e.key==='T')PB.classList.toggle('hide')});"""
 
 def build():
     body = "\n".join(slides())
     qr_site_banner = (HERE / "qr-weft-site.svg").read_text().split("?>", 1)[-1].strip().replace('id="qr-path"', 'id="qr-site-banner-path"')
-    html = f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Weft · Connect 2026</title><style>{CSS}.site{{position:fixed;top:0;left:0;right:0;z-index:50;height:7vh;display:flex;align-items:center;justify-content:center;background:rgba(10,10,16,.92);border-bottom:1px solid #2c2c3c;color:#ff4d5e;font-weight:700;font-size:2.6vh;letter-spacing:.04em;text-decoration:none}}section{{top:7vh!important;bottom:0!important;padding-top:2vh!important;padding-bottom:2vh!important;transform:scale(.94);transform-origin:50% 0;justify-content:safe center!important}}.siteqr{{position:fixed;top:0;right:0;z-index:51;line-height:0}}.siteqr svg{{width:7vh;height:7vh;background:#fff;padding:.4vh;box-sizing:border-box;display:block}}</style></head><body>{body}<div class="n"></div><a class="site" href="https://weft-site.elier.ai/" target="_blank" rel="noopener">weft-site.elier.ai</a><a class="siteqr" href="https://weft-site.elier.ai/" target="_blank" rel="noopener" aria-label="QR code: weft-site.elier.ai">{qr_site_banner}</a><script>{JS}</script></body></html>'
+    html = f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Weft · Connect 2026</title><style>{CSS}.site{{position:fixed;top:0;left:0;right:0;z-index:50;height:7vh;display:flex;align-items:center;justify-content:center;background:rgba(10,10,16,.92);border-bottom:0;color:#ff4d5e;font-weight:700;font-size:2.6vh;letter-spacing:.04em;text-decoration:none}}.pace{{position:fixed;left:0;right:0;top:calc(7vh - 3px);height:3px;background:#2c2c3c;z-index:60;pointer-events:none}}.pace i{{display:block;height:100%;width:0;background:rgba(255,255,255,.45)}}.pace.over i{{background:#ff4d5e}}.pace.hide{{display:none}}section{{top:7vh!important;bottom:0!important;padding-top:2vh!important;padding-bottom:2vh!important;transform:scale(.94);transform-origin:50% 0;justify-content:safe center!important}}.siteqr{{position:fixed;top:0;right:0;z-index:51;line-height:0}}.siteqr svg{{width:7vh;height:7vh;background:#fff;padding:.4vh;box-sizing:border-box;display:block}}</style></head><body>{body}<div class="n"></div><a class="site" href="https://weft-site.elier.ai/" target="_blank" rel="noopener">weft-site.elier.ai</a><a class="siteqr" href="https://weft-site.elier.ai/" target="_blank" rel="noopener" aria-label="QR code: weft-site.elier.ai">{qr_site_banner}</a><script>{JS}</script></body></html>'
     (HERE / "slides.html").write_text(html)
     print(f"slides.html: {len(slides())} slides, {len(html)/1e6:.1f} MB")
 
