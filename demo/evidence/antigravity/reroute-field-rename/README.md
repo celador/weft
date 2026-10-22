@@ -24,3 +24,5 @@ WCP §6.3 it got a `contract_changed` **warning**, which closes no gate (wcp-v0.
 `continue` … the `contract_changed` warning, which closes no gate"). agy-b adapted because the
 warning reached it. A gate-closing error for this ordering would be a protocol change; it is
 filed as a separate card.
+
+Update (t_513b15c6): WCP now opens a gate-closing `stale_assumption` in this order too (§6.3 step 6); rerun in [`../reroute-contract-gate/`](../reroute-contract-gate/).

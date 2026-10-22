@@ -1,0 +1,28 @@
+agent-a: committed
+agent-b: committed
+--- agent-b:src/cart.ts
+import { calcTotal, type Item } from "./pricing";
+
+export class Cart {
+  private items: Item[] = [];
+
+  add(item: Item): void {
+    this.items.push(item);
+  }
+
+  list(): Item[] {
+    return [...this.items];
+  }
+
+  total(): number {
+    return calcTotal(this.items, { rate: 0 });
+  }
+}
+
+
+--- main after merging agent-a then agent-b:
+b7a2b52 Merge branch 'agent-b'
+7adcec5 pricing: apply tax in calcTotal
+915f27f cart: add total()
+8728363 ts-shop: initial
+tsc: exit 0 (clean)
