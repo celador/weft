@@ -30,11 +30,13 @@ binding = "ARTIFACTS"
 namespace = "weft"
 
 # Per-fork Queues event subscriptions (`pushed`) deliver here; consumer = this Worker's queue().
-[[queues.consumers]]
-queue = "weft-artifacts-events"
-max_batch_size = 10
-max_batch_timeout = 2
-max_retries = 8
+# Queue deleted in the 2026-10-22 post-judging wind-down; re-create it (`wrangler queues create <name>`)
+# and restore this block before relying on per-fork push events again.
+# [[queues.consumers]]
+# queue = "weft-artifacts-events"
+# max_batch_size = 10
+# max_batch_timeout = 2
+# max_retries = 8
 
 # B8 workflows (script weft-workflows): pushes start ProcessRevision, /land LandChange, /select
 # BestOfN, `undo` RevertOperation, `approve` signals BestOfN.
@@ -102,11 +104,13 @@ migrations_dir = "migrations"
 binding = "ARTIFACTS"
 namespace = "weft-preview"
 
-[[env.preview.queues.consumers]]
-queue = "weft-artifacts-events-preview"
-max_batch_size = 10
-max_batch_timeout = 2
-max_retries = 8
+# Queue deleted in the 2026-10-22 post-judging wind-down; re-create it (`wrangler queues create <name>`)
+# and restore this block before relying on per-fork push events again.
+# [[env.preview.queues.consumers]]
+# queue = "weft-artifacts-events-preview"
+# max_batch_size = 10
+# max_batch_timeout = 2
+# max_retries = 8
 
 [[env.preview.workflows]]
 name = "weft-process-revision-preview"

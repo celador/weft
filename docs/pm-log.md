@@ -151,3 +151,9 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-10-21 22:45 — re-dispatched t_d14462ee
 - Memory-dream card gave up after 2 claim-expiry reclaims (worker sat in a 540 s sleep past its claim; worker dead, no real blocker). Commented continue-from-current-state + heartbeat between waits; unblocked + dispatched (running). Deck banner/pacing commits on main: CI Gate green.
 - wt/local still HELD (Omer-code question, flagged 10-13). wt/t_be804fb4 intentionally unmerged.
+
+## 2026-10-22 10:10 — post-judging Cloudflare wind-down
+- KEEP_LIVE absent → wound down unused paid resources. Deleted: Workers weft-demo, weft-production-signal-preview, weft-sandbox-preview (force; workflows-preview's SANDBOX binding now dangles) + container app weft-sandbox-preview-weftsandbox-preview + custom domains weft-demo/weft-sandbox-preview.elier.ai; tail consumer removed from weft-demo-site; Queues weft-artifacts-events, weft-artifacts-events-preview, weft-prod-events-preview (consumers removed first); R2 weft-sandbox-logs-preview (1,324 objects, unreferenced) and weft-evidence (empty); 183 candidate forks in Artifacts ns weft-preview (trunks weft-demo, weft-demo-site kept).
+- KEPT despite the list: weft-workflows-preview (gateway-preview has 4 workflow bindings to it); weft-previews-preview + R2 weft-evidence-preview (399 D1 evidence rows link screenshots served from them; apps/web renders them).
+- apps/gateway/wrangler.toml: queue consumer blocks commented (queues gone) so a gateway redeploy doesn't fail. New candidates will get subscription_status=failed until a queue is re-created.
+- Verified after: weft.elier.ai 200, /api/repos 200, weft-media.elier.ai/weft-demo.mp4 200, weft-gateway-preview /v1/health 200, repo weft seq 1258 by hermes-default at 2026-10-22T05:01Z.
