@@ -1,0 +1,86 @@
+{
+  "description": "Kotlin conformance workspace (docs/languages.md): a Gradle layout with Kotlin under src/main/kotlin and Java under src/main/java. The peer changes are other agents' edits to Pricing.kt (top-level functions) and Tax.java (Java interop); their writes are exactly what @weft/analyzer derives from `after` (checked by packages/conformance/test/languages.test.ts).",
+  "language": "kotlin",
+  "interop": [
+    "java"
+  ],
+  "files": {
+    "src/main/java/com/shop/model/Item.java": "package com.shop.model;\n\npublic record Item(double price, int qty) {}\n",
+    "src/main/java/com/shop/model/Tax.java": "package com.shop.model;\n\npublic final class Tax {\n    private Tax() {}\n\n    public static double rate() {\n        return 0.2;\n    }\n}\n",
+    "src/main/kotlin/com/shop/pricing/Pricing.kt": "package com.shop.pricing\n\nimport com.shop.model.Item\n\nfun calcTotal(items: List<Item>): Double {\n    return items.sumOf { it.price() * it.qty() }\n}\n\nfun formatPrice(amount: Double): String {\n    return \"$\" + String.format(\"%.2f\", amount)\n}\n",
+    "src/main/kotlin/com/shop/cart/CartSummary.kt": "package com.shop.cart\n\nimport com.shop.model.Item\nimport com.shop.pricing.calcTotal\n\nfun cartSummary(items: List<Item>): String {\n    return \"${items.size} items\"\n}\n",
+    "src/main/kotlin/com/shop/report/Report.kt": "package com.shop.report\n\nimport com.shop.pricing.formatPrice\n\nfun reportLine(total: Double): String {\n    return \"Total\"\n}\n",
+    "src/main/kotlin/com/shop/checkout/Checkout.kt": "package com.shop.checkout\n\nimport com.shop.model.Item\nimport com.shop.model.Tax\n\nclass Checkout(private val items: List<Item>) {\n    fun tax(net: Double): Double {\n        return 0.0\n    }\n}\n"
+  },
+  "peers": {
+    "change_signature": {
+      "agent": "peer-a",
+      "harness": "claude-code",
+      "task": "T-1",
+      "intent": "calcTotal takes a taxRate",
+      "files": [
+        "src/main/kotlin/com/shop/pricing/Pricing.kt"
+      ],
+      "writes": [
+        {
+          "key": "src/main/kotlin/com/shop/pricing/Pricing.kt#calcTotal",
+          "kind": "signature"
+        }
+      ],
+      "reads": [
+        "src/main/java/com/shop/model/Item.java#Item"
+      ],
+      "after": {
+        "src/main/kotlin/com/shop/pricing/Pricing.kt": "package com.shop.pricing\n\nimport com.shop.model.Item\n\nfun calcTotal(items: List<Item>, taxRate: Double): Double {\n    val net = items.sumOf { it.price() * it.qty() }\n    return net * (1 + taxRate)\n}\n\nfun formatPrice(amount: Double): String {\n    return \"$\" + String.format(\"%.2f\", amount)\n}\n"
+      }
+    },
+    "rename_helper": {
+      "agent": "peer-b",
+      "harness": "codex",
+      "task": "T-3",
+      "intent": "rename formatPrice to formatMoney",
+      "files": [
+        "src/main/kotlin/com/shop/pricing/Pricing.kt"
+      ],
+      "writes": [
+        {
+          "key": "src/main/kotlin/com/shop/pricing/Pricing.kt#formatMoney",
+          "kind": "new"
+        },
+        {
+          "key": "src/main/kotlin/com/shop/pricing/Pricing.kt#formatPrice",
+          "kind": "deleted"
+        }
+      ],
+      "reads": [
+        "src/main/java/com/shop/model/Item.java#Item"
+      ],
+      "after": {
+        "src/main/kotlin/com/shop/pricing/Pricing.kt": "package com.shop.pricing\n\nimport com.shop.model.Item\n\nfun calcTotal(items: List<Item>): Double {\n    return items.sumOf { it.price() * it.qty() }\n}\n\nfun formatMoney(amount: Double): String {\n    return \"$\" + String.format(\"%.2f\", amount)\n}\n"
+      }
+    },
+    "java_tax_by_region": {
+      "agent": "peer-c",
+      "harness": "codex",
+      "task": "T-4",
+      "intent": "Tax.rate takes a region (Java)",
+      "files": [
+        "src/main/java/com/shop/model/Tax.java"
+      ],
+      "writes": [
+        {
+          "key": "src/main/java/com/shop/model/Tax.java#Tax",
+          "kind": "body"
+        },
+        {
+          "key": "src/main/java/com/shop/model/Tax.java#Tax.rate",
+          "kind": "signature"
+        }
+      ],
+      "reads": [],
+      "after": {
+        "src/main/java/com/shop/model/Tax.java": "package com.shop.model;\n\npublic final class Tax {\n    private Tax() {}\n\n    public static double rate(String region) {\n        return region.equals(\"UY\") ? 0.22 : 0.2;\n    }\n}\n"
+      }
+    }
+  }
+}

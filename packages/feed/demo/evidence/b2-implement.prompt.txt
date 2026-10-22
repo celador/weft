@@ -1,0 +1,3 @@
+claude --resume 50dedf9e-b385-4092-9c73-48229ea936b2 --max-turns 20 -p …
+
+Go ahead and implement the plan now. If the Weft coordinator reports a conflict, adapt your code to it. When you are done, reply with the final function and one sentence on anything that changed from your plan.
