@@ -60,6 +60,7 @@ Each package's README has its install command and hook mapping. For a harness th
 listed: if it has pre/post tool hooks with a deny + reason, copy the Claude Code adapter's
 `host.ts` translator pattern (the Cursor, OpenCode and Gemini adapters are 200-300 lines of
 translation onto the same core); if it has none, run the watcher in its checkout.
+Every known harness, its hook surface and Weft's plan for it: [harness-coverage.md](harness-coverage.md).
 
 ## Advise vs enforce
 
