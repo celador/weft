@@ -22,8 +22,9 @@ Antigravity, VSCodium (Open VSX) and Trae.
 
 The squiggles are ordinary diagnostics, so any editor agent that reads diagnostics sees them.
 VS Code's Copilot agent mode does (`get_errors` / `#problems`): ask it “what errors are in this
-file?” and it reports the Weft squiggle and its cause. See `docs/harness-coverage.md` §7 Q5 in
-the Weft repo for what was verified in which editor.
+file?” and it reports the Weft squiggle (verified on 2026-10-22). In Cursor, the squiggle's
+**Fix with Agent** / **Fix in Agent** hands it to Cursor's agent. See `docs/harness-coverage.md`
+§7 Q5 in the Weft repo for what was verified in which editor.
 
 ## Setup
 

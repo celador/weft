@@ -1,0 +1,8 @@
+[live-run] claude-b planned (session ef18b2d8-730e-41e5-942d-e38d4eaba1b3)
+[live-run] claude-a's calcTotal edit is in the log; claude-b implements now
+[live-run] claude-a: I added `PriceOptions` to `src/pricing.ts`, and `calcTotal(items, opts)` now returns the net sum times `(1 + opts.taxRate)`. No Weft errors came up and nothing else calls it, but I didn't run the tests or check the Weft inbox (that command needed approval).
+[live-run] claude-b: The function isn't written yet: Weft has paused me, so `src/cart.ts` is unchanged and T-2 is not finished.
+
+What happened:
+
+1. **My first edit was blocked by a conflict.** claude-a (task T-1) changed `calcTotal`'s signature in event #4 to `calcTotal(items: Item[], opts: PriceOptions)`, where `PriceO

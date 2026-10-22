@@ -514,7 +514,7 @@ class WeftExtension {
     return this.session?.log.combined.find((e) => e.agent === agent && (!repo || e.repo === repo));
   }
 
-  /** Commands: an event id (`repo#seq`), `{repo, agent}`, or nothing (pick). */
+  /** Commands: an event id (`repo#seq`), `{repo, agent, text?, reason?, note?}`, or nothing (pick). */
   async action(kind: ActionOption["kind"], arg?: unknown): Promise<void> {
     const s = this.session;
     if (!s) return void vscode.window.showWarningMessage("Weft is not connected.");
@@ -540,7 +540,13 @@ class WeftExtension {
       option = pick.o;
     }
     const input: ActionInput = {};
-    if (kind === "message") {
+    // Keybindings and scripts can pass the text up front: {repo, agent, text | reason | note}.
+    const given = arg && typeof arg === "object" ? (arg as { text?: unknown; reason?: unknown; note?: unknown }) : {};
+    if (kind === "message" && typeof given.text === "string" && given.text.trim()) input.text = given.text.trim();
+    else if (kind === "undo" && typeof given.reason === "string" && given.reason.trim()) input.reason = given.reason.trim();
+    else if (kind === "approve" && typeof given.note === "string") {
+      if (given.note.trim()) input.note = given.note.trim();
+    } else if (kind === "message") {
       const text = await vscode.window.showInputBox({ title: option.label, prompt: "Delivered to the agent's inbox as a steer message.", placeHolder: "What should it do?", validateInput: (v) => (v.trim() ? undefined : "Write a message") });
       if (text === undefined) return;
       input.text = text.trim();
