@@ -1,0 +1,9 @@
+2026-10-22T22:22:42.801Z hello agy-b change I2e2b46cf980e1542835869df0be4a89a0d289e12 -> s1 head #1 base #1
+2026-10-22T22:23:40.480Z check src/cart.ts base #1 -> reject #7 (stale_assumption)
+2026-10-22T22:23:52.246Z stop gate refused #1 (stale_assumption:src/pricing.ts#calcTotal)
+2026-10-22T22:26:23.469Z stop gate refused #2 (stale_assumption:src/pricing.ts#calcTotal)
+2026-10-22T22:26:26.624Z stop gate refused #3 (stale_assumption:src/pricing.ts#calcTotal)
+2026-10-22T22:26:29.641Z stop gate refused #4 (stale_assumption:src/pricing.ts#calcTotal)
+2026-10-22T22:26:32.719Z stop gate refused #5 (stale_assumption:src/pricing.ts#calcTotal)
+2026-10-22T22:26:36.904Z stop gate: letting the agent stop after 5 refusals; open errors stay visible in the feed (stale_assumption:src/pricing.ts#calcTotal)
+2026-10-22T22:27:35.725Z stop gate: letting the agent stop after 5 refusals; open errors stay visible in the feed (stale_assumption:src/pricing.ts#calcTotal)

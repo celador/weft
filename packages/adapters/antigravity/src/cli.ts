@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { Capabilities } from "@weft/protocol";
 import { Host, readStdin } from "../../claude-code/src/host";
 import { ADAPTER_VERSION } from "../../claude-code/src/hooks";
-import { EDIT_TOOLS, EVENTS, SHELL_TOOL, eventOf, fromCore, hooksPath, rootOf, toCore, type AntigravityEvent, type AntigravityInput } from "./translate";
+import { EDIT_TOOLS, EVENTS, SHELL_TOOL, eventOf, failOpen, fromCore, hooksPath, rootOf, toCore, type AntigravityEvent, type AntigravityInput } from "./translate";
 
 const SELF = fileURLToPath(import.meta.url);
 export const HOOK_NAME = "weft";
@@ -18,9 +18,9 @@ export const HOOK_MARK = "weft-antigravity";
 export const CONFIG_REL = ".weft/antigravity.json";
 
 /**
- * PreToolUse deny + reason (L2), PreInvocation injectSteps before the next model call
- * (delayed L1: PostToolUse cannot inject), Stop decision:"continue" (L3), git commit
- * intercepted in run_command.
+ * PreToolUse deny + reason (L2), SessionStart / PreInvocation injectSteps before the next model
+ * call (delayed L1: PostToolUse cannot inject), Stop decision:"continue" (L3), git commit
+ * intercepted in run_command. All verified live on agy 1.4.5 (demo/evidence/antigravity/).
  */
 export const CAPABILITIES: Capabilities = {
   level: 3,
@@ -39,9 +39,11 @@ type HookDef = { enabled?: boolean } & Partial<Record<AntigravityEvent, Array<Gr
 export function mergeHooks(file: Record<string, HookDef>, command: (event: AntigravityEvent) => string): Record<string, HookDef> {
   const h = (event: AntigravityEvent): Handler => ({ type: "command", command: command(event), timeout: 30 });
   const ours: HookDef = {
+    // Only the edit tools and run_command: every matched call must get a `decision` back.
     PreToolUse: [{ matcher: [...EDIT_TOOLS, SHELL_TOOL].join("|"), hooks: [h("PreToolUse")] }],
-    PostToolUse: [{ matcher: ".*", hooks: [h("PostToolUse")] }],
+    PostToolUse: [{ matcher: "*", hooks: [h("PostToolUse")] }],
     // Matcher-less events take handlers directly (docs example `"PreInvocation": [{type, command}]`).
+    SessionStart: [h("SessionStart")],
     PreInvocation: [h("PreInvocation")],
     Stop: [h("Stop")],
   };
@@ -68,23 +70,24 @@ export const host = new Host({
 });
 
 async function hook(args: string[]): Promise<void> {
-  let json: Record<string, unknown> = {};
+  const named = args.find((a): a is AntigravityEvent => (EVENTS as string[]).includes(a));
+  let json: Record<string, unknown> = failOpen(named);
   try {
     const raw = JSON.parse(await readStdin()) as AntigravityInput;
-    const named = args.find((a): a is AntigravityEvent => (EVENTS as string[]).includes(a));
     const event = named ?? eventOf(raw);
+    json = failOpen(event);
     const loaded = event ? host.load(rootOf(raw)) : undefined;
     const input = loaded && event ? toCore(raw, event) : undefined;
     if (loaded && event && input) {
       const out = await host.run(loaded, input, { antigravity_event: event, ...(raw.toolCall?.name ? { antigravity_tool: raw.toolCall.name } : {}) });
-      const canInject = event === "PreInvocation" || event === "Stop";
+      const canInject = event === "SessionStart" || event === "PreInvocation" || event === "Stop";
       const carried = canInject ? host.takeCarry(loaded.root, input.session_id) : "";
       const r = fromCore(event, out, carried);
       if (r.carry) host.addCarry(loaded.root, input.session_id, r.carry);
       json = r.json;
     }
   } catch {
-    json = {}; // fail open
+    // fail open: keeps the answer chosen above (`ask` for PreToolUse, `{}` elsewhere)
   }
   process.stdout.write(JSON.stringify(json));
 }

@@ -1,0 +1,40 @@
+[demo] checkouts: <work>/agent-a, <work>/agent-b
+[demo] coordinator http://localhost:8799 repo demo-agy-stop-gate-20261022-221452 (tokens minted, not printed)
+[demo] B (agy) turn 1: read + plan (no edits)
+[demo] B conversation 3686038d-0b18-4f5e-ae98-18cf987be405: 1. Update [cart.ts](file://<work>/agent-b/src/cart.ts#L1) to import [`calcTotal`](file://<work>/agent-b/src/pricing.ts#L4) alongside [`Item`](file://<work>/agent-b/src/pricing.ts#L1) from `./pricing`.
+[demo] A (claude-a): change calcTotal's signature
+[demo] A: `calcTotal(items, opts: PriceOptions)` now returns the net sum × (1 + taxRate), and `src/orders.ts` calls it with `{ taxRate: 0.22 }`. I didn't compile or test it, no Weft errors showed up, and checking the Weft inbox for messages needed approval, so that didn't run.
+[demo] B (agy) turn 2: implement (resumed conversation — still believes the old signature)
+[demo] B: The edit was blocked by the pre-tool hook with the following message:
+[demo] A (claude-a): rename PriceOptions.taxRate -> rate (B now depends on it; the coordinator queues that for B)
+[demo] A2: I renamed `taxRate` to `rate` in `src/pricing.ts` and `src/orders.ts`, but Weft won't count the task as done: agy-b's proposal #8 is still unanswered. That was Weft's fifth and last refusal of my stop.
+[demo] B (agy) turn 3: a status question; whatever the coordinator queued arrives via PreInvocation injectSteps
+[demo] B3: NONE
+[demo] evidence in ~/github/weft/.worktrees/adapter-antigravity/demo/evidence/antigravity/stop-gate
+agent-a: committed
+agent-b: committed
+--- agent-b:src/cart.ts
+import { calcTotal, type Item } from "./pricing";
+
+export class Cart {
+  private items: Item[] = [];
+
+  add(item: Item): void {
+    this.items.push(item);
+  }
+
+  list(): Item[] {
+    return [...this.items];
+  }
+
+  total(): number {
+    return calcTotal(this.items, { rate: 0 });
+  }
+}
+
+--- main after merging agent-a then agent-b:
+fcb30ed Merge branch 'agent-b'
+0912f9d pricing: apply tax in calcTotal
+82455b1 cart: add total()
+8aa7fb0 ts-shop: initial
+tsc: exit 0 (clean)

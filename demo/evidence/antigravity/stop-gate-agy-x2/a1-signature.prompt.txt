@@ -1,0 +1,4 @@
+cwd: <work>/agent-a
+agy -p … --output-format json --dangerously-skip-permissions --print-timeout 600s
+
+Task T-1: prices must include tax. In src/pricing.ts add `export type PriceOptions = { taxRate: number }` and change calcTotal to `calcTotal(items: Item[], opts: PriceOptions): number` returning the net sum multiplied by (1 + opts.taxRate). Update the existing caller in src/orders.ts (use taxRate 0.22). Keep it minimal, then reply with a one-line summary. Do not run any command.

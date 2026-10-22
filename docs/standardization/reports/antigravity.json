@@ -2,7 +2,7 @@
   "tool": "wcp-hook-conformance",
   "version": "0.1.0",
   "hooks_core": "0.1",
-  "generated_at": "2026-10-22T16:06:47.110Z",
+  "generated_at": "2026-10-22T17:06:44.371Z",
   "subject": "Antigravity translator (@weft/adapter-antigravity)",
   "dialect": "antigravity",
   "command": "node packages/adapters/antigravity/dist/weft-antigravity.mjs hook",
@@ -35,9 +35,9 @@
   "failure_policy": "fail-open",
   "latency_ms": {
     "invocations": 39,
-    "p50": 86,
-    "p95": 202,
-    "max": 212
+    "p50": 516,
+    "p95": 2639,
+    "max": 4408
   },
   "fixtures": [
     {
@@ -47,7 +47,7 @@
       "title": "a read-only tool call is allowed and records no edit",
       "spec": "§4.3",
       "pass": true,
-      "ms": 361,
+      "ms": 2136,
       "checks": [
         {
           "name": "tool.pre read: allow",
@@ -66,22 +66,22 @@
         {
           "event": "session.start",
           "decision": "advise",
-          "ms": 84
+          "ms": 538
         },
         {
           "event": "tool.pre",
           "decision": "allow",
-          "ms": 34
+          "ms": 168
         },
         {
           "event": "tool.post",
           "decision": "allow",
-          "ms": 37
+          "ms": 246
         },
         {
           "event": "prompt.submit",
           "decision": "allow",
-          "ms": 52
+          "ms": 262
         },
         {
           "event": "session.end",
@@ -97,7 +97,7 @@
       "title": "an applied edit is observed and recorded (tool.pre does not block a harmless edit)",
       "spec": "§4.2, §4.3",
       "pass": true,
-      "ms": 615,
+      "ms": 3803,
       "checks": [
         {
           "name": "tool.pre edit: not-deny",
@@ -116,22 +116,22 @@
         {
           "event": "session.start",
           "decision": "advise",
-          "ms": 82
+          "ms": 442
         },
         {
           "event": "tool.pre",
           "decision": "allow",
-          "ms": 169
+          "ms": 1246
         },
         {
           "event": "tool.post",
           "decision": "allow",
-          "ms": 165
+          "ms": 976
         },
         {
           "event": "prompt.submit",
           "decision": "allow",
-          "ms": 52
+          "ms": 238
         },
         {
           "event": "session.end",
@@ -147,7 +147,7 @@
       "title": "session.start is answered and the session joins with a capability declaration",
       "spec": "§4.1, §3.2",
       "pass": true,
-      "ms": 228,
+      "ms": 1509,
       "checks": [
         {
           "name": "session.start: not-deny",
@@ -162,7 +162,7 @@
         {
           "event": "session.start",
           "decision": "advise",
-          "ms": 83
+          "ms": 516
         },
         {
           "event": "session.end",
@@ -178,7 +178,7 @@
       "title": "a peer's signature change to a symbol this agent uses reaches the model as advise context at the next tool call",
       "spec": "§5.2 advise",
       "pass": true,
-      "ms": 1091,
+      "ms": 12095,
       "checks": [
         {
           "name": "tool.pre edit: not-deny",
@@ -201,37 +201,37 @@
         {
           "event": "session.start",
           "decision": "advise",
-          "ms": 89
+          "ms": 470
         },
         {
           "event": "tool.pre",
           "decision": "allow",
-          "ms": 186
+          "ms": 1112
         },
         {
           "event": "tool.post",
           "decision": "allow",
-          "ms": 180
+          "ms": 2508
         },
         {
           "event": "prompt.submit",
           "decision": "allow",
-          "ms": 55
+          "ms": 1405
         },
         {
           "event": "tool.pre",
           "decision": "allow",
-          "ms": 196
+          "ms": 4408
         },
         {
           "event": "tool.post",
           "decision": "allow",
-          "ms": 171
+          "ms": 549
         },
         {
           "event": "prompt.submit",
           "decision": "advise",
-          "ms": 55
+          "ms": 446
         },
         {
           "event": "session.end",
@@ -247,7 +247,7 @@
       "title": "after a deny, the adapted edit is allowed and recorded",
       "spec": "§5.2",
       "pass": true,
-      "ms": 874,
+      "ms": 6811,
       "checks": [
         {
           "name": "tool.pre edit: deny",
@@ -270,27 +270,27 @@
         {
           "event": "session.start",
           "decision": "advise",
-          "ms": 83
+          "ms": 279
         },
         {
           "event": "tool.pre",
           "decision": "deny",
-          "ms": 192
+          "ms": 1188
         },
         {
           "event": "tool.pre",
           "decision": "allow",
-          "ms": 212
+          "ms": 2639
         },
         {
           "event": "tool.post",
           "decision": "allow",
-          "ms": 177
+          "ms": 1481
         },
         {
           "event": "prompt.submit",
           "decision": "allow",
-          "ms": 53
+          "ms": 434
         },
         {
           "event": "session.end",
@@ -306,7 +306,7 @@
       "title": "an edit built on a stale signature is denied before it runs, with a model-visible explanation",
       "spec": "§5.2 deny, §5.3",
       "pass": true,
-      "ms": 443,
+      "ms": 2960,
       "checks": [
         {
           "name": "tool.pre edit: deny",
@@ -329,12 +329,12 @@
         {
           "event": "session.start",
           "decision": "advise",
-          "ms": 86
+          "ms": 738
         },
         {
           "event": "tool.pre",
           "decision": "deny",
-          "ms": 195
+          "ms": 1041
         },
         {
           "event": "session.end",
@@ -350,7 +350,7 @@
       "title": "agent.stop is refused (deny + explanation) while an error is open, and allowed once it is resolved",
       "spec": "§5.4 gates",
       "pass": true,
-      "ms": 1025,
+      "ms": 3585,
       "checks": [
         {
           "name": "tool.pre edit: deny",
@@ -377,37 +377,37 @@
         {
           "event": "session.start",
           "decision": "advise",
-          "ms": 86
+          "ms": 307
         },
         {
           "event": "tool.pre",
           "decision": "deny",
-          "ms": 202
+          "ms": 488
         },
         {
           "event": "agent.stop",
           "decision": "deny",
-          "ms": 80
+          "ms": 162
         },
         {
           "event": "tool.pre",
           "decision": "allow",
-          "ms": 198
+          "ms": 610
         },
         {
           "event": "tool.post",
           "decision": "allow",
-          "ms": 184
+          "ms": 714
         },
         {
           "event": "prompt.submit",
           "decision": "allow",
-          "ms": 58
+          "ms": 164
         },
         {
           "event": "agent.stop",
           "decision": "allow",
-          "ms": 55
+          "ms": 166
         },
         {
           "event": "session.end",
@@ -423,7 +423,7 @@
       "title": "optional: a shell `git commit` is denied while an error is open (tool interception)",
       "spec": "§3.1 commit_gate",
       "pass": true,
-      "ms": 566,
+      "ms": 2538,
       "checks": [
         {
           "name": "tool.pre edit: deny",
@@ -438,17 +438,17 @@
         {
           "event": "session.start",
           "decision": "advise",
-          "ms": 94
+          "ms": 431
         },
         {
           "event": "tool.pre",
           "decision": "deny",
-          "ms": 202
+          "ms": 779
         },
         {
           "event": "tool.pre",
           "decision": "deny",
-          "ms": 106
+          "ms": 412
         },
         {
           "event": "session.end",
@@ -464,7 +464,7 @@
       "title": "plugin backend unreachable: every hook still answers in time with valid output (observed failure policy)",
       "spec": "§7",
       "pass": true,
-      "ms": 722,
+      "ms": 3738,
       "checks": [
         {
           "name": "session.start: any",
@@ -487,27 +487,27 @@
         {
           "event": "session.start",
           "decision": "allow",
-          "ms": 56
+          "ms": 304
         },
         {
           "event": "tool.pre",
           "decision": "allow",
-          "ms": 196
+          "ms": 1006
         },
         {
           "event": "tool.post",
           "decision": "allow",
-          "ms": 194
+          "ms": 859
         },
         {
           "event": "prompt.submit",
           "decision": "advise",
-          "ms": 55
+          "ms": 526
         },
         {
           "event": "agent.stop",
           "decision": "allow",
-          "ms": 46
+          "ms": 321
         }
       ]
     },
@@ -518,7 +518,7 @@
       "title": "malformed stdin: the hook exits in time without crashing the host (empty or valid output)",
       "spec": "§7.3",
       "pass": true,
-      "ms": 215,
+      "ms": 1649,
       "checks": [
         {
           "name": "malformed input: exits in time with empty or JSON output",
@@ -529,7 +529,7 @@
         {
           "event": "raw",
           "decision": "exit 0",
-          "ms": 39
+          "ms": 460
         }
       ]
     }
