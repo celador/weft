@@ -69,6 +69,12 @@ export type ImportBinding = {
    * target package's declared name once it has indexed the package.
    */
   guessed?: boolean;
+  /**
+   * The import brings every declaration of `module` into scope, unqualified (C/C++ `#include`).
+   * `local` and `name` are ignored. The engine reads the included file (`AnalyzeOptions.read`)
+   * and follows its own includes.
+   */
+  all?: boolean;
 };
 
 export interface TreeSitterLanguage {
@@ -113,6 +119,17 @@ export interface TreeSitterLanguage {
    * match a lookup. Without it every file of the package is parsed.
    */
   packageDeclaredNames?(text: string): Iterable<string>;
+  /**
+   * C/C++: true when a definition in `path` that an included file also declares is keyed to
+   * the included file (a `.c` definition shares its header prototype's key: callers read the
+   * header). False for headers themselves.
+   */
+  keyToIncludes?(path: string): boolean;
+  /**
+   * The id of the language that should analyze this text instead, when one extension is shared
+   * (a `.h` file written in C++). Undefined keeps this language.
+   */
+  refine?(path: string, text: string): string | undefined;
 }
 
 /**
@@ -139,7 +156,10 @@ export type AnalyzeOptions = {
   prefix?: string;
   /** Lets import resolution check the checkout. Without it, only relative imports resolve. */
   exists?: Exists;
-  /** Reads other checkout files (go.mod, the files of a Go package). Optional. */
+  /**
+   * Reads a checkout file (checkout-relative path): C/C++ `#include`d files, Go's go.mod and the
+   * files of a Go package. Without it, those cross-file reads are not seen.
+   */
   read?: ReadCheckoutFile;
   /** Lists checkout directories (the files of a Go package). Optional. */
   list?: ListCheckoutDir;

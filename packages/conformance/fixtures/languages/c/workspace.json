@@ -1,0 +1,87 @@
+{
+  "description": "C conformance workspace (docs/languages.md). The contract is include/pricing.h; src/pricing.c defines it, so a definition in the .c shares its header's key. The peer changes are another agent's edits; their reads/writes are exactly what @weft/analyzer's C backend derives from `after` (checked by packages/conformance/test/languages.test.ts).",
+  "language": "c",
+  "files": {
+    "include/pricing.h": "#ifndef PRICING_H\n#define PRICING_H\n\ntypedef struct {\n  int price;\n  int qty;\n} Item;\n\nint calc_total(const Item *items, int n);\nint format_price(int amount, char *out, int size);\n\n#endif\n",
+    "src/pricing.c": "#include <stdio.h>\n#include \"pricing.h\"\n\nint calc_total(const Item *items, int n) {\n  int sum = 0;\n  for (int i = 0; i < n; i++) sum += items[i].price * items[i].qty;\n  return sum;\n}\n\nint format_price(int amount, char *out, int size) {\n  return snprintf(out, size, \"$%d.%02d\", amount / 100, amount % 100);\n}\n",
+    "src/cart.c": "#include \"pricing.h\"\n\nint cart_count(const Item *items, int n) {\n  return n;\n}\n",
+    "src/report.c": "#include \"pricing.h\"\n\nint report_line(int total, char *out, int size) {\n  return 0;\n}\n"
+  },
+  "peers": {
+    "change_signature": {
+      "agent": "peer-a",
+      "harness": "claude-code",
+      "task": "T-1",
+      "files": [
+        "include/pricing.h",
+        "src/pricing.c"
+      ],
+      "writes": [
+        {
+          "key": "include/pricing.h#calc_total",
+          "kind": "signature"
+        }
+      ],
+      "reads": [
+        "include/pricing.h#Item"
+      ],
+      "intent": "calc_total takes a tax_rate",
+      "after": {
+        "include/pricing.h": "#ifndef PRICING_H\n#define PRICING_H\n\ntypedef struct {\n  int price;\n  int qty;\n} Item;\n\nint calc_total(const Item *items, int n, int tax_rate);\nint format_price(int amount, char *out, int size);\n\n#endif\n",
+        "src/pricing.c": "#include <stdio.h>\n#include \"pricing.h\"\n\nint calc_total(const Item *items, int n, int tax_rate) {\n  int sum = 0;\n  for (int i = 0; i < n; i++) sum += items[i].price * items[i].qty;\n  return sum + sum * tax_rate / 100;\n}\n\nint format_price(int amount, char *out, int size) {\n  return snprintf(out, size, \"$%d.%02d\", amount / 100, amount % 100);\n}\n"
+      }
+    },
+    "change_body": {
+      "agent": "peer-c",
+      "harness": "cursor",
+      "task": "T-4",
+      "files": [
+        "src/pricing.c"
+      ],
+      "writes": [
+        {
+          "key": "include/pricing.h#calc_total",
+          "kind": "body"
+        }
+      ],
+      "reads": [
+        "include/pricing.h#Item"
+      ],
+      "intent": "calc_total skips negative quantities",
+      "after": {
+        "src/pricing.c": "#include <stdio.h>\n#include \"pricing.h\"\n\nint calc_total(const Item *items, int n) {\n  int sum = 0;\n  for (int i = 0; i < n; i++)\n    if (items[i].qty > 0) sum += items[i].price * items[i].qty;\n  return sum;\n}\n\nint format_price(int amount, char *out, int size) {\n  return snprintf(out, size, \"$%d.%02d\", amount / 100, amount % 100);\n}\n"
+      }
+    },
+    "rename_helper": {
+      "agent": "peer-b",
+      "harness": "codex",
+      "task": "T-3",
+      "files": [
+        "include/pricing.h",
+        "src/pricing.c"
+      ],
+      "writes": [
+        {
+          "key": "include/pricing.h#format_money",
+          "kind": "new"
+        },
+        {
+          "key": "include/pricing.h#format_price",
+          "kind": "deleted"
+        },
+        {
+          "key": "src/pricing.c#format_price",
+          "kind": "deleted"
+        }
+      ],
+      "reads": [
+        "include/pricing.h#Item"
+      ],
+      "intent": "rename format_price to format_money",
+      "after": {
+        "include/pricing.h": "#ifndef PRICING_H\n#define PRICING_H\n\ntypedef struct {\n  int price;\n  int qty;\n} Item;\n\nint calc_total(const Item *items, int n);\nint format_money(int amount, char *out, int size);\n\n#endif\n",
+        "src/pricing.c": "#include <stdio.h>\n#include \"pricing.h\"\n\nint calc_total(const Item *items, int n) {\n  int sum = 0;\n  for (int i = 0; i < n; i++) sum += items[i].price * items[i].qty;\n  return sum;\n}\n\nint format_money(int amount, char *out, int size) {\n  return snprintf(out, size, \"$%d.%02d\", amount / 100, amount % 100);\n}\n"
+      }
+    }
+  }
+}

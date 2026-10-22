@@ -143,6 +143,9 @@ async function hook(byPath: boolean, args: string[] = []): Promise<void> {
         break;
       }
     }
+    // Copilot CLI also runs `.claude/settings*.json` hooks. In a checkout where the Copilot
+    // adapter is installed it owns the session; answering here too would double every event.
+    if (loaded && process.env.COPILOT_CLI === "1" && existsSync(join(loaded.root, ".weft/copilot.json"))) loaded = undefined;
     if (loaded && input) out = await adapterFor(loaded, calls).handle(input);
   } catch {
     out = undefined; // fail open: malformed input or a bug must not block the harness

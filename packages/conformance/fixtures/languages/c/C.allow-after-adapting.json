@@ -1,0 +1,47 @@
+{
+  "id": "C.allow-after-adapting",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a75.2",
+  "title": "C: after the deny, the call adapted to the new prototype is allowed",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/cart.c",
+        "old_text": "  return n;",
+        "new_text": "  return calc_total(items, n);"
+      },
+      "expect_pre": {
+        "decision": "deny"
+      }
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/cart.c",
+        "old_text": "  return n;",
+        "new_text": "  return calc_total(items, n, 0);"
+      },
+      "expect_pre": {
+        "decision": "not-deny"
+      },
+      "expect_applied": true
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "kind": "edit",
+        "status": "accepted",
+        "files_include": "src/cart.c",
+        "min": 1
+      }
+    }
+  ]
+}

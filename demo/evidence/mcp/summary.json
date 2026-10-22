@@ -1,0 +1,81 @@
+{
+  "run_at": "2026-10-22T17:01:20.485Z",
+  "gateway": "http://localhost:8796",
+  "repo": "mcp-demo-20261022165953",
+  "model": "sonnet",
+  "claude_version": "2.1.308 (Claude Code)",
+  "harness_b": "Claude Code with NO Weft hooks (--strict-mcp-config, --setting-sources project, no .claude/ in the worktree); only the weft MCP server",
+  "a_join": {
+    "harness": "claude-code",
+    "level": 3
+  },
+  "b_join": {
+    "harness": "mcp:claude-code",
+    "level": 0
+  },
+  "b_hooks_jsonl_harnesses": [
+    "mcp:claude-code"
+  ],
+  "signature_change": {
+    "seq": 4,
+    "summary": "claude-a changed signature of calcTotal, added calcTotal.net, PriceOptions in src/pricing.ts — Tax-aware totals"
+  },
+  "b_weft_tool_calls": [
+    "weft_check",
+    "weft_check",
+    "weft_gate"
+  ],
+  "b_native_edit_calls": [
+    "Write /private/var/folders/h7/fpctn9ss3d72g2gn83vfhfdr0000gn/T/weft-mcp-demo-MmHrM5/shop-agent-b/src/cart.ts"
+  ],
+  "b_check_with_squiggle": {
+    "input_path": "src/cart.ts",
+    "result_excerpt": [
+      "[weft] check src/cart.ts: REJECT — this edit conflicts with another agent's change (Weft edit-time coordination, log #9).",
+      "[weft error] stale_assumption src/cart.ts:4:43: You use src/pricing.ts#calcTotal, whose signature changed in #4 by claude-a after your base #1. (caused by claude-a · task T-1 · event #4). Suggestion: Read the new src/pricing.ts#calcTotal (event #4) and update this call site, or negotiate with claude-a.",
+      "  ↳ event #4 by claude-a changed src/pricing.ts (their change is not in your checkout yet):"
+    ]
+  },
+  "b_check_records": [
+    {
+      "seq": 9,
+      "status": "rejected",
+      "codes": [
+        "stale_assumption"
+      ],
+      "caused_by": [
+        4
+      ]
+    }
+  ],
+  "b_watcher_edits": [
+    {
+      "seq": 10,
+      "status": "accepted",
+      "files": [
+        "src/cart.ts"
+      ],
+      "tool": {
+        "name": "Write",
+        "call_id": "watch-1792688469437-1",
+        "harness_event": "PostToolUse"
+      },
+      "codes": []
+    }
+  ],
+  "b_final_result": "`cartSummary` in `src/cart.ts` now returns the item count plus a second line, `Total: <amount>`. Weft's stop gate passed with no open errors and nothing owed.\n\nWeft's first check rejected my plain `calcTotal(items)` call. claude-a changed `calcTotal` in `src/pricing.ts` to `calcTotal(items, opts: PriceOptions)`, where `PriceOptions` is `{ taxRate: number }`, and applies the tax to the total. That change isn't in this checkout yet, so I haven't compiled or run anything here.\n\nI adapted `cartSummary` to take an optional second argument, `opts: PriceOptions = { taxRate: 0 }`, and pass it to `calc",
+  "exit": {
+    "b1": 0,
+    "a": 0,
+    "b2": 0
+  },
+  "checks": {
+    "b_is_l0_mcp": true,
+    "a_is_hooked_l3": true,
+    "no_claude_code_hooks_in_b": true,
+    "b_called_weft_check": true,
+    "b_got_a_squiggle": true,
+    "b_unannounced_edits_in_log": true,
+    "b_used_native_edit_tool": true
+  }
+}

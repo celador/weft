@@ -93,7 +93,7 @@ export function analyzeChanges(changes: FileChange[], root?: string, prefix = ""
 }
 
 /**
- * `analyzeChanges` plus the tree-sitter languages (Python, ...): what the hooks call. TypeScript
+ * `analyzeChanges` plus the tree-sitter languages (Python, C, C++, ...): what the hooks call. TypeScript
  * and JavaScript go through exactly the same path as `analyzeChanges`; files of a tree-sitter
  * language get declaration-level keys and import-resolved reads instead of a whole-file key.
  */
@@ -102,7 +102,10 @@ export async function analyzeChangesAsync(changes: FileChange[], root?: string, 
   const base = analyzeChanges(typescriptOrOther, root, prefix);
   const reads = new Set(base.reads);
   const writes = new Map(base.writes.map((w) => [w.key, w] as const));
-  const checkout = root ? checkoutAccess(root) : {};
+  // Files this same tool call changes are read as they will be after it (a C header + its .c,
+  // two files of one Go package).
+  const pending = new Map(changes.map((c) => [c.rel, c.after] as const));
+  const checkout = root ? checkoutAccess(root, pending) : {};
   for (const c of changes) {
     if (c.before === c.after || !treeSitterLanguageFor(c.rel)) continue;
     try {
@@ -119,14 +122,15 @@ export async function analyzeChangesAsync(changes: FileChange[], root?: string, 
 }
 
 /**
- * What a tree-sitter language may look at besides the edited file (Go: go.mod and the other
- * files of a package): existence, listings, and reads that follow the adapters' read rule
- * (no symlinks, nothing outside the checkout, at most 1 MiB).
+ * What a tree-sitter language may look at besides the edited file (C/C++ included headers; Go
+ * go.mod and the other files of a package): existence, listings, and reads that follow the
+ * adapters' read rule (no symlinks, nothing outside the checkout, at most 1 MiB). `pending`
+ * holds the post-edit text of files the same tool call changes (null = deleted).
  */
-export function checkoutAccess(root: string) {
+export function checkoutAccess(root: string, pending: Map<string, string | null> = new Map()) {
   return {
-    exists: (rel: string) => existsSync(join(root, rel)),
-    read: (rel: string) => readInsideCheckout(root, join(root, rel), 1 << 20) ?? undefined,
+    exists: (rel: string) => (pending.has(rel) ? pending.get(rel) !== null : existsSync(join(root, rel))),
+    read: (rel: string): string | undefined => (pending.has(rel) ? (pending.get(rel) ?? undefined) : (readInsideCheckout(root, join(root, rel), 1 << 20) ?? undefined)),
     list: (rel: string): string[] | undefined => {
       try {
         return readdirSync(join(root, rel), { withFileTypes: true }).map((e) => (e.isDirectory() ? `${e.name}/` : e.name));

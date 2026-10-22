@@ -1,0 +1,36 @@
+{
+  "id": "CPP.allow-unrelated",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a74.1",
+  "title": "C++: an edit that does not use the changed method is not blocked",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/receipt.cpp",
+        "old_text": "  return \"Total\";",
+        "new_text": "  return \"Total: \" + shop::format_price(total);"
+      },
+      "expect_pre": {
+        "decision": "not-deny"
+      },
+      "expect_applied": true
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "kind": "edit",
+        "status": "accepted",
+        "files_include": "src/receipt.cpp",
+        "min": 1
+      }
+    }
+  ]
+}

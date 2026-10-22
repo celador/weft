@@ -1,0 +1,4 @@
+cwd: <work>/agent-b
+COPILOT_ALLOW_ALL=true copilot -p … --output-format json --allow-all-tools --no-ask-user --resume 4a76670c-3c7a-4524-9694-a30fbf826029
+
+Go ahead and implement the plan now, without re-reading the files first. If the Weft coordinator reports a conflict, adapt your code to it. When you are done, reply with the final method and one sentence on anything that changed from your plan.
