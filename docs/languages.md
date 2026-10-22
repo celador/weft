@@ -57,6 +57,14 @@ Runtime: `web-tree-sitter` 0.25.10 (WASM, no native build, no toolchain). Adapte
 analyzer and copy the WASM files to `dist/grammars/` at build time
 (`packages/analyzer/scripts/copy-assets.mjs`); `WEFT_GRAMMARS_DIR` overrides the lookup.
 
+Vendored grammars (`packages/analyzer/grammars/`, copied from each grammar's npm package):
+
+| Grammar | npm version | ABI | sha256 |
+|---|---|---|---|
+| `tree-sitter-python.wasm` | tree-sitter-python 0.25.0 | 15 | `16108b50df4ee9a30168794252ab55e7c93bfc5765d7fa0aa3e335752c515f47` |
+| `tree-sitter-c.wasm` | tree-sitter-c 0.24.1 | 15 | `c852c2a85ebf2beb636aa3b0ef7f7e70458684d74f6741b20dcb296885bed9f9` |
+| `tree-sitter-cpp.wasm` | tree-sitter-cpp 0.23.4 | 14 | `174eb0deb75b2ec7881bcacda9f995648d8e683956e5c2267e69ab6dc503fcbf` |
+
 ### C and C++: headers carry the contract
 
 `#include` brings a whole file into scope, so the C/C++ spec returns its includes as `all`
@@ -111,13 +119,6 @@ load average near 190, so these are upper bounds; 30 runs each, header read incl
 `packages/analyzer/src/c.test.ts` fails if the fastest of three warm runs on a 2,000-line C or
 C++ file takes 300 ms or more (fastest of three, so a busy machine's scheduler does not fail it).
 
-### Grammars
-
-| File | Package | sha256 |
-|---|---|---|
-| `tree-sitter-python.wasm` | tree-sitter-python 0.25.0 | `16108b50df4ee9a30168794252ab55e7c93bfc5765d7fa0aa3e335752c515f47` |
-| `tree-sitter-c.wasm` | tree-sitter-c 0.24.1 (ABI 15) | `c852c2a85ebf2beb636aa3b0ef7f7e70458684d74f6741b20dcb296885bed9f9` |
-| `tree-sitter-cpp.wasm` | tree-sitter-cpp 0.23.4 (ABI 14) | `174eb0deb75b2ec7881bcacda9f995648d8e683956e5c2267e69ab6dc503fcbf` |
 
 ## Adding a language
 

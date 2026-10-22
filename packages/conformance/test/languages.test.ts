@@ -33,8 +33,9 @@ describe("language fixture sets", () => {
       for (const [name, peer] of Object.entries(workspace.peers)) {
         it(`peer ${name}: declared reads/writes = analyzer output`, async () => {
           const exists = (rel: string) => rel in workspace.files;
-          // C/C++ read included headers; a peer's change sees its own other changed files.
-          const read = (rel: string) => peer.after?.[rel] ?? workspace.files[rel];
+          // The same checkout access the adapters give the analyzer (exists / read). C/C++ read
+          // included headers; like the adapters, a change sees its own other changed files.
+          const read = (rel: string): string | undefined => peer.after?.[rel] ?? workspace.files[rel];
           const reads = new Set<string>();
           // One key per symbol, as the adapters merge them (a header and its .c share keys).
           const writes = new Map<string, { key: string; kind: string }>();
