@@ -3,12 +3,14 @@ import { posix } from "node:path";
 import type { Analysis, AnalyzeOptions, BackendId, SourceChange, TreeSitterLanguage } from "../language.js";
 import { analyzeTreeSitter } from "../treesitter.js";
 import { c, cpp } from "./c.js";
+import { csharp } from "./csharp.js";
 import { java } from "./java.js";
 import { kotlin } from "./kotlin.js";
 import { python } from "./python.js";
+import { swift } from "./swift.js";
 
 /** Languages on the tree-sitter backend. Add a spec + grammar + conformance fixture per language. */
-export const treeSitterLanguages: TreeSitterLanguage[] = [python, c, cpp, java, kotlin];
+export const treeSitterLanguages: TreeSitterLanguage[] = [python, c, cpp, java, kotlin, swift, csharp];
 
 export type LanguageInfo = { id: string; name: string; backend: BackendId };
 

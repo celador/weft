@@ -9,6 +9,7 @@ import { posix } from "node:path";
 import { Language, Parser, type Tree } from "web-tree-sitter";
 import { findGrammar, findRuntimeWasm } from "./assets.js";
 import type { Analysis, AnalyzeOptions, Definition, ImportBinding, Reference, SyntaxNode, TreeSitterLanguage, Write } from "./language.js";
+import { type IndexHit, longestDefined, ModuleLookup } from "./moduleindex.js";
 
 let runtime: Promise<void> | undefined;
 const parsers = new Map<string, Promise<Parser>>();
@@ -151,15 +152,6 @@ function includedDeclarations(
   return out;
 }
 
-/** Longest prefix of `ref` (only the whole of it when `exact`) that `has` accepts. */
-function longestDefined(ref: Reference, has: (name: string) => boolean): string | undefined {
-  for (let n = ref.length; n >= (ref.exact ? ref.length : 1); n--) {
-    const name = ref.slice(0, n).join(".");
-    if (has(name)) return name;
-  }
-  return undefined;
-}
-
 const KIND_RANK: Record<Write["kind"], number> = { deleted: 3, signature: 2, new: 1, body: 0 };
 
 /**
@@ -247,32 +239,55 @@ export async function analyzeTreeSitter(
       const file = resolve(b.module);
       if (file) reads.add(key(file, b.name));
     }
-    for (const ref of language.references(afterRoot)) {
-      // 1. This file's own declarations: the longest defined prefix (`Cart.tax`, else `Cart`).
-      const local = longestDefined(ref, (name) => newDefs.has(name));
-      if (local) {
-        reads.add(ownKey(local));
-        continue;
-      }
-      // 2. Declarations of included files (C/C++ headers), keyed to the declaring file.
-      if (included.size) {
-        const name = longestDefined(ref, (n) => included.has(n));
-        if (name) {
-          reads.add(key(included.get(name)!, name));
-          continue;
-        }
-      }
-      // 3. Imports: `name.rest` through a member binding, `module.member` through a module one.
+    // 3. Imports: `name.rest` through a member binding, `module.member` through a module one.
+    const viaImport = (ref: Reference): boolean => {
       const hit = longestBinding(ref, bindings);
-      if (!hit) continue;
+      if (!hit) return false;
       const file = resolve(hit.binding.module);
-      if (!file) continue;
+      if (!file) return false;
       if (hit.binding.name !== undefined) {
         reads.add(key(file, hit.binding.name));
         if (hit.rest.length) reads.add(key(file, `${hit.binding.name}.${hit.rest[0]}`));
       } else if (hit.rest.length) {
         reads.add(key(file, hit.rest[0]));
         if (hit.rest.length > 1) reads.add(key(file, `${hit.rest[0]}.${hit.rest[1]}`));
+      }
+      return true;
+    };
+    // 4. Index-based languages (Swift, C#): declarations of other files in the module/namespace.
+    const fs = language.index && opts.list && opts.read
+      ? { exists: opts.exists ?? ((rel: string) => opts.read!(rel) !== undefined), list: opts.list, read: opts.read }
+      : undefined;
+    let index: ModuleLookup | undefined;
+    const viaIndex = (ref: Reference): IndexHit | undefined => {
+      if (!language.index || !fs) return undefined;
+      index ??= new ModuleLookup(language, language.index, parser, path, afterRoot!, bindings, fs, parse, definitionMap);
+      return index.lookup(ref);
+    };
+
+    for (const first of language.references(afterRoot)) {
+      for (let ref: Reference | undefined = first; ref; ref = ref.or) {
+        // 1. This file's own declarations: the longest defined prefix (`Cart.tax`, else `Cart`).
+        const local = longestDefined(ref, newDefs);
+        // A longer match elsewhere wins (`Cart.rate` declared in an extension in another file).
+        const elsewhere = !local || local.depth < ref.length ? viaIndex(ref) : undefined;
+        if (elsewhere && (!local || elsewhere.depth > local.depth)) {
+          for (const k of elsewhere.keys) reads.add(key(k.file, k.name));
+          break;
+        }
+        if (local) {
+          reads.add(ownKey(local.name));
+          break;
+        }
+        // 2. Declarations of included files (C/C++ headers), keyed to the declaring file.
+        if (included.size) {
+          const inc = longestDefined(ref, included);
+          if (inc) {
+            reads.add(key(included.get(inc.name)!, inc.name));
+            break;
+          }
+        }
+        if (viaImport(ref)) break;
       }
     }
   }

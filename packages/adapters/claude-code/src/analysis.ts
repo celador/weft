@@ -4,7 +4,7 @@
 // checkout, so `import { calcTotal } from "./pricing"` reads `src/pricing.ts#calcTotal`.
 import { analyze, analyzeSource, treeSitterLanguageFor, type Write } from "@weft/analyzer";
 import ts from "typescript";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
 
 export const ANALYZABLE = /\.(?:[cm]?ts|tsx|[cm]?js|jsx)$/;
@@ -92,7 +92,7 @@ export function analyzeChanges(changes: FileChange[], root?: string, prefix = ""
 }
 
 /**
- * `analyzeChanges` plus the tree-sitter languages (Python, C, C++, ...): what the hooks call. TypeScript
+ * `analyzeChanges` plus the tree-sitter languages (Python, C/C++, Java, Kotlin, Swift, C#): what the hooks call. TypeScript
  * and JavaScript go through exactly the same path as `analyzeChanges`; files of a tree-sitter
  * language get declaration-level keys and import-resolved reads instead of a whole-file key.
  */
@@ -102,23 +102,18 @@ export async function analyzeChangesAsync(changes: FileChange[], root?: string, 
   const reads = new Set(base.reads);
   const writes = new Map(base.writes.map((w) => [w.key, w] as const));
   const exists = root ? (rel: string) => existsSync(join(root, rel)) : undefined;
-  // C/C++ `#include`: the analyzer reads included headers to key definitions and resolve uses.
-  // Files this same tool call changes are read as they will be after it (a header + its .c).
+  // The analyzer reads other checkout files: C/C++ `#include`d headers, and the Swift/C# module
+  // index (`list` + `read`). Files this same tool call changes are read as they will be after it
+  // (a header + its .c).
+  const checkout = root ? checkoutFs(root) : undefined;
   const pending = new Map(changes.map((c) => [c.rel, c.after] as const));
-  const read = root
-    ? (rel: string): string | undefined => {
-        if (pending.has(rel)) return pending.get(rel) ?? undefined;
-        try {
-          return readFileSync(join(root, rel), "utf8");
-        } catch {
-          return undefined;
-        }
-      }
+  const read = checkout
+    ? (rel: string): string | undefined => (pending.has(rel) ? (pending.get(rel) ?? undefined) : checkout.read(rel))
     : undefined;
   for (const c of changes) {
     if (c.before === c.after || !treeSitterLanguageFor(c.rel)) continue;
     try {
-      const result = await analyzeSource({ path: c.rel, before: c.before, after: c.after }, { prefix, exists, read });
+      const result = await analyzeSource({ path: c.rel, before: c.before, after: c.after }, { prefix, exists, list: checkout?.list, read });
       for (const k of result.reads) reads.add(k);
       for (const w of result.writes) writes.set(w.key, w);
     } catch {
@@ -128,6 +123,42 @@ export async function analyzeChangesAsync(changes: FileChange[], root?: string, 
   }
   for (const k of writes.keys()) reads.delete(k);
   return { reads: [...reads].sort(), writes: [...writes.values()].sort((a, b) => a.key.localeCompare(b.key)) };
+}
+
+/** Files larger than this are not read for the declaration index (generated code, bundles). */
+const MAX_INDEXED_BYTES = 1_000_000;
+
+/**
+ * Directory listing + file reads of the checkout, for index-based languages (Swift, C#), whose
+ * cross-file reads need the module's other files. Paths are checkout-relative; nothing outside
+ * `root` is read.
+ */
+export function checkoutFs(root: string): { list: (dir: string) => string[] | undefined; read: (rel: string) => string | undefined } {
+  const inside = (rel: string): string | undefined => {
+    const clean = posix.normalize(rel || ".");
+    return clean.startsWith("../") || clean === ".." || posix.isAbsolute(clean) ? undefined : join(root, clean);
+  };
+  return {
+    list(dir) {
+      const abs = inside(dir);
+      if (!abs) return undefined;
+      try {
+        return readdirSync(abs, { withFileTypes: true }).map((e) => (e.isDirectory() ? `${e.name}/` : e.name));
+      } catch {
+        return undefined;
+      }
+    },
+    read(rel) {
+      const abs = inside(rel);
+      if (!abs) return undefined;
+      try {
+        if (statSync(abs).size > MAX_INDEXED_BYTES) return undefined;
+        return readFileSync(abs, "utf8");
+      } catch {
+        return undefined;
+      }
+    },
+  };
 }
 
 /** Plain unified diff (enough for humans and for `analyzeDiff`); LCS on lines. */

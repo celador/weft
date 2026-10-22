@@ -1,0 +1,67 @@
+{
+  "description": "C# conformance workspace (docs/languages.md): a solution with one project. `using Shop.Pricing;` names a namespace, not a file, so the callers read PriceCalculator.cs through the module index. The peer changes are another agent's edits to src/Shop/Pricing/PriceCalculator.cs; their reads/writes are exactly what @weft/analyzer's C# backend derives from `after` (checked by packages/conformance/test/languages.test.ts).",
+  "language": "csharp",
+  "files": {
+    "Shop.sln": "Microsoft Visual Studio Solution File, Format Version 12.00\n",
+    "src/Shop/Shop.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net8.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n",
+    "src/Shop/Pricing/PriceCalculator.cs": "namespace Shop.Pricing;\n\npublic record Item(decimal Price, int Qty);\n\npublic static class PriceCalculator\n{\n    public static decimal CalcTotal(IEnumerable<Item> items)\n    {\n        return items.Sum(i => i.Price * i.Qty);\n    }\n\n    public static string FormatPrice(decimal amount) => amount.ToString(\"C\");\n}\n",
+    "src/Shop/Cart/CartSummary.cs": "using Shop.Pricing;\n\nnamespace Shop.Cart;\n\npublic static class CartSummary\n{\n    public static string Describe(List<Item> items)\n    {\n        return $\"{items.Count} items\";\n    }\n}\n",
+    "src/Shop/Report/ReportLine.cs": "using Shop.Pricing;\n\nnamespace Shop.Report;\n\npublic static class ReportLine\n{\n    public static string Format(decimal total)\n    {\n        return \"Total\";\n    }\n}\n"
+  },
+  "peers": {
+    "change_signature": {
+      "agent": "peer-a",
+      "harness": "claude-code",
+      "task": "T-1",
+      "files": [
+        "src/Shop/Pricing/PriceCalculator.cs"
+      ],
+      "writes": [
+        {
+          "key": "src/Shop/Pricing/PriceCalculator.cs#PriceCalculator",
+          "kind": "body"
+        },
+        {
+          "key": "src/Shop/Pricing/PriceCalculator.cs#PriceCalculator.CalcTotal",
+          "kind": "signature"
+        }
+      ],
+      "reads": [
+        "src/Shop/Pricing/PriceCalculator.cs#Item"
+      ],
+      "intent": "CalcTotal takes a taxRate",
+      "after": {
+        "src/Shop/Pricing/PriceCalculator.cs": "namespace Shop.Pricing;\n\npublic record Item(decimal Price, int Qty);\n\npublic static class PriceCalculator\n{\n    public static decimal CalcTotal(IEnumerable<Item> items, decimal taxRate)\n    {\n        return (1 + taxRate) * items.Sum(i => i.Price * i.Qty);\n    }\n\n    public static string FormatPrice(decimal amount) => amount.ToString(\"C\");\n}\n"
+      }
+    },
+    "rename_helper": {
+      "agent": "peer-b",
+      "harness": "codex",
+      "task": "T-3",
+      "files": [
+        "src/Shop/Pricing/PriceCalculator.cs"
+      ],
+      "writes": [
+        {
+          "key": "src/Shop/Pricing/PriceCalculator.cs#PriceCalculator",
+          "kind": "body"
+        },
+        {
+          "key": "src/Shop/Pricing/PriceCalculator.cs#PriceCalculator.FormatMoney",
+          "kind": "new"
+        },
+        {
+          "key": "src/Shop/Pricing/PriceCalculator.cs#PriceCalculator.FormatPrice",
+          "kind": "deleted"
+        }
+      ],
+      "reads": [
+        "src/Shop/Pricing/PriceCalculator.cs#Item"
+      ],
+      "intent": "rename FormatPrice to FormatMoney",
+      "after": {
+        "src/Shop/Pricing/PriceCalculator.cs": "namespace Shop.Pricing;\n\npublic record Item(decimal Price, int Qty);\n\npublic static class PriceCalculator\n{\n    public static decimal CalcTotal(IEnumerable<Item> items)\n    {\n        return items.Sum(i => i.Price * i.Qty);\n    }\n\n    public static string FormatMoney(decimal amount) => amount.ToString(\"C\");\n}\n"
+      }
+    }
+  }
+}

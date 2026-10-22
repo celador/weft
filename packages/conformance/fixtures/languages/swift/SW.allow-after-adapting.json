@@ -1,0 +1,47 @@
+{
+  "id": "SW.allow-after-adapting",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a75.2",
+  "title": "Swift: after the deny, the call adapted to the new signature is allowed",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "Sources/Shop/Cart+Summary.swift",
+        "old_text": "        \"\\(items.count) items\"",
+        "new_text": "        \"\\(items.count) items, total \\(calcTotal(items: items))\""
+      },
+      "expect_pre": {
+        "decision": "deny"
+      }
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "Sources/Shop/Cart+Summary.swift",
+        "old_text": "        \"\\(items.count) items\"",
+        "new_text": "        \"\\(items.count) items, total \\(calcTotal(items: items, taxRate: 0))\""
+      },
+      "expect_pre": {
+        "decision": "not-deny"
+      },
+      "expect_applied": true
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "kind": "edit",
+        "status": "accepted",
+        "files_include": "Sources/Shop/Cart+Summary.swift",
+        "min": 1
+      }
+    }
+  ]
+}

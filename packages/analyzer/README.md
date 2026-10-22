@@ -1,7 +1,7 @@
 # @weft/analyzer
 
 `@weft/analyzer` derives the read/write sets sent with a WCP edit event: TypeScript/JavaScript
-through the TypeScript compiler API, other languages (Python, C, C++ today) through a tree-sitter
+through the TypeScript compiler API, other languages (Python, C, C++, Java, Kotlin, Swift, C#) through a tree-sitter
 backend. Support matrix and how to add a language: [docs/languages.md](../../docs/languages.md).
 
 ## Runtime boundary
@@ -43,6 +43,11 @@ const result = await analyzeSource(
   { prefix: "svc/", exists: (rel) => existsSync(join(root, rel)) },
 );
 ```
+
+Swift and C# declarations are visible across files without per-file imports, so their
+cross-file reads need the checkout's other files: pass `list(dir)` (entries, directories end in
+`/`) and `read(rel)` too (`{ prefix, exists, list, read }`). See "Module index" in
+docs/languages.md.
 
 `analyzeSource` is async only because the WASM runtime and grammar load on first use (~10 ms,
 once per process). Keys and write kinds are the same as for TypeScript; reads include imported

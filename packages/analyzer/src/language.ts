@@ -38,6 +38,15 @@ export type Definition = { name: string; signature: string; body: string };
 export type Reference = string[] & {
   /** Resolve only the full path, never a shorter prefix (`self.items` must not read `Cart`). */
   exact?: boolean;
+  /** Resolve at least this many leading segments (scoped lookups: `Cart.Inner` must not read `Cart`). */
+  min?: number;
+  /** The first segment is a type (an enclosing type, `self`/`this`), never a namespace qualifier. */
+  anchored?: boolean;
+  /**
+   * Tried when this reference resolves nowhere. Swift/C# implicit `self`: a bare `tax()` inside
+   * `Cart` is `["Cart", "tax"]` (exact) or else the free function `["tax"]`.
+   */
+  or?: Reference;
 };
 
 /**
@@ -90,6 +99,48 @@ export interface TreeSitterLanguage {
    * (a `.h` file written in C++). Undefined keeps this language.
    */
   refine?(path: string, text: string): string | undefined;
+  /**
+   * For languages whose declarations are visible across files without a per-file import
+   * (Swift: the whole module; C#: `using` names namespaces, not files). The engine resolves
+   * references that match nothing local or imported against a declaration index of the
+   * directories this returns. Needs `AnalyzeOptions.list` and `read`; without them, cross-file
+   * reads are skipped (local reads still work).
+   */
+  index?: ModuleIndex;
+}
+
+/** Directory listing and file contents of the checkout, for index-based languages. */
+export type CheckoutFs = {
+  exists: Exists;
+  /** Entries of checkout-relative `dir` ("" = root): file names, and directory names ending in `/`. */
+  list: (dir: string) => string[] | undefined;
+  read: (rel: string) => string | undefined;
+};
+
+export interface ModuleIndex {
+  /**
+   * Checkout-relative directories (searched recursively) whose files' declarations are visible
+   * from `fromRel`: Swift, the file's SwiftPM target / Xcode group plus the targets it imports;
+   * C#, the solution or project directory. `imports` are this file's import bindings.
+   */
+  scopes(fromRel: string, imports: ImportBinding[], fs: CheckoutFs): string[];
+  /**
+   * Cheap textual over-approximation of the top-level names `text` declares (a regex pass, no
+   * parse). The engine parses only files whose names match an unresolved reference.
+   */
+  declaredNames(text: string): Iterable<string>;
+  /**
+   * Namespace (dotted, "" = global) of each top-level declaration in file `rel`. Swift: the
+   * module name, so `Pricing.calcTotal` resolves like `calcTotal`. C#: the declaring namespace.
+   */
+  namespaces(root: SyntaxNode, rel: string): Map<string, string>;
+  /** Namespaces whose declarations a reference in this file may name unqualified. */
+  visibleNamespaces(root: SyntaxNode, rel: string, imports: ImportBinding[]): string[];
+  /**
+   * When an unqualified reference matches no visible namespace, accept matches from any
+   * namespace in scope (C#: project-wide `global using` and implicit usings live in other files).
+   */
+  looseNamespaces?: boolean;
 }
 
 /**
@@ -117,8 +168,13 @@ export type AnalyzeOptions = {
   /** Lets import resolution check the checkout. Without it, only relative imports resolve. */
   exists?: Exists;
   /**
-   * Reads a checkout file (checkout-relative path), for languages whose imports bring a whole
-   * file into scope (C/C++ `#include`). Without it, included declarations are not seen.
+   * Directory listing of the checkout (entries of a checkout-relative dir; directories end in
+   * `/`). Optional; with `read`, enables cross-file reads for index-based languages (Swift, C#).
+   */
+  list?: (dir: string) => string[] | undefined;
+  /**
+   * Reads a checkout file (checkout-relative path, undefined if missing): C/C++ `#include`d
+   * declarations, and with `list` the cross-file index of Swift/C#. Without it, neither is seen.
    */
   read?: (rel: string) => string | undefined;
 };

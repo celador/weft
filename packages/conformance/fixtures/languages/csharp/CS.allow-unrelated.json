@@ -1,0 +1,36 @@
+{
+  "id": "CS.allow-unrelated",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a74.1",
+  "title": "C#: an edit that does not use the changed declaration is not blocked",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/Shop/Report/ReportLine.cs",
+        "old_text": "        return \"Total\";",
+        "new_text": "        return \"Total: \" + PriceCalculator.FormatPrice(total);"
+      },
+      "expect_pre": {
+        "decision": "not-deny"
+      },
+      "expect_applied": true
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "kind": "edit",
+        "status": "accepted",
+        "files_include": "src/Shop/Report/ReportLine.cs",
+        "min": 1
+      }
+    }
+  ]
+}
