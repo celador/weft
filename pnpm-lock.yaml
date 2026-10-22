@@ -223,6 +223,9 @@ importers:
       '@weft/adapter-codex':
         specifier: workspace:*
         version: link:../adapters/codex
+      '@weft/adapter-copilot':
+        specifier: workspace:*
+        version: link:../adapters/copilot
       '@weft/adapter-cursor':
         specifier: workspace:*
         version: link:../adapters/cursor
@@ -258,6 +261,16 @@ importers:
         specifier: ^0.25.4
         version: 0.25.4
 
+  packages/feed:
+    dependencies:
+      '@weft/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      esbuild:
+        specifier: ^0.25.4
+        version: 0.25.4
+
   packages/mcp:
     dependencies:
       typescript:
@@ -273,16 +286,6 @@ importers:
       '@weft/protocol':
         specifier: workspace:*
         version: link:../protocol
-      esbuild:
-        specifier: ^0.25.4
-        version: 0.25.4
-
-  packages/feed:
-    dependencies:
-      '@weft/protocol':
-        specifier: workspace:*
-        version: link:../protocol
-    devDependencies:
       esbuild:
         specifier: ^0.25.4
         version: 0.25.4
