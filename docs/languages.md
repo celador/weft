@@ -11,11 +11,11 @@ per language family.
 |---|---|---|---|---|---|---|---|
 | TypeScript / JavaScript | `.ts .tsx .mts .cts .js .jsx .mjs .cjs` | `typescript` (TS compiler API) | functions, classes, methods, properties, interfaces, type aliases, enums, variables | calls, `new`, type references, named/namespace/default imports of relative modules | yes | deleted + new | unit tests, core conformance fixtures (L0–L3), real agent runs |
 | Python | `.py .pyi` | `tree-sitter` (tree-sitter-python 0.25.0) | functions, classes, methods (`Cart.total`), module- and class-level assignments | calls, decorators, base classes, type annotations, attribute chains (`pricing.calc_total`, `self.tax`), every imported member that resolves into the checkout | yes (decorators count as signature; whitespace and trailing commas do not; an assignment's annotation is its signature and its value its body) | deleted + new | 13 analyzer tests, 5 conformance fixtures (`fixtures/languages/python`), real two-agent Claude Code run ([record](research/python-real-run-2026-10-22.md)) |
-| Go, Rust | | `tree-sitter` | planned | | | | follow-up card |
-| Java, Kotlin | | `tree-sitter` | planned | | | | follow-up card |
-| Swift, C# | | `tree-sitter` | planned | | | | follow-up card |
-| Ruby, PHP | | `tree-sitter` | planned | | | | follow-up card |
-| C, C++ | | `tree-sitter` | planned | | | | follow-up card |
+| Go, Rust | | `tree-sitter` | planned | | | | card t_41439699 |
+| Java, Kotlin | | `tree-sitter` | planned | | | | card t_5184c50b |
+| Swift, C# | | `tree-sitter` | planned | | | | card t_232556f9 |
+| Ruby, PHP | | `tree-sitter` | planned | | | | card t_da702770 |
+| C, C++ | | `tree-sitter` | planned | | | | card t_538b9b81 |
 | Anything else | | none | whole file: `path#*` | none | no | no | the adapters' existing fallback |
 
 A file in a language without a backend still takes part: its edits write `path#*`, so two
@@ -97,4 +97,6 @@ step can add precise reads after the edit-time check has answered:
 - Type-aware breakage (an argument type change that keeps the arity) comes from the server's
   diagnostics on the agent's checkout after merging the peer's change, reported as a warning.
 
-Tracked as a follow-up card.
+Tracked as card t_082661b7. The Hermes adapter's own analyzer bundle still sends whole-file
+keys for Python until card t_8ac721b0; the Claude Code, Codex, Cursor, Gemini CLI, OpenCode and
+watcher adapters use the tree-sitter backend now.

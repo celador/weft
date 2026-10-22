@@ -62,7 +62,7 @@ agent-a ran to completion first (signature change, event #4), then agent-b start
 joined at base #7, after #4, so its `calc_total(items)` call was accepted clean, although its
 checkout does not contain agent-a's change. The Python analysis was right (agent-b's edit read
 `shop/pricing.py#calc_total`); the gap is that a session's base is the log head at join, not
-what its checkout contains. This is language-independent and is filed as a follow-up card.
+what its checkout contains. This is language-independent and is filed as card t_7268cb08.
 
 ## Deny path
 
