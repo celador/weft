@@ -168,3 +168,8 @@ Append-only. One dated entry per heartbeat that changed something.
 - Local gate under load: 2 failures, both pass alone (analyzer python 300 ms budget test; hermes test_patch_checks_then_commits_symbol_writes fell back to file-level key = analyze subprocess timeout under load). CI Gate on 4a11291 green. Spot-check: copilot reroute hooks-b.jsonl has a real PreToolUse deny.
 - Weft lands seq #1776–#1779; worktrees removed. Hermes plugin copies NOT reinstalled yet: wait for t_8ac721b0 (also edits adapter.py), then `install.py --profiles` once.
 - Dispatcher at capacity (9 running); t_7268cb08 / t_8ffb9487 wait for a slot. wt/local still HELD; wt/t_be804fb4 intentionally unmerged.
+
+## 2026-10-22 19:15 — landed @weft/feed + Java/Kotlin; mass worker crash re-dispatched
+- Merged wt/weft-feed (t_c8c6816b, @weft/feed, 77 tests) and wt/t_5184c50b (Java/Kotlin). Resolved conflicts with C/C++ in analyzer languages/index.ts, treesitter.ts (incremental parse kept; beforeTree freed after header includes are read) and conformance languages.test.ts (interop + read). Full gate on main GATE_EXIT=0 (conformance 34/34, analyzer 75/75). Pushed; Weft lands #1853–#1855; worktrees removed.
+- NOT landed: wt/t_232556f9 (Swift/C#): trial merge hit 19 conflict hunks in 8 files incl. both adapters' analysis.ts, and its own gate wasn't green. Aborted; follow-up card t_0cdf0fd9 rebases it on the same worktree and unifies the module/package index. Go/Rust + Ruby/PHP cards told to merge main first.
+- 9 cards crashed together at 19:05:43 (exit 130, "provider temporarily unavailable" interrupt) → gave_up. Not a card fault; unblocked all 9 (dispatcher caps concurrency). Windsurf t_6b8460d9 stays parked per John.
