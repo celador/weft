@@ -13,13 +13,13 @@ which the plugin uses too). Modes are per repo: ``--enforce weft`` (default) blo
 weft; every other repo is ``advise`` (never blocks, never waits on the gateway).
 
 What install does (idempotent):
-  1. builds dist/analyze.mjs (bundled @weft/analyzer + typescript; node >= 22)
+  1. builds dist/analyze.mjs (bundled @weft/analyzer + typescript; node >= 22) + dist/grammars/
   2. sync: discovers projects, creates each missing Weft repo (POST /v1/admin/repos, admin token
      from --admin-token-file), and issues one agent token per (profile, repo), agent id
      ``hermes-<profile>`` (POST /v1/admin/tokens; agent tokens are single-repo by protocol §3)
   3. writes ~/.config/weft/hermes-adapter.json (mode 600): url, projects, modes, per-profile tokens
   4. backs up each profile's config.yaml to ~/.hermes/cache/backups/weft-plugins-<date>/
-  5. copies plugin/weft/* + analyze.mjs into <profile home>/plugins/weft/ (+ INSTALLED.json, no secrets)
+  5. copies plugin/weft/* + analyze.mjs + grammars/ into <profile home>/plugins/weft/ (+ INSTALLED.json, no secrets)
   6. enables the plugin: ``hermes [-p <profile>] plugins enable weft --no-allow-tool-override``
 
 ``--sync`` runs step 2-3 only (the plugin re-reads the config in every new Hermes process; the
@@ -150,10 +150,11 @@ def build() -> Path:
     env = dict(os.environ, PATH=f"{Path(node_bin()).parent}:{os.environ.get('PATH', '')}")
     subprocess.run([node_bin(), str(PKG / "scripts" / "build.mjs"), str(out)], check=True, env=env,
                    capture_output=True)
-    probe = subprocess.run([node_bin(), str(out)], input='{"files":[{"path":"a.ts","before":"","after":"export const a = 1;"}]}',
+    probe = subprocess.run([node_bin(), str(out)], input='{"files":[{"path":"a.ts","before":"","after":"export const a = 1;"},'
+                           '{"path":"b.py","before":"","after":"def b():\\n    return 1\\n"}]}',
                            capture_output=True, text=True, timeout=30)
-    if '"ok":true' not in probe.stdout:
-        sys.exit(f"analyzer bundle probe failed: {probe.stdout} {probe.stderr}")
+    if '"ok":true' not in probe.stdout or "b.py#b" not in probe.stdout:
+        sys.exit(f"analyzer bundle probe failed (TS + tree-sitter): {probe.stdout} {probe.stderr}")
     return out
 
 
@@ -269,12 +270,17 @@ def install(args) -> None:
         for name in PLUGIN_FILES:
             shutil.copy2(PLUGIN_SRC / name, dest / name)
         shutil.copy2(bundle, dest / "analyze.mjs")
+        # tree-sitter runtime + grammars: the bundle looks for ./grammars/*.wasm next to itself.
+        if (dest / "grammars").exists():
+            shutil.rmtree(dest / "grammars")
+        shutil.copytree(bundle.parent / "grammars", dest / "grammars")
+        grammars = sorted(f"grammars/{p.name}" for p in (dest / "grammars").glob("*.wasm"))
         manifest = {
             "installed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "source": str(PKG), "profile": profile, "agent": agent, "gateway": args.url,
             "repos": len(cfg["agents"][profile]["tokens"]), "config": str(CONFIG),
             "config_backup": str(backups / f"{profile}.config.yaml"),
-            "files": PLUGIN_FILES + ["analyze.mjs"],
+            "files": PLUGIN_FILES + ["analyze.mjs"] + grammars,
             "sync": f"python3 {PKG / 'scripts' / 'install.py'} --sync",
             "uninstall": f"python3 {PKG / 'scripts' / 'install.py'} --uninstall --profiles {profile}",
         }

@@ -29,9 +29,14 @@ Identity: agent `hermes-<profile>` (one repo-scoped token per profile and repo),
 `hermes-<profile>/<kanban task id>` (`adhoc-<session>` outside kanban), task title/priority read
 from the kanban DB (`HERMES_KANBAN_DB`) and used as `intent` / `summary_hint`.
 
-Keys: `.ts/.tsx/.js…` files go through `@weft/analyzer` (bundled to `analyze.mjs`, run as one
-persistent `node … --serve` child per Hermes process) plus cross-file reads from relative imports
-(`src/analyze-cli.ts#importReads`). Other files get a whole-file key `path#*`.
+Keys: every language `@weft/analyzer` knows gets declaration keys (`shop/pricing.py#calc_total`,
+`src/a.ts#Cart.total`). The analyzer is bundled to `analyze.mjs` with the tree-sitter grammars in
+`grammars/` next to it, and runs as one persistent `node … --serve` child per Hermes process.
+TS/JS go through the TypeScript backend plus cross-file reads from relative imports
+(`src/analyze-cli.ts#importReads`); Python and every other tree-sitter language go through
+`analyzeSource`, with imports resolved against the checkout. At start the plugin asks the bundle
+which extensions it analyzes (`node analyze.mjs --languages`), so a new language needs no Python
+change. Other files get a whole-file key `path#*`.
 
 ### Projects and scope
 

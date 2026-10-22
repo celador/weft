@@ -1,0 +1,73 @@
+[
+  {
+    "seq": 1,
+    "status": "accepted",
+    "kind": "join",
+    "agent": "hermes-default",
+    "change": "hermes-default/adhoc-20261022_141534_529734",
+    "summary": "hermes-default joined (hermes, L3)",
+    "writes": [],
+    "reads": []
+  },
+  {
+    "seq": 2,
+    "status": "accepted",
+    "kind": "edit",
+    "agent": "hermes-default",
+    "change": "hermes-default/adhoc-20261022_141534_529734",
+    "summary": "hermes-default changed signature of calc_total, added apply_coupon in shop/pricing.py",
+    "writes": [
+      {
+        "key": "shop/pricing.py#apply_coupon",
+        "kind": "new"
+      },
+      {
+        "key": "shop/pricing.py#calc_total",
+        "kind": "signature"
+      }
+    ],
+    "reads": []
+  },
+  {
+    "seq": 3,
+    "status": "accepted",
+    "kind": "join",
+    "agent": "hermes-default",
+    "change": "hermes-default/adhoc-20261022_141723_19235e",
+    "summary": "hermes-default joined (hermes, L3)",
+    "writes": [],
+    "reads": []
+  },
+  {
+    "seq": 4,
+    "status": "accepted",
+    "kind": "edit",
+    "agent": "hermes-default",
+    "change": "hermes-default/adhoc-20261022_141723_19235e",
+    "summary": "hermes-default changed signature of Cart.total, edited Cart in shop/cart.py",
+    "writes": [
+      {
+        "key": "shop/cart.py#Cart",
+        "kind": "body"
+      },
+      {
+        "key": "shop/cart.py#Cart.total",
+        "kind": "signature"
+      }
+    ],
+    "reads": [
+      "shop/pricing.py#calc_total",
+      "shop/pricing.py#tax"
+    ]
+  },
+  {
+    "seq": 5,
+    "status": "accepted",
+    "kind": "release",
+    "agent": "hermes-default",
+    "change": "hermes-default/adhoc-20261022_141534_529734",
+    "summary": "hermes-default released apply_coupon, calc_total (expired)",
+    "writes": [],
+    "reads": []
+  }
+]
