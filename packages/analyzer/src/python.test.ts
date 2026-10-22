@@ -133,8 +133,14 @@ def summary(items: List[Item]) -> str:
   it("stays inside the edit-time budget (< 300 ms for a 2,000-line file, warm)", async () => {
     const big = Array.from({ length: 200 }, (_, i) => PRICING_V1.replaceAll("calc_total", `calc_${i}`).replaceAll("Cart", `Cart${i}`).replaceAll("Item", `Item${i}`)).join("\n");
     await run(big, big);
-    const t = performance.now();
-    await run(big, big.replace("calc_7(items", "calc_7(items, x"));
-    expect(performance.now() - t).toBeLessThan(300);
+    // Median of 5: one sample is at the mercy of a loaded machine (parallel agents, CI).
+    const times: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const t = performance.now();
+      await run(big, big.replace("calc_7(items", "calc_7(items, x"));
+      times.push(performance.now() - t);
+    }
+    times.sort((a, b) => a - b);
+    expect(times[2]).toBeLessThan(300);
   });
 });

@@ -107,8 +107,13 @@ M-series MacBook Pro (Node 24):
 | first Python file in a process (runtime + grammar load + parse + diff) | 11 ms |
 | 2,080-line Python file, before + after, warm | p50 22 ms, max 36 ms |
 | whole Claude Code hook invocation (node start, analysis, coordinator round trip), conformance run | p50 118 ms, p95 265 ms |
+| Go and Rust, measured 2026-10-22 on the same machine **under heavy load** (load average 150–180 from parallel agent test runs; expect less on an idle machine): | |
+| first file in a process (runtime + Go grammar load) / first Rust file after that | 52–111 ms / 6–16 ms |
+| 2,115-line Go file, before + after, warm | p50 32–40 ms, max 72–115 ms |
+| same edit with its package index: 20 sibling files, 42,000 lines | p50 41–50 ms, max 82–241 ms |
+| 2,040-line Rust file, before + after, warm | p50 33–37 ms, max 58–76 ms |
 
-`packages/analyzer/src/python.test.ts` fails if a 2,000-line file takes 300 ms or more.
+`packages/analyzer/src/{python,go,rust}.test.ts` fail if the median of 5 warm edit checks on a 2,000-line file (Go: in a 20-file, 42,000-line package) takes 300 ms or more.
 
 ## Adding a language
 
