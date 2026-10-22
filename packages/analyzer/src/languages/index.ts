@@ -25,7 +25,8 @@ export function languageFor(path: string): LanguageInfo | undefined {
 
 /**
  * The tree-sitter language for a path. With `text`, a language that shares an extension may
- * hand the file to another (`.h` is C unless the text is C++).
+ * hand the file to another (`.h` is C unless the text is C++); `analyzeSource` passes the
+ * edit's text, so `.rb`/`.php` and every other extension resolve by path alone.
  */
 export function treeSitterLanguageFor(path: string, text?: string | null): TreeSitterLanguage | undefined {
   const ext = posix.extname(path).toLowerCase();
@@ -40,6 +41,7 @@ export function treeSitterLanguageFor(path: string, text?: string | null): TreeS
  * Throws for paths no tree-sitter language claims; check `treeSitterLanguageFor` first.
  */
 export async function analyzeSource(change: SourceChange, opts: AnalyzeOptions = {}): Promise<Analysis> {
+  // The edit's text lets a shared extension pick its language (`.h`: C or C++).
   const language = treeSitterLanguageFor(change.path, change.after ?? change.before);
   if (!language) throw new Error(`no tree-sitter language for ${change.path}`);
   return analyzeTreeSitter(language, change.before ?? "", change.after ?? "", change.path, opts);

@@ -181,9 +181,10 @@ class Cart extends Base implements \\Countable
     const opts = { exists: (rel: string) => rel in tree, read: (rel: string) => tree[rel] };
     const r = await analyzeSource({ path: "web/Shop.php", before: null, after: src }, opts);
     expect(r.reads).toEqual(["lib/Money.php#Money", "modules/billing/src/Invoice.php#Invoice", "qa/Fixtures.php#Fixtures", "qa/Fixtures.php#Fixtures.one"]);
-    // Without `read` the convention applies.
+    // Without `read` the convention applies: src/ for Billing/Invoice, lib/ (a convention root) for Money;
+    // qa/ is only known from composer.json, so Fixtures stays unresolved.
     const plain = await analyzeSource({ path: "web/Shop.php", before: null, after: src }, { exists: opts.exists });
-    expect(plain.reads).toEqual(["src/Billing/Invoice.php#Invoice"]);
+    expect(plain.reads).toEqual(["lib/Money.php#Money", "src/Billing/Invoice.php#Invoice"]);
   });
 
   it("prefixes keys with the checkout's path in the repository", async () => {
