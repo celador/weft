@@ -64,6 +64,28 @@ checkout does not contain agent-a's change. The Python analysis was right (agent
 `shop/pricing.py#calc_total`); the gap is that a session's base is the log head at join, not
 what its checkout contains. This is language-independent and is filed as card t_7268cb08.
 
+### Run 1 re-run after the fix (t_7268cb08)
+
+Same repo and prompts, sequential sessions, local gateway built from `wt/t_7268cb08`
+(WCP §6.1 `told`/`U`). agent-a's session ran to completion first; agent-b's session
+started afterwards in a worktree without agent-a's change and joined at base #5, past
+agent-a's edit (#2). Its first edit was still denied
+([join-rerun-events.txt](../../demo/evidence/python/join-rerun-events.txt)):
+
+```
+#2 accepted commit edit agent-a writes=[('shop/pricing.py#calc_total', 'signature')]
+#5 accepted join agent-b
+#6 rejected check edit agent-b reads=[..., 'shop/pricing.py#calc_total']
+    error stale_assumption shop/pricing.py#calc_total: You use shop/pricing.py#calc_total, whose
+    signature changed in #2 by agent-a and is not in your checkout: that change has not landed
+    and was never delivered to you. (caused_by #2)
+```
+
+The stop gate then refused once on the open error; agent-b rewrote the call against agent-a's
+new signature (`calc_total(items, tax_rate)`), which was accepted (#7). Its final answer names
+the conflict and that the call fails in its own checkout until agent-a's change lands
+([join-rerun-agent-b-final-answer.md](../../demo/evidence/python/join-rerun-agent-b-final-answer.md)).
+
 ## Deny path
 
 The edit-time deny (`stale_assumption`, the edit never reaches disk) is covered by the Python

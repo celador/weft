@@ -290,6 +290,17 @@ For an incoming event E from session S (agent `a`, change `c`) with base `b`:
 - **W** = accepted records with `seq > b`, `change ≠ c`, and `kind ∈ {edit, land, revert}`,
   minus the `edit` records of `c`'s alternatives (§7.7).
 - **committed** records are `land` and `revert`; edits are **in flight**.
+- **told(c, k)** = the highest seq of another change's in-flight write on key k that `c`
+  (any member of its merged group, §7.6) has been told about: raised by a logged verdict
+  whose `stale_assumption`/`stale_read` diagnostic on k is caused by that record, and by
+  the §6.3 broadcast of an `edit` writing k while `c` had a live session and k in its
+  reads, writes or active claims. Initially 0.
+- **U** (unseen in-flight writes) for a read key k = accepted `edit` records with
+  `told(c, k) < seq ≤ b` writing k, by a change that is not in `c`'s merged group, not an
+  alternative of `c` (§7.7), and not landed. A checkout never contains another change's
+  unlanded edits, so `base_seq` alone cannot show that `c` saw them: a session that joins
+  after a peer's edit gets a base past it (§5.2) although its checkout lacks it. U keeps
+  such writes visible until `c` is told about them once.
 - A change's **writes** accumulate across its accepted edits per key with the net kind:
   `new` stays `new` (unless later `deleted`), `deleted` and `signature` dominate `body`,
   and `deleted` then re-declared counts as `signature` (`mergeWriteKind`). A `land`
@@ -309,11 +320,13 @@ keys appear in E (`writes` for R1/R3, `reads` for R2).
   writes k, emit `stale_overwrite` (error) caused by the latest such record. Keys hit by
   R1 are skipped by R3.
 - **R2 stale assumption / stale read** (`edit`): for each distinct read key k, take the
-  records in W writing k. If any wrote k as `signature` or `deleted`, emit
+  records in W writing k, or, if there are none, the records in U for k. If any wrote k as `signature` or `deleted`, emit
   `stale_assumption` (error) caused by the latest of those. Else, if any wrote it as
   `body`, emit `stale_read` (warning) caused by the latest. `new` writes are ignored.
   Committed and in-flight writers are treated alike: an accepted signature change is a
-  fact of the log, and the call site must be checked against it now.
+  fact of the log, and the call site must be checked against it now. A diagnostic caused
+  by a record in U says so in its message ("... and is not in your checkout: that change
+  has not landed and was never delivered to you") instead of "after your base".
 - **R3 claim overlap** (`edit`, `claim`): for each write key k with active claims, apply
   arbitration (§7). Predicted claims never arbitrate (§7.5).
 - `land` drafts (system) are checked with R1 only, against committed records in W: this
@@ -346,7 +359,9 @@ Applied atomically with the append, in this order:
    - `land`/`revert`: one `trunk` item (`requires_rebase: true`) carrying a
      `trunk_advanced` info diagnostic;
    - any of the three, per write of kind `signature`/`deleted`: a `contract_changed`
-     warning.
+     warning;
+   - for an `edit`, `told(c', k)` is raised to its seq for each such change `c'` and each
+     written key k in `c'`'s reads, writes or active claims (§6.1).
 
 ### 6.4 Human summary
 
@@ -855,7 +870,8 @@ rule + check logging (`inbox-and-base`), human actions (`human-actions`), claim 
 session expiry (`claim-ttl-and-session-expiry`), trunk notification + predicted claims
 (`trunk-advanced-and-predicted`), claim leases and the hard firm limit
 (`lease-soft-claim`, `lease-firm-hard-limit`), release on exit (`release-on-exit`), open
-errors that survive release/bye/hello/expiry (`open-errors-persist`), and repos created
+errors that survive release/bye/hello/expiry (`open-errors-persist`), a session that joins
+after a peer's unlanded signature change (`join-after-unmerged-change`), and repos created
 before the claims policy plus the policy migration (`claims-legacy-and-migration`). The
 reference coordinator passes all of them and its log replays deterministically.
 
@@ -963,3 +979,14 @@ Proposed for `docs/design.md` (rule 7 of agent-rules):
     `negotiate.escalate` whose only conflict evidence was such an error). Scenarios
     `lease-soft-claim`, `lease-firm-hard-limit`, `release-on-exit`, `open-errors-persist`,
     `claims-legacy-and-migration`.
+- 0.1 change (2026-10-22, t_7268cb08; behaviour change, no wire change): unseen in-flight
+  writes (§6.1 `told`, `U`; §6.2 R2; §6.3 step 6). Before, R2 only looked at records after
+  the agent's base, and a session's base starts at the log head (§5.2), so an agent whose
+  session started after a peer's accepted, unlanded signature change was never warned,
+  although its checkout lacks that change; whether it was warned depended on session
+  timing. Now R2 also reports in-flight writes at or below the base that the change was
+  never told about, once. Messages for these say "is not in your checkout" instead of
+  "after your base". The SQL coordinator stores `told` in `change_told` (schema v4); a
+  database migrated from v3 treats its existing log as told (`meta.told_floor`), so live
+  changes are not re-warned about edits they already saw. Scenario
+  `join-after-unmerged-change`; hook fixture `L2.deny-after-late-join`.

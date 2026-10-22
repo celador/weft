@@ -444,6 +444,7 @@ their own oracle; the levels and checks do not depend on WCP.
 | `L0.ignore-non-edit` | L0 | a read is allowed and records nothing |
 | `L1.inject-after-tool` | L1 | a peer's signature change to a symbol the agent uses reaches the model as `advise` (with the symbol and the cause) at the next tool call |
 | `L2.deny-stale-edit` | L2 | the stale edit is denied before it runs, with an explanation naming the problem; the file is untouched; the denial is recorded |
+| `L2.deny-after-late-join` | L2 | a peer's signature change is accepted (unlanded) and the peer's session ends before the agent's session starts; the agent's checkout lacks the change; its edit calling the changed symbol is still denied |
 | `L2.allow-after-adapting` | L2 | after the deny, the corrected edit is allowed and recorded |
 | `L3.refuse-stop-while-open` | L3 | `agent.stop` is denied (with an explanation) while the error is open and allowed once it is fixed |
 | `X.commit-gate` | optional | a shell `git commit` is denied while an error is open |

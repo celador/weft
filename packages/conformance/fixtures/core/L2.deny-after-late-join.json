@@ -1,0 +1,46 @@
+{
+  "id": "L2.deny-after-late-join",
+  "level": 2,
+  "required": true,
+  "spec": "WCP \u00a76.1 U, \u00a76.2 R2; \u00a75.2 deny",
+  "title": "an agent that starts after a peer's accepted, unlanded signature change (and whose checkout lacks it) is still denied when it calls the changed symbol",
+  "steps": [
+    {
+      "peer": "change_signature",
+      "leave": true
+    },
+    {
+      "event": "session.start"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/cart.ts",
+        "old_text": "  return `${items.length} items`;",
+        "new_text": "  return `${items.length} items, total ${calcTotal(items)}`;"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "stale_assumption",
+          "calcTotal"
+        ]
+      },
+      "expect_applied": false
+    },
+    {
+      "expect_file": {
+        "path": "src/cart.ts",
+        "unchanged": true
+      }
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "status": "rejected",
+        "mode": "check",
+        "min": 1
+      }
+    }
+  ]
+}
