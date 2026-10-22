@@ -107,6 +107,22 @@ importers:
         specifier: ^0.25.4
         version: 0.25.4
 
+  packages/adapters/copilot:
+    dependencies:
+      '@weft/analyzer':
+        specifier: workspace:*
+        version: link:../../analyzer
+      '@weft/protocol':
+        specifier: workspace:*
+        version: link:../../protocol
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+    devDependencies:
+      esbuild:
+        specifier: ^0.25.4
+        version: 0.25.4
+
   packages/adapters/cursor:
     dependencies:
       '@weft/analyzer':

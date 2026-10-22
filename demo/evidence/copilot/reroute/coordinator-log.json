@@ -1,0 +1,404 @@
+{
+  "url": "http://localhost:8797",
+  "repo": "demo-copilot-reroute-20261022-161506",
+  "events": [
+    {
+      "seq": 1,
+      "repo": "demo-copilot-reroute-20261022-161506",
+      "status": "accepted",
+      "kind": "join",
+      "ts": "2026-10-22T16:15:10.772Z",
+      "actor": {
+        "type": "agent",
+        "id": "copilot-b",
+        "harness": "copilot"
+      },
+      "agent": "copilot-b",
+      "task": "T-2",
+      "change": "I838d2f93358915a0623deab2804aea61e2f31740",
+      "session": "s1",
+      "base_seq": 0,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "summary": "copilot-b joined (copilot, L3)",
+      "diagnostics": [],
+      "payload": {
+        "harness": "copilot",
+        "level": 3
+      }
+    },
+    {
+      "seq": 2,
+      "repo": "demo-copilot-reroute-20261022-161506",
+      "status": "accepted",
+      "kind": "leave",
+      "ts": "2026-10-22T16:15:21.601Z",
+      "actor": {
+        "type": "agent",
+        "id": "copilot-b",
+        "harness": "copilot"
+      },
+      "agent": "copilot-b",
+      "task": "T-2",
+      "change": "I838d2f93358915a0623deab2804aea61e2f31740",
+      "session": "s1",
+      "base_seq": 1,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "intent": "copilot session end: complete",
+      "summary": "copilot-b left — copilot session end: complete",
+      "diagnostics": [],
+      "payload": {
+        "harness": "copilot",
+        "level": 3
+      }
+    },
+    {
+      "seq": 3,
+      "repo": "demo-copilot-reroute-20261022-161506",
+      "status": "accepted",
+      "kind": "join",
+      "ts": "2026-10-22T16:15:26.614Z",
+      "actor": {
+        "type": "agent",
+        "id": "copilot-a",
+        "harness": "copilot"
+      },
+      "agent": "copilot-a",
+      "task": "T-1",
+      "change": "I2701ccea8cba72c4683eb58534d8812f7b4ff6fb",
+      "session": "s2",
+      "base_seq": 2,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "summary": "copilot-a joined (copilot, L3)",
+      "diagnostics": [],
+      "payload": {
+        "harness": "copilot",
+        "level": 3
+      }
+    },
+    {
+      "seq": 4,
+      "repo": "demo-copilot-reroute-20261022-161506",
+      "status": "accepted",
+      "kind": "edit",
+      "ts": "2026-10-22T16:15:38.267Z",
+      "actor": {
+        "type": "agent",
+        "id": "copilot-a",
+        "harness": "copilot"
+      },
+      "agent": "copilot-a",
+      "task": "T-1",
+      "change": "I2701ccea8cba72c4683eb58534d8812f7b4ff6fb",
+      "session": "s2",
+      "base_seq": 3,
+      "mode": "commit",
+      "files": [
+        "src/pricing.ts"
+      ],
+      "reads": [
+        "src/pricing.ts#Item"
+      ],
+      "writes": [
+        {
+          "key": "src/pricing.ts#calcTotal",
+          "kind": "signature"
+        },
+        {
+          "key": "src/pricing.ts#PriceOptions",
+          "kind": "new"
+        }
+      ],
+      "diff": "diff --git a/src/pricing.ts b/src/pricing.ts\n--- a/src/pricing.ts\n+++ b/src/pricing.ts\n@@ -1,6 +1,7 @@\n export type Item = { sku: string; price: number; qty: number };\n+export type PriceOptions = { taxRate: number };\n \n /** Sum of price × quantity over the cart. */\n-export function calcTotal(items: Item[]): number {\n-  return items.reduce((sum, item) => sum + item.price * item.qty, 0);\n+export function calcTotal(items: Item[], opts: PriceOptions): number {\n+  return items.reduce((sum, item) => sum + item.price * item.qty, 0) * (1 + opts.taxRate);\n }\n",
+      "intent": "T-1: Apply tax in calcTotal",
+      "summary": "copilot-a changed signature of calcTotal, added PriceOptions in src/pricing.ts — Apply tax in calcTotal",
+      "diagnostics": [],
+      "tool": {
+        "name": "Write",
+        "call_id": "cp-f1685e946d6eae67#0",
+        "harness_event": "PostToolUse"
+      }
+    },
+    {
+      "seq": 5,
+      "repo": "demo-copilot-reroute-20261022-161506",
+      "status": "accepted",
+      "kind": "edit",
+      "ts": "2026-10-22T16:15:38.286Z",
+      "actor": {
+        "type": "agent",
+        "id": "copilot-a",
+        "harness": "copilot"
+      },
+      "agent": "copilot-a",
+      "task": "T-1",
+      "change": "I2701ccea8cba72c4683eb58534d8812f7b4ff6fb",
+      "session": "s2",
+      "base_seq": 3,
+      "mode": "commit",
+      "files": [
+        "src/orders.ts"
+      ],
+      "reads": [
+        "src/orders.ts#Order",
+        "src/pricing.ts#Item",
+        "src/pricing.ts#calcTotal"
+      ],
+      "writes": [
+        {
+          "key": "src/orders.ts#createOrder",
+          "kind": "body"
+        }
+      ],
+      "diff": "diff --git a/src/orders.ts b/src/orders.ts\n--- a/src/orders.ts\n+++ b/src/orders.ts\n@@ -3,5 +3,5 @@\n export type Order = { id: string; items: Item[]; total: number };\n \n export function createOrder(id: string, items: Item[]): Order {\n-  return { id, items, total: calcTotal(items) };\n+  return { id, items, total: calcTotal(items, { taxRate: 0.22 }) };\n }\n",
+      "intent": "T-1: Apply tax in calcTotal",
+      "summary": "copilot-a edited createOrder in src/orders.ts — Apply tax in calcTotal",
+      "diagnostics": [],
+      "tool": {
+        "name": "Write",
+        "call_id": "cp-f1685e946d6eae67#1",
+        "harness_event": "PostToolUse"
+      }
+    },
+    {
+      "seq": 6,
+      "repo": "demo-copilot-reroute-20261022-161506",
+      "status": "accepted",
+      "kind": "leave",
+      "ts": "2026-10-22T16:15:46.138Z",
+      "actor": {
+        "type": "agent",
+        "id": "copilot-a",
+        "harness": "copilot"
+      },
+      "agent": "copilot-a",
+      "task": "T-1",
+      "change": "I2701ccea8cba72c4683eb58534d8812f7b4ff6fb",
+      "session": "s2",
+      "base_seq": 5,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "intent": "copilot session end: complete",
+      "summary": "copilot-a left — copilot session end: complete",
+      "diagnostics": [],
+      "payload": {
+        "harness": "copilot",
+        "level": 3
+      }
+    },
+    {
+      "seq": 7,
+      "repo": "demo-copilot-reroute-20261022-161506",
+      "status": "accepted",
+      "kind": "release",
+      "ts": "2026-10-22T16:15:46.138Z",
+      "actor": {
+        "type": "system",
+        "id": "coordinator"
+      },
+      "agent": "copilot-a",
+      "task": "T-1",
+      "change": "I2701ccea8cba72c4683eb58534d8812f7b4ff6fb",
+      "base_seq": 6,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "summary": "copilot-a released calcTotal, PriceOptions +1 more (session ended)",
+      "diagnostics": [],
+      "payload": {
+        "keys": [
+          "src/pricing.ts#calcTotal",
+          "src/pricing.ts#PriceOptions",
+          "src/orders.ts#createOrder"
+        ],
+        "reason": "session_ended"
+      }
+    },
+    {
+      "seq": 8,
+      "repo": "demo-copilot-reroute-20261022-161506",
+      "status": "accepted",
+      "kind": "join",
+      "ts": "2026-10-22T16:15:50.769Z",
+      "actor": {
+        "type": "agent",
+        "id": "copilot-b",
+        "harness": "copilot"
+      },
+      "agent": "copilot-b",
+      "task": "T-2",
+      "change": "I838d2f93358915a0623deab2804aea61e2f31740",
+      "session": "s3",
+      "base_seq": 7,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "summary": "copilot-b joined (copilot, L3)",
+      "diagnostics": [],
+      "payload": {
+        "harness": "copilot",
+        "level": 3
+      }
+    },
+    {
+      "seq": 9,
+      "repo": "demo-copilot-reroute-20261022-161506",
+      "status": "rejected",
+      "kind": "edit",
+      "ts": "2026-10-22T16:15:56.176Z",
+      "actor": {
+        "type": "agent",
+        "id": "copilot-b",
+        "harness": "copilot"
+      },
+      "agent": "copilot-b",
+      "task": "T-2",
+      "change": "I838d2f93358915a0623deab2804aea61e2f31740",
+      "session": "s3",
+      "base_seq": 1,
+      "mode": "check",
+      "files": [
+        "src/cart.ts"
+      ],
+      "reads": [
+        "src/pricing.ts#Item",
+        "src/pricing.ts#calcTotal"
+      ],
+      "writes": [
+        {
+          "key": "src/cart.ts#Cart",
+          "kind": "body"
+        },
+        {
+          "key": "src/cart.ts#Cart.total",
+          "kind": "new"
+        }
+      ],
+      "diff": "diff --git a/src/cart.ts b/src/cart.ts\n--- a/src/cart.ts\n+++ b/src/cart.ts\n@@ -1,4 +1,4 @@\n-import type { Item } from \"./pricing\";\n+import { calcTotal, type Item } from \"./pricing\";\n \n export class Cart {\n   private items: Item[] = [];\n@@ -9,5 +9,9 @@\n \n   list(): Item[] {\n     return [...this.items];\n+  }\n+\n+  total(): number {\n+    return calcTotal(this.items);\n   }\n }\n",
+      "intent": "T-2: Show the cart total",
+      "summary": "Blocked: copilot-b edited Cart, added Cart.total in src/cart.ts — Show the cart total",
+      "diagnostics": [
+        {
+          "severity": "error",
+          "code": "stale_assumption",
+          "file": "src/pricing.ts",
+          "symbol": "src/pricing.ts#calcTotal",
+          "message": "You use src/pricing.ts#calcTotal, whose signature changed in #4 by copilot-a after your base #1.",
+          "suggestion": "Read the new src/pricing.ts#calcTotal (event #4) and update this call site, or negotiate with copilot-a.",
+          "caused_by_seq": 4,
+          "caused_by_agent": "copilot-a",
+          "caused_by_task": "T-1"
+        }
+      ],
+      "tool": {
+        "name": "Write",
+        "call_id": "cp-2af9dffa02a8daa6",
+        "harness_event": "PreToolUse"
+      }
+    },
+    {
+      "seq": 10,
+      "repo": "demo-copilot-reroute-20261022-161506",
+      "status": "accepted",
+      "kind": "edit",
+      "ts": "2026-10-22T16:16:01.383Z",
+      "actor": {
+        "type": "agent",
+        "id": "copilot-b",
+        "harness": "copilot"
+      },
+      "agent": "copilot-b",
+      "task": "T-2",
+      "change": "I838d2f93358915a0623deab2804aea61e2f31740",
+      "session": "s3",
+      "base_seq": 9,
+      "mode": "commit",
+      "files": [
+        "src/cart.ts"
+      ],
+      "reads": [
+        "src/pricing.ts#Item",
+        "src/pricing.ts#calcTotal"
+      ],
+      "writes": [
+        {
+          "key": "src/cart.ts#Cart",
+          "kind": "body"
+        },
+        {
+          "key": "src/cart.ts#Cart.total",
+          "kind": "new"
+        }
+      ],
+      "diff": "diff --git a/src/cart.ts b/src/cart.ts\n--- a/src/cart.ts\n+++ b/src/cart.ts\n@@ -1,4 +1,4 @@\n-import type { Item } from \"./pricing\";\n+import { calcTotal, type Item } from \"./pricing\";\n \n export class Cart {\n   private items: Item[] = [];\n@@ -9,5 +9,9 @@\n \n   list(): Item[] {\n     return [...this.items];\n+  }\n+\n+  total(): number {\n+    return calcTotal(this.items, { taxRate: 0 });\n   }\n }\n",
+      "intent": "T-2: Show the cart total",
+      "summary": "copilot-b edited Cart, added Cart.total in src/cart.ts — Show the cart total",
+      "diagnostics": [],
+      "tool": {
+        "name": "Write",
+        "call_id": "cp-08939ef36c0c732d",
+        "harness_event": "PostToolUse"
+      }
+    },
+    {
+      "seq": 11,
+      "repo": "demo-copilot-reroute-20261022-161506",
+      "status": "accepted",
+      "kind": "leave",
+      "ts": "2026-10-22T16:16:04.157Z",
+      "actor": {
+        "type": "agent",
+        "id": "copilot-b",
+        "harness": "copilot"
+      },
+      "agent": "copilot-b",
+      "task": "T-2",
+      "change": "I838d2f93358915a0623deab2804aea61e2f31740",
+      "session": "s3",
+      "base_seq": 10,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "intent": "copilot session end: complete",
+      "summary": "copilot-b left — copilot session end: complete",
+      "diagnostics": [],
+      "payload": {
+        "harness": "copilot",
+        "level": 3
+      }
+    },
+    {
+      "seq": 12,
+      "repo": "demo-copilot-reroute-20261022-161506",
+      "status": "accepted",
+      "kind": "release",
+      "ts": "2026-10-22T16:16:04.157Z",
+      "actor": {
+        "type": "system",
+        "id": "coordinator"
+      },
+      "agent": "copilot-b",
+      "task": "T-2",
+      "change": "I838d2f93358915a0623deab2804aea61e2f31740",
+      "base_seq": 11,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "summary": "copilot-b released Cart, Cart.total (session ended)",
+      "diagnostics": [],
+      "payload": {
+        "keys": [
+          "src/cart.ts#Cart",
+          "src/cart.ts#Cart.total"
+        ],
+        "reason": "session_ended"
+      }
+    }
+  ]
+}

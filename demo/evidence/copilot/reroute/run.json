@@ -1,0 +1,11 @@
+{
+  "scenario": "reroute",
+  "agent_a": "copilot-a",
+  "agent_b": "copilot-b",
+  "stamp": "20261022-161506",
+  "url": "http://localhost:8797",
+  "repo": "demo-copilot-reroute-20261022-161506",
+  "copilot": "GitHub Copilot CLI 1.0.102.\nRun 'copilot update' to check for updates.",
+  "b_session": "4a76670c-3c7a-4524-9694-a30fbf826029",
+  "a_session": "f045594f-d54a-4079-b0d8-9ecfed33c426"
+}

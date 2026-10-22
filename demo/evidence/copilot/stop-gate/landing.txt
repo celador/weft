@@ -1,0 +1,27 @@
+agent-a: committed
+agent-b: committed
+agent-b git diff vs base:
+cart: add total()
+
+Change-Id: I1a6c900634ff6a7f6a96a971e29a470b08146f46
+Task-Id: T-2
+Agent-Id: copilot-b
+--- agent-b:src/cart.ts
+import { calcTotal, type Item } from "./pricing";
+
+export class Cart {
+  private items: Item[] = [];
+
+  add(item: Item): void {
+    this.items.push(item);
+  }
+
+  list(): Item[] {
+    return [...this.items];
+  }
+
+  total(): number {
+    return calcTotal(this.items, { taxRate: 0 });
+  }
+}
+

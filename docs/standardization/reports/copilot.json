@@ -1,0 +1,502 @@
+{
+  "tool": "wcp-hook-conformance",
+  "version": "0.1.0",
+  "hooks_core": "0.1",
+  "generated_at": "2026-10-22T16:23:47.368Z",
+  "subject": "GitHub Copilot adapter (@weft/adapter-copilot)",
+  "dialect": "copilot",
+  "command": "node packages/adapters/copilot/dist/weft-copilot.mjs hook",
+  "setup": "node packages/adapters/copilot/dist/weft-copilot.mjs install --url {url} --repo {repo} --agent {agent} --task {task} --title conformance",
+  "env": {
+    "WEFT_TOKEN": "conformance-token"
+  },
+  "declared": {
+    "agent": "conf-agent",
+    "harness": "copilot",
+    "adapter": "@weft/adapter-copilot@0.1.0",
+    "capabilities": {
+      "level": 3,
+      "observe": "sync",
+      "inject": "immediate",
+      "deny_edit": true,
+      "refuse_stop": true,
+      "commit_gate": "tool_interception"
+    }
+  },
+  "levels": {
+    "L0": "pass",
+    "L1": "pass",
+    "L2": "pass",
+    "L3": "pass"
+  },
+  "verified_level": 3,
+  "honest": true,
+  "commit_gate": "pass",
+  "failure_policy": "fail-open",
+  "latency_ms": {
+    "invocations": 40,
+    "p50": 334,
+    "p95": 988,
+    "max": 1171
+  },
+  "fixtures": [
+    {
+      "id": "L0.ignore-non-edit",
+      "level": 0,
+      "required": true,
+      "title": "a read-only tool call is allowed and records no edit",
+      "spec": "§4.3",
+      "pass": true,
+      "ms": 1299,
+      "checks": [
+        {
+          "name": "tool.pre read: allow",
+          "pass": true
+        },
+        {
+          "name": "tool.post read: not-deny",
+          "pass": true
+        },
+        {
+          "name": "coordinator log: no edit by the agent",
+          "pass": true
+        }
+      ],
+      "decisions": [
+        {
+          "event": "session.start",
+          "decision": "advise",
+          "ms": 283
+        },
+        {
+          "event": "tool.pre",
+          "decision": "allow",
+          "ms": 98
+        },
+        {
+          "event": "tool.post",
+          "decision": "allow",
+          "ms": 103
+        },
+        {
+          "event": "session.end",
+          "decision": "allow",
+          "ms": 203
+        }
+      ]
+    },
+    {
+      "id": "L0.observe-edit",
+      "level": 0,
+      "required": true,
+      "title": "an applied edit is observed and recorded (tool.pre does not block a harmless edit)",
+      "spec": "§4.2, §4.3",
+      "pass": true,
+      "ms": 3650,
+      "checks": [
+        {
+          "name": "tool.pre edit: not-deny",
+          "pass": true
+        },
+        {
+          "name": "tool edit runs",
+          "pass": true
+        },
+        {
+          "name": "coordinator log: ≥1 edit accepted src/cart.ts by the agent",
+          "pass": true
+        }
+      ],
+      "decisions": [
+        {
+          "event": "session.start",
+          "decision": "advise",
+          "ms": 988
+        },
+        {
+          "event": "tool.pre",
+          "decision": "allow",
+          "ms": 541
+        },
+        {
+          "event": "tool.post",
+          "decision": "allow",
+          "ms": 899
+        },
+        {
+          "event": "session.end",
+          "decision": "allow",
+          "ms": 460
+        }
+      ]
+    },
+    {
+      "id": "L0.session-start",
+      "level": 0,
+      "required": true,
+      "title": "session.start is answered and the session joins with a capability declaration",
+      "spec": "§4.1, §3.2",
+      "pass": true,
+      "ms": 2223,
+      "checks": [
+        {
+          "name": "session.start: not-deny",
+          "pass": true
+        },
+        {
+          "name": "session joined with a capability declaration",
+          "pass": true
+        }
+      ],
+      "decisions": [
+        {
+          "event": "session.start",
+          "decision": "advise",
+          "ms": 846
+        },
+        {
+          "event": "session.end",
+          "decision": "allow",
+          "ms": 734
+        }
+      ]
+    },
+    {
+      "id": "L1.inject-after-tool",
+      "level": 1,
+      "required": true,
+      "title": "a peer's signature change to a symbol this agent uses reaches the model as advise context at the next tool call",
+      "spec": "§5.2 advise",
+      "pass": true,
+      "ms": 3889,
+      "checks": [
+        {
+          "name": "tool.pre edit: not-deny",
+          "pass": true
+        },
+        {
+          "name": "tool edit runs",
+          "pass": true
+        },
+        {
+          "name": "coordinator log: ≥1 edit accepted src/pricing.ts#calcTotal by the agent",
+          "pass": true
+        },
+        {
+          "name": "tool write (pre or post): advise",
+          "pass": true
+        }
+      ],
+      "decisions": [
+        {
+          "event": "session.start",
+          "decision": "advise",
+          "ms": 437
+        },
+        {
+          "event": "tool.pre",
+          "decision": "allow",
+          "ms": 421
+        },
+        {
+          "event": "tool.post",
+          "decision": "allow",
+          "ms": 422
+        },
+        {
+          "event": "tool.pre",
+          "decision": "allow",
+          "ms": 430
+        },
+        {
+          "event": "tool.post",
+          "decision": "advise",
+          "ms": 1171
+        },
+        {
+          "event": "session.end",
+          "decision": "allow",
+          "ms": 159
+        }
+      ]
+    },
+    {
+      "id": "L2.allow-after-adapting",
+      "level": 2,
+      "required": true,
+      "title": "after a deny, the adapted edit is allowed and recorded",
+      "spec": "§5.2",
+      "pass": true,
+      "ms": 1825,
+      "checks": [
+        {
+          "name": "tool.pre edit: deny",
+          "pass": true
+        },
+        {
+          "name": "tool.pre edit: not-deny",
+          "pass": true
+        },
+        {
+          "name": "tool edit runs",
+          "pass": true
+        },
+        {
+          "name": "coordinator log: ≥1 edit accepted src/cart.ts by the agent",
+          "pass": true
+        }
+      ],
+      "decisions": [
+        {
+          "event": "session.start",
+          "decision": "advise",
+          "ms": 199
+        },
+        {
+          "event": "tool.pre",
+          "decision": "deny",
+          "ms": 340
+        },
+        {
+          "event": "tool.pre",
+          "decision": "allow",
+          "ms": 430
+        },
+        {
+          "event": "tool.post",
+          "decision": "allow",
+          "ms": 334
+        },
+        {
+          "event": "session.end",
+          "decision": "allow",
+          "ms": 174
+        }
+      ]
+    },
+    {
+      "id": "L2.deny-stale-edit",
+      "level": 2,
+      "required": true,
+      "title": "an edit built on a stale signature is denied before it runs, with a model-visible explanation",
+      "spec": "§5.2 deny, §5.3",
+      "pass": true,
+      "ms": 1080,
+      "checks": [
+        {
+          "name": "tool.pre edit: deny",
+          "pass": true
+        },
+        {
+          "name": "tool edit does not run",
+          "pass": true
+        },
+        {
+          "name": "src/cart.ts unchanged on disk",
+          "pass": true
+        },
+        {
+          "name": "coordinator log: ≥1 rejected check by the agent",
+          "pass": true
+        }
+      ],
+      "decisions": [
+        {
+          "event": "session.start",
+          "decision": "advise",
+          "ms": 204
+        },
+        {
+          "event": "tool.pre",
+          "decision": "deny",
+          "ms": 461
+        },
+        {
+          "event": "session.end",
+          "decision": "allow",
+          "ms": 92
+        }
+      ]
+    },
+    {
+      "id": "L3.refuse-stop-while-open",
+      "level": 3,
+      "required": true,
+      "title": "agent.stop is refused (deny + explanation) while an error is open, and allowed once it is resolved",
+      "spec": "§5.4 gates",
+      "pass": true,
+      "ms": 2156,
+      "checks": [
+        {
+          "name": "tool.pre edit: deny",
+          "pass": true
+        },
+        {
+          "name": "agent.stop: deny",
+          "pass": true
+        },
+        {
+          "name": "tool.pre edit: not-deny",
+          "pass": true
+        },
+        {
+          "name": "tool edit runs",
+          "pass": true
+        },
+        {
+          "name": "agent.stop: not-deny",
+          "pass": true
+        }
+      ],
+      "decisions": [
+        {
+          "event": "session.start",
+          "decision": "advise",
+          "ms": 189
+        },
+        {
+          "event": "tool.pre",
+          "decision": "deny",
+          "ms": 413
+        },
+        {
+          "event": "agent.stop",
+          "decision": "deny",
+          "ms": 172
+        },
+        {
+          "event": "tool.pre",
+          "decision": "allow",
+          "ms": 408
+        },
+        {
+          "event": "tool.post",
+          "decision": "allow",
+          "ms": 390
+        },
+        {
+          "event": "agent.stop",
+          "decision": "allow",
+          "ms": 113
+        },
+        {
+          "event": "session.end",
+          "decision": "allow",
+          "ms": 174
+        }
+      ]
+    },
+    {
+      "id": "X.commit-gate",
+      "level": 3,
+      "required": false,
+      "title": "optional: a shell `git commit` is denied while an error is open (tool interception)",
+      "spec": "§3.1 commit_gate",
+      "pass": true,
+      "ms": 1256,
+      "checks": [
+        {
+          "name": "tool.pre edit: deny",
+          "pass": true
+        },
+        {
+          "name": "tool.pre shell: deny",
+          "pass": true
+        }
+      ],
+      "decisions": [
+        {
+          "event": "session.start",
+          "decision": "advise",
+          "ms": 157
+        },
+        {
+          "event": "tool.pre",
+          "decision": "deny",
+          "ms": 438
+        },
+        {
+          "event": "tool.pre",
+          "decision": "deny",
+          "ms": 218
+        },
+        {
+          "event": "session.end",
+          "decision": "allow",
+          "ms": 109
+        }
+      ]
+    },
+    {
+      "id": "F.coordinator-unreachable",
+      "level": null,
+      "required": false,
+      "title": "plugin backend unreachable: every hook still answers in time with valid output (observed failure policy)",
+      "spec": "§7",
+      "pass": true,
+      "ms": 1186,
+      "checks": [
+        {
+          "name": "session.start: any",
+          "pass": true
+        },
+        {
+          "name": "tool.pre edit: any",
+          "pass": true
+        },
+        {
+          "name": "tool.post edit: any",
+          "pass": true
+        },
+        {
+          "name": "agent.stop: any",
+          "pass": true
+        }
+      ],
+      "decisions": [
+        {
+          "event": "session.start",
+          "decision": "allow",
+          "ms": 103
+        },
+        {
+          "event": "tool.pre",
+          "decision": "allow",
+          "ms": 363
+        },
+        {
+          "event": "tool.post",
+          "decision": "advise",
+          "ms": 319
+        },
+        {
+          "event": "agent.stop",
+          "decision": "allow",
+          "ms": 78
+        }
+      ]
+    },
+    {
+      "id": "F.malformed-input",
+      "level": null,
+      "required": false,
+      "title": "malformed stdin: the hook exits in time without crashing the host (empty or valid output)",
+      "spec": "§7.3",
+      "pass": true,
+      "ms": 343,
+      "checks": [
+        {
+          "name": "malformed input: exits in time with empty or JSON output",
+          "pass": true
+        }
+      ],
+      "decisions": [
+        {
+          "event": "raw",
+          "decision": "exit 0",
+          "ms": 55
+        }
+      ]
+    }
+  ]
+}
