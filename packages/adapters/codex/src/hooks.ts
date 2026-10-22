@@ -26,7 +26,8 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, renameSy
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { AgentRef, Capabilities, Diagnostic, EventDraft, EventRecord, InboxItem, NegotiateCommand, NegotiationDue, Verdict } from "@weft/protocol";
 import { WcpError, PROTOCOL, type Transport } from "./client";
-import { readState, withLock, writeState, type Loaded, type SessionState } from "./config";
+import { readState, stateDir, withLock, writeState, type Loaded, type SessionState } from "./config";
+import type { BeatResult } from "../../claude-code/src/heartbeat";
 import { EDIT_TOOLS, isGitCommit, patchPaths, proposedFiles, shellPatch } from "./edits";
 import { renderDues, renderForModel, type EditedFile, type RenderCtx } from "./render";
 import type { Sets, FileChange } from "./analysis";
@@ -761,17 +762,24 @@ export class CodexAdapter {
     });
   }
 
-  /** One heartbeat for a Codex session; false when the loop should end. */
-  async beat(codexSession: string, idleLimitMs: number): Promise<boolean> {
+  /**
+   * One heartbeat for a session: "ended" when the loop should stop (no live WCP session,
+   * idle past `idleLimitMs`, or the coordinator says the session is gone), "unreachable"
+   * when the coordinator could not be reached.
+   */
+  async beat(codexSession: string, idleLimitMs: number): Promise<BeatResult> {
+    // withLock would mkdir .weft/state and resurrect a deleted checkout.
+    if (!existsSync(stateDir(this.root))) return "ended";
     return withLock(this.root, codexSession, async () => {
       const st = readState(this.root, codexSession);
-      if (!st.wcpSession || this.now() - st.lastContact > idleLimitMs) return false;
+      if (!st.wcpSession || this.now() - st.lastContact > idleLimitMs) return "ended";
       try {
         await this.deps.transport.heartbeat(st.wcpSession);
-        return true;
+        return "alive";
       } catch (err) {
         this.log(`heartbeat failed: ${String(err)}`);
-        return !(err instanceof WcpError && (err.code === "session_expired" || err.status === 404));
+        if (err instanceof WcpError) return err.code === "session_expired" || err.status === 404 || err.status === 410 ? "ended" : "alive";
+        return "unreachable";
       }
     });
   }
