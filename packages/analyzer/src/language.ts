@@ -71,9 +71,11 @@ export interface TreeSitterLanguage {
   imports(root: SyntaxNode): ImportBinding[];
   /**
    * Checkout-relative file that `module` (as written in an import in `fromRel`) refers to, or
-   * undefined when it is not a file in the checkout (stdlib, third-party).
+   * undefined when it is not a file in the checkout (stdlib, third-party). `read` (when the
+   * adapter passes `AnalyzeOptions.read`) lets a spec consult project config, e.g. PHP's
+   * composer.json autoload map.
    */
-  resolveModule(module: string, fromRel: string, exists?: Exists): string | undefined;
+  resolveModule(module: string, fromRel: string, exists?: Exists, read?: (rel: string) => string | undefined): string | undefined;
   /**
    * For languages where `from pkg import sub` may import a submodule: the module spec to try
    * for member `name` of `module`. When it resolves to a file, the binding is a module binding.

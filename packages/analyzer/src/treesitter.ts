@@ -186,7 +186,7 @@ export async function analyzeTreeSitter(
   if (afterRoot) {
     const resolved = new Map<string, string | undefined>();
     const resolve = (module: string): string | undefined => {
-      if (!resolved.has(module)) resolved.set(module, language.resolveModule(module, path, opts.exists));
+      if (!resolved.has(module)) resolved.set(module, language.resolveModule(module, path, opts.exists, opts.read));
       return resolved.get(module);
     };
     const bindings = language

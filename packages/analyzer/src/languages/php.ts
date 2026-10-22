@@ -15,11 +15,11 @@
 //
 // Resolution: `use` statements (aliases, group uses, `use function` / `use const`), fully
 // qualified names (`\App\Util\Fmt`), and names in the file's own namespace, mapped to files by
-// PSR-4 convention: `App\Models\User` is tried under `src/`, `app/`, `lib/`, the checkout root
-// and `tests/`, with 0..n leading namespace segments dropped (`app/Models/User.php` for Laravel,
-// `src/Models/User.php` for `App\` => `src/`). The composer.json autoload map itself is not read:
-// a language spec only sees the checkout through `exists`. Same-namespace classes are tried next
-// to the file first.
+// the nearest composer.json's PSR-4 map (`autoload` and `autoload-dev`; needs
+// `AnalyzeOptions.read`, which the adapters pass), then PSR-4 convention: `App\Models\User` is
+// tried under `src/`, `app/`, `lib/`, the checkout root and `tests/`, with 0..n leading namespace
+// segments dropped (`app/Models/User.php` for Laravel, `src/Models/User.php` for `App\` =>
+// `src/`). Same-namespace classes are also tried next to the file.
 import { posix } from "node:path";
 import type { Definition, Exists, ImportBinding, Reference, SyntaxNode, TreeSitterLanguage } from "../language.js";
 import { firstExisting } from "../treesitter.js";
@@ -307,8 +307,55 @@ function imports(root: SyntaxNode): ImportBinding[] {
 
 const ROOTS = ["src", "app", "lib", "", "tests"];
 
-function resolveModule(module: string, fromRel: string, exists?: Exists): string | undefined {
+type Read = (rel: string) => string | undefined;
+type Composer = { dir: string; psr4: Array<[prefix: string, dirs: string[]]>; files: string[] };
+const composerCache = new Map<string, { text: string; composer: Composer }>();
+
+/** The nearest composer.json at or above `fromRel`'s directory, with its PSR-4 map (longest prefix first). */
+function composerFor(fromRel: string, read: Read): Composer | undefined {
+  for (let dir = posix.dirname(fromRel); ; dir = posix.dirname(dir)) {
+    const rel = dir === "." || dir === "" ? "composer.json" : `${dir}/composer.json`;
+    const text = read(rel);
+    if (text !== undefined) {
+      const hit = composerCache.get(rel);
+      if (hit?.text === text) return hit.composer;
+      const composer: Composer = { dir: dir === "." ? "" : dir, psr4: [], files: [] };
+      try {
+        const json = JSON.parse(text) as Record<string, { "psr-4"?: Record<string, string | string[]>; files?: string[] } | undefined>;
+        for (const section of [json.autoload, json["autoload-dev"]]) {
+          for (const [prefix, dirs] of Object.entries(section?.["psr-4"] ?? {})) composer.psr4.push([prefix.replace(/^\\/, ""), Array.isArray(dirs) ? dirs : [dirs]]);
+          composer.files.push(...(section?.files ?? []));
+        }
+      } catch {
+        /* unparsable composer.json: fall back to convention */
+      }
+      composer.psr4.sort((a, b) => b[0].length - a[0].length);
+      composerCache.set(rel, { text, composer });
+      return composer;
+    }
+    if (dir === "." || dir === "" || dir === "/") return undefined;
+  }
+}
+
+/** Files composer.json's PSR-4 map assigns to class `fqn` (most specific prefix first). */
+function psr4Candidates(composer: Composer, fqn: string): string[] {
+  const out: string[] = [];
+  for (const [prefix, dirs] of composer.psr4) {
+    if (!fqn.startsWith(prefix)) continue;
+    const rest = `${fqn.slice(prefix.length).split("\\").filter(Boolean).join("/")}.php`;
+    for (const d of dirs) out.push(posix.join(composer.dir || ".", d, rest));
+  }
+  return out;
+}
+
+/**
+ * Classes: composer.json's PSR-4 map when `read` is available, then (and without it) PSR-4
+ * convention. Functions/constants (`fn:<namespace>`): `<namespace path>.php`,
+ * `<namespace path>/functions.php`, `helpers.php`, then a lone composer `files` entry.
+ */
+function resolveModule(module: string, fromRel: string, exists?: Exists, read?: Read): string | undefined {
   if (!exists) return undefined; // PSR-4 resolution needs the checkout
+  const composer = read ? composerFor(fromRel, read) : undefined;
   const candidates: string[] = [];
   const at = (root: string, tail: string): string => (root ? `${root}/${tail}` : tail);
   if (module.startsWith("fn:")) {
@@ -318,10 +365,13 @@ function resolveModule(module: string, fromRel: string, exists?: Exists): string
       for (const root of ROOTS) candidates.push(at(root, `${tail}.php`), at(root, `${tail}/functions.php`), at(root, `${tail}/helpers.php`));
     }
     for (const root of ROOTS) candidates.push(at(root, "functions.php"), at(root, "helpers.php"));
+    if (composer?.files.length === 1) candidates.push(posix.join(composer.dir || ".", composer.files[0]));
   } else {
     const sameNamespace = module.startsWith("~");
-    const segs = module.replace(/^~/, "").split("\\").filter(Boolean);
+    const fqn = module.replace(/^~/, "");
+    const segs = fqn.split("\\").filter(Boolean);
     if (!segs.length) return undefined;
+    if (composer) candidates.push(...psr4Candidates(composer, fqn));
     if (sameNamespace) candidates.push(posix.join(posix.dirname(fromRel), `${segs[segs.length - 1]}.php`));
     for (let k = 0; k < segs.length; k++) {
       const tail = `${segs.slice(k).join("/")}.php`;

@@ -167,6 +167,24 @@ class Cart extends Base implements \\Countable
     ]);
   });
 
+  it("uses composer.json's PSR-4 map (autoload and autoload-dev) when the adapter can read the checkout", async () => {
+    const composer = JSON.stringify({ autoload: { "psr-4": { "Acme\\Billing\\": "modules/billing/src/", "Acme\\": ["lib/"] } }, "autoload-dev": { "psr-4": { "Acme\\Tests\\": "qa/" } } });
+    const tree: Record<string, string> = {
+      "composer.json": composer,
+      "modules/billing/src/Invoice.php": "",
+      "lib/Money.php": "",
+      "qa/Fixtures.php": "",
+      "src/Billing/Invoice.php": "", // what convention alone would pick
+    };
+    const src = `<?php\nnamespace Acme\\Shop;\n\nuse Acme\\Billing\\Invoice;\nuse Acme\\Money;\nuse Acme\\Tests\\Fixtures;\n\nfunction f(Invoice $i, Money $m) { return Fixtures::one(); }\n`;
+    const opts = { exists: (rel: string) => rel in tree, read: (rel: string) => tree[rel] };
+    const r = await analyzeSource({ path: "web/Shop.php", before: null, after: src }, opts);
+    expect(r.reads).toEqual(["lib/Money.php#Money", "modules/billing/src/Invoice.php#Invoice", "qa/Fixtures.php#Fixtures", "qa/Fixtures.php#Fixtures.one"]);
+    // Without `read` the convention applies.
+    const plain = await analyzeSource({ path: "web/Shop.php", before: null, after: src }, { exists: opts.exists });
+    expect(plain.reads).toEqual(["src/Billing/Invoice.php#Invoice"]);
+  });
+
   it("prefixes keys with the checkout's path in the repository", async () => {
     const r = await analyzeSource({ path: "src/x.php", before: "", after: "<?php\nfunction f() { return 1; }\n" }, { prefix: "svc/" });
     expect(r.writes).toEqual([{ key: "svc/src/x.php#f", kind: "new" }]);
@@ -176,13 +194,19 @@ class Cart extends Base implements \\Countable
     expect(await run("<?php\nfunction f() {}\n", null)).toEqual({ reads: [], writes: [{ key: "src/Pricing/Calculator.php#f", kind: "deleted" }] });
   });
 
-  it("stays inside the edit-time budget (< 300 ms for a 2,000-line file, warm)", async () => {
+  it("stays inside the edit-time budget (< 300 ms for a 2,000-line file, warm, fastest of 3)", async () => {
     const body = PRICING_V1.replace(/^<\?php[\s\S]*?namespace App\\Pricing;\n/, "");
     const big = "<?php\nnamespace App\\Pricing;\n" + Array.from({ length: 70 }, (_, i) => body.replaceAll("calc_total", `calc_${i}`).replaceAll("Calculator", `Calculator${i}`).replaceAll("TAX_RATE", `RATE_${i}`)).join("\n");
     expect(big.split("\n").length).toBeGreaterThanOrEqual(2000);
     await run(big, big);
-    const t = performance.now();
-    await run(big, big.replace("function calc_7(array $items)", "function calc_7(array $items, $x)"));
-    expect(performance.now() - t).toBeLessThan(300);
+    const after = big.replace("function calc_7(array $items)", "function calc_7(array $items, $x)");
+    // Fastest of three, so a busy machine's scheduler does not fail it (as c.test.ts does).
+    const times: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const t = performance.now();
+      await run(big, after);
+      times.push(performance.now() - t);
+    }
+    expect(Math.min(...times)).toBeLessThan(300);
   });
 });
