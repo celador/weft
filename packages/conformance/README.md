@@ -61,6 +61,14 @@ The oracle is WCP's reference coordinator because it makes the right answers det
 denied). The levels and checks are core semantics; a non-WCP hook can be tested by pointing
 its policy at the oracle in `--setup`, or by contributing fixtures with another oracle.
 
+## Language fixture sets
+
+`fixtures/languages/<language>/` holds per-language sets (Python today): a workspace in that
+language and fixtures where a peer renames a function or changes its signature and the agent's
+edit must be denied (or allowed after adapting, or allowed when unrelated). Run one with
+`--fixtures python`; list it with `fixtures python`. `test/languages.test.ts` checks every set
+against `@weft/analyzer` and the Claude Code adapter. See [docs/languages.md](../../docs/languages.md).
+
 ## Weft reports
 
 `node packages/conformance/scripts/weft-reports.mjs` (from the repo root, after building the

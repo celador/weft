@@ -1,0 +1,12 @@
+diff --git a/shop/cart.py b/shop/cart.py
+index e156ea3..ba11ddd 100644
+--- a/shop/cart.py
++++ b/shop/cart.py
+@@ -1,5 +1,5 @@
+-from shop.pricing import Item
++from shop.pricing import Item, calc_total
+ 
+ 
+ def cart_summary(items: list[Item]) -> str:
+-    return f"{len(items)} items"
++    return f"{len(items)} items, total {calc_total(items):.2f}"

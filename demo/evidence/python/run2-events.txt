@@ -1,0 +1,8 @@
+#1 accepted join agent-b reads=[] writes=[]
+#2 accepted edit agent-b reads=['shop/pricing.py#Item', 'shop/pricing.py#calc_total'] writes=[('shop/cart.py#cart_summary', 'body')]
+#3 accepted join agent-a reads=[] writes=[]
+#4 accepted edit agent-a reads=['shop/pricing.py#Item'] writes=[('shop/pricing.py#calc_total', 'signature')]
+#5 accepted leave agent-a reads=[] writes=[]
+#6 accepted release agent-a reads=[] writes=[]
+#7 accepted leave agent-b reads=[] writes=[]
+#8 accepted release agent-b reads=[] writes=[]
