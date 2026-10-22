@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkoutAccess } from "../src/analysis";
+import { analyzeChanges, checkoutAccess } from "../src/analysis";
 
 function tree(): { root: string; outside: string } {
   const outside = mkdtempSync(join(tmpdir(), "weft-outside-"));
@@ -58,5 +58,29 @@ describe("checkoutAccess", () => {
     expect(c.exists("pkg/b.go")).toBe(false);
     expect(c.exists("pkg/new.go")).toBe(true);
     expect(c.list("pkg")?.sort()).toEqual(["a.go", "big.go", "new.go"]);
+  });
+});
+
+describe("contract reads go through checkoutAccess", () => {
+  const pricing = "export interface PriceOptions { rate: number }\nexport function calcTotal(n: number, opts: PriceOptions): number { return n * opts.rate; }\n";
+  const cart = (body: string) => `import { calcTotal } from "./pricing";\nexport const total = ${body};\n`;
+
+  it("reads the contract type of an imported function from a checkout file", () => {
+    const root = mkdtempSync(join(tmpdir(), "weft-contract-"));
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src", "pricing.ts"), pricing);
+    const { reads } = analyzeChanges([{ rel: "src/cart.ts", before: cart("1"), after: cart("calcTotal(2, { rate: 1 })") }], root);
+    expect(reads).toContain("src/pricing.ts#calcTotal");
+    expect(reads).toContain("src/pricing.ts#PriceOptions");
+  });
+
+  it("does not read the contract through a symlink out of the checkout", () => {
+    const outside = mkdtempSync(join(tmpdir(), "weft-outside-"));
+    writeFileSync(join(outside, "pricing.ts"), pricing);
+    const root = mkdtempSync(join(tmpdir(), "weft-contract-"));
+    mkdirSync(join(root, "src"));
+    symlinkSync(join(outside, "pricing.ts"), join(root, "src", "pricing.ts"));
+    const { reads } = analyzeChanges([{ rel: "src/cart.ts", before: cart("1"), after: cart("calcTotal(2, { rate: 1 })") }], root);
+    expect(reads).not.toContain("src/pricing.ts#PriceOptions");
   });
 });

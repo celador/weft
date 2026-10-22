@@ -309,8 +309,10 @@ enabled by an optional `index` on the language spec):
 
 The index needs `AnalyzeOptions.list(dir)` and `AnalyzeOptions.read(rel)` (both optional and
 backward compatible). The Claude Code and Codex adapters pass them from the checkout
-(`checkoutAccess` in `src/analysis.ts`, the same helper Go and Kotlin's package index and C/C++
-includes use); without them, Swift and C# still get same-file reads.
+(`checkoutAccess` in `src/analysis.ts`, the same helper Go and Kotlin's package index, C/C++
+includes and the TypeScript contract-type reads (`contractReads`) use: no symlinks, nothing
+outside the checkout, 1 MiB cap, files the same tool call changes read as they will be after
+it); without them, Swift and C# still get same-file reads.
 
 Package index (Go, Kotlin) and module index (Swift, C#) are two mechanisms, deliberately kept
 separate. Both are lazy, list and read through the same checkout access, and parse only files
