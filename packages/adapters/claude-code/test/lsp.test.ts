@@ -205,3 +205,19 @@ describe("daemon", () => {
     expect(existsSync(join(root, ".weft/lsp/daemon.lock"))).toBe(false);
   });
 });
+
+describe("breakage input from other agents", () => {
+  it("ignores keys outside the checkout", async () => {
+    const root = pyCheckout("x");
+    const loaded: Loaded = { root, token: "t", config: { url: "http://unused", repo: "demo", agent: "b", task: { id: "T" }, change: "I-b" } };
+    const asked: number[] = [];
+    const transport = { event: async (seq: number) => (asked.push(seq), { seq, agent: "a", actor: { id: "a" }, diff: unifiedDiff("../evil.py", "x = 1\n", "x = 2\n") }) } as unknown as Transport;
+    const worker = new LspWorker(loaded, { transport, servers });
+    try {
+      expect(await worker.breakageLines(7, ["../evil.py#x", "shop/../../evil.py#x", "/etc/evil.py#x"])).toEqual([]);
+      expect(asked).toEqual([7]);
+    } finally {
+      await worker.close();
+    }
+  });
+});

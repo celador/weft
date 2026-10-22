@@ -15,12 +15,13 @@
 // (`weft-adapter-claude lsp-daemon`), fed through a queue directory `.weft/lsp/queue/`. Enqueueing
 // is a file write (plus a spawn when no daemon runs); hooks never wait for it.
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { detectServer, LspEnricher, splitKey, treeSitterLanguageFor, type Breakage, type LspServerSpec } from "@weft/analyzer";
 import type { Diagnostic, EventRecord } from "@weft/protocol";
 import type { Transport } from "./client";
 import { appendAdapterLog, readState, withLock, writeState, type Loaded } from "./config";
 import { renderForModel } from "./render";
+import { outsideRoot, readCheckoutFile } from "./safe-read";
 import { alive, lockDir, lspDir, queueDir } from "./lsp-queue";
 
 export { daemonPid, enqueue, lspDir, spawnDaemonProcess } from "./lsp-queue";
@@ -28,6 +29,7 @@ export { daemonPid, enqueue, lspDir, spawnDaemonProcess } from "./lsp-queue";
 export type { FileText, LspJob } from "./lsp-queue";
 import type { LspJob } from "./lsp-queue";
 const MAX_NOTES = 50;
+const MAX_FILE_BYTES = 1 << 20;
 const MAX_DEPENDENTS = 8;
 
 /** Does this checkout-relative path have an installed language server (and a tree-sitter spec)? */
@@ -273,14 +275,11 @@ export class LspWorker {
     }
     if (!record?.diff) return [];
     const overlays: Array<{ path: string; text: string }> = [];
-    for (const file of new Set(todo.map((k) => splitKey(k, this.prefix)[0]))) {
-      if (!lspEligible(file, this.deps.env, this.deps.servers)) continue;
-      let current: string | null = null;
-      try {
-        current = readFileSync(join(this.loaded.root, file), "utf8");
-      } catch {
-        current = "";
-      }
+    for (const file of new Set(todo.map((k) => posix.normalize(splitKey(k, this.prefix)[0])))) {
+      // Keys come from other agents: only checkout files, never through a symlink.
+      if (outsideRoot(file) || !lspEligible(file, this.deps.env, this.deps.servers)) continue;
+      const current = readCheckoutFile(this.loaded.root, join(this.loaded.root, file), MAX_FILE_BYTES);
+      if (current === undefined) continue;
       const peer = applyFileDiff(current ?? "", record.diff, this.prefix + file);
       if (peer === undefined) {
         this.log(`lsp breakage: #${seq}'s diff does not apply to ${file} here; skipped`);
