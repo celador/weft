@@ -1,0 +1,67 @@
+{
+  "description": "PHP conformance workspace (docs/languages.md). The peer changes are another agent's edits; their reads/writes are exactly what @weft/analyzer's PHP backend derives from `after` (checked by packages/conformance/test/languages.test.ts).",
+  "language": "php",
+  "files": {
+    "src/Pricing/Pricing.php": "<?php\n\nnamespace App\\Pricing;\n\nfinal class Pricing\n{\n    public static function calcTotal(array $items): float\n    {\n        return array_sum(array_map(fn (Item $i) => $i->price * $i->qty, $items));\n    }\n\n    public static function formatPrice(float $amount): string\n    {\n        return sprintf('$%.2f', $amount);\n    }\n}\n",
+    "src/Pricing/Item.php": "<?php\n\nnamespace App\\Pricing;\n\nfinal class Item\n{\n    public function __construct(public float $price, public int $qty)\n    {\n    }\n}\n",
+    "src/Shop/Cart.php": "<?php\n\nnamespace App\\Shop;\n\nuse App\\Pricing\\Pricing;\n\nfinal class Cart\n{\n    public function summary(array $items): string\n    {\n        return count($items) . ' items';\n    }\n}\n",
+    "src/Shop/Report.php": "<?php\n\nnamespace App\\Shop;\n\nuse App\\Pricing\\Pricing as P;\n\nfinal class Report\n{\n    public function line(float $total): string\n    {\n        return 'Total';\n    }\n}\n",
+    "src/Shop/Checkout.php": "<?php\n\nnamespace App\\Shop;\n\nfinal class Checkout\n{\n    public function total(array $items): float\n    {\n        return 0.0;\n    }\n}\n"
+  },
+  "peers": {
+    "change_signature": {
+      "agent": "peer-a",
+      "harness": "claude-code",
+      "task": "T-1",
+      "files": [
+        "src/Pricing/Pricing.php"
+      ],
+      "writes": [
+        {
+          "key": "src/Pricing/Pricing.php#Pricing",
+          "kind": "body"
+        },
+        {
+          "key": "src/Pricing/Pricing.php#Pricing.calcTotal",
+          "kind": "signature"
+        }
+      ],
+      "reads": [
+        "src/Pricing/Item.php#Item"
+      ],
+      "intent": "calcTotal takes a tax rate",
+      "after": {
+        "src/Pricing/Pricing.php": "<?php\n\nnamespace App\\Pricing;\n\nfinal class Pricing\n{\n    public static function calcTotal(array $items, float $taxRate): float\n    {\n        $net = array_sum(array_map(fn (Item $i) => $i->price * $i->qty, $items));\n        return $net * (1 + $taxRate);\n    }\n\n    public static function formatPrice(float $amount): string\n    {\n        return sprintf('$%.2f', $amount);\n    }\n}\n"
+      }
+    },
+    "rename_helper": {
+      "agent": "peer-b",
+      "harness": "codex",
+      "task": "T-3",
+      "files": [
+        "src/Pricing/Pricing.php"
+      ],
+      "writes": [
+        {
+          "key": "src/Pricing/Pricing.php#Pricing",
+          "kind": "body"
+        },
+        {
+          "key": "src/Pricing/Pricing.php#Pricing.formatMoney",
+          "kind": "new"
+        },
+        {
+          "key": "src/Pricing/Pricing.php#Pricing.formatPrice",
+          "kind": "deleted"
+        }
+      ],
+      "reads": [
+        "src/Pricing/Item.php#Item"
+      ],
+      "intent": "rename formatPrice to formatMoney",
+      "after": {
+        "src/Pricing/Pricing.php": "<?php\n\nnamespace App\\Pricing;\n\nfinal class Pricing\n{\n    public static function calcTotal(array $items): float\n    {\n        return array_sum(array_map(fn (Item $i) => $i->price * $i->qty, $items));\n    }\n\n    public static function formatMoney(float $amount): string\n    {\n        return sprintf('$%.2f', $amount);\n    }\n}\n"
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 # @weft/analyzer
 
 `@weft/analyzer` derives the read/write sets sent with a WCP edit event: TypeScript/JavaScript
-through the TypeScript compiler API, other languages (Python, C, C++, Java, Kotlin, Swift, C#) through a tree-sitter
+through the TypeScript compiler API, other languages (Python, C, C++, Java, Kotlin, Swift, C#, Ruby, PHP) through a tree-sitter
 backend. Support matrix and how to add a language: [docs/languages.md](../../docs/languages.md).
 
 ## Runtime boundary

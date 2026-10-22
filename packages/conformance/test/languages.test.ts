@@ -15,8 +15,8 @@ const repo = join(here, "..", "..", "..");
 const CLAUDE = join(repo, "packages/adapters/claude-code/dist/weft-claude.mjs");
 
 describe("language fixture sets", () => {
-  it("ship Python, C, C++, Java, Kotlin, Swift and C#", () => {
-    expect(languageFixtureSets()).toEqual(expect.arrayContaining(["c", "cpp", "csharp", "java", "kotlin", "python", "swift"]));
+  it("ship Python, C, C++, Java, Kotlin, Swift, C#, Ruby and PHP", () => {
+    expect(languageFixtureSets()).toEqual(expect.arrayContaining(["c", "cpp", "csharp", "java", "kotlin", "php", "python", "ruby", "swift"]));
   });
 
   for (const set of languageFixtureSets()) {

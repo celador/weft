@@ -1,0 +1,30 @@
+{
+  "id": "RB.deny-autoloaded-constant",
+  "level": 2,
+  "required": true,
+  "spec": "§4.1",
+  "title": "Ruby: a constant resolved by autoload convention (no require) is checked like a required one",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "app/services/checkout.rb",
+        "old_text": "    0.0",
+        "new_text": "    Pricing.calc_total(items)"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "calc_total"
+        ]
+      },
+      "expect_applied": false
+    }
+  ]
+}

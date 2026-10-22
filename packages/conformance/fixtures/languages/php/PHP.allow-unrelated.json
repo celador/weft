@@ -1,0 +1,36 @@
+{
+  "id": "PHP.allow-unrelated",
+  "level": 2,
+  "required": true,
+  "spec": "§4.1",
+  "title": "PHP: an edit that does not use the changed method is not blocked",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/Shop/Report.php",
+        "old_text": "        return 'Total';",
+        "new_text": "        return 'Total: ' . P::formatPrice($total);"
+      },
+      "expect_pre": {
+        "decision": "not-deny"
+      },
+      "expect_applied": true
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "kind": "edit",
+        "status": "accepted",
+        "files_include": "src/Shop/Report.php",
+        "min": 1
+      }
+    }
+  ]
+}
