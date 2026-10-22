@@ -15,8 +15,8 @@ const repo = join(here, "..", "..", "..");
 const CLAUDE = join(repo, "packages/adapters/claude-code/dist/weft-claude.mjs");
 
 describe("language fixture sets", () => {
-  it("ship Python, Swift and C#", () => {
-    expect(languageFixtureSets()).toEqual(expect.arrayContaining(["csharp", "python", "swift"]));
+  it("ship Python, C, C++, Java, Kotlin, Swift and C#", () => {
+    expect(languageFixtureSets()).toEqual(expect.arrayContaining(["c", "cpp", "csharp", "java", "kotlin", "python", "swift"]));
   });
 
   for (const set of languageFixtureSets()) {
@@ -33,7 +33,7 @@ describe("language fixture sets", () => {
       for (const [name, peer] of Object.entries(workspace.peers)) {
         it(`peer ${name}: declared reads/writes = analyzer output`, async () => {
           const exists = (rel: string) => rel in workspace.files;
-          // Directory listing + reads of the workspace, for index-based languages (Swift, C#).
+          // Directory listing of the workspace, for index-based languages (Swift, C#).
           const list = (dir: string): string[] | undefined => {
             const prefix = dir ? `${dir}/` : "";
             const entries = new Set<string>();
@@ -45,17 +45,21 @@ describe("language fixture sets", () => {
             }
             return entries.size ? [...entries] : undefined;
           };
-          const read = (rel: string): string | undefined => workspace.files[rel];
+          // The same checkout access the adapters give the analyzer (exists / list / read). C/C++
+          // read included headers, Swift/C# index their module; like the adapters, a change sees
+          // its own other changed files as they will be after it.
+          const read = (rel: string): string | undefined => (peer.after && rel in peer.after ? (peer.after[rel] ?? undefined) : workspace.files[rel]);
           const reads = new Set<string>();
-          const writes: Array<{ key: string; kind: string }> = [];
+          // One key per symbol, as the adapters merge them (a header and its .c share keys).
+          const writes = new Map<string, { key: string; kind: string }>();
           for (const [path, after] of Object.entries(peer.after ?? {})) {
-            expect(treeSitterLanguageFor(path)?.id).toBe(set);
+            expect([set, ...(workspace.interop ?? [])]).toContain(treeSitterLanguageFor(path, after)?.id);
             const r = await analyzeSource({ path, before: workspace.files[path] ?? null, after }, { exists, list, read });
             r.reads.forEach((k) => reads.add(k));
-            writes.push(...r.writes);
+            for (const w of r.writes) writes.set(w.key, w);
           }
-          for (const w of writes) reads.delete(w.key);
-          expect([...peer.writes].sort((a, b) => a.key.localeCompare(b.key))).toEqual(writes.sort((a, b) => a.key.localeCompare(b.key)));
+          for (const k of writes.keys()) reads.delete(k);
+          expect([...peer.writes].sort((a, b) => a.key.localeCompare(b.key))).toEqual([...writes.values()].sort((a, b) => a.key.localeCompare(b.key)));
           expect([...peer.reads].sort()).toEqual([...reads].sort());
         });
       }

@@ -1,0 +1,6 @@
+[e2e] opened http://127.0.0.1:8818/; waiting for the agents (live)
+[e2e] ok   conflict row arrived live — shop-feed-162959#6
+[e2e] ok   Editing now shows both tasks — claude-b, claude-a
+[e2e] ok   status is live — Live · shop-feed-162959
+[e2e] ok   squiggle → cause — caused by claude-a · event #4 › → shop-feed-162959#4 (edit by claude-a)
+[e2e] ok   cause diff shown in colour — 6 added/removed lines

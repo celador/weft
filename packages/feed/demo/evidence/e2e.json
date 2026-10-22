@@ -1,0 +1,56 @@
+{
+  "page": "http://127.0.0.1:8818/",
+  "repo": "shop-feed-162959",
+  "results": [
+    {
+      "name": "conflict row arrived live",
+      "pass": true,
+      "detail": "shop-feed-162959#6"
+    },
+    {
+      "name": "Editing now shows both tasks",
+      "pass": true,
+      "detail": "claude-b, claude-a"
+    },
+    {
+      "name": "status is live",
+      "pass": true,
+      "detail": "Live · shop-feed-162959"
+    },
+    {
+      "name": "squiggle → cause",
+      "pass": true,
+      "detail": "caused by claude-a · event #4 › → shop-feed-162959#4 (edit by claude-a)"
+    },
+    {
+      "name": "cause diff shown in colour",
+      "pass": true,
+      "detail": "6 added/removed lines"
+    },
+    {
+      "name": "Message appended to the log",
+      "pass": true,
+      "detail": "Message sent · logged as #12 · #12 john → claude-a: Heads up from the feed: claude-b needs calcTotal's old call to keep working. Keep a default for opts?"
+    },
+    {
+      "name": "Pause appended to the log",
+      "pass": true,
+      "detail": "#13 john paused claude-b"
+    },
+    {
+      "name": "detail shows PAUSED and offers Resume",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Resume appended to the log",
+      "pass": true,
+      "detail": "#14 john resumed claude-b"
+    },
+    {
+      "name": "no console errors or CSP violations",
+      "pass": true,
+      "detail": ""
+    }
+  ]
+}

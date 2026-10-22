@@ -92,7 +92,7 @@ export function analyzeChanges(changes: FileChange[], root?: string, prefix = ""
 }
 
 /**
- * `analyzeChanges` plus the tree-sitter languages (Python, Swift, C#, ...): what the hooks call. TypeScript
+ * `analyzeChanges` plus the tree-sitter languages (Python, C/C++, Java, Kotlin, Swift, C#): what the hooks call. TypeScript
  * and JavaScript go through exactly the same path as `analyzeChanges`; files of a tree-sitter
  * language get declaration-level keys and import-resolved reads instead of a whole-file key.
  */
@@ -102,11 +102,18 @@ export async function analyzeChangesAsync(changes: FileChange[], root?: string, 
   const reads = new Set(base.reads);
   const writes = new Map(base.writes.map((w) => [w.key, w] as const));
   const exists = root ? (rel: string) => existsSync(join(root, rel)) : undefined;
-  const checkout = root ? checkoutFs(root) : {};
+  // The analyzer reads other checkout files: C/C++ `#include`d headers, and the Swift/C# module
+  // index (`list` + `read`). Files this same tool call changes are read as they will be after it
+  // (a header + its .c).
+  const checkout = root ? checkoutFs(root) : undefined;
+  const pending = new Map(changes.map((c) => [c.rel, c.after] as const));
+  const read = checkout
+    ? (rel: string): string | undefined => (pending.has(rel) ? (pending.get(rel) ?? undefined) : checkout.read(rel))
+    : undefined;
   for (const c of changes) {
     if (c.before === c.after || !treeSitterLanguageFor(c.rel)) continue;
     try {
-      const result = await analyzeSource({ path: c.rel, before: c.before, after: c.after }, { prefix, exists, ...checkout });
+      const result = await analyzeSource({ path: c.rel, before: c.before, after: c.after }, { prefix, exists, list: checkout?.list, read });
       for (const k of result.reads) reads.add(k);
       for (const w of result.writes) writes.set(w.key, w);
     } catch {

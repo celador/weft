@@ -1,0 +1,67 @@
+{
+  "description": "Java conformance workspace (docs/languages.md): a Maven layout under src/main/java. The peer changes are another agent's edits to Pricing.java; their writes are exactly what @weft/analyzer's Java backend derives from `after` (checked by packages/conformance/test/languages.test.ts).",
+  "language": "java",
+  "files": {
+    "src/main/java/com/shop/model/Item.java": "package com.shop.model;\n\npublic record Item(double price, int qty) {}\n",
+    "src/main/java/com/shop/pricing/Pricing.java": "package com.shop.pricing;\n\nimport java.util.List;\nimport com.shop.model.Item;\n\npublic final class Pricing {\n    private Pricing() {}\n\n    public static double calcTotal(List<Item> items) {\n        double sum = 0;\n        for (Item i : items) sum += i.price() * i.qty();\n        return sum;\n    }\n\n    public static String formatPrice(double amount) {\n        return String.format(\"$%.2f\", amount);\n    }\n}\n",
+    "src/main/java/com/shop/cart/CartSummary.java": "package com.shop.cart;\n\nimport java.util.List;\nimport com.shop.model.Item;\nimport com.shop.pricing.Pricing;\n\npublic class CartSummary {\n    public static String summary(List<Item> items) {\n        return items.size() + \" items\";\n    }\n}\n",
+    "src/main/java/com/shop/report/Report.java": "package com.shop.report;\n\nimport static com.shop.pricing.Pricing.formatPrice;\n\npublic class Report {\n    public static String line(double total) {\n        return \"Total\";\n    }\n}\n",
+    "src/main/java/com/shop/pricing/Checkout.java": "package com.shop.pricing;\n\nimport java.util.List;\nimport com.shop.model.Item;\n\nclass Checkout {\n    double due(List<Item> items) {\n        return 0.0;\n    }\n}\n"
+  },
+  "peers": {
+    "change_signature": {
+      "agent": "peer-a",
+      "harness": "claude-code",
+      "task": "T-1",
+      "intent": "calcTotal takes a taxRate",
+      "files": [
+        "src/main/java/com/shop/pricing/Pricing.java"
+      ],
+      "writes": [
+        {
+          "key": "src/main/java/com/shop/pricing/Pricing.java#Pricing",
+          "kind": "body"
+        },
+        {
+          "key": "src/main/java/com/shop/pricing/Pricing.java#Pricing.calcTotal",
+          "kind": "signature"
+        }
+      ],
+      "reads": [
+        "src/main/java/com/shop/model/Item.java#Item"
+      ],
+      "after": {
+        "src/main/java/com/shop/pricing/Pricing.java": "package com.shop.pricing;\n\nimport java.util.List;\nimport com.shop.model.Item;\n\npublic final class Pricing {\n    private Pricing() {}\n\n    public static double calcTotal(List<Item> items, double taxRate) {\n        double sum = 0;\n        for (Item i : items) sum += i.price() * i.qty();\n        return sum * (1 + taxRate);\n    }\n\n    public static String formatPrice(double amount) {\n        return String.format(\"$%.2f\", amount);\n    }\n}\n"
+      }
+    },
+    "rename_helper": {
+      "agent": "peer-b",
+      "harness": "codex",
+      "task": "T-3",
+      "intent": "rename formatPrice to formatMoney",
+      "files": [
+        "src/main/java/com/shop/pricing/Pricing.java"
+      ],
+      "writes": [
+        {
+          "key": "src/main/java/com/shop/pricing/Pricing.java#Pricing",
+          "kind": "body"
+        },
+        {
+          "key": "src/main/java/com/shop/pricing/Pricing.java#Pricing.formatMoney",
+          "kind": "new"
+        },
+        {
+          "key": "src/main/java/com/shop/pricing/Pricing.java#Pricing.formatPrice",
+          "kind": "deleted"
+        }
+      ],
+      "reads": [
+        "src/main/java/com/shop/model/Item.java#Item"
+      ],
+      "after": {
+        "src/main/java/com/shop/pricing/Pricing.java": "package com.shop.pricing;\n\nimport java.util.List;\nimport com.shop.model.Item;\n\npublic final class Pricing {\n    private Pricing() {}\n\n    public static double calcTotal(List<Item> items) {\n        double sum = 0;\n        for (Item i : items) sum += i.price() * i.qty();\n        return sum;\n    }\n\n    public static String formatMoney(double amount) {\n        return String.format(\"$%.2f\", amount);\n    }\n}\n"
+      }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "@weft/mcp",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Weft MCP server for harnesses without hooks: weft_check/claim/status/inbox/feed/negotiate/gate tools, the pending inbox on every tool result (delayed L1), and an embedded file watcher that reports every edit (guaranteed L0).",
+  "license": "MIT",
+  "bin": {
+    "weft-mcp": "./bin/weft-mcp.mjs"
+  },
+  "files": ["bin", "dist", "README.md"],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node scripts/build.mjs && vitest run"
+  },
+  "dependencies": {
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@weft/analyzer": "workspace:*",
+    "@weft/protocol": "workspace:*",
+    "esbuild": "^0.25.4"
+  }
+}

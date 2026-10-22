@@ -1,0 +1,33 @@
+agent-a: committed
+agent-b: committed
+agent-b git diff vs base:
+cart: add total()
+
+Change-Id: I838d2f93358915a0623deab2804aea61e2f31740
+Task-Id: T-2
+Agent-Id: copilot-b
+--- agent-b:src/cart.ts
+import { calcTotal, type Item } from "./pricing";
+
+export class Cart {
+  private items: Item[] = [];
+
+  add(item: Item): void {
+    this.items.push(item);
+  }
+
+  list(): Item[] {
+    return [...this.items];
+  }
+
+  total(): number {
+    return calcTotal(this.items, { taxRate: 0 });
+  }
+}
+
+--- main after merging agent-a then agent-b:
+68b068b Merge branch 'agent-b'
+647259f cart: add total()
+08b2c82 pricing: apply tax in calcTotal
+be016a6 ts-shop: initial
+tsc: exit 0 (clean)

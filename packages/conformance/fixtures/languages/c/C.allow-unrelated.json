@@ -1,0 +1,36 @@
+{
+  "id": "C.allow-unrelated",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a74.1",
+  "title": "C: an edit that does not use the changed function is not blocked",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/report.c",
+        "old_text": "  return 0;",
+        "new_text": "  return format_price(total, out, size);"
+      },
+      "expect_pre": {
+        "decision": "not-deny"
+      },
+      "expect_applied": true
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "kind": "edit",
+        "status": "accepted",
+        "files_include": "src/report.c",
+        "min": 1
+      }
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { cpuMs, EDIT_BUDGET_MS } from "./budget.js";
 import { analyzeSource, languageFor } from "./index.js";
 import { clearModuleIndexCache } from "./moduleindex.js";
 
@@ -158,22 +159,23 @@ describe("c# (tree-sitter backend)", () => {
     expect((await run(null, src, "src/Shop/A.cs")).reads).toEqual([`${PRICING_PATH}#Item`]);
   });
 
-  it("stays inside the edit-time budget (< 300 ms: 2,000-line file, and a 400-file solution)", async () => {
+  it("stays inside the edit-time budget (< 300 ms CPU: 2,000-line file, and a 400-file solution)", async () => {
     const big = `namespace Big;\n${Array.from({ length: 140 }, (_, i) => PRICING.replace("namespace Shop.Pricing;\n", "").replaceAll("PriceCalculator", `Calc${i}`).replaceAll("Item", `Item${i}`)).join("\n")}`;
     expect(big.split("\n").length).toBeGreaterThan(2000);
     await run(big, big);
-    let t = performance.now();
-    await run(big, big.replace("Calc7.CalcTotal", "x").replace("CalcTotal(IEnumerable<Item7> items)", "CalcTotal(IEnumerable<Item7> items, int x)"));
-    expect(performance.now() - t).toBeLessThan(300);
+    expect(await cpuMs(() => run(big, big.replace("Calc7.CalcTotal", "x").replace("CalcTotal(IEnumerable<Item7> items)", "CalcTotal(IEnumerable<Item7> items, int x)")))).toBeLessThan(EDIT_BUDGET_MS);
 
     const files: Record<string, string> = { "Big.sln": "" };
     for (let i = 0; i < 400; i++) files[`src/F${i}.cs`] = PRICING.replace("Shop.Pricing", "Big").replaceAll("PriceCalculator", `Calc${i}`).replaceAll("Item", `Item${i}`);
     const bigFs = checkout(files);
     const user = `namespace Big;\nclass Use { decimal M() => Calc399.CalcTotal(new List<Item12>()); }\n`;
     clearModuleIndexCache();
-    t = performance.now();
-    const cold = await run(null, user, "src/Use.cs", bigFs);
-    expect(performance.now() - t).toBeLessThan(300);
-    expect(cold.reads).toEqual(["src/F12.cs#Item12", "src/F399.cs#Calc399.CalcTotal"]);
+    let cold: Awaited<ReturnType<typeof run>> | undefined;
+    expect(
+      await cpuMs(async () => {
+        cold = await run(null, user, "src/Use.cs", bigFs);
+      }),
+    ).toBeLessThan(EDIT_BUDGET_MS);
+    expect(cold?.reads).toEqual(["src/F12.cs#Item12", "src/F399.cs#Calc399.CalcTotal"]);
   });
 });

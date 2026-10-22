@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { cpuMs, EDIT_BUDGET_MS } from "./budget.js";
 import { analyzeSource, languageFor } from "./index.js";
 import { clearModuleIndexCache } from "./moduleindex.js";
 
@@ -177,26 +178,23 @@ describe("swift (tree-sitter backend)", () => {
     expect(r.reads).toEqual(["App/Model/Pricing.swift#calcTotal"]);
   });
 
-  it("stays inside the edit-time budget (< 300 ms: 2,000-line file, and a 400-file module)", async () => {
+  it("stays inside the edit-time budget (< 300 ms CPU: 2,000-line file, and a 400-file module)", async () => {
     const big = Array.from({ length: 120 }, (_, i) => PRICING.replaceAll("calcTotal", `calc${i}`).replaceAll("Item", `Item${i}`).replaceAll("taxRate", `rate${i}`).replaceAll("formatPrice", `fmt${i}`)).join("\n");
     expect(big.split("\n").length).toBeGreaterThan(2000);
     await run(big, big);
-    let t = performance.now();
-    await run(big, big.replace("calc7(items: [Item7])", "calc7(items: [Item7], x: Int)"));
-    expect(performance.now() - t).toBeLessThan(300);
+    expect(await cpuMs(() => run(big, big.replace("calc7(items: [Item7])", "calc7(items: [Item7], x: Int)")))).toBeLessThan(EDIT_BUDGET_MS);
 
     const files: Record<string, string> = { "Package.swift": "" };
     for (let i = 0; i < 400; i++) files[`Sources/Big/File${i}.swift`] = PRICING.replaceAll("calcTotal", `calc${i}`).replaceAll("Item", `Item${i}`).replaceAll("taxRate", `rate${i}`).replaceAll("formatPrice", `fmt${i}`);
     const bigFs = checkout(files);
     const user = `func use() -> Double { calc399(items: [Item12(price: 1)]) + rate5 }\n`;
     clearModuleIndexCache();
-    t = performance.now();
-    const cold = await run(null, user, "Sources/Big/Use.swift", bigFs);
-    const coldMs = performance.now() - t;
-    expect(cold.reads).toEqual(["Sources/Big/File12.swift#Item12", "Sources/Big/File399.swift#calc399", "Sources/Big/File5.swift#rate5"]);
-    expect(coldMs).toBeLessThan(300);
-    t = performance.now();
-    await run(null, user, "Sources/Big/Use.swift", bigFs);
-    expect(performance.now() - t).toBeLessThan(300);
+    let cold: Awaited<ReturnType<typeof run>> | undefined;
+    const coldMs = await cpuMs(async () => {
+      cold = await run(null, user, "Sources/Big/Use.swift", bigFs);
+    });
+    expect(cold?.reads).toEqual(["Sources/Big/File12.swift#Item12", "Sources/Big/File399.swift#calc399", "Sources/Big/File5.swift#rate5"]);
+    expect(coldMs).toBeLessThan(EDIT_BUDGET_MS);
+    expect(await cpuMs(() => run(null, user, "Sources/Big/Use.swift", bigFs))).toBeLessThan(EDIT_BUDGET_MS);
   });
 });

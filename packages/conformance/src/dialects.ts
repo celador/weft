@@ -7,6 +7,7 @@
 // mapping table in hooks-core-v0.md §10.
 import { isAbsolute, join } from "node:path";
 import { HOOKS_CORE_VERSION, checkDecision, type CoreDecision, type CoreEvent, type CoreTool } from "./core";
+import { copilot } from "./dialects/copilot";
 
 /** What a hook process returned. */
 export type RawResult = { stdout: string; stderr: string; code: number | null; timedOut: boolean; ms: number };
@@ -299,7 +300,7 @@ export const opencode: Dialect = {
   },
 };
 
-export const DIALECTS: Record<string, Dialect> = { core, "claude-code": claudeCode, codex, cursor, gemini, opencode };
+export const DIALECTS: Record<string, Dialect> = { core, "claude-code": claudeCode, codex, cursor, gemini, opencode, copilot };
 
 export function dialect(name: string): Dialect {
   const d = DIALECTS[name];

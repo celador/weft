@@ -1,0 +1,11 @@
+{
+  "scenario": "stop-gate",
+  "agent_a": "copilot-a",
+  "agent_b": "copilot-b",
+  "stamp": "20261022-161335",
+  "url": "http://localhost:8797",
+  "repo": "demo-copilot-stop-gate-20261022-161335",
+  "copilot": "GitHub Copilot CLI 1.0.102.\nRun 'copilot update' to check for updates.",
+  "b_session": "dd3f9003-63ee-4f68-9b25-8a07fb705b8b",
+  "a_session": "47e4edac-4aa6-4885-9e02-b90743bc31a2"
+}
