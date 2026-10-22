@@ -67,7 +67,17 @@ export class HttpTransport implements Transport {
     try {
       res = await this.fetchImpl(this.base + path, init);
     } catch (err) {
-      throw new WcpError("transport", err instanceof Error ? err.message : String(err));
+      // One quick retry for a failed connection (DNS blip, reset socket, busy machine), never
+      // for a timeout: the request is idempotent (submits carry an Idempotency-Key) and the
+      // signal still bounds the total time.
+      const timedOut = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
+      if (timedOut || (init.signal as AbortSignal).aborted) throw new WcpError("transport", err instanceof Error ? err.message : String(err));
+      try {
+        await new Promise((r) => setTimeout(r, 250));
+        res = await this.fetchImpl(this.base + path, init);
+      } catch (err2) {
+        throw new WcpError("transport", err2 instanceof Error ? err2.message : String(err2));
+      }
     }
     const text = await res.text();
     let json: unknown = undefined;
