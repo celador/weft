@@ -629,7 +629,9 @@ export class ReferenceCoordinator {
       });
       return out;
     }
-    if (e.kind !== "edit" && e.kind !== "claim") return out;
+    // An `intent` that carries reads is a reads amendment (§6.2 R2a): checked like R2, never rejected.
+    const amendment = e.kind === "intent" && (e.reads?.length ?? 0) > 0;
+    if (e.kind !== "edit" && e.kind !== "claim" && !amendment) return out;
     const writes = e.writes ?? [];
     const W = this.log.filter(
       (r) =>
@@ -652,6 +654,29 @@ export class ReferenceCoordinator {
       caused_by_agent: r.agent ?? r.actor.id,
       ...(r.task ? { caused_by_task: r.task } : {}),
     });
+
+    // R2a reads amendment (intent with reads): R2 with every error downgraded to a warning.
+    if (amendment) {
+      for (const key of uniq(e.reads ?? [])) {
+        const strong = latest(key, (_r, w) => STRONG.includes(w.kind));
+        const body = strong ? undefined : latest(key, (_r, w) => w.kind === "body");
+        const hit = strong ?? body;
+        if (!hit) continue;
+        const who = hit.r.agent ?? hit.r.actor.id;
+        out.push({
+          severity: "warning",
+          code: strong ? "contract_changed" : "stale_read",
+          file: fileOf(key),
+          symbol: key,
+          message: strong
+            ? `${who} ${strong.w.kind === "deleted" ? "removed" : "changed the signature of"} ${key} (#${strong.r.seq}) after your base #${e.base_seq}, and your change uses it.`
+            : `${key} body changed in #${hit.r.seq} by ${who} after your base #${e.base_seq}; its contract is unchanged.`,
+          ...(strong ? { suggestion: `Re-read ${key} (event #${strong.r.seq}) and adapt your call sites, or negotiate with ${who}.` } : {}),
+          ...cause(hit.r),
+        });
+      }
+      return out;
+    }
 
     // R1 stale overwrite (edit only): a committed (landed/reverted) write since base.
     const r1 = new Set<SymbolKey>();
