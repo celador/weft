@@ -246,6 +246,16 @@ importers:
         specifier: ^0.25.4
         version: 0.25.4
 
+  packages/feed:
+    dependencies:
+      '@weft/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      esbuild:
+        specifier: ^0.25.4
+        version: 0.25.4
+
   packages/protocol:
     devDependencies:
       ajv:

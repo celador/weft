@@ -1,0 +1,725 @@
+{
+ "type": "feed",
+ "events": [
+  {
+   "seq": 578,
+   "repo": "weft-demo",
+   "status": "rejected",
+   "kind": "edit",
+   "ts": "2026-10-04T13:56:32.047Z",
+   "actor": {
+    "type": "agent",
+    "id": "claude-t3-r4",
+    "harness": "claude-code"
+   },
+   "agent": "claude-t3-r4",
+   "task": "m2-mutvr92s-t3",
+   "change": "I5ac4a6907501726656cec1527bbda795a5953212",
+   "session": "s126",
+   "base_seq": 542,
+   "mode": "check",
+   "files": [
+    "src/auth/refresh.ts"
+   ],
+   "reads": [
+    "src/auth/session.ts#Session",
+    "src/auth/session.ts#createSession",
+    "src/auth/session.ts#getSession",
+    "src/auth/session.ts#revokeSession"
+   ],
+   "writes": [
+    {
+     "key": "src/auth/refresh.ts#refreshSession",
+     "kind": "new"
+    },
+    {
+     "key": "src/auth/refresh.ts#refreshSession.session",
+     "kind": "new"
+    }
+   ],
+   "intent": "m2-mutvr92s-t3: Session refresh",
+   "summary": "Blocked: claude-t3-r4 added refreshSession, refreshSession.session in src/auth/refresh.ts \u2014 Session refresh",
+   "diagnostics": [
+    {
+     "severity": "error",
+     "code": "stale_assumption",
+     "file": "src/auth/session.ts",
+     "symbol": "src/auth/session.ts#Session",
+     "message": "You use src/auth/session.ts#Session, whose signature changed in #571 by claude-t1-r4 after your base #542.",
+     "suggestion": "Read the new src/auth/session.ts#Session (event #571) and update this call site, or negotiate with claude-t1-r4.",
+     "caused_by_seq": 571,
+     "caused_by_agent": "claude-t1-r4",
+     "caused_by_task": "m2-mutvr92s-t1"
+    },
+    {
+     "severity": "error",
+     "code": "stale_assumption",
+     "file": "src/auth/session.ts",
+     "symbol": "src/auth/session.ts#createSession",
+     "message": "You use src/auth/session.ts#createSession, whose signature changed in #571 by claude-t1-r4 after your base #542.",
+     "suggestion": "Read the new src/auth/session.ts#createSession (event #571) and update this call site, or negotiate with claude-t1-r4.",
+     "caused_by_seq": 571,
+     "caused_by_agent": "claude-t1-r4",
+     "caused_by_task": "m2-mutvr92s-t1"
+    },
+    {
+     "severity": "warning",
+     "code": "stale_read",
+     "file": "src/auth/session.ts",
+     "symbol": "src/auth/session.ts#getSession",
+     "message": "src/auth/session.ts#getSession body changed in #571 by claude-t1-r4 after your base #542; its contract is unchanged.",
+     "caused_by_seq": 571,
+     "caused_by_agent": "claude-t1-r4",
+     "caused_by_task": "m2-mutvr92s-t1"
+    }
+   ],
+   "tool": {
+    "name": "Write",
+    "call_id": "toolu_01WVT4rhPYRsAwoetzZcTDZP",
+    "harness_event": "PreToolUse"
+   },
+   "has_diff": true
+  },
+  {
+   "seq": 579,
+   "repo": "weft-demo",
+   "status": "accepted",
+   "kind": "join",
+   "ts": "2026-10-04T13:56:33.669Z",
+   "actor": {
+    "type": "agent",
+    "id": "codex-t3-r4",
+    "harness": "codex-code"
+   },
+   "agent": "codex-t3-r4",
+   "task": "m2-mutvr92s-t3",
+   "change": "I7d3655824ff2f6efe56f6c46ab74f2b27b3af1da",
+   "session": "s128",
+   "base_seq": 578,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "summary": "codex-t3-r4 joined (codex-code, L2)",
+   "diagnostics": [],
+   "payload": {
+    "harness": "codex-code",
+    "level": 2
+   }
+  },
+  {
+   "seq": 603,
+   "repo": "weft",
+   "status": "accepted",
+   "kind": "edit",
+   "ts": "2026-10-04T13:57:15.447Z",
+   "actor": {
+    "type": "agent",
+    "id": "hermes-default",
+    "harness": "hermes"
+   },
+   "agent": "hermes-default",
+   "task": "t_7d70b1e8",
+   "change": "hermes-default/t_7d70b1e8",
+   "session": "s27",
+   "base_seq": 601,
+   "mode": "commit",
+   "files": [
+    "demo/evidence/m2/run-4.driver.log",
+    "demo/evidence/m2/run-4/agents/claude-t1-r4/1-work.prompt.txt",
+    "demo/evidence/m2/run-4/agents/claude-t2-r4/1-plan.jsonl",
+    "demo/evidence/m2/run-4/agents/claude-t2-r4/1-plan.prompt.txt",
+    "demo/evidence/m2/run-4/agents/claude-t2-r4/2-implement.prompt.txt",
+    "demo/evidence/m2/run-4/agents/claude-t3-r4/1-plan.jsonl",
+    "demo/evidence/m2/run-4/agents/claude-t3-r4/1-plan.prompt.txt",
+    "demo/evidence/m2/run-4/agents/claude-t3-r4/2-implement.prompt.txt",
+    "demo/evidence/m2/run-4/agents/claude-t4-r4/1-work.jsonl",
+    "demo/evidence/m2/run-4/agents/claude-t4-r4/1-work.prompt.txt",
+    "demo/evidence/m2/run-4/agents/claude-t5-r4/1-work.prompt.txt",
+    "demo/evidence/m2/run-4/agents/claude-t6-r4/1-work.jsonl",
+    "demo/evidence/m2/run-4/agents/claude-t6-r4/1-work.prompt.txt",
+    "demo/evidence/m2/run-4/agents/codex-t1-r4/1-work.prompt.txt",
+    "demo/evidence/m2/run-4/agents/codex-t2-r4/1-plan.jsonl",
+    "demo/evidence/m2/run-4/agents/codex-t2-r4/1-plan.prompt.txt",
+    "demo/evidence/m2/run-4/agents/codex-t2-r4/1-plan.stderr.txt",
+    "demo/evidence/m2/run-4/agents/codex-t2-r4/2-implement.prompt.txt",
+    "demo/evidence/m2/run-4/agents/codex-t3-r4/1-plan.jsonl",
+    "demo/evidence/m2/run-4/agents/codex-t3-r4/1-plan.prompt.txt",
+    "demo/evidence/m2/run-4/agents/codex-t3-r4/1-plan.stderr.txt",
+    "demo/evidence/m2/run-4/agents/codex-t3-r4/2-implement.prompt.txt",
+    "demo/evidence/m2/run-4/agents/codex-t4-r4/1-work.jsonl",
+    "demo/evidence/m2/run-4/agents/codex-t4-r4/1-work.prompt.txt",
+    "demo/evidence/m2/run-4/agents/codex-t4-r4/1-work.stderr.txt",
+    "demo/evidence/m2/run-4/agents/codex-t5-r4/1-work.jsonl",
+    "demo/evidence/m2/run-4/agents/codex-t5-r4/1-work.prompt.txt",
+    "demo/evidence/m2/run-4/agents/codex-t5-r4/1-work.stderr.txt",
+    "demo/evidence/m2/run-4/agents/codex-t6-r4/1-work.jsonl",
+    "demo/evidence/m2/run-4/agents/codex-t6-r4/1-work.prompt.txt",
+    "demo/evidence/m2/run-4/agents/codex-t6-r4/1-work.stderr.txt",
+    "demo/evidence/m2/run-4/agents/opencode-t1-r4/1-work.prompt.txt",
+    "demo/evidence/m2/run-4/agents/opencode-t2-r4/1-plan.jsonl",
+    "demo/evidence/m2/run-4/agents/opencode-t2-r4/1-plan.prompt.txt",
+    "demo/evidence/m2/run-4/agents/opencode-t2-r4/2-implement.prompt.txt",
+    "demo/evidence/m2/run-4/agents/opencode-t3-r4/1-plan.jsonl",
+    "demo/evidence/m2/run-4/agents/opencode-t3-r4/1-plan.prompt.txt",
+    "demo/evidence/m2/run-4/agents/opencode-t3-r4/2-implement.prompt.txt",
+    "demo/evidence/m2/run-4/agents/opencode-t4-r4/1-work.prompt.txt",
+    "demo/evidence/m2/run-4/agents/opencode-t5-r4/1-work.prompt.txt",
+    "demo/evidence/m2/run-4/agents/opencode-t6-r4/1-work.jsonl",
+    "demo/evidence/m2/run-4/agents/opencode-t6-r4/1-work.prompt.txt",
+    "demo/evidence/m2/run-4/agents/opencode-t6-r4/opencode-serve.log"
+   ],
+   "reads": [],
+   "writes": [
+    {
+     "key": "demo/evidence/m2/run-4.driver.log#*",
+     "kind": "body"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/claude-t1-r4/1-work.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/claude-t2-r4/1-plan.jsonl#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/claude-t2-r4/1-plan.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/claude-t2-r4/2-implement.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/claude-t3-r4/1-plan.jsonl#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/claude-t3-r4/1-plan.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/claude-t3-r4/2-implement.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/claude-t4-r4/1-work.jsonl#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/claude-t4-r4/1-work.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/claude-t5-r4/1-work.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/claude-t6-r4/1-work.jsonl#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/claude-t6-r4/1-work.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t1-r4/1-work.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t2-r4/1-plan.jsonl#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t2-r4/1-plan.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t2-r4/1-plan.stderr.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t2-r4/2-implement.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t3-r4/1-plan.jsonl#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t3-r4/1-plan.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t3-r4/1-plan.stderr.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t3-r4/2-implement.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t4-r4/1-work.jsonl#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t4-r4/1-work.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t4-r4/1-work.stderr.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t5-r4/1-work.jsonl#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t5-r4/1-work.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t5-r4/1-work.stderr.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t6-r4/1-work.jsonl#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t6-r4/1-work.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/codex-t6-r4/1-work.stderr.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/opencode-t1-r4/1-work.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/opencode-t2-r4/1-plan.jsonl#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/opencode-t2-r4/1-plan.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/opencode-t2-r4/2-implement.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/opencode-t3-r4/1-plan.jsonl#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/opencode-t3-r4/1-plan.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/opencode-t3-r4/2-implement.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/opencode-t4-r4/1-work.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/opencode-t5-r4/1-work.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/opencode-t6-r4/1-work.jsonl#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/opencode-t6-r4/1-work.prompt.txt#*",
+     "kind": "new"
+    },
+    {
+     "key": "demo/evidence/m2/run-4/agents/opencode-t6-r4/opencode-serve.log#*",
+     "kind": "new"
+    }
+   ],
+   "intent": "t_7d70b1e8: M2 milestone: full demo scenario end to end",
+   "summary": "hermes-default edited *, added * in 43 files \u2014 M2 milestone: full demo scenario end to end",
+   "diagnostics": [],
+   "tool": {
+    "name": "terminal",
+    "harness_event": "post_tool_call",
+    "call_id": "toolu_014qmsrP2WhzgVSJ7tVzpt7o"
+   },
+   "has_diff": true
+  },
+  {
+   "seq": 608,
+   "repo": "weft",
+   "status": "accepted",
+   "kind": "checkpoint",
+   "ts": "2026-10-04T14:10:54.174Z",
+   "actor": {
+    "type": "agent",
+    "id": "hermes-default",
+    "harness": "hermes"
+   },
+   "agent": "hermes-default",
+   "task": "t_7d70b1e8",
+   "change": "hermes-default/t_7d70b1e8",
+   "session": "s27",
+   "base_seq": 607,
+   "mode": "commit",
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "summary": "hermes-default pushed checkpoint 8430787 \u2014 M2 milestone: full demo scenario end to end",
+   "diagnostics": [],
+   "payload": {
+    "sha": "84307877ef156270c6d16397843cf8049876135d"
+   },
+   "tool": {
+    "name": "terminal",
+    "harness_event": "post_tool_call"
+   }
+  },
+  {
+   "seq": 638,
+   "repo": "weft",
+   "status": "accepted",
+   "kind": "land",
+   "ts": "2026-10-04T14:48:47.221Z",
+   "actor": {
+    "type": "system",
+    "id": "weft-pm-land"
+   },
+   "agent": "hermes-backend",
+   "task": "t_dc8956a4",
+   "change": "hermes-backend/t_dc8956a4",
+   "base_seq": 637,
+   "files": [
+    "README.md",
+    "docs/try-it.md",
+    "docs/proposal-aaif.md",
+    "docs/protocol/wcp-v0.md"
+   ],
+   "reads": [],
+   "writes": [
+    {
+     "key": "README.md#*",
+     "kind": "body"
+    },
+    {
+     "key": "docs/try-it.md#*",
+     "kind": "new"
+    },
+    {
+     "key": "docs/proposal-aaif.md#*",
+     "kind": "new"
+    },
+    {
+     "key": "docs/protocol/wcp-v0.md#*",
+     "kind": "body"
+    }
+   ],
+   "summary": "hermes-backend landed hermes-backend/t_dc8956a4 (4 symbols)",
+   "diagnostics": [],
+   "payload": {
+    "sha": "f23d1041cb29109817711c24753a01ad5c641267",
+    "op_id": "31593a7a-718f-50db-924d-9447d3692bce"
+   }
+  },
+  {
+   "seq": 652,
+   "repo": "weft",
+   "status": "accepted",
+   "kind": "edit",
+   "ts": "2026-10-04T15:24:33.345Z",
+   "actor": {
+    "type": "agent",
+    "id": "hermes-default",
+    "harness": "hermes"
+   },
+   "agent": "hermes-default",
+   "task": "t_d9b03cbb",
+   "change": "hermes-default/t_d9b03cbb",
+   "session": "s31",
+   "base_seq": 651,
+   "mode": "commit",
+   "files": [
+    "demo/video/rig/.probe.mjs",
+    "demo/video/rig/shots/web.json"
+   ],
+   "reads": [],
+   "writes": [
+    {
+     "key": "demo/video/rig/.probe.mjs#b",
+     "kind": "deleted"
+    },
+    {
+     "key": "demo/video/rig/.probe.mjs#base",
+     "kind": "deleted"
+    },
+    {
+     "key": "demo/video/rig/.probe.mjs#ctx",
+     "kind": "deleted"
+    },
+    {
+     "key": "demo/video/rig/.probe.mjs#info",
+     "kind": "deleted"
+    },
+    {
+     "key": "demo/video/rig/.probe.mjs#p",
+     "kind": "deleted"
+    },
+    {
+     "key": "demo/video/rig/.probe.mjs#r",
+     "kind": "deleted"
+    },
+    {
+     "key": "demo/video/rig/shots/web.json#*",
+     "kind": "body"
+    }
+   ],
+   "intent": "t_d9b03cbb: R3 video: script, record, narrate, edit (autonomous)",
+   "summary": "hermes-default edited *, removed b, base +4 more in 2 files \u2014 R3 video: script, record, narrate, edit (autonomous)",
+   "diagnostics": [],
+   "tool": {
+    "name": "terminal",
+    "harness_event": "post_tool_call",
+    "call_id": "toolu_01T7LCycLNmhwWJRiFcUgZFU"
+   },
+   "has_diff": true
+  },
+  {
+   "seq": 1,
+   "repo": "cto",
+   "status": "accepted",
+   "kind": "join",
+   "ts": "2026-10-09T14:00:08.913Z",
+   "actor": {
+    "type": "agent",
+    "id": "hermes-webmaster",
+    "harness": "hermes"
+   },
+   "agent": "hermes-webmaster",
+   "task": "adhoc-20261009_110004_b100f3",
+   "change": "hermes-webmaster/adhoc-20261009_110004_b100f3",
+   "session": "s1",
+   "base_seq": 0,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "summary": "hermes-webmaster joined (hermes, L3)",
+   "diagnostics": [],
+   "payload": {
+    "harness": "hermes",
+    "level": 3
+   }
+  },
+  {
+   "seq": 2,
+   "repo": "cto",
+   "status": "accepted",
+   "kind": "edit",
+   "ts": "2026-10-09T14:00:09.376Z",
+   "actor": {
+    "type": "agent",
+    "id": "hermes-webmaster",
+    "harness": "hermes"
+   },
+   "agent": "hermes-webmaster",
+   "task": "adhoc-20261009_110004_b100f3",
+   "change": "hermes-webmaster/adhoc-20261009_110004_b100f3",
+   "session": "s1",
+   "base_seq": 0,
+   "mode": "commit",
+   "files": [
+    "weft-probe.md"
+   ],
+   "reads": [],
+   "writes": [
+    {
+     "key": "weft-probe.md#*",
+     "kind": "new"
+    }
+   ],
+   "summary": "hermes-webmaster added * in weft-probe.md",
+   "diagnostics": [],
+   "tool": {
+    "name": "write_file",
+    "harness_event": "post_tool_call",
+    "call_id": "toolu_01MnHjshcnqGE4kUA7trpBgs"
+   },
+   "has_diff": true
+  },
+  {
+   "seq": 3,
+   "repo": "cto",
+   "status": "accepted",
+   "kind": "join",
+   "ts": "2026-10-09T14:01:42.367Z",
+   "actor": {
+    "type": "agent",
+    "id": "hermes-default",
+    "harness": "hermes"
+   },
+   "agent": "hermes-default",
+   "task": "adhoc-20261009_110132_60c755",
+   "change": "hermes-default/adhoc-20261009_110132_60c755",
+   "session": "s2",
+   "base_seq": 2,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "summary": "hermes-default joined (hermes, L3)",
+   "diagnostics": [],
+   "payload": {
+    "harness": "hermes",
+    "level": 3
+   }
+  },
+  {
+   "seq": 4,
+   "repo": "cto",
+   "status": "accepted",
+   "kind": "edit",
+   "ts": "2026-10-09T14:01:42.777Z",
+   "actor": {
+    "type": "agent",
+    "id": "hermes-default",
+    "harness": "hermes"
+   },
+   "agent": "hermes-default",
+   "task": "adhoc-20261009_110132_60c755",
+   "change": "hermes-default/adhoc-20261009_110132_60c755",
+   "session": "s2",
+   "base_seq": 0,
+   "mode": "commit",
+   "files": [
+    "weft-probe-2.md"
+   ],
+   "reads": [],
+   "writes": [
+    {
+     "key": "weft-probe-2.md#*",
+     "kind": "new"
+    }
+   ],
+   "summary": "hermes-default added * in weft-probe-2.md",
+   "diagnostics": [],
+   "tool": {
+    "name": "write_file",
+    "harness_event": "post_tool_call",
+    "call_id": "toolu_01LKGh87JnKBpgW1nrsX65hk"
+   },
+   "has_diff": true
+  },
+  {
+   "seq": 5,
+   "repo": "cto",
+   "status": "accepted",
+   "kind": "leave",
+   "ts": "2026-10-09T14:05:09.408Z",
+   "actor": {
+    "type": "system",
+    "id": "coordinator"
+   },
+   "agent": "hermes-webmaster",
+   "task": "adhoc-20261009_110004_b100f3",
+   "change": "hermes-webmaster/adhoc-20261009_110004_b100f3",
+   "session": "s1",
+   "base_seq": 4,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "intent": "session expired",
+   "summary": "hermes-webmaster left \u2014 session expired",
+   "diagnostics": [],
+   "payload": {
+    "harness": "hermes",
+    "level": 3
+   }
+  },
+  {
+   "seq": 6,
+   "repo": "cto",
+   "status": "accepted",
+   "kind": "leave",
+   "ts": "2026-10-09T14:06:42.810Z",
+   "actor": {
+    "type": "system",
+    "id": "coordinator"
+   },
+   "agent": "hermes-default",
+   "task": "adhoc-20261009_110132_60c755",
+   "change": "hermes-default/adhoc-20261009_110132_60c755",
+   "session": "s2",
+   "base_seq": 5,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "intent": "session expired",
+   "summary": "hermes-default left \u2014 session expired",
+   "diagnostics": [],
+   "payload": {
+    "harness": "hermes",
+    "level": 3
+   }
+  },
+  {
+   "seq": 7,
+   "repo": "cto",
+   "status": "accepted",
+   "kind": "release",
+   "ts": "2026-10-09T14:30:09.410Z",
+   "actor": {
+    "type": "system",
+    "id": "coordinator"
+   },
+   "agent": "hermes-webmaster",
+   "task": "adhoc-20261009_110004_b100f3",
+   "change": "hermes-webmaster/adhoc-20261009_110004_b100f3",
+   "base_seq": 6,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "summary": "hermes-webmaster released * (expired)",
+   "diagnostics": [],
+   "payload": {
+    "keys": [
+     "weft-probe.md#*"
+    ],
+    "reason": "expired"
+   }
+  },
+  {
+   "seq": 8,
+   "repo": "cto",
+   "status": "accepted",
+   "kind": "release",
+   "ts": "2026-10-09T14:31:42.811Z",
+   "actor": {
+    "type": "system",
+    "id": "coordinator"
+   },
+   "agent": "hermes-default",
+   "task": "adhoc-20261009_110132_60c755",
+   "change": "hermes-default/adhoc-20261009_110132_60c755",
+   "base_seq": 7,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "summary": "hermes-default released * (expired)",
+   "diagnostics": [],
+   "payload": {
+    "keys": [
+     "weft-probe-2.md#*"
+    ],
+    "reason": "expired"
+   }
+  }
+ ],
+ "cursor": "v0.eyJGb3JjZUNvZGUiOjAsIkpvaG5BYXJvbk5lbHNvbiI6MCwiYWZ0ZXJ3b3JkIjowLCJhZ2VudC1za2lsbHMiOjAsImFsYWJhcnJhIjowLCJhbmFseXRpY3MiOjAsImFwcGZhY3RvcnkiOjAsImF0ZWxpZXIiOjAsImF0ZWxpZXItY2xhdWRlLXBsdWdpbiI6MCwiYXRlbGllci1jb2RleC1wbHVnaW4iOjAsImF0ZWxpZXItZ2F0ZXdheSI6MCwiYmxhY2tob2xlIjowLCJibG9nZ2VyIjowLCJib2ItYXRlbGllciI6MCwiYm91bmRsZXNzIjowLCJicm9va3Nob3BraW5zZWRncm91cCI6MCwiYnVpbGQtbWNwIjowLCJjZGhhIjowLCJjdG8iOjgsImRlbW8tYjExLTIwMjYxMDA0LTE0NDAwNS1yNiI6MjYsImRlbW8tYjEyLTIwMjYxMDA0LTA5MDA1OCI6MTAsImRlbW8tYjEyLTIwMjYxMDA0LTA5MDczMSI6MTAsImRlbW8tYjEyLTIwMjYxMDA0LTA5MTI0NCI6OSwiZGVtby1iMTItMjAyNjEwMDQtMDkxNDM2Ijo3LCJkZW1vLWIxMi0yMDI2MTAwNC0wOTE2NDEiOjEzLCJkZW1vLWIxMi0yMDI2MTAwNC0wOTIzNTAiOjIwLCJkZW1vLWIxMi0yMDI2MTAwNC0wOTMzMjMiOjcsImRlbW8tYjEyLTIwMjYxMDA0LTA5MzgwNSI6NywiZGVtby1iMTItMjAyNjEwMDQtMTEwNTI4IjoyMCwiZGVtby1iMTItMjAyNjEwMDQtMTEwOTQ0IjoyOCwiZGVtby1jbGF1ZGUtMjAyNjEwMDQtMDM0MjAxIjoxMywiZGVtby1jbGF1ZGUtMjAyNjEwMDQtMDM0MzE0IjoxMCwiZGVtby1jbGF1ZGUtMjAyNjEwMDQtMDM0NTE1IjoxNCwiZGVtby1jbGF1ZGUtMjAyNjEwMDQtMDM0NjIwIjoxMCwiZGVtby1tMS0yMDI2MTAwNC0wNjI1MjQtcjEiOjYsImRlbW8tbTEtMjAyNjEwMDQtMDYzMjMzLXIxIjoxMCwiZGVtby1tMS0yMDI2MTAwNC0wNjM2MTItcjEiOjEwLCJkZW1vLW0xLTIwMjYxMDA0LTA2NDIwMS1yMSI6MTMsImRlbW8tbTEtMjAyNjEwMDQtMDY0NDQyLXIxIjoxMywiZGVtby1tMS0yMDI2MTAwNC0wNjQ3MDItcjIiOjEwLCJkZW1vLW0xLTIwMjYxMDA0LTA2NDgwNS1yMyI6MTAsImRlbW8tbTEtMjAyNjEwMDQtMTEwNTU1LXI1Ijo4LCJkZW1vLW0xLTIwMjYxMDA0LTExMTczNC1yNiI6MTMsImRlbW8tbTFzbW9rZS0yMDI2MTAwNC0wNjIxMzgiOjYsImVtaWx5a2ltZWxtYW4iOjAsImZpY2hhIjowLCJmbHVlLWFnZW50IjowLCJnYXNjaXR5Lm52aW0iOjAsImdzdGFjayI6MCwiaGVybWVzLWlvcyI6MCwiaGVybWVzLXRyYWluaW5nIjowLCJob2ZmLWRlYWxzIjowLCJpbmt5IjowLCJpb3MtYnVsayI6NTExNiwiaW9zLWRlbW8iOjUwLCJpb3Mtc2l0ZSI6MTUsImphbiI6MCwia2FuYmFuLW1jcCI6MCwia2FuYmFuLXRyYXkiOjAsImtpbi1jb25uZWN0LWRhc2hib2FyZCI6MCwibGFiYXJyYS1yZSI6MCwibWNwLWJvb2siOjAsIm1lbW9yeSI6MCwibmV3cyI6MCwib2JzaWRpYW4tcjItc3luYyI6MCwib2ZmbG9hZCI6MCwic2lsdmVyLWFkdmVudHVyZSI6MCwic2l0ZS1zdGF0cyI6MCwic21va2UtaGVybWVzLTE3OTEwODQxMjQiOjEyLCJzbW9rZS1oZXJtZXMtMTc5MTA4NDE0OCI6MTMsInNtb2tlLWxhbmQtMTc5MTA4NTAyNCI6MTAsInNtb2tlLWxhbmQtMTc5MTA4NTA2OSI6MTAsInNtb2tlLWxhbmQtMTc5MTA4NTA4MyI6MTAsInNtb2tlLW11dDhxdzBqIjoxMSwic21va2UtbXV0YTZveXkiOjExLCJzb2xhcml6ZWQiOjAsInN0b3J5Z3JvdmUiOjAsInN0b3J5Z3JvdmUtYXBwIjowLCJ0YWtlb2ZmIjowLCJ0ZXJyYWZvcm0tcHJvdmlkZXItdGVtcGxhdGUiOjAsInRpZHkiOjAsInRyZWxsby1oZXJtZXMiOjAsInR1bWJsZXBhbHMiOjAsInV5LXRlbmRlcnMiOjAsIndlZnQiOjY5MSwid2VmdC1kZW1vIjo5NTMsIndlZnQtZTJlLW11dGE0Z2ljIjoxLCJ3ZWZ0LWUyZS1tdXRhNWZoMiI6MSwid2VmdC1lMmUtbXV0YTZ4bGciOjEsIndlZnQtc2J4LW11dGNjZnYxIjoxLCJ3ZWZ0LXNieC1tdXRjZHNyYyI6MSwid2VmdC1zYngtbXV0Y3VzM2YiOjIsIndlZnQtdWktY2hlY2sxIjoyMywid2VmdC11aS1jaGVjazIiOjI2LCJ3ZWZ0LXVpLWxpdmUxIjoyOH0",
+ "has_more": false
+}

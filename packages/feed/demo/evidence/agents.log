@@ -1,0 +1,9 @@
+[live-run] claude-b planned (session 50dedf9e-b385-4092-9c73-48229ea936b2)
+[live-run] claude-a's calcTotal edit is in the log; claude-b implements now
+[live-run] claude-a: `calcTotal` in `src/pricing.ts` now takes a new `PriceOptions` argument (`{ taxRate: number }`) and returns the net sum multiplied by `(1 + opts.taxRate)`.
+`src/cart.ts` imports `calcTotal` but never calls it, so the signature change doesn't break it. I didn't compile or run anything. Weft reported
+[live-run] claude-b: I added `cartTotal` to `src/cart.ts` after `cartSummary`:
+```ts
+export function cartTotal(items: Item[]): number { return calcTotal(items, { taxRate: 0 }); }
+```
+What changed from the plan: claude-a (task T-1) changed `calcTotal` to take a required `opts: { taxRate: number }`, so Weft blocked my f
