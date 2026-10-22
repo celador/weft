@@ -1,0 +1,70 @@
+{
+  "app": "Visual Studio Code",
+  "version": "1.143.0",
+  "atSquiggle": {
+    "url": "http://localhost:8831",
+    "status": "live",
+    "tokenWhere": ".weft/human-token",
+    "repos": [
+      "shop-feed-222754"
+    ],
+    "records": 6,
+    "views": 1,
+    "canAct": true,
+    "squiggles": [
+      {
+        "file": "/tmp/wl-vscode-mvk43mvg/shop-agent-b/src/pricing.ts",
+        "message": "calcTotal: contract changed under you. You use src/pricing.ts#calcTotal, whose signature changed in #4 by claude-a after your base #1. Suggestion: Read the new src/pricing.ts#calcTotal (event #4) and update this call site, or negotiate with claude-a. Edit blocked by Weft · caused by claude-a · event #4.",
+        "line": 2
+      }
+    ],
+    "editing": [
+      {
+        "agent": "claude-b",
+        "title": "Show the cart total"
+      },
+      {
+        "agent": "claude-a",
+        "title": "Prices include tax"
+      }
+    ]
+  },
+  "end": {
+    "url": "http://localhost:8831",
+    "status": "live",
+    "tokenWhere": ".weft/human-token",
+    "repos": [
+      "shop-feed-222754"
+    ],
+    "records": 15,
+    "views": 1,
+    "canAct": true,
+    "squiggles": [],
+    "editing": [
+      {
+        "agent": "claude-b",
+        "title": "Show the cart total"
+      },
+      {
+        "agent": "claude-a",
+        "title": "Prices include tax"
+      }
+    ]
+  },
+  "squiggle": {
+    "message": "calcTotal: contract changed under you. You use src/pricing.ts#calcTotal, whose signature changed in #4 by claude-a after your base #1. Suggestion: Read the new src/pricing.ts#calcTotal (event #4) and update this call site, or negotiate with claude-a. Edit blocked by Weft · caused by claude-a · event #4.",
+    "related": "caused by claude-a · event #4: claude-a (Prices include tax) changed this",
+    "code": "stale_assumption"
+  },
+  "codeActions": [
+    "Open causing event (#4)",
+    "Show the blocked change in the Weft feed (#6)",
+    "Fix",
+    "Explain"
+  ],
+  "humans": [
+    "#12 control john resumed claude-b",
+    "#10 message john → claude-b: calcTotal now takes (items, opts: PriceOptions). Call calcTotal(items, { taxRate: 0 }) so the cart total stays net.",
+    "#7 control john paused claude-b"
+  ]
+}

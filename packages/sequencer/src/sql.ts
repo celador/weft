@@ -34,7 +34,7 @@ export function run(sql: Sql, q: string, ...args: Array<string | number | boolea
  * Schema of one repo's coordinator. Every table is owned by exactly one Durable Object
  * (one repo), so no table carries a repo column.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const DDL: string[] = [
   `CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)`,
@@ -105,6 +105,11 @@ export const DDL: string[] = [
      requested_by TEXT NOT NULL, enqueued_seq INTEGER, landed_seq INTEGER, note TEXT,
      created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS submit_queue_change ON submit_queue(change_id, status)`,
+  // v4: told(c, k) (spec §6.1): the highest seq of another change's in-flight write on k
+  // that change c has been told about (a verdict diagnostic or the §6.3 broadcast).
+  `CREATE TABLE IF NOT EXISTS change_told (
+     change_id TEXT NOT NULL, key TEXT NOT NULL, seq INTEGER NOT NULL,
+     PRIMARY KEY (change_id, key))`,
 ];
 
 /** Columns added after a table first shipped (CREATE TABLE IF NOT EXISTS never adds them). */
@@ -115,6 +120,12 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; ddl: string }> = [
 
 export function migrate(sql: Sql): void {
   for (const q of DDL) run(sql, q);
+  const prior = one<{ v: string }>(sql, `SELECT v FROM meta WHERE k = 'schema_version'`);
+  // v4: a database from before told(c, k) existed has no record of what its changes were
+  // told, so in-flight writes already in its log are not treated as unseen (spec §6.1 U):
+  // U only considers records after this floor. Fresh databases have no floor.
+  if (prior && Number(prior.v) < 4)
+    run(sql, `INSERT OR IGNORE INTO meta (k, v) SELECT 'told_floor', CAST(COALESCE(MAX(seq), 0) AS TEXT) FROM events`);
   for (const c of ADDED_COLUMNS) {
     const cols = all<{ name: string }>(sql, `PRAGMA table_info(${c.table})`).map((r) => r.name);
     if (!cols.includes(c.column)) run(sql, c.ddl);

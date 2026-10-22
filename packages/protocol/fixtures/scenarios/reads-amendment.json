@@ -1,0 +1,262 @@
+{
+  "name": "reads-amendment",
+  "description": "R2a: an intent that carries reads is a reads amendment (an adapter's asynchronous language-server enrichment after its edit). B's edit read the re-export shop/__init__.py#calc_total (what tree-sitter saw); A changes the real declaration shop/pricing.py#calc_total, which B is not told about. B's amendment adds the precise reads: the signature change since B's base comes back as a contract_changed warning on the verdict (never a reject, never an open error), and A's later signature change of an amended key is pushed to B like any read.",
+  "covers": [
+    "6.2 R2a",
+    "6.3",
+    "4.2"
+  ],
+  "repo": "demo",
+  "start": "2026-10-22T14:00:00.000Z",
+  "steps": [
+    {
+      "op": "hello",
+      "as": "A",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "claude-a",
+          "harness": "claude-code"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-1"
+        },
+        "change": "I-a"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s1",
+        "head_seq": 1,
+        "delivered_through": 1
+      }
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "claude-b",
+          "harness": "claude-code"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s2",
+        "head_seq": 2,
+        "delivered_through": 2
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 2,
+          "writes": [
+            {
+              "key": "shop/cart.py#Cart.total",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "shop/__init__.py#calc_total"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 3,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 1,
+          "writes": [
+            {
+              "key": "shop/pricing.py#calc_total",
+              "kind": "signature"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 4,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "intent",
+          "base_seq": 3,
+          "reads": [
+            "shop/pricing.py#calc_total",
+            "shop/pricing.py#Pricer.quote"
+          ],
+          "intent": "lsp reads amendment for #3 (pyright)",
+          "tool": {
+            "name": "lsp:pyright",
+            "harness_event": "PostToolUse"
+          }
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 5,
+        "inbox": [],
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "contract_changed",
+            "symbol": "shop/pricing.py#calc_total",
+            "caused_by_seq": 4,
+            "caused_by_agent": "claude-a",
+            "caused_by_task": "T-1"
+          }
+        ]
+      }
+    },
+    {
+      "op": "event",
+      "seq": 5,
+      "expect": {
+        "status": "accepted",
+        "kind": "intent",
+        "reads": [
+          "shop/pricing.py#calc_total",
+          "shop/pricing.py#Pricer.quote"
+        ]
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "stop",
+      "expect": {
+        "allow": true
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 4,
+          "writes": [
+            {
+              "key": "shop/pricing.py#Pricer.quote",
+              "kind": "signature"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 6,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "drain",
+      "as": "B",
+      "ack": "last",
+      "expect": {
+        "items": [
+          {
+            "id": 1,
+            "seq": 6,
+            "kind": "diagnostic",
+            "diagnostic": {
+              "severity": "warning",
+              "code": "contract_changed",
+              "symbol": "shop/pricing.py#Pricer.quote",
+              "caused_by_seq": 6,
+              "caused_by_agent": "claude-a"
+            }
+          }
+        ],
+        "delivered_through": 6,
+        "open_errors": []
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "intent",
+          "base_seq": 6,
+          "reads": [
+            "shop/pricing.py#calc_total"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 7,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "intent",
+          "base_seq": 6,
+          "intent": "plain intent, no reads"
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 8,
+        "diagnostics": []
+      }
+    }
+  ]
+}

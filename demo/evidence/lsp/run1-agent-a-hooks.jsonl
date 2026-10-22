@@ -1,0 +1,6 @@
+{"ts":"2026-10-22T16:53:26.033Z","event":"SessionStart","session":"sa","total_ms":124,"handle_ms":68,"calls":[{"op":"hello","ms":39},{"op":"drain","ms":7}],"injected_chars":1032,"weft_chars":1032}
+{"ts":"2026-10-22T16:53:27.422Z","event":"PreToolUse","tool":"Edit","session":"sa","total_ms":387,"handle_ms":352,"calls":[{"op":"submit","ms":111}],"injected_chars":0,"weft_chars":0}
+{"ts":"2026-10-22T16:53:27.829Z","event":"PostToolUse","tool":"Edit","session":"sa","total_ms":359,"handle_ms":311,"calls":[{"op":"submit","ms":49}],"lsp_ms":3,"lsp_jobs":["enrich"],"injected_chars":0,"weft_chars":0}
+{"ts":"2026-10-22T16:53:30.550Z","event":"PreToolUse","tool":"Edit","session":"sa","total_ms":380,"handle_ms":351,"calls":[{"op":"submit","ms":49}],"injected_chars":0,"weft_chars":0}
+{"ts":"2026-10-22T16:53:31.001Z","event":"PostToolUse","tool":"Edit","session":"sa","total_ms":414,"handle_ms":380,"calls":[{"op":"submit","ms":98}],"lsp_ms":1,"lsp_jobs":["enrich"],"injected_chars":212,"weft_chars":212}
+{"ts":"2026-10-22T16:53:33.222Z","event":"SessionEnd","session":"sa","total_ms":98,"handle_ms":62,"calls":[{"op":"gate","ms":45},{"op":"bye","ms":10}],"lsp_ms":1,"lsp_jobs":["end"],"injected_chars":0,"weft_chars":0}

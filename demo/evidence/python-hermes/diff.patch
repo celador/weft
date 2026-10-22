@@ -1,0 +1,29 @@
+diff --git a/shop/cart.py b/shop/cart.py
+index 8819f46..df89a89 100644
+--- a/shop/cart.py
++++ b/shop/cart.py
+@@ -8,6 +8,6 @@ class Cart:
+     def add(self, name, price):
+         self.items.append((name, price))
+ 
+-    def total(self):
+-        subtotal = calc_total(self.items)
++    def total(self, discount=0):
++        subtotal = calc_total(self.items, discount=discount)
+         return subtotal + tax(subtotal)
+diff --git a/shop/pricing.py b/shop/pricing.py
+index 8b99178..8c7977b 100644
+--- a/shop/pricing.py
++++ b/shop/pricing.py
+@@ -1,5 +1,9 @@
+-def calc_total(items):
+-    return sum(price for _, price in items)
++def calc_total(items, discount=0):
++    return sum(price for _, price in items) - discount
++
++
++def apply_coupon(amount, code):
++    return amount * 0.9 if code == 'SAVE10' else amount
+ 
+ 
+ def tax(amount):

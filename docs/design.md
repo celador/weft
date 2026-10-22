@@ -388,3 +388,28 @@ WCP v0.1 is specified in `docs/protocol/wcp-v0.md` (normative; implemented by `p
   Approve button sends (`POST /actions {action: approve}` with John's `observe+human` token),
   which forwards to the waiting BestOfN.
 
+## Update 2026-10-22 (t_7268cb08, late joiners and unlanded peer changes)
+
+- Finding (real Python run, `docs/research/python-real-run-2026-10-22.md` run 1): agent-a's
+  session changed `calc_total`'s signature (#4) and ended; agent-b's session then started in
+  a worktree without that change, got base #7 (the log head) at `hello`, and its
+  `calc_total(items)` call was accepted clean. R2 only looked at records after the base, so
+  being warned depended on when a session started, not on what its checkout contained.
+- Options weighed: (a) the adapter computes the base from its checkout (last event whose
+  change is in HEAD). Rejected: base is one number on a total order, but "in my checkout" is
+  a set (another change's unlanded edits are never in it, landed ones may or may not be);
+  every adapter would need Change-Id/landed-SHA bookkeeping, and it changes §5.2 for every
+  harness. (c) push unmerged peer changes at join. Rejected: needs file reads to target, and
+  an inbox item the agent may never act on would not deny the edit. (b) coordinator-side
+  state. Chosen: the coordinator records, per change and key, the highest in-flight write it
+  has told that change about (`told(c, k)`: a verdict diagnostic on k, or the §6.3 broadcast
+  while live). R2 also reports in-flight, unlanded writes at or below the base that were
+  never told (`U`, WCP §6.1). One deny or warning per write, then the base rule applies as
+  before (`L2.allow-after-adapting` behaviour unchanged). Landed changes are trunk: an agent
+  that checked out after the land is not warned. No wire change; adapters unchanged.
+- SqlCoordinator: table `change_told`, schema v4. A database migrated from v3 sets
+  `meta.told_floor` to its head so live changes are not re-warned about edits they already
+  saw before the upgrade.
+- Proof: protocol scenario `join-after-unmerged-change` (reference + SqlCoordinator) and
+  hook fixture `L2.deny-after-late-join` (core set) fail on main and pass now.
+

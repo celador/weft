@@ -1,0 +1,46 @@
+{
+  "id": "PHP.deny-stale-signature",
+  "level": 2,
+  "required": true,
+  "spec": "§4.1, §5.2",
+  "title": "PHP: a call built on a signature another agent just changed is denied before it runs",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/Shop/Cart.php",
+        "old_text": "        return count($items) . ' items';",
+        "new_text": "        return count($items) . ' items, total ' . Pricing::calcTotal($items);"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "stale_assumption",
+          "calcTotal"
+        ]
+      },
+      "expect_applied": false
+    },
+    {
+      "expect_file": {
+        "path": "src/Shop/Cart.php",
+        "unchanged": true
+      }
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "status": "rejected",
+        "mode": "check",
+        "reads_include": "src/Pricing/Pricing.php#Pricing.calcTotal",
+        "min": 1
+      }
+    }
+  ]
+}

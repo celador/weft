@@ -1,0 +1,13 @@
+{
+  "scenario": "stop-gate",
+  "agent_a": "claude-a",
+  "agent_b": "agy-b",
+  "stamp": "20261022-222235",
+  "url": "http://localhost:8799",
+  "repo": "demo-agy-stop-gate-20261022-222235",
+  "agy": "1.4.5",
+  "claude": "2.1.308 (Claude Code)",
+  "b_conversation": "25adbb9d-04d5-42ce-8eeb-6fbd0f460e33",
+  "a_session": "0f4202b4-7170-4f68-a06a-ef2d396ec121",
+  "a2_session": "71672e45-0385-4a21-877b-4d34ada106be"
+}

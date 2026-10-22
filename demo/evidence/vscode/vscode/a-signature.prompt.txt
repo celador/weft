@@ -1,0 +1,3 @@
+claude  -p …
+
+Task T-1: prices must include tax. In src/pricing.ts add `export type PriceOptions = { taxRate: number }` and change calcTotal to `calcTotal(items: Item[], opts: PriceOptions): number` returning the net sum multiplied by (1 + opts.taxRate). Keep it minimal, then reply with a one-line summary.

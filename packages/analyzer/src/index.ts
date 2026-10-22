@@ -10,7 +10,21 @@ export type Analysis = { reads: string[]; writes: Write[] };
  */
 export type ReadFile = (path: string) => string | undefined;
 
-type DeclarationInfo = { key: string; signature: string; body: string };
+/**
+ * `typeRefs`: names the declaration's contract (its signature part, not its body) refers to in
+ * type positions: `opts: PriceOptions`, `extends Base`, `typeof limit`. Qualified names
+ * (`ns.T`) contribute their leftmost identifier.
+ */
+type DeclarationInfo = { key: string; signature: string; body: string; typeRefs: string[]; local: boolean };
+
+/** Declared inside a function body (`calcTotal.net`): no other file can use it. */
+function isLocal(node: ts.Node): boolean {
+  for (let current = node.parent; current; current = current.parent) {
+    const parent = current.parent as ts.FunctionLikeDeclarationBase | undefined;
+    if (parent && parent.body === current) return true;
+  }
+  return false;
+}
 type DiffFile = { path: string; hunks: Hunk[]; deleted: boolean };
 type Hunk = { oldStart: number; newStart: number; lines: string[] };
 
@@ -58,13 +72,137 @@ function declarations(source: ts.SourceFile, path: string): Map<string, Declarat
           const close = whole.lastIndexOf("}");
           if (open >= 0 && close >= open) body = whole.slice(open, close + 1);
         }
-        result.set(key, { key, signature: body ? whole.replace(body, "") : whole, body });
+        result.set(key, { key, signature: body ? whole.replace(body, "") : whole, body, typeRefs: contractTypeRefs(node), local: isLocal(node) });
       }
     }
     ts.forEachChild(node, visit);
   };
   visit(source);
   return result;
+}
+
+function leftmost(name: ts.EntityName | ts.Expression): string | undefined {
+  let current: ts.Node = name;
+  for (;;) {
+    if (ts.isIdentifier(current)) return current.text;
+    if (ts.isQualifiedName(current)) current = current.left;
+    else if (ts.isPropertyAccessExpression(current)) current = current.expression;
+    else return undefined;
+  }
+}
+
+/**
+ * Type-position names in the contract of `node`: everything except a function-like body and
+ * the members of a class or enum (those are their own declarations).
+ */
+function contractTypeRefs(node: ts.Node): string[] {
+  const found = new Set<string>();
+  const functionLike = node as ts.FunctionLikeDeclarationBase;
+  const skip = new Set<ts.Node>();
+  if (functionLike.body) skip.add(functionLike.body);
+  if (ts.isClassDeclaration(node)) for (const member of node.members) skip.add(member);
+  if (ts.isEnumDeclaration(node)) for (const member of node.members) skip.add(member);
+  const visit = (child: ts.Node): void => {
+    if (skip.has(child)) return;
+    let name: string | undefined;
+    if (ts.isTypeReferenceNode(child)) name = leftmost(child.typeName);
+    else if (ts.isExpressionWithTypeArguments(child)) name = leftmost(child.expression);
+    else if (ts.isTypeQueryNode(child)) name = leftmost(child.exprName);
+    if (name) found.add(name);
+    ts.forEachChild(child, visit);
+  };
+  ts.forEachChild(node, visit);
+  return [...found].sort();
+}
+
+/**
+ * A declaration's contract includes the types its signature names. When one of those changes
+ * contract (signature change or deletion), so does the declaration: `calcTotal(opts:
+ * PriceOptions)` changes contract when a PriceOptions field is renamed, though its own text
+ * does not, and every caller of calcTotal must adapt. Propagated to a fixed point within the
+ * file; `kinds` maps keys to their write kind and is upgraded in place.
+ */
+function propagateContracts(declarationsAfter: Map<string, DeclarationInfo>, path: string, kinds: Map<string, WriteKind>): void {
+  const contract = (key: string) => kinds.get(key) === "signature" || kinds.get(key) === "deleted";
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [key, declaration] of declarationsAfter) {
+      if (declaration.local || contract(key) || kinds.get(key) === "new") continue;
+      if (declaration.typeRefs.some((name) => `${path}#${name}` !== key && contract(`${path}#${name}`))) {
+        kinds.set(key, "signature");
+        changed = true;
+      }
+    }
+  }
+}
+
+const TS_FILE = /\.(?:[cm]?ts|tsx)$/;
+const RESOLVE_SUFFIXES = ["", ".ts", ".tsx", ".mts", ".cts", "/index.ts", "/index.tsx"];
+
+function normalizePosix(path: string): string {
+  const out: string[] = [];
+  for (const part of path.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") out.pop();
+    else out.push(part);
+  }
+  return out.join("/");
+}
+
+/**
+ * Cross-file contract reads (spec §4.1). `keys` are reads of declarations in other TypeScript
+ * files of the checkout (`src/pricing.ts#calcTotal`, carrying `prefix`). For each, the
+ * declaration's contract types (`PriceOptions` in `calcTotal(opts: PriceOptions)`) become reads
+ * too, resolved to the file that declares them: the same file, or the file it imports them
+ * from by a relative import. A caller of calcTotal then sees a contract change to PriceOptions
+ * as a stale assumption, wherever PriceOptions lives. One hop: types named by those types are
+ * covered by the writer side (`analyze` propagates contract changes within a file).
+ * `readFile` takes checkout-relative paths and returns undefined for missing files.
+ */
+export function contractReads(keys: string[], readFile: (rel: string) => string | undefined, prefix = ""): string[] {
+  const found = new Set<string>();
+  const parsed = new Map<string, ts.SourceFile | undefined>();
+  const load = (rel: string) => {
+    if (!parsed.has(rel)) {
+      const text = TS_FILE.test(rel) ? readFile(rel) : undefined;
+      parsed.set(rel, text === undefined ? undefined : ts.createSourceFile("/entry.tsx", text, ts.ScriptTarget.ES2022, true, rel.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS));
+    }
+    return parsed.get(rel);
+  };
+  const resolve = (spec: string, fromRel: string): string | undefined => {
+    if (!spec.startsWith(".")) return undefined;
+    const dir = fromRel.includes("/") ? fromRel.slice(0, fromRel.lastIndexOf("/")) : "";
+    const joined = normalizePosix(`${dir}/${spec}`);
+    const stem = joined.replace(/\.(?:[cm]?js|jsx)$/, "");
+    return [joined, ...RESOLVE_SUFFIXES.map((s) => stem + s)].find((c) => TS_FILE.test(c) && readFile(c) !== undefined);
+  };
+  for (const key of keys) {
+    if (!key.startsWith(prefix)) continue;
+    const hash = key.indexOf("#");
+    if (hash < 0) continue;
+    const rel = key.slice(prefix.length, hash);
+    const name = key.slice(hash + 1);
+    const source = load(rel);
+    if (!source || name === "*" || name === "default") continue;
+    const local = declarations(source, "");
+    const imported = new Map<string, { spec: string; name: string }>();
+    for (const statement of source.statements) {
+      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+      const bindings = statement.importClause?.namedBindings;
+      if (bindings && ts.isNamedImports(bindings))
+        for (const el of bindings.elements) imported.set(el.name.text, { spec: statement.moduleSpecifier.text, name: (el.propertyName ?? el.name).text });
+    }
+    for (const ref of local.get(`#${name}`)?.typeRefs ?? []) {
+      if (local.has(`#${ref}`)) found.add(`${prefix}${rel}#${ref}`);
+      else {
+        const via = imported.get(ref);
+        const target = via && resolve(via.spec, rel);
+        if (via && target) found.add(`${prefix}${target}#${via.name}`);
+      }
+    }
+  }
+  for (const key of keys) found.delete(key);
+  return [...found].sort();
 }
 
 function buildProgram(text: string): { source: ts.SourceFile; checker: ts.TypeChecker } {
@@ -116,14 +254,16 @@ export function analyze(before: string, after: string, path: string): Analysis {
   const afterBuild = buildProgram(after);
   const oldDeclarations = declarations(beforeSource, path);
   const newDeclarations = declarations(afterBuild.source, path);
-  const writes: Write[] = [];
+  const kinds = new Map<string, WriteKind>();
   for (const [key, afterDeclaration] of newDeclarations) {
     const beforeDeclaration = oldDeclarations.get(key);
-    if (!beforeDeclaration) writes.push({ key, kind: "new" });
-    else if (beforeDeclaration.signature !== afterDeclaration.signature) writes.push({ key, kind: "signature" });
-    else if (beforeDeclaration.body !== afterDeclaration.body) writes.push({ key, kind: "body" });
+    if (!beforeDeclaration) kinds.set(key, "new");
+    else if (beforeDeclaration.signature !== afterDeclaration.signature) kinds.set(key, "signature");
+    else if (beforeDeclaration.body !== afterDeclaration.body) kinds.set(key, "body");
   }
-  for (const key of oldDeclarations.keys()) if (!newDeclarations.has(key)) writes.push({ key, kind: "deleted" });
+  for (const key of oldDeclarations.keys()) if (!newDeclarations.has(key)) kinds.set(key, "deleted");
+  propagateContracts(newDeclarations, path, kinds);
+  const writes: Write[] = [...kinds].map(([key, kind]) => ({ key, kind }));
   return { reads: reads(afterBuild.source, afterBuild.checker, path), writes: writes.sort((a, b) => a.key.localeCompare(b.key)) };
 }
 
@@ -201,3 +341,9 @@ export function analyzeDiff(diff: string, readFile: ReadFile): Analysis {
 export type { AnalyzeOptions, BackendId, Definition, Exists, ImportBinding, Reference, SourceChange, SyntaxNode, TreeSitterLanguage } from "./language.js";
 export { analyzeSource, languageFor, treeSitterLanguageFor, treeSitterLanguages, type LanguageInfo } from "./languages/index.js";
 export { analyzeTreeSitter, normalize } from "./treesitter.js";
+
+// ---- `lsp` backend: asynchronous language-server enrichment (src/lsp/, docs/languages.md) ----
+export { LspEnricher, attribute, changedSpan, declarationAt, offsetAt, positionAt, splitKey, type Breakage, type EnrichResult, type LspDiagnostic, type LspOptions, type Position, type Range } from "./lsp/enrich.js";
+export { detectServer, lspServers, lspSpecFor, which, type DetectedServer, type LspServerSpec } from "./lsp/servers.js";
+export { JsonRpc, RpcError, spawnServer } from "./lsp/jsonrpc.js";
+export { outlineTreeSitter, type Identifier, type Outline } from "./treesitter.js";

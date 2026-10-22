@@ -235,6 +235,10 @@ export type SessionState = {
   lastContact: number;
   /** Claim limits the coordinator announced in its last welcome (spec §7.5), for `weft claim`. */
   claimLimits?: { claim_ttl_ms: number; claims?: { lease_ms: number; firm_max_ms: number } };
+  /** Lines from the asynchronous language-server enrichment (src/lsp.ts) for the next hook to inject. */
+  lspNotes?: string[];
+  /** Inbox seqs already sent to the enrichment daemon for a breakage check (dedupe redeliveries). */
+  lspSeen?: number[];
 };
 
 export function stateDir(root: string): string {

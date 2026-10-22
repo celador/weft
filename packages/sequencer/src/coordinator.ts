@@ -23,6 +23,7 @@ import {
   renderContext,
   summarize,
   validate,
+  UNSEEN_NOTE,
   WCP_VERSION,
   WcpProtocolError,
   type ActionResult,
@@ -218,6 +219,8 @@ const SYSTEM_KINDS = new Set<EventKind>(["land", "revert", "release", "checkpoin
 const PAUSABLE = new Set<EventKind>(["edit", "claim", "checkpoint"]);
 const NEGOTIATION_REPLIES = new Set<EventKind>(["negotiate.accept", "negotiate.reject", "negotiate.counter"]);
 const STRONG: WriteKind[] = ["deleted", "signature"];
+/** Verdict diagnostics that tell a change about another change's write (spec §6.1 told). */
+const TELLS = new Set(["stale_assumption", "stale_read"]);
 
 const uniq = <T>(xs: Iterable<T>) => [...new Set(xs)];
 const opt = <K extends string, V>(k: K, v: V | null | undefined) => (v === null || v === undefined ? {} : ({ [k]: v } as { [P in K]: V }));
@@ -625,6 +628,7 @@ export class SqlCoordinator {
       out = this.verdict(s, "accept", "check", null, diagnostics);
     } else {
       const rec = this.append({ kind: e.kind, actor, session: s, draft: e, diagnostics, status: reject ? "rejected" : "accepted", mode: msg.mode });
+      for (const d of diagnostics) if (TELLS.has(d.code) && d.symbol) this.tell(s.change, d.symbol, d.caused_by_seq);
       if (reject) {
         for (const d of diagnostics) if (d.severity === "error" && d.code !== "agent_paused") this.openSet(s.change, d, msg.mode, rec.seq);
         if (this.conflicts === "continue") for (const d of diagnostics) if (ownedElsewhere(d, s.agent)) this.notifyOwner(d, s.agent, e.kind);
@@ -801,6 +805,55 @@ export class SqlCoordinator {
     );
   }
 
+  /** told(c, k) over c's merged group (spec §6.1), floored at a pre-v4 database's head. */
+  private toldOf(change: string, key: SymbolKey): Seq {
+    const t = one<{ t: number | null }>(
+      this.sql,
+      `SELECT MAX(seq) AS t FROM change_told WHERE key = ? AND change_id IN (SELECT id FROM changes WHERE COALESCE(merged_into, id) = ?)`,
+      key,
+      this.group(change),
+    )?.t ?? 0;
+    const floor = Number(one<{ v: string }>(this.sql, `SELECT v FROM meta WHERE k = 'told_floor'`)?.v ?? 0);
+    return Math.max(t, floor);
+  }
+
+  private tell(change: string | undefined | null, key: SymbolKey, seq: Seq | undefined): void {
+    if (!change || seq === undefined) return;
+    run(
+      this.sql,
+      `INSERT INTO change_told (change_id, key, seq) VALUES (?, ?, ?) ON CONFLICT (change_id, key) DO UPDATE SET seq = MAX(seq, excluded.seq)`,
+      change,
+      key,
+      seq,
+    );
+  }
+
+  /**
+   * Latest record in U (spec §6.1) for one key: an accepted in-flight `edit` at or below
+   * `base` by another unlanded change (not the submitter's group, not an alternative)
+   * writing `key`, that the submitter's change was never told about. A checkout never
+   * contains another change's unlanded edits, so a base past them (a session that joined
+   * later) must not hide them. Mirrors ReferenceCoordinator.unseen.
+   */
+  private latestU(key: SymbolKey, base: Seq, change: string, where: string): { r: EventRecord; w: Write } | undefined {
+    const hit = one<{ seq: number; wkind: WriteKind }>(
+      this.sql,
+      `SELECT w.seq, w.wkind FROM event_writes w JOIN changes c ON c.id = w.change_id
+        WHERE w.key = ? AND w.seq <= ? AND w.seq > ? AND w.committed = 0 AND c.landed = 0
+          AND COALESCE(c.merged_into, c.id) != ?
+          AND NOT (c.id != ? AND c.task IS NOT NULL AND c.task IS ?) AND ${where}
+        ORDER BY w.seq DESC LIMIT 1`,
+      key,
+      base,
+      this.toldOf(change, key),
+      this.group(change),
+      change,
+      this.getChange(change)?.task ?? null,
+    );
+    if (!hit) return undefined;
+    return { r: this.record(hit.seq)!, w: { key, kind: hit.wkind } };
+  }
+
   /** Latest record in W (spec §6.1) writing `key`, restricted by a predicate on the write. */
   private latestW(key: SymbolKey, base: Seq, change: string | undefined, where: string): { r: EventRecord; w: Write } | undefined {
     const hit = one<{ seq: number; wkind: WriteKind }>(
@@ -836,13 +889,38 @@ export class SqlCoordinator {
       });
       return out;
     }
-    if (e.kind !== "edit" && e.kind !== "claim") return out;
+    // An `intent` that carries reads is a reads amendment (§6.2 R2a): checked like R2, never rejected.
+    const amendment = e.kind === "intent" && (e.reads?.length ?? 0) > 0;
+    if (e.kind !== "edit" && e.kind !== "claim" && !amendment) return out;
     const writes = e.writes ?? [];
     const cause = (r: EventRecord) => ({
       caused_by_seq: r.seq,
       caused_by_agent: r.agent ?? r.actor.id,
       ...(r.task ? { caused_by_task: r.task } : {}),
     });
+
+    // R2a reads amendment (intent with reads): R2 with every error downgraded to a warning.
+    if (amendment) {
+      for (const key of uniq(e.reads ?? [])) {
+        const strong = this.latestW(key, e.base_seq, s.change, `wkind IN ('deleted', 'signature')`);
+        const body = strong ? undefined : this.latestW(key, e.base_seq, s.change, `wkind = 'body'`);
+        const hit = strong ?? body;
+        if (!hit) continue;
+        const who = hit.r.agent ?? hit.r.actor.id;
+        out.push({
+          severity: "warning",
+          code: strong ? "contract_changed" : "stale_read",
+          file: fileOf(key),
+          symbol: key,
+          message: strong
+            ? `${who} ${strong.w.kind === "deleted" ? "removed" : "changed the signature of"} ${key} (#${strong.r.seq}) after your base #${e.base_seq}, and your change uses it.`
+            : `${key} body changed in #${hit.r.seq} by ${who} after your base #${e.base_seq}; its contract is unchanged.`,
+          ...(strong ? { suggestion: `Re-read ${key} (event #${strong.r.seq}) and adapt your call sites, or negotiate with ${who}.` } : {}),
+          ...cause(hit.r),
+        });
+      }
+      return out;
+    }
 
     // R1 stale overwrite (edit only): a committed (landed/reverted) write since base.
     const r1 = new Set<SymbolKey>();
@@ -864,16 +942,18 @@ export class SqlCoordinator {
         });
       }
 
-      // R2 stale assumption / stale read.
+      // R2 stale assumption / stale read, over W and U (unseen in-flight writes, §6.1).
       for (const key of uniq(e.reads ?? [])) {
-        const strong = this.latestW(key, e.base_seq, s.change, `wkind IN ('deleted', 'signature')`);
+        const when = (inW: boolean) => (inW ? `after your base #${e.base_seq}` : UNSEEN_NOTE);
+        const strongW = this.latestW(key, e.base_seq, s.change, `wkind IN ('deleted', 'signature')`);
+        const strong = strongW ?? this.latestU(key, e.base_seq, s.change, `w.wkind IN ('deleted', 'signature')`);
         if (strong) {
           out.push({
             severity: "error",
             code: "stale_assumption",
             file: fileOf(key),
             symbol: key,
-            message: `You use ${key}, whose ${strong.w.kind === "deleted" ? "declaration was removed" : "signature changed"} in #${strong.r.seq} by ${strong.r.agent ?? strong.r.actor.id} after your base #${e.base_seq}.`,
+            message: `You use ${key}, whose ${strong.w.kind === "deleted" ? "declaration was removed" : "signature changed"} in #${strong.r.seq} by ${strong.r.agent ?? strong.r.actor.id} ${when(!!strongW)}.`,
             suggestion: this.conflicts === "continue"
               ? `Keep editing your other tasks, but the commit gate stays closed while this error is open: report it instead of working around it. Do not adapt this call site to ${strong.r.agent ?? strong.r.actor.id}'s new ${key} (event #${strong.r.seq}) or adopt their partial work: ${strong.r.agent ?? strong.r.actor.id} owns the conflict.`
               : `Read the new ${key} (event #${strong.r.seq}) and update this call site, or negotiate with ${strong.r.agent ?? strong.r.actor.id}.`,
@@ -881,14 +961,15 @@ export class SqlCoordinator {
           });
           continue;
         }
-        const body = this.latestW(key, e.base_seq, s.change, `wkind = 'body'`);
+        const bodyW = this.latestW(key, e.base_seq, s.change, `wkind = 'body'`);
+        const body = bodyW ?? this.latestU(key, e.base_seq, s.change, `w.wkind = 'body'`);
         if (body)
           out.push({
             severity: "warning",
             code: "stale_read",
             file: fileOf(key),
             symbol: key,
-            message: `${key} body changed in #${body.r.seq} by ${body.r.agent ?? body.r.actor.id} after your base #${e.base_seq}; its contract is unchanged.`,
+            message: `${key} body changed in #${body.r.seq} by ${body.r.agent ?? body.r.actor.id} ${when(!!bodyW)}; its contract is unchanged.`,
             ...cause(body.r),
           });
       }
@@ -1289,6 +1370,7 @@ export class SqlCoordinator {
         if (rec.kind === "edit" && this.alternatives(c.id, rec.change)) continue;
         const targets = this.sessionsOf({ change: c.id });
         if (!targets.length) continue;
+        if (rec.kind === "edit") for (const w of rec.writes) if (this.touchesChange(c, w.key)) this.tell(c.id, w.key, rec.seq);
         if (rec.kind !== "edit") {
           const hit = rec.writes.filter((w) => this.touchesChange(c, w.key));
           if (hit.length) {
@@ -1758,7 +1840,7 @@ export class SqlCoordinator {
 
   /** Complete dump of coordinator state (for replay-determinism checks). */
   dump(): Record<string, unknown[]> {
-    const tables = ["events", "event_writes", "sessions", "changes", "change_reads", "change_writes", "claims", "inbox", "change_errors", "ops", "submit_queue"];
+    const tables = ["events", "event_writes", "sessions", "changes", "change_reads", "change_writes", "claims", "inbox", "change_errors", "change_told", "ops", "submit_queue"];
     const out: Record<string, unknown[]> = {};
     for (const t of tables) out[t] = all(this.sql, `SELECT * FROM ${t} ORDER BY rowid`);
     out.meta = all(this.sql, `SELECT * FROM meta WHERE k != 'schema_version' ORDER BY k`);

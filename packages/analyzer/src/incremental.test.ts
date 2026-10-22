@@ -8,6 +8,8 @@ const SAMPLES: Record<string, string> = {
   python: `import os\n\n\nclass Cart:\n    """Señor’s cart 🛒."""\n\n    def total(self, items):\n        return sum(i.price for i in items)\n\n\ndef calc_total(items):\n    return Cart().total(items)\n`,
   java: `package a;\n\n/** Señor’s cart 🛒. */\npublic class Cart {\n    static final String NAME = "carrito ñ";\n\n    double total(java.util.List<Item> items) {\n        return items.stream().mapToDouble(i -> i.price).sum();\n    }\n}\n`,
   kotlin: `package a\n\n// Señor’s cart 🛒.\nclass Cart(val items: List<Item>) {\n    val name = "carrito ñ"\n\n    fun total(): Double = items.sumOf { it.price * it.qty }\n}\n\nfun calcTotal(items: List<Item>) = Cart(items).total()\n`,
+  swift: `import Foundation\n\n/// Señor’s cart 🛒.\nstruct Cart {\n    let name = "carrito ñ"\n    var items: [Item]\n\n    func total() -> Double {\n        items.reduce(0) { $0 + $1.price * Double($1.qty) }\n    }\n}\n\nextension Cart {\n    func tax(rate: Double = 0.2) -> Double { total() * rate }\n}\n\nfunc calcTotal(items: [Item]) -> Double { Cart(items: items).total() }\n`,
+  csharp: `using System.Linq;\n\nnamespace Shop;\n\n/// <summary>Señor’s cart 🛒.</summary>\npublic class Cart\n{\n    public const string Name = "carrito ñ";\n    public List<Item> Items { get; } = new();\n\n    public decimal Total() => Items.Sum(i => i.Price * i.Qty);\n\n    public static decimal CalcTotal(List<Item> items) => new Cart().Total();\n}\n`,
 };
 
 /** Deterministic edits: insert, delete and replace at spread-out positions, including next to non-ASCII text. */

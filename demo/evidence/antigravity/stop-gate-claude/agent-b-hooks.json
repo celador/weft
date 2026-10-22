@@ -1,0 +1,49 @@
+{
+  "weft": {
+    "PreToolUse": [
+      {
+        "matcher": "edit_file|write_file|write_to_file|replace_file_content|multi_replace_file_content|run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-antigravity/packages/adapters/antigravity/dist/weft-antigravity.mjs hook PreToolUse # weft-antigravity",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-antigravity/packages/adapters/antigravity/dist/weft-antigravity.mjs hook PostToolUse # weft-antigravity",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-antigravity/packages/adapters/antigravity/dist/weft-antigravity.mjs hook SessionStart # weft-antigravity",
+        "timeout": 30
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-antigravity/packages/adapters/antigravity/dist/weft-antigravity.mjs hook PreInvocation # weft-antigravity",
+        "timeout": 30
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-antigravity/packages/adapters/antigravity/dist/weft-antigravity.mjs hook Stop # weft-antigravity",
+        "timeout": 30
+      }
+    ]
+  }
+}

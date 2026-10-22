@@ -1,0 +1,467 @@
+{
+  "url": "http://localhost:8799",
+  "repo": "demo-agy-reroute-20261022-224419",
+  "events": [
+    {
+      "seq": 1,
+      "repo": "demo-agy-reroute-20261022-224419",
+      "status": "accepted",
+      "kind": "join",
+      "ts": "2026-10-22T22:44:30.142Z",
+      "actor": {
+        "type": "agent",
+        "id": "agy-b",
+        "harness": "antigravity"
+      },
+      "agent": "agy-b",
+      "task": "T-2",
+      "change": "I1e3419ca0a7990e0b054cfd6eaa83020c53cc101",
+      "session": "s1",
+      "base_seq": 0,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "summary": "agy-b joined (antigravity, L3)",
+      "diagnostics": [],
+      "payload": {
+        "harness": "antigravity",
+        "level": 3
+      }
+    },
+    {
+      "seq": 2,
+      "repo": "demo-agy-reroute-20261022-224419",
+      "status": "accepted",
+      "kind": "join",
+      "ts": "2026-10-22T22:45:00.917Z",
+      "actor": {
+        "type": "agent",
+        "id": "claude-a",
+        "harness": "claude-code"
+      },
+      "agent": "claude-a",
+      "task": "T-1",
+      "change": "Ieda3eb463bd67b60e7bbf53c83afe1b16825b181",
+      "session": "s2",
+      "base_seq": 1,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "summary": "claude-a joined (claude-code, L3)",
+      "diagnostics": [],
+      "payload": {
+        "harness": "claude-code",
+        "level": 3
+      }
+    },
+    {
+      "seq": 3,
+      "repo": "demo-agy-reroute-20261022-224419",
+      "status": "accepted",
+      "kind": "edit",
+      "ts": "2026-10-22T22:45:15.632Z",
+      "actor": {
+        "type": "agent",
+        "id": "claude-a",
+        "harness": "claude-code"
+      },
+      "agent": "claude-a",
+      "task": "T-1",
+      "change": "Ieda3eb463bd67b60e7bbf53c83afe1b16825b181",
+      "session": "s2",
+      "base_seq": 2,
+      "mode": "commit",
+      "files": [
+        "src/pricing.ts"
+      ],
+      "reads": [
+        "src/pricing.ts#Item"
+      ],
+      "writes": [
+        {
+          "key": "src/pricing.ts#calcTotal",
+          "kind": "signature"
+        },
+        {
+          "key": "src/pricing.ts#calcTotal.net",
+          "kind": "new"
+        },
+        {
+          "key": "src/pricing.ts#PriceOptions",
+          "kind": "new"
+        }
+      ],
+      "diff": "diff --git a/src/pricing.ts b/src/pricing.ts\n--- a/src/pricing.ts\n+++ b/src/pricing.ts\n@@ -1,6 +1,9 @@\n export type Item = { sku: string; price: number; qty: number };\n \n-/** Sum of price × quantity over the cart. */\n-export function calcTotal(items: Item[]): number {\n-  return items.reduce((sum, item) => sum + item.price * item.qty, 0);\n+export type PriceOptions = { taxRate: number };\n+\n+/** Sum of price × quantity over the cart, including tax. */\n+export function calcTotal(items: Item[], opts: PriceOptions): number {\n+  const net = items.reduce((sum, item) => sum + item.price * item.qty, 0);\n+  return net * (1 + opts.taxRate);\n }\n",
+      "intent": "T-1: Apply tax in calcTotal",
+      "summary": "claude-a changed signature of calcTotal, added calcTotal.net, PriceOptions in src/pricing.ts — Apply tax in calcTotal",
+      "diagnostics": [],
+      "tool": {
+        "name": "Edit",
+        "call_id": "toolu_01DgjN1s7QRZJGNgKBJ1Tmtt",
+        "harness_event": "PostToolUse"
+      }
+    },
+    {
+      "seq": 4,
+      "repo": "demo-agy-reroute-20261022-224419",
+      "status": "accepted",
+      "kind": "edit",
+      "ts": "2026-10-22T22:45:21.830Z",
+      "actor": {
+        "type": "agent",
+        "id": "claude-a",
+        "harness": "claude-code"
+      },
+      "agent": "claude-a",
+      "task": "T-1",
+      "change": "Ieda3eb463bd67b60e7bbf53c83afe1b16825b181",
+      "session": "s2",
+      "base_seq": 2,
+      "mode": "commit",
+      "files": [
+        "src/orders.ts"
+      ],
+      "reads": [
+        "src/orders.ts#Order",
+        "src/pricing.ts#Item",
+        "src/pricing.ts#calcTotal"
+      ],
+      "writes": [
+        {
+          "key": "src/orders.ts#createOrder",
+          "kind": "body"
+        }
+      ],
+      "diff": "diff --git a/src/orders.ts b/src/orders.ts\n--- a/src/orders.ts\n+++ b/src/orders.ts\n@@ -3,5 +3,5 @@\n export type Order = { id: string; items: Item[]; total: number };\n \n export function createOrder(id: string, items: Item[]): Order {\n-  return { id, items, total: calcTotal(items) };\n+  return { id, items, total: calcTotal(items, { taxRate: 0.22 }) };\n }\n",
+      "intent": "T-1: Apply tax in calcTotal",
+      "summary": "claude-a edited createOrder in src/orders.ts — Apply tax in calcTotal",
+      "diagnostics": [],
+      "tool": {
+        "name": "Edit",
+        "call_id": "toolu_018wvEsAKC3gjFddaCkqAdZT",
+        "harness_event": "PostToolUse"
+      }
+    },
+    {
+      "seq": 5,
+      "repo": "demo-agy-reroute-20261022-224419",
+      "status": "accepted",
+      "kind": "leave",
+      "ts": "2026-10-22T22:45:50.395Z",
+      "actor": {
+        "type": "agent",
+        "id": "claude-a",
+        "harness": "claude-code"
+      },
+      "agent": "claude-a",
+      "task": "T-1",
+      "change": "Ieda3eb463bd67b60e7bbf53c83afe1b16825b181",
+      "session": "s2",
+      "base_seq": 4,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "intent": "claude-code session end: other",
+      "summary": "claude-a left — claude-code session end: other",
+      "diagnostics": [],
+      "payload": {
+        "harness": "claude-code",
+        "level": 3
+      }
+    },
+    {
+      "seq": 6,
+      "repo": "demo-agy-reroute-20261022-224419",
+      "status": "accepted",
+      "kind": "release",
+      "ts": "2026-10-22T22:45:50.395Z",
+      "actor": {
+        "type": "system",
+        "id": "coordinator"
+      },
+      "agent": "claude-a",
+      "task": "T-1",
+      "change": "Ieda3eb463bd67b60e7bbf53c83afe1b16825b181",
+      "base_seq": 5,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "summary": "claude-a released calcTotal, calcTotal.net +2 more (session ended)",
+      "diagnostics": [],
+      "payload": {
+        "keys": [
+          "src/pricing.ts#calcTotal",
+          "src/pricing.ts#calcTotal.net",
+          "src/pricing.ts#PriceOptions",
+          "src/orders.ts#createOrder"
+        ],
+        "reason": "session_ended"
+      }
+    },
+    {
+      "seq": 7,
+      "repo": "demo-agy-reroute-20261022-224419",
+      "status": "rejected",
+      "kind": "edit",
+      "ts": "2026-10-22T22:46:13.691Z",
+      "actor": {
+        "type": "agent",
+        "id": "agy-b",
+        "harness": "antigravity"
+      },
+      "agent": "agy-b",
+      "task": "T-2",
+      "change": "I1e3419ca0a7990e0b054cfd6eaa83020c53cc101",
+      "session": "s1",
+      "base_seq": 1,
+      "mode": "check",
+      "files": [
+        "src/cart.ts"
+      ],
+      "reads": [
+        "src/pricing.ts#Item",
+        "src/pricing.ts#calcTotal"
+      ],
+      "writes": [
+        {
+          "key": "src/cart.ts#Cart",
+          "kind": "body"
+        },
+        {
+          "key": "src/cart.ts#Cart.total",
+          "kind": "new"
+        }
+      ],
+      "diff": "diff --git a/src/cart.ts b/src/cart.ts\n--- a/src/cart.ts\n+++ b/src/cart.ts\n@@ -1,4 +1,4 @@\n-import type { Item } from \"./pricing\";\n+import { calcTotal, type Item } from \"./pricing\";\n \n export class Cart {\n   private items: Item[] = [];\n@@ -9,5 +9,9 @@\n \n   list(): Item[] {\n     return [...this.items];\n+  }\n+\n+  total(): number {\n+    return calcTotal(this.items);\n   }\n }\n",
+      "intent": "T-2: Show the cart total",
+      "summary": "Blocked: agy-b edited Cart, added Cart.total in src/cart.ts — Show the cart total",
+      "diagnostics": [
+        {
+          "severity": "error",
+          "code": "stale_assumption",
+          "file": "src/pricing.ts",
+          "symbol": "src/pricing.ts#calcTotal",
+          "message": "You use src/pricing.ts#calcTotal, whose signature changed in #3 by claude-a after your base #1.",
+          "suggestion": "Read the new src/pricing.ts#calcTotal (event #3) and update this call site, or negotiate with claude-a.",
+          "caused_by_seq": 3,
+          "caused_by_agent": "claude-a",
+          "caused_by_task": "T-1"
+        }
+      ],
+      "tool": {
+        "name": "Edit",
+        "call_id": "edit_file@9",
+        "harness_event": "PreToolUse"
+      }
+    },
+    {
+      "seq": 8,
+      "repo": "demo-agy-reroute-20261022-224419",
+      "status": "accepted",
+      "kind": "edit",
+      "ts": "2026-10-22T22:47:02.494Z",
+      "actor": {
+        "type": "agent",
+        "id": "agy-b",
+        "harness": "antigravity"
+      },
+      "agent": "agy-b",
+      "task": "T-2",
+      "change": "I1e3419ca0a7990e0b054cfd6eaa83020c53cc101",
+      "session": "s1",
+      "base_seq": 7,
+      "mode": "commit",
+      "files": [
+        "src/cart.ts"
+      ],
+      "reads": [
+        "src/pricing.ts#Item",
+        "src/pricing.ts#calcTotal"
+      ],
+      "writes": [
+        {
+          "key": "src/cart.ts#Cart",
+          "kind": "body"
+        },
+        {
+          "key": "src/cart.ts#Cart.total",
+          "kind": "new"
+        }
+      ],
+      "diff": "diff --git a/src/cart.ts b/src/cart.ts\n--- a/src/cart.ts\n+++ b/src/cart.ts\n@@ -1,4 +1,4 @@\n-import type { Item } from \"./pricing\";\n+import { calcTotal, type Item } from \"./pricing\";\n \n export class Cart {\n   private items: Item[] = [];\n@@ -9,5 +9,9 @@\n \n   list(): Item[] {\n     return [...this.items];\n+  }\n+\n+  total(): number {\n+    return calcTotal(this.items, { taxRate: 0 });\n   }\n }\n",
+      "intent": "T-2: Show the cart total",
+      "summary": "agy-b edited Cart, added Cart.total in src/cart.ts — Show the cart total",
+      "diagnostics": [],
+      "tool": {
+        "name": "Edit",
+        "call_id": "edit_file@11",
+        "harness_event": "PostToolUse"
+      }
+    },
+    {
+      "seq": 9,
+      "repo": "demo-agy-reroute-20261022-224419",
+      "status": "accepted",
+      "kind": "join",
+      "ts": "2026-10-22T22:47:13.493Z",
+      "actor": {
+        "type": "agent",
+        "id": "claude-a",
+        "harness": "claude-code"
+      },
+      "agent": "claude-a",
+      "task": "T-1",
+      "change": "Ieda3eb463bd67b60e7bbf53c83afe1b16825b181",
+      "session": "s3",
+      "base_seq": 8,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "summary": "claude-a joined (claude-code, L3)",
+      "diagnostics": [],
+      "payload": {
+        "harness": "claude-code",
+        "level": 3
+      }
+    },
+    {
+      "seq": 10,
+      "repo": "demo-agy-reroute-20261022-224419",
+      "status": "accepted",
+      "kind": "edit",
+      "ts": "2026-10-22T22:47:37.182Z",
+      "actor": {
+        "type": "agent",
+        "id": "claude-a",
+        "harness": "claude-code"
+      },
+      "agent": "claude-a",
+      "task": "T-1",
+      "change": "Ieda3eb463bd67b60e7bbf53c83afe1b16825b181",
+      "session": "s3",
+      "base_seq": 9,
+      "mode": "commit",
+      "files": [
+        "src/pricing.ts"
+      ],
+      "reads": [
+        "src/pricing.ts#Item"
+      ],
+      "writes": [
+        {
+          "key": "src/pricing.ts#calcTotal",
+          "kind": "body"
+        },
+        {
+          "key": "src/pricing.ts#PriceOptions",
+          "kind": "signature"
+        }
+      ],
+      "diff": "diff --git a/src/pricing.ts b/src/pricing.ts\n--- a/src/pricing.ts\n+++ b/src/pricing.ts\n@@ -1,9 +1,9 @@\n export type Item = { sku: string; price: number; qty: number };\n \n-export type PriceOptions = { taxRate: number };\n+export type PriceOptions = { rate: number };\n \n /** Sum of price × quantity over the cart, including tax. */\n export function calcTotal(items: Item[], opts: PriceOptions): number {\n   const net = items.reduce((sum, item) => sum + item.price * item.qty, 0);\n-  return net * (1 + opts.taxRate);\n+  return net * (1 + opts.rate);\n }\n",
+      "intent": "T-1: Apply tax in calcTotal",
+      "summary": "claude-a changed signature of PriceOptions, edited calcTotal in src/pricing.ts — Apply tax in calcTotal",
+      "diagnostics": [],
+      "tool": {
+        "name": "Edit",
+        "call_id": "toolu_01XfDgXScNS1WpPWn18K7A27",
+        "harness_event": "PostToolUse"
+      }
+    },
+    {
+      "seq": 11,
+      "repo": "demo-agy-reroute-20261022-224419",
+      "status": "accepted",
+      "kind": "edit",
+      "ts": "2026-10-22T22:47:41.216Z",
+      "actor": {
+        "type": "agent",
+        "id": "claude-a",
+        "harness": "claude-code"
+      },
+      "agent": "claude-a",
+      "task": "T-1",
+      "change": "Ieda3eb463bd67b60e7bbf53c83afe1b16825b181",
+      "session": "s3",
+      "base_seq": 9,
+      "mode": "commit",
+      "files": [
+        "src/orders.ts"
+      ],
+      "reads": [
+        "src/orders.ts#Order",
+        "src/pricing.ts#Item",
+        "src/pricing.ts#calcTotal"
+      ],
+      "writes": [
+        {
+          "key": "src/orders.ts#createOrder",
+          "kind": "body"
+        }
+      ],
+      "diff": "diff --git a/src/orders.ts b/src/orders.ts\n--- a/src/orders.ts\n+++ b/src/orders.ts\n@@ -3,5 +3,5 @@\n export type Order = { id: string; items: Item[]; total: number };\n \n export function createOrder(id: string, items: Item[]): Order {\n-  return { id, items, total: calcTotal(items, { taxRate: 0.22 }) };\n+  return { id, items, total: calcTotal(items, { rate: 0.22 }) };\n }\n",
+      "intent": "T-1: Apply tax in calcTotal",
+      "summary": "claude-a edited createOrder in src/orders.ts — Apply tax in calcTotal",
+      "diagnostics": [],
+      "tool": {
+        "name": "Edit",
+        "call_id": "toolu_01LTGMnVQmHxAFH8czr8T8jK",
+        "harness_event": "PostToolUse"
+      }
+    },
+    {
+      "seq": 12,
+      "repo": "demo-agy-reroute-20261022-224419",
+      "status": "accepted",
+      "kind": "leave",
+      "ts": "2026-10-22T22:47:47.940Z",
+      "actor": {
+        "type": "agent",
+        "id": "claude-a",
+        "harness": "claude-code"
+      },
+      "agent": "claude-a",
+      "task": "T-1",
+      "change": "Ieda3eb463bd67b60e7bbf53c83afe1b16825b181",
+      "session": "s3",
+      "base_seq": 11,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "intent": "claude-code session end: other",
+      "summary": "claude-a left — claude-code session end: other",
+      "diagnostics": [],
+      "payload": {
+        "harness": "claude-code",
+        "level": 3
+      }
+    },
+    {
+      "seq": 13,
+      "repo": "demo-agy-reroute-20261022-224419",
+      "status": "accepted",
+      "kind": "release",
+      "ts": "2026-10-22T22:47:47.940Z",
+      "actor": {
+        "type": "system",
+        "id": "coordinator"
+      },
+      "agent": "claude-a",
+      "task": "T-1",
+      "change": "Ieda3eb463bd67b60e7bbf53c83afe1b16825b181",
+      "base_seq": 12,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "summary": "claude-a released calcTotal, PriceOptions +1 more (session ended)",
+      "diagnostics": [],
+      "payload": {
+        "keys": [
+          "src/pricing.ts#calcTotal",
+          "src/pricing.ts#PriceOptions",
+          "src/orders.ts#createOrder"
+        ],
+        "reason": "session_ended"
+      }
+    }
+  ]
+}

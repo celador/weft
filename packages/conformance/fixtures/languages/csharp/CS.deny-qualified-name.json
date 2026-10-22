@@ -1,0 +1,30 @@
+{
+  "id": "CS.deny-qualified-name",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a74.1",
+  "title": "C#: a fully qualified call (Shop.Pricing.PriceCalculator.CalcTotal) is checked like one through `using`",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/Shop/Report/ReportLine.cs",
+        "old_text": "        return \"Total\";",
+        "new_text": "        return \"Total: \" + Shop.Pricing.PriceCalculator.CalcTotal(new List<Item>());"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "CalcTotal"
+        ]
+      },
+      "expect_applied": false
+    }
+  ]
+}

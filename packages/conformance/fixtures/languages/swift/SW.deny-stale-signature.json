@@ -1,0 +1,46 @@
+{
+  "id": "SW.deny-stale-signature",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a74.1, \u00a75.2",
+  "title": "Swift: a call built on a signature another agent just changed is denied before it runs",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "Sources/Shop/Cart+Summary.swift",
+        "old_text": "        \"\\(items.count) items\"",
+        "new_text": "        \"\\(items.count) items, total \\(calcTotal(items: items))\""
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "stale_assumption",
+          "calcTotal"
+        ]
+      },
+      "expect_applied": false
+    },
+    {
+      "expect_file": {
+        "path": "Sources/Shop/Cart+Summary.swift",
+        "unchanged": true
+      }
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "status": "rejected",
+        "mode": "check",
+        "reads_include": "Sources/Shop/Pricing.swift#calcTotal",
+        "min": 1
+      }
+    }
+  ]
+}

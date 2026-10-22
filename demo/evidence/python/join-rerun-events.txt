@@ -1,0 +1,10 @@
+#1 accepted join agent-a reads=[] writes=[]
+#2 accepted commit edit agent-a reads=['shop/pricing.py#Item'] writes=[('shop/pricing.py#calc_total', 'signature')]
+#3 accepted leave agent-a reads=[] writes=[]
+#4 accepted release agent-a reads=[] writes=[]
+#5 accepted join agent-b reads=[] writes=[]
+#6 rejected check edit agent-b reads=['shop/pricing.py#Item', 'shop/pricing.py#calc_total'] writes=[('shop/cart.py#cart_summary', 'body')]
+    error stale_assumption shop/pricing.py#calc_total: You use shop/pricing.py#calc_total, whose signature changed in #2 by agent-a and is not in your checkout: that change has not landed and was never delivered to you. (caused_by #2)
+#7 accepted commit edit agent-b reads=['shop/pricing.py#Item', 'shop/pricing.py#calc_total'] writes=[('shop/cart.py#cart_summary', 'signature')]
+#8 accepted leave agent-b reads=[] writes=[]
+#9 accepted release agent-b reads=[] writes=[]
