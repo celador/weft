@@ -1,5 +1,5 @@
 {
-  "description": "Kotlin conformance workspace (docs/languages.md): a Gradle layout with Kotlin under src/main/kotlin and Java under src/main/java. The peer changes are other agents' edits to Pricing.kt (top-level functions) and Tax.java (Java interop); their writes are exactly what @weft/analyzer derives from `after` (checked by packages/conformance/test/languages.test.ts).",
+  "description": "Kotlin conformance workspace (docs/languages.md): a Gradle layout with Kotlin under src/main/kotlin and Java under src/main/java. The peer changes are other agents' edits to Pricing.kt (top-level functions) and Tax.java (Java interop); Discounts.kt shares Pricing.kt's package without importing it, and Invoice.java calls Pricing.kt through its JVM facade class PricingKt; their writes are exactly what @weft/analyzer derives from `after` (checked by packages/conformance/test/languages.test.ts).",
   "language": "kotlin",
   "interop": [
     "java"
@@ -10,7 +10,9 @@
     "src/main/kotlin/com/shop/pricing/Pricing.kt": "package com.shop.pricing\n\nimport com.shop.model.Item\n\nfun calcTotal(items: List<Item>): Double {\n    return items.sumOf { it.price() * it.qty() }\n}\n\nfun formatPrice(amount: Double): String {\n    return \"$\" + String.format(\"%.2f\", amount)\n}\n",
     "src/main/kotlin/com/shop/cart/CartSummary.kt": "package com.shop.cart\n\nimport com.shop.model.Item\nimport com.shop.pricing.calcTotal\n\nfun cartSummary(items: List<Item>): String {\n    return \"${items.size} items\"\n}\n",
     "src/main/kotlin/com/shop/report/Report.kt": "package com.shop.report\n\nimport com.shop.pricing.formatPrice\n\nfun reportLine(total: Double): String {\n    return \"Total\"\n}\n",
-    "src/main/kotlin/com/shop/checkout/Checkout.kt": "package com.shop.checkout\n\nimport com.shop.model.Item\nimport com.shop.model.Tax\n\nclass Checkout(private val items: List<Item>) {\n    fun tax(net: Double): Double {\n        return 0.0\n    }\n}\n"
+    "src/main/kotlin/com/shop/checkout/Checkout.kt": "package com.shop.checkout\n\nimport com.shop.model.Item\nimport com.shop.model.Tax\n\nclass Checkout(private val items: List<Item>) {\n    fun tax(net: Double): Double {\n        return 0.0\n    }\n}\n",
+    "src/main/kotlin/com/shop/pricing/Discounts.kt": "package com.shop.pricing\n\nimport com.shop.model.Item\n\nfun bulkTotal(items: List<Item>): Double {\n    return 0.0\n}\n",
+    "src/main/java/com/shop/billing/Invoice.java": "package com.shop.billing;\n\nimport com.shop.model.Item;\nimport com.shop.pricing.PricingKt;\nimport java.util.List;\n\npublic final class Invoice {\n    public static double total(List<Item> items) {\n        return 0.0;\n    }\n}\n"
   },
   "peers": {
     "change_signature": {

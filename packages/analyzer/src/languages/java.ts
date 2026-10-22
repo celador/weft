@@ -22,8 +22,13 @@
 // file's own package and of wildcard-imported packages are visible without an import; they
 // resolve to `Name.java`/`Name.kt` next to the file or in the wildcard package. Static wildcard
 // imports (`import static a.b.C.*;`) are not followed.
+//
+// Kotlin top-level functions and properties are static members of a facade class: `PricingKt`
+// for `Pricing.kt`, or the name the file gives itself with `@file:JvmName("...")`.
+// `PricingKt.calcTotal()` and `import static com.shop.pricing.PricingKt.calcTotal;` read
+// `Pricing.kt#calcTotal`, the key the Kotlin file writes (`ImportBinding.facade`).
 import type { Definition, ImportBinding, Reference, SyntaxNode, TreeSitterLanguage } from "../language.js";
-import { exact, header, implicitBindings, importBinding, named, perRoot, resolveJvmModule, sameNode } from "./jvm.js";
+import { exact, header, implicitBindings, importBinding, named, perRoot, resolveJvmModule, sameNode, withFacade } from "./jvm.js";
 
 const TYPE_DECL = new Set(["class_declaration", "interface_declaration", "enum_declaration", "record_declaration", "annotation_type_declaration"]);
 const CONSTRUCTOR = new Set(["constructor_declaration", "compact_constructor_declaration"]);
@@ -209,7 +214,7 @@ const imports = perRoot((root: SyntaxNode): ImportBinding[] => {
       continue;
     }
     const b = importBinding(path.text.split("."));
-    if (b) explicit.push(b);
+    if (b) explicit.push(withFacade(b));
   }
   const declared = new Set<string>();
   for (const d of definitions(root)) for (const part of d.name.split(".")) declared.add(part);
@@ -221,7 +226,7 @@ const imports = perRoot((root: SyntaxNode): ImportBinding[] => {
     for (const c of named(node)) visit(c);
   };
   visit(root);
-  return [...explicit, ...implicitBindings(references(root), explicit, declared, wildcards)];
+  return [...explicit, ...implicitBindings(references(root), explicit, declared, wildcards, true)];
 });
 
 export const java: TreeSitterLanguage = {
@@ -232,5 +237,5 @@ export const java: TreeSitterLanguage = {
   definitions,
   references,
   imports,
-  resolveModule: (module, fromRel, exists) => resolveJvmModule(module, fromRel, exists, [".java", ".kt"]),
+  resolveModule: (module, fromRel, exists, checkout) => resolveJvmModule(module, fromRel, exists, [".java", ".kt"], checkout),
 };

@@ -11,8 +11,8 @@ per language family.
 |---|---|---|---|---|---|---|---|
 | TypeScript / JavaScript | `.ts .tsx .mts .cts .js .jsx .mjs .cjs` | `typescript` (TS compiler API) | functions, classes, methods, properties, interfaces, type aliases, enums, variables | calls, `new`, type references, named/namespace/default imports of relative modules | yes | deleted + new | unit tests, core conformance fixtures (L0–L3), real agent runs |
 | Python | `.py .pyi` | `tree-sitter` (tree-sitter-python 0.25.0) | functions, classes, methods (`Cart.total`), module- and class-level assignments | calls, decorators, base classes, type annotations, attribute chains (`pricing.calc_total`, `self.tax`), every imported member that resolves into the checkout | yes (decorators count as signature; whitespace and trailing commas do not; an assignment's annotation is its signature and its value its body) | deleted + new | 13 analyzer tests, 5 conformance fixtures (`fixtures/languages/python`), real two-agent Claude Code run ([record](research/python-real-run-2026-10-22.md)) |
-| Java | `.java` | `tree-sitter` (tree-sitter-java 0.23.5) | classes, interfaces, enums, records, annotation types (nested: `Pricing.Kind`), methods (overloads share a key), fields, enum constants, record components | calls (`calcTotal()`, `this.tax()`, `Fmt.round()`), `new`, every type use, annotations, field accesses, method references, unqualified members of enclosing classes; single-type, static, wildcard and same-package imports, as `.java` or `.kt` | yes (constructors count as the class's signature; comments and `@Override`/`@Deprecated`/`@SuppressWarnings` do not; other annotations do) | deleted + new | 16 analyzer tests, 5 conformance fixtures (`fixtures/languages/java`) |
-| Kotlin | `.kt .kts` | `tree-sitter` (@tree-sitter-grammars/tree-sitter-kotlin 1.1.0) | classes, interfaces, objects, enum entries, type aliases, functions and properties (top-level, members, companion members as `Cart.create`), extensions by name (`discount`), `val`/`var` constructor parameters | calls, constructor calls, every type use, navigation (`Item.ZERO`, `Cart::total`), `this`, extension receivers, unqualified members; class, top-level-function, aliased, wildcard and same-directory imports, Kotlin → Java interop | yes (primary and secondary constructors count as the class's signature; `@JvmStatic`/`@JvmName` count; `@Deprecated`/`@Suppress` and comments do not) | deleted + new | 14 analyzer tests, 5 conformance fixtures (`fixtures/languages/kotlin`, incl. Kotlin calling a changed Java method) |
+| Java | `.java` | `tree-sitter` (tree-sitter-java 0.23.5) | classes, interfaces, enums, records, annotation types (nested: `Pricing.Kind`), methods (overloads share a key), fields, enum constants, record components | calls (`calcTotal()`, `this.tax()`, `Fmt.round()`), `new`, every type use, annotations, field accesses, method references, unqualified members of enclosing classes; single-type, static, wildcard and same-package imports, as `.java` or `.kt`; Kotlin top-level declarations through their facade class (`PricingKt.calcTotal()`, `@file:JvmName`) | yes (constructors count as the class's signature; comments and `@Override`/`@Deprecated`/`@SuppressWarnings` do not; other annotations do) | deleted + new | 16 analyzer tests, 5 conformance fixtures (`fixtures/languages/java`) |
+| Kotlin | `.kt .kts` | `tree-sitter` (@tree-sitter-grammars/tree-sitter-kotlin 1.1.0) | classes, interfaces, objects, enum entries, type aliases, functions and properties (top-level, members, companion members as `Cart.create`), extensions by name (`discount`), `val`/`var` constructor parameters | calls, constructor calls, every type use, navigation (`Item.ZERO`, `Cart::total`), `this`, extension receivers, unqualified members; class, top-level-function, aliased, wildcard and same-directory imports, same-package top-level declarations of other files without an import (package index), Kotlin → Java interop | yes (primary and secondary constructors count as the class's signature; `@JvmStatic`/`@JvmName` count; `@Deprecated`/`@Suppress` and comments do not) | deleted + new | 25 analyzer tests (incl. Java → Kotlin facades), 7 conformance fixtures (`fixtures/languages/kotlin`, incl. Kotlin calling a changed Java method, a same-package call with no import, and Java calling `PricingKt.calcTotal`) |
 | Go | `.go` | `tree-sitter` (tree-sitter-go 0.25.0) | functions, methods keyed by receiver type (`Cart.Total`), types and interfaces, package-level consts/vars | calls, selector chains (`pricing.CalcTotal`, receiver calls `c.Tax()` → `Cart.Tax`), type uses (`Item`, `pricing.Item`, composite literals); imports resolve through `go.mod` to a package directory, and names used but not declared in the file resolve through its own package (see [Go packages](#go-packages)) | yes (the receiver is part of a method's signature; a struct's fields and an interface's methods are the type's signature; a const/var's type is its signature, its value the body; gofmt alignment and trailing commas are not changes) | deleted + new | 12 analyzer tests, 5 conformance fixtures (`fixtures/languages/go`, incl. a same-package cross-file deny) |
 | Rust | `.rs` | `tree-sitter` (tree-sitter-rust 0.24.0) | functions, impl/trait methods keyed by type (`Cart.total`, `impl Display for Cart` → `Cart.fmt`, `Shape.area`), structs, enums, unions, traits, type aliases, consts, statics, items of inline modules (`tests.t`) | calls, paths (`pricing::calc_total`, `Self::new`, `Kind::A`), `self.tax()` → `Cart.tax`, type uses, calls and paths inside macro arguments (`format!(.., calc_total(x))`); `use` trees (`{self, x, y as z}`), `mod x;`, and `crate::`/`self::`/`super::` paths resolve to `src/a/b.rs` or `src/a/b/mod.rs` under the nearest `Cargo.toml` | yes (outer attributes such as `#[derive]` are signature; a struct's fields and an enum's variants are its signature; a const/static's type is its signature, its value the body) | deleted + new | 11 analyzer tests, 5 conformance fixtures (`fixtures/languages/rust`) |
 | Swift, C# | | `tree-sitter` | planned | | | | card t_232556f9 |
@@ -43,9 +43,33 @@ per language family.
 - **Kotlin files are not named after their classes.** A Kotlin import that misses
   `<Class>.kt` falls back to the package's `<LastSegment>.kt` (`Cart` in
   `com/shop/pricing/Pricing.kt`); a top-level function import (`com.shop.pricing.calcTotal`)
-  looks in `<LastSegment>.kt` and `<Name>.kt`, `.kt` only. Anything else (top-level functions
-  of the same package in another file, `FooKt` facades called from Java, static wildcard imports)
-  is not resolved; the LSP enrichment below covers it.
+  looks in `<LastSegment>.kt` and `<Name>.kt`, `.kt` only.
+- **Same package, no import (Kotlin).** Any file of a package may call another file's
+  top-level functions and properties, or use its classes, without importing them, and the
+  declaring file can have any name. Kotlin reuses the Go package index (see
+  [Go packages](#go-packages)): `kotlin.ts` sets `packageFiles` (the directory's `.kt` files),
+  `packageName` (the `package` header), `packageDeclaredNames` (a regex pass over `fun`/`val`/
+  `var`/`class`/`object`/`interface`/`typealias` names) and `importsFiles`, which keeps imports
+  resolving to files as before; the index only answers names the edited file neither declares
+  nor imports. `calcTotal(items)` in `pricing/Discounts.kt` reads `pricing/Pricing.kt#calcTotal`,
+  the key `Pricing.kt` writes. A class used without an import (`Money(0)`) that has no
+  `Money.kt` next to the file is looked up the same way. Files of another `package` in the
+  directory and `private` top-level declarations (file-private in Kotlin) are skipped; an
+  explicit import outside the checkout hides a same-package name, as in Kotlin. The index is the
+  file's own directory: the same package in another source set (`src/test/kotlin/...`) is not
+  searched.
+- **Java → Kotlin facades.** Java sees Kotlin top-level declarations as static members of a
+  facade class: `PricingKt` for `Pricing.kt`, or the name the file gives itself with
+  `@file:JvmName("PriceFormat")`. A Java class binding (an import, a static import, or a
+  same-package name with no import) carries a `facade:` candidate (`ImportBinding.facade`) that
+  the engine tries before the class: it resolves when no `PricingKt.java`/`.kt` exists and
+  either `Pricing.kt` exists without a different `@file:JvmName`, or a `.kt` file of the package
+  declares that `JvmName` (found by listing and reading the package directories, once per
+  analysis). The class segment is then dropped, so `PricingKt.calcTotal()` and
+  `import static com.shop.pricing.PricingKt.calcTotal;` both read `Pricing.kt#calcTotal`. Same-
+  package lookups try the sibling source root too (`src/main/java/p` → `src/main/kotlin/p`).
+  `@JvmMultifileClass` facades and static wildcard imports are not followed; the LSP enrichment
+  below covers them.
 - **Extensions are keyed by name.** `fun Cart.discount()` is `Pricing.kt#discount`, because
   Kotlin imports extensions by name and callers write `cart.discount()`; the receiver is part of
   the signature.
@@ -167,6 +191,10 @@ safe-read rule (no symlinks, nothing outside the checkout, at most 1 MiB), and a
 tool call changes is read as it will be after it. Without them Go finds same-file reads only.
 Not handled yet: dot imports, `replace` directives and `go.work` workspaces (those imports are
 treated as outside the checkout).
+
+Kotlin uses the same index for same-package names (see [Java and Kotlin notes](#java-and-kotlin-notes));
+with `importsFiles` its imports keep resolving to files, and only names the edited file neither
+declares nor imports go through the index.
 
 ### Rust modules
 

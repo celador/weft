@@ -241,8 +241,15 @@ export async function analyzeTreeSitter(
         if (b.name === undefined || !language.memberModule || !opts.exists) return b;
         const sub = language.memberModule(b.module, b.name);
         return resolve(sub) ? { local: b.local, module: sub } : b;
+      })
+      .map((b): ImportBinding => {
+        // Java's `PricingKt.calcTotal()`: the facade class stands for Pricing.kt's top level.
+        if (!b.facade || !resolve(b.facade)) return b;
+        const rest = b.name?.split(".").slice(1) ?? [];
+        return rest.length ? { local: b.local, module: b.facade, name: rest.join(".") } : { local: b.local, module: b.facade };
       });
-    if (packages) {
+    const packageImports = packages !== undefined && !language.importsFiles;
+    if (packageImports) {
       // `import "example.com/shop/pricing-v2"` binds whatever `package` the directory declares.
       bindings = bindings.map((b) => {
         if (!b.guessed) return b;
@@ -289,10 +296,9 @@ export async function analyzeTreeSitter(
       }
       // 3. Imports: `name.rest` through a member binding, `module.member` through a module one.
       const hit = longestBinding(ref, bindings);
-      if (hit) {
-        const file = resolve(hit.binding.module);
-        if (!file) continue;
-        if (packages) {
+      const file = hit && resolve(hit.binding.module);
+      if (hit && file) {
+        if (packageImports) {
           if (hit.binding.name === undefined && hit.rest.length) packageReads(file, hit.rest);
         } else if (hit.binding.name !== undefined) {
           reads.add(key(file, hit.binding.name));
@@ -315,7 +321,9 @@ export async function analyzeTreeSitter(
         }
         continue;
       }
-      // 4. Package-scoped languages (Go): the other files of this file's own package.
+      // An import outside the checkout hides same-package names; a guessed class name does not.
+      if (hit && !(hit.binding.implicit && language.importsFiles)) continue;
+      // 4. Package-scoped languages (Go, Kotlin): the other files of this file's own package.
       if (packages && ref.length) packageReads(dirOf(path), ref.exact ? ref : ref.slice(0, 2), ref.exact);
     }
   }
@@ -395,7 +403,10 @@ function packageIndexer(
       if (text === undefined) return;
       texts.delete(rel);
       try {
-        for (const d of language.definitions(parse(parser, text))) if (!names.has(d.name)) names.set(d.name, rel);
+        for (const d of language.definitions(parse(parser, text))) {
+          if (language.packageVisible && !language.packageVisible(d)) continue;
+          if (!names.has(d.name)) names.set(d.name, rel);
+        }
       } catch {
         /* unparsable file: no declarations */
       }

@@ -75,6 +75,20 @@ export type ImportBinding = {
    * and follows its own includes.
    */
   all?: boolean;
+  /**
+   * The spec's guess at a name the file uses without importing it (a JVM class of the file's
+   * own package). When it does not resolve and the language has a package index with
+   * `importsFiles`, the name is looked up in the file's own package instead.
+   */
+  implicit?: boolean;
+  /**
+   * Module spec of a file whose top-level declarations the class named by the first segment
+   * of `name` (or by `local`, for a module binding) stands for: Java calling Kotlin through the
+   * generated facade class (`PricingKt.calcTotal()` -> `Pricing.kt#calcTotal`). Tried before
+   * `module`; when it resolves, that segment is dropped: `name: "PricingKt"` becomes a module
+   * binding of the file, `name: "PricingKt.calcTotal"` a member binding of `calcTotal`.
+   */
+  facade?: string;
 };
 
 export interface TreeSitterLanguage {
@@ -102,7 +116,7 @@ export interface TreeSitterLanguage {
   /** Node types that are identifiers (what the `lsp` backend asks definitions for). Default `["identifier"]`. */
   identifierTypes?: string[];
   /**
-   * Package-scoped languages (Go), where every file of a directory shares one namespace. When
+   * Package-scoped languages (Go; Kotlin with `importsFiles`), where every file of a directory shares one namespace. When
    * set, `resolveModule` returns the package's directory, and names resolve through a
    * declaration index of that directory: the engine lists it, keeps the files this returns,
    * parses them and maps each declaration to the file that declares it. Keys stay file-level
@@ -111,6 +125,14 @@ export interface TreeSitterLanguage {
    * `AnalyzeOptions.read` and `.list`; without them only same-file reads are found.
    */
   packageFiles?(dir: string, entries: string[], fromRel: string): string[];
+  /**
+   * With `packageFiles`: imports name files, not package directories (Kotlin), so they resolve
+   * as in any other language, and the package index only serves names the edited file uses
+   * without declaring or importing them (same-package top-level functions in other files).
+   */
+  importsFiles?: boolean;
+  /** Whether a declaration of another file of the package is visible here (Kotlin: not `private`). Default: all are. */
+  packageVisible?(definition: Definition): boolean;
   /** The package a file's text belongs to (Go `package x`); index files of other packages are skipped. */
   packageName?(text: string): string | undefined;
   /**
