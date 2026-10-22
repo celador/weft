@@ -1,0 +1,47 @@
+{
+  "id": "GO.allow-after-adapting",
+  "level": 2,
+  "required": true,
+  "spec": "§5.2",
+  "title": "Go: after the deny, the call adapted to the new signature is allowed",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "cart/cart.go",
+        "old_text": "\treturn fmt.Sprintf(\"%d items\", len(items))",
+        "new_text": "\treturn fmt.Sprintf(\"%d items, total %.2f\", len(items), pricing.CalcTotal(items))"
+      },
+      "expect_pre": {
+        "decision": "deny"
+      }
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "cart/cart.go",
+        "old_text": "\treturn fmt.Sprintf(\"%d items\", len(items))",
+        "new_text": "\treturn fmt.Sprintf(\"%d items, total %.2f\", len(items), pricing.CalcTotal(items, 0))"
+      },
+      "expect_pre": {
+        "decision": "not-deny"
+      },
+      "expect_applied": true
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "kind": "edit",
+        "status": "accepted",
+        "files_include": "cart/cart.go",
+        "min": 1
+      }
+    }
+  ]
+}

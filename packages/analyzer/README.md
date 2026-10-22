@@ -1,7 +1,7 @@
 # @weft/analyzer
 
 `@weft/analyzer` derives the read/write sets sent with a WCP edit event: TypeScript/JavaScript
-through the TypeScript compiler API, other languages (Python today) through a tree-sitter
+through the TypeScript compiler API, other languages (Python, Go, Rust today) through a tree-sitter
 backend. Support matrix and how to add a language: [docs/languages.md](../../docs/languages.md).
 
 ## Runtime boundary
@@ -50,3 +50,15 @@ members that resolve to files in the checkout. The language contract is `TreeSit
 in `src/language.ts`; the grammars live in `grammars/` and adapter bundles copy them to
 `dist/grammars/` (`scripts/copy-assets.mjs`).
 
+
+Go needs to look past the edited file (a package spans a directory, and imports resolve through
+`go.mod`), so pass `read` and `list` as well; the adapters use `checkoutAccess(root)` from
+`src/analysis.ts`:
+
+```ts
+await analyzeSource({ path: "cart/cart.go", before, after }, {
+  exists: (rel) => existsSync(join(root, rel)),
+  read: (rel) => readInsideCheckout(root, join(root, rel), 1 << 20) ?? undefined,
+  list: (rel) => readdirSync(join(root, rel), { withFileTypes: true }).map((e) => (e.isDirectory() ? `${e.name}/` : e.name)),
+});
+```

@@ -11,7 +11,8 @@ per language family.
 |---|---|---|---|---|---|---|---|
 | TypeScript / JavaScript | `.ts .tsx .mts .cts .js .jsx .mjs .cjs` | `typescript` (TS compiler API) | functions, classes, methods, properties, interfaces, type aliases, enums, variables | calls, `new`, type references, named/namespace/default imports of relative modules | yes | deleted + new | unit tests, core conformance fixtures (L0–L3), real agent runs |
 | Python | `.py .pyi` | `tree-sitter` (tree-sitter-python 0.25.0) | functions, classes, methods (`Cart.total`), module- and class-level assignments | calls, decorators, base classes, type annotations, attribute chains (`pricing.calc_total`, `self.tax`), every imported member that resolves into the checkout | yes (decorators count as signature; whitespace and trailing commas do not; an assignment's annotation is its signature and its value its body) | deleted + new | 13 analyzer tests, 5 conformance fixtures (`fixtures/languages/python`), real two-agent Claude Code run ([record](research/python-real-run-2026-10-22.md)) |
-| Go, Rust | | `tree-sitter` | planned | | | | card t_41439699 |
+| Go | `.go` | `tree-sitter` (tree-sitter-go 0.25.0) | functions, methods keyed by receiver type (`Cart.Total`), types and interfaces, package-level consts/vars | calls, selector chains (`pricing.CalcTotal`, receiver calls `c.Tax()` → `Cart.Tax`), type uses (`Item`, `pricing.Item`, composite literals); imports resolve through `go.mod` to a package directory, and names used but not declared in the file resolve through its own package (see [Go packages](#go-packages)) | yes (the receiver is part of a method's signature; a struct's fields and an interface's methods are the type's signature; a const/var's type is its signature, its value the body; gofmt alignment and trailing commas are not changes) | deleted + new | 12 analyzer tests, 5 conformance fixtures (`fixtures/languages/go`, incl. a same-package cross-file deny) |
+| Rust | `.rs` | `tree-sitter` (tree-sitter-rust 0.24.0) | functions, impl/trait methods keyed by type (`Cart.total`, `impl Display for Cart` → `Cart.fmt`, `Shape.area`), structs, enums, unions, traits, type aliases, consts, statics, items of inline modules (`tests.t`) | calls, paths (`pricing::calc_total`, `Self::new`, `Kind::A`), `self.tax()` → `Cart.tax`, type uses, calls and paths inside macro arguments (`format!(.., calc_total(x))`); `use` trees (`{self, x, y as z}`), `mod x;`, and `crate::`/`self::`/`super::` paths resolve to `src/a/b.rs` or `src/a/b/mod.rs` under the nearest `Cargo.toml` | yes (outer attributes such as `#[derive]` are signature; a struct's fields and an enum's variants are its signature; a const/static's type is its signature, its value the body) | deleted + new | 11 analyzer tests, 5 conformance fixtures (`fixtures/languages/rust`) |
 | Java, Kotlin | | `tree-sitter` | planned | | | | card t_5184c50b |
 | Swift, C# | | `tree-sitter` | planned | | | | card t_232556f9 |
 | Ruby, PHP | | `tree-sitter` | planned | | | | card t_da702770 |
@@ -46,6 +47,51 @@ For each changed file the engine parses before and after, diffs the declarations
 declarations first, then its imports. Imported members that resolve to a file in the checkout
 are reads, the same rule the TypeScript adapter applies to named imports. Modules outside the
 checkout (stdlib, packages) are ignored.
+
+Grammars (vendored in `packages/analyzer/grammars/`, copied from each package's npm tarball):
+
+| Grammar | npm version | ABI | sha256 |
+|---|---|---|---|
+| `tree-sitter-go.wasm` | tree-sitter-go 0.25.0 | 15 | `9504573f352b20be7f2f1911754d710622aedc15afff16d5ed8fb5645681aee7` |
+| `tree-sitter-rust.wasm` | tree-sitter-rust 0.24.0 | 14 | `f65f354215611fd94ad34134b3427eb3d58cbb745df7b6509ba722184db73d57` |
+
+### Go packages
+
+A Go package is a directory whose files share one namespace, and an import path names a
+directory, not a file. Keys stay file-level: `pricing.CalcTotal` reads
+`pricing/pricing.go#CalcTotal`, the key of the file that declares it, so reads match the
+writes the declaring file produces, the whole-file fallback (`path#*`) and the diff quoting in
+diagnostics. (Keying on the package, `pricing#CalcTotal`, would have needed no file reads, but
+would break all three.)
+
+To find the declaring file the engine keeps a lazy declaration index per package directory
+(`TreeSitterLanguage.packageFiles`, `packageName`, `packageDeclaredNames`): it lists the
+directory, reads its `.go` files, takes a cheap regex pass over each file's top-level names,
+and parses only the files whose names match a lookup. The edited file is never read from disk
+(the hook runs before the edit lands); its own declarations resolve first. Files of another
+package in the same directory (`package pricing_test`) are skipped, and so are `_test.go`
+files of imported packages. An import without an alias binds the package name the directory
+declares (`example.com/shop/pricing-v2` with `package pricev2` binds `pricev2`).
+
+This needs more than `exists`: `AnalyzeOptions` gains optional `read` (a checkout file, by the
+adapters' safe-read rule: no symlinks, nothing outside the checkout, at most 1 MiB) and `list`
+(a checkout directory's entries, directories ending in `/`). The Claude Code and Codex adapters
+pass both (`checkoutAccess` in `src/analysis.ts`); without them Go finds same-file reads only.
+Not handled yet: dot imports, `replace` directives and `go.work` workspaces (those imports are
+treated as outside the checkout).
+
+### Rust modules
+
+Rust items in other modules are always reached by a path or a `use`, so keys are file-level
+without an index: `use crate::pricing::{self, calc_total, Item as LineItem}` binds the module
+and two members of `src/pricing.rs`; `mod tax;` in `src/cart.rs` binds `src/cart/tax.rs`;
+nested paths descend through module files (`util::money::round` →
+`src/util/money.rs#round`). The crate root is the `src/` next to the nearest `Cargo.toml`. A
+path spelled from `crate::`/`self::`/`super::` in code binds itself; its item is the first
+CamelCase segment (a type, whose member follows: `crate::pricing::Item::zero` reads `Item` and
+`Item.zero`) or else the last one. Not handled: glob imports, `#[path]`, re-exports through
+`pub use` (the key is the file the `use` names), and method calls on values other than `self`
+(no type inference; the LSP enrichment covers those).
 
 Runtime: `web-tree-sitter` 0.25.10 (WASM, no native build, no toolchain). Adapters bundle the
 analyzer and copy the WASM files to `dist/grammars/` at build time

@@ -1,0 +1,59 @@
+{
+  "description": "Go conformance workspace (docs/languages.md). Module example.com/shop: package pricing spans pricing/pricing.go and pricing/discount.go; cart and report import it through go.mod. The peer changes are another agent's edits to pricing/pricing.go; their writes are exactly what @weft/analyzer's Go backend derives from `after` (checked by packages/conformance/test/languages.test.ts).",
+  "language": "go",
+  "files": {
+    "go.mod": "module example.com/shop\n\ngo 1.22\n",
+    "pricing/pricing.go": "package pricing\n\nimport \"fmt\"\n\ntype Item struct {\n\tPrice float64\n\tQty   int\n}\n\nfunc CalcTotal(items []Item) float64 {\n\ttotal := 0.0\n\tfor _, i := range items {\n\t\ttotal += i.Price * float64(i.Qty)\n\t}\n\treturn total\n}\n\nfunc FormatPrice(amount float64) string {\n\treturn fmt.Sprintf(\"$%.2f\", amount)\n}\n",
+    "pricing/discount.go": "package pricing\n\nfunc Discounted(items []Item, pct float64) float64 {\n\treturn 0\n}\n",
+    "cart/cart.go": "package cart\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/shop/pricing\"\n)\n\nfunc Summary(items []pricing.Item) string {\n\treturn fmt.Sprintf(\"%d items\", len(items))\n}\n",
+    "report/report.go": "package report\n\nimport \"example.com/shop/pricing\"\n\nvar _ = pricing.Item{}\n\nfunc Line(total float64) string {\n\treturn \"Total\"\n}\n"
+  },
+  "peers": {
+    "change_signature": {
+      "agent": "peer-a",
+      "harness": "claude-code",
+      "task": "T-1",
+      "files": [
+        "pricing/pricing.go"
+      ],
+      "writes": [
+        {
+          "key": "pricing/pricing.go#CalcTotal",
+          "kind": "signature"
+        }
+      ],
+      "reads": [
+        "pricing/pricing.go#Item"
+      ],
+      "intent": "CalcTotal takes a taxRate",
+      "after": {
+        "pricing/pricing.go": "package pricing\n\nimport \"fmt\"\n\ntype Item struct {\n\tPrice float64\n\tQty   int\n}\n\nfunc CalcTotal(items []Item, taxRate float64) float64 {\n\ttotal := 0.0\n\tfor _, i := range items {\n\t\ttotal += i.Price * float64(i.Qty)\n\t}\n\treturn total * (1 + taxRate)\n}\n\nfunc FormatPrice(amount float64) string {\n\treturn fmt.Sprintf(\"$%.2f\", amount)\n}\n"
+      }
+    },
+    "rename_helper": {
+      "agent": "peer-b",
+      "harness": "codex",
+      "task": "T-3",
+      "files": [
+        "pricing/pricing.go"
+      ],
+      "writes": [
+        {
+          "key": "pricing/pricing.go#FormatMoney",
+          "kind": "new"
+        },
+        {
+          "key": "pricing/pricing.go#FormatPrice",
+          "kind": "deleted"
+        }
+      ],
+      "reads": [
+        "pricing/pricing.go#Item"
+      ],
+      "intent": "rename FormatPrice to FormatMoney",
+      "after": {
+        "pricing/pricing.go": "package pricing\n\nimport \"fmt\"\n\ntype Item struct {\n\tPrice float64\n\tQty   int\n}\n\nfunc CalcTotal(items []Item) float64 {\n\ttotal := 0.0\n\tfor _, i := range items {\n\t\ttotal += i.Price * float64(i.Qty)\n\t}\n\treturn total\n}\n\nfunc FormatMoney(amount float64) string {\n\treturn fmt.Sprintf(\"$%.2f\", amount)\n}\n"
+      }
+    }
+  }
+}

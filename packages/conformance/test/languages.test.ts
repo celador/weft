@@ -15,8 +15,8 @@ const repo = join(here, "..", "..", "..");
 const CLAUDE = join(repo, "packages/adapters/claude-code/dist/weft-claude.mjs");
 
 describe("language fixture sets", () => {
-  it("ship Python", () => {
-    expect(languageFixtureSets()).toContain("python");
+  it("ship Python, Go and Rust", () => {
+    expect(languageFixtureSets()).toEqual(expect.arrayContaining(["python", "go", "rust"]));
   });
 
   for (const set of languageFixtureSets()) {
@@ -32,12 +32,20 @@ describe("language fixture sets", () => {
 
       for (const [name, peer] of Object.entries(workspace.peers)) {
         it(`peer ${name}: declared reads/writes = analyzer output`, async () => {
+          // The same checkout access the adapters give the analyzer (exists / list / read).
           const exists = (rel: string) => rel in workspace.files;
+          const read = (rel: string): string | undefined => workspace.files[rel];
+          const list = (dir: string): string[] | undefined => {
+            const prefix = dir ? `${dir}/` : "";
+            const entries = new Set<string>();
+            for (const f of Object.keys(workspace.files)) if (f.startsWith(prefix)) entries.add(f.slice(prefix.length).replace(/\/.*$/, "/"));
+            return entries.size ? [...entries] : undefined;
+          };
           const reads = new Set<string>();
           const writes: Array<{ key: string; kind: string }> = [];
           for (const [path, after] of Object.entries(peer.after ?? {})) {
             expect(treeSitterLanguageFor(path)?.id).toBe(set);
-            const r = await analyzeSource({ path, before: workspace.files[path] ?? null, after }, { exists });
+            const r = await analyzeSource({ path, before: workspace.files[path] ?? null, after }, { exists, read, list });
             r.reads.forEach((k) => reads.add(k));
             writes.push(...r.writes);
           }

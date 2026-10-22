@@ -4,7 +4,8 @@
 // checkout, so `import { calcTotal } from "./pricing"` reads `src/pricing.ts#calcTotal`.
 import { analyze, analyzeSource, treeSitterLanguageFor, type Write } from "@weft/analyzer";
 import ts from "typescript";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { readInsideCheckout } from "./safe-read";
 import { join, posix } from "node:path";
 
 export const ANALYZABLE = /\.(?:[cm]?ts|tsx|[cm]?js|jsx)$/;
@@ -101,11 +102,11 @@ export async function analyzeChangesAsync(changes: FileChange[], root?: string, 
   const base = analyzeChanges(typescriptOrOther, root, prefix);
   const reads = new Set(base.reads);
   const writes = new Map(base.writes.map((w) => [w.key, w] as const));
-  const exists = root ? (rel: string) => existsSync(join(root, rel)) : undefined;
+  const checkout = root ? checkoutAccess(root) : {};
   for (const c of changes) {
     if (c.before === c.after || !treeSitterLanguageFor(c.rel)) continue;
     try {
-      const result = await analyzeSource({ path: c.rel, before: c.before, after: c.after }, { prefix, exists });
+      const result = await analyzeSource({ path: c.rel, before: c.before, after: c.after }, { prefix, ...checkout });
       for (const k of result.reads) reads.add(k);
       for (const w of result.writes) writes.set(w.key, w);
     } catch {
@@ -115,6 +116,25 @@ export async function analyzeChangesAsync(changes: FileChange[], root?: string, 
   }
   for (const k of writes.keys()) reads.delete(k);
   return { reads: [...reads].sort(), writes: [...writes.values()].sort((a, b) => a.key.localeCompare(b.key)) };
+}
+
+/**
+ * What a tree-sitter language may look at besides the edited file (Go: go.mod and the other
+ * files of a package): existence, listings, and reads that follow the adapters' read rule
+ * (no symlinks, nothing outside the checkout, at most 1 MiB).
+ */
+export function checkoutAccess(root: string) {
+  return {
+    exists: (rel: string) => existsSync(join(root, rel)),
+    read: (rel: string) => readInsideCheckout(root, join(root, rel), 1 << 20) ?? undefined,
+    list: (rel: string): string[] | undefined => {
+      try {
+        return readdirSync(join(root, rel), { withFileTypes: true }).map((e) => (e.isDirectory() ? `${e.name}/` : e.name));
+      } catch {
+        return undefined;
+      }
+    },
+  };
 }
 
 /** Plain unified diff (enough for humans and for `analyzeDiff`); LCS on lines. */
