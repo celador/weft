@@ -10,10 +10,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { configDir, readJson, tryGit, VERSION, WeftError, which } from "./util";
 
-export type HarnessId = "claude-code" | "codex" | "cursor" | "gemini" | "opencode" | "watcher";
+export type HarnessId = "claude-code" | "codex" | "copilot" | "cursor" | "gemini" | "opencode" | "watcher";
 
 export const HARNESSES: Array<{ id: HarnessId; name: string; bins: string[]; entry: string; config: string; mark: string }> = [
   { id: "codex", name: "Codex", bins: ["codex"], entry: "weft-codex.mjs", config: ".weft/codex.json", mark: "weft-codex" },
+  { id: "copilot", name: "GitHub Copilot CLI", bins: ["copilot"], entry: "weft-copilot.mjs", config: ".weft/copilot.json", mark: "weft-copilot" },
   { id: "cursor", name: "Cursor CLI", bins: ["cursor-agent"], entry: "weft-cursor.mjs", config: ".weft/cursor.json", mark: "weft-cursor" },
   { id: "gemini", name: "Gemini CLI", bins: ["gemini"], entry: "weft-gemini.mjs", config: ".weft/gemini.json", mark: "weft-gemini" },
   { id: "opencode", name: "OpenCode", bins: ["opencode"], entry: "weft-opencode.mjs", config: ".weft/opencode.json", mark: "weft-opencode" },
@@ -144,10 +145,12 @@ export function removeAdapters(root: string): string[] {
     } else writeFileSync(p, JSON.stringify(pruned, null, 2) + "\n");
     touched.push(rel);
   }
-  const plugin = join(root, ".opencode/plugin/weft.js");
-  if (existsSync(plugin) && hasMark(readFileSync(plugin, "utf8"))) {
-    unlinkSync(plugin);
-    touched.push(".opencode/plugin/weft.js");
+  for (const rel of [".opencode/plugin/weft.js", ".github/hooks/weft.json"]) {
+    const f = join(root, rel);
+    if (existsSync(f) && hasMark(readFileSync(f, "utf8"))) {
+      unlinkSync(f);
+      touched.push(rel);
+    }
   }
   // git hooks: ours are removed; a hook we had moved aside (.pre-weft) is put back.
   const hooksDir = tryGit(root, ["config", "core.hooksPath"]) ?? tryGit(root, ["rev-parse", "--path-format=absolute", "--git-path", "hooks"]);

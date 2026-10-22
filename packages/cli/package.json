@@ -1,7 +1,7 @@
 {
   "name": "@celador/weft",
   "version": "0.1.0",
-  "description": "Red squiggles for teams of coding agents. `npx @celador/weft` in any git repo: a free hosted space, hooks for Claude Code, Codex, Cursor, OpenCode and Gemini, and a live feed.",
+  "description": "Red squiggles for teams of coding agents. `npx @celador/weft` in any git repo: a free hosted space, hooks for Claude Code, Codex, Copilot, Cursor, OpenCode and Gemini, and a live feed.",
   "license": "MIT",
   "type": "module",
   "homepage": "https://github.com/celador/weft#readme",
@@ -23,6 +23,7 @@
   "devDependencies": {
     "@weft/adapter-claude-code": "workspace:*",
     "@weft/adapter-codex": "workspace:*",
+    "@weft/adapter-copilot": "workspace:*",
     "@weft/adapter-cursor": "workspace:*",
     "@weft/adapter-gemini": "workspace:*",
     "@weft/adapter-opencode": "workspace:*",

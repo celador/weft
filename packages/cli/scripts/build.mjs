@@ -17,6 +17,7 @@ const pkg = JSON.parse(readFileSync(join(here, "package.json"), "utf8"));
 export const ADAPTERS = {
   "claude-code": "weft-claude.mjs",
   codex: "weft-codex.mjs",
+  copilot: "weft-copilot.mjs",
   cursor: "weft-cursor.mjs",
   gemini: "weft-gemini.mjs",
   opencode: "weft-opencode.mjs",
