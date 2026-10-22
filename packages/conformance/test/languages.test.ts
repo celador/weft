@@ -15,8 +15,8 @@ const repo = join(here, "..", "..", "..");
 const CLAUDE = join(repo, "packages/adapters/claude-code/dist/weft-claude.mjs");
 
 describe("language fixture sets", () => {
-  it("ship Python", () => {
-    expect(languageFixtureSets()).toContain("python");
+  it("ship Python, Swift and C#", () => {
+    expect(languageFixtureSets()).toEqual(expect.arrayContaining(["csharp", "python", "swift"]));
   });
 
   for (const set of languageFixtureSets()) {
@@ -33,11 +33,24 @@ describe("language fixture sets", () => {
       for (const [name, peer] of Object.entries(workspace.peers)) {
         it(`peer ${name}: declared reads/writes = analyzer output`, async () => {
           const exists = (rel: string) => rel in workspace.files;
+          // Directory listing + reads of the workspace, for index-based languages (Swift, C#).
+          const list = (dir: string): string[] | undefined => {
+            const prefix = dir ? `${dir}/` : "";
+            const entries = new Set<string>();
+            for (const f of Object.keys(workspace.files)) {
+              if (!f.startsWith(prefix)) continue;
+              const rest = f.slice(prefix.length);
+              const slash = rest.indexOf("/");
+              entries.add(slash < 0 ? rest : rest.slice(0, slash + 1));
+            }
+            return entries.size ? [...entries] : undefined;
+          };
+          const read = (rel: string): string | undefined => workspace.files[rel];
           const reads = new Set<string>();
           const writes: Array<{ key: string; kind: string }> = [];
           for (const [path, after] of Object.entries(peer.after ?? {})) {
             expect(treeSitterLanguageFor(path)?.id).toBe(set);
-            const r = await analyzeSource({ path, before: workspace.files[path] ?? null, after }, { exists });
+            const r = await analyzeSource({ path, before: workspace.files[path] ?? null, after }, { exists, list, read });
             r.reads.forEach((k) => reads.add(k));
             writes.push(...r.writes);
           }

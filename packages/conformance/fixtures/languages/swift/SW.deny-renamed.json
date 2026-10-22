@@ -1,0 +1,36 @@
+{
+  "id": "SW.deny-renamed",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a74.1",
+  "title": "Swift: a use of a declaration another agent renamed is denied",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "rename_helper"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "Sources/Shop/Report.swift",
+        "old_text": "    \"Total\"",
+        "new_text": "    \"Total: \" + formatPrice(total)"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "formatPrice"
+        ]
+      },
+      "expect_applied": false
+    },
+    {
+      "expect_file": {
+        "path": "Sources/Shop/Report.swift",
+        "unchanged": true
+      }
+    }
+  ]
+}

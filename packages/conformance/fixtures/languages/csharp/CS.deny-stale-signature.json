@@ -1,0 +1,46 @@
+{
+  "id": "CS.deny-stale-signature",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a74.1, \u00a75.2",
+  "title": "C#: a call built on a signature another agent just changed is denied before it runs",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/Shop/Cart/CartSummary.cs",
+        "old_text": "        return $\"{items.Count} items\";",
+        "new_text": "        return $\"{items.Count} items, total {PriceCalculator.CalcTotal(items)}\";"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "stale_assumption",
+          "CalcTotal"
+        ]
+      },
+      "expect_applied": false
+    },
+    {
+      "expect_file": {
+        "path": "src/Shop/Cart/CartSummary.cs",
+        "unchanged": true
+      }
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "status": "rejected",
+        "mode": "check",
+        "reads_include": "src/Shop/Pricing/PriceCalculator.cs#PriceCalculator.CalcTotal",
+        "min": 1
+      }
+    }
+  ]
+}
