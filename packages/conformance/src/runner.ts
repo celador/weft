@@ -167,6 +167,31 @@ function applyTool(root: string, t: Omit<CoreTool, "call_id">): string | undefin
   return undefined;
 }
 
+/**
+ * Kill the heartbeat loops the adapter under test started in this workspace (they write
+ * `.weft/state/<session>.heartbeat.pid`). They would exit on their own once the runner or
+ * the workspace is gone; this just does it now.
+ */
+function stopHeartbeats(root: string): void {
+  const dir = join(root, ".weft", "state");
+  let files: string[] = [];
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith(".heartbeat.pid"));
+  } catch {
+    return;
+  }
+  for (const f of files) {
+    const pid = Number(readFileSync(join(dir, f), "utf8").trim());
+    if (Number.isInteger(pid) && pid > 1) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+}
+
 function pct(xs: number[], p: number): number {
   if (!xs.length) return 0;
   const s = [...xs].sort((a, b) => a - b);
@@ -317,6 +342,7 @@ export async function runFixture(fx: Fixture, ws: Workspace, d: Dialect, opts: R
       /* ignore */
     }
     await oracle.stop();
+    stopHeartbeats(root);
     if (!opts.keepWorkspaces) rmSync(root, { recursive: true, force: true });
   }
   const declared = oracle.declared(peers);
