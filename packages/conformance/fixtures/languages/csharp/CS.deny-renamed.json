@@ -1,0 +1,36 @@
+{
+  "id": "CS.deny-renamed",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a74.1",
+  "title": "C#: a use of a declaration another agent renamed is denied",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "rename_helper"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/Shop/Report/ReportLine.cs",
+        "old_text": "        return \"Total\";",
+        "new_text": "        return \"Total: \" + PriceCalculator.FormatPrice(total);"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "FormatPrice"
+        ]
+      },
+      "expect_applied": false
+    },
+    {
+      "expect_file": {
+        "path": "src/Shop/Report/ReportLine.cs",
+        "unchanged": true
+      }
+    }
+  ]
+}

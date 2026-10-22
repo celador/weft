@@ -68,7 +68,6 @@ SKIP_PARTS = {
     "DerivedData", "Pods", "target", "coverage", ".venv", "venv", ".cache", ".parcel-cache",
     ".pytest_cache", ".mypy_cache", ".gradle",
 }
-ANALYZABLE = re.compile(r"\.(?:[cm]?ts|tsx|[cm]?js|jsx)$")
 MAX_FILE_BYTES = 512 * 1024
 MAX_SNAPSHOT_FILES = 300
 DRAIN_EVERY_S = 20.0
@@ -477,6 +476,28 @@ class Analyzer:
         self.lock = threading.Lock()
         self.broken = False
         self.seq = 0
+        self._extensions: Optional[Tuple[str, ...]] = None
+
+    def extensions(self) -> Optional[Tuple[str, ...]]:
+        """File extensions the bundle analyzes at declaration level (``analyze.mjs --languages``),
+        asked once. None when the bundle cannot say (older bundle): every file is then sent and
+        the bundle's ``analyzed`` list decides."""
+        if self._extensions is None and self.script and not self.broken:
+            try:
+                out = subprocess.run([self.node, self.script, "--languages"], capture_output=True, text=True,
+                                     timeout=max(self.timeout, 10.0))
+                info = json.loads(out.stdout.strip().splitlines()[-1]) if out.stdout.strip() else {}
+                exts = info.get("extensions") if info.get("ok") else None
+                if isinstance(exts, list):
+                    self._extensions = tuple(str(e).lower() for e in exts)
+                    self.log(f"analyzer languages: {', '.join(l.get('id', '?') for l in info.get('languages', []))}")
+            except Exception as err:
+                self.log(f"analyzer --languages failed: {err}")
+        return self._extensions
+
+    def analyzable(self, path: str) -> bool:
+        exts = self.extensions()
+        return True if exts is None else path.lower().endswith(exts)
 
     def _start(self) -> Optional[subprocess.Popen]:
         if self.broken or not self.script:
@@ -534,9 +555,9 @@ class Analyzer:
         let the analyzer resolve relative imports against the checkout (cross-file reads)."""
         reads: List[str] = []
         writes: Dict[str, dict] = {}
-        ts_files = [c for c in changes if ANALYZABLE.search(c[0])]
-        result = self._ask([{"path": p, "before": b or "", "after": a or ""} for p, b, a in ts_files], root, prefix) \
-            if ts_files else None
+        code_files = [c for c in changes if c[1] != c[2] and self.analyzable(c[0])] if self.script else []
+        result = self._ask([{"path": p, "before": b or "", "after": a or ""} for p, b, a in code_files], root, prefix) \
+            if code_files else None
         analyzed = set(result.get("analyzed", [])) if result else set()
         if result:
             reads = list(result.get("reads", []))
@@ -547,7 +568,7 @@ class Analyzer:
                 continue
             kind = "new" if before is None else "deleted" if after is None else "body"
             writes[file_key(path)] = {"key": file_key(path), "kind": kind}
-        # A TS file whose text changed without symbol-level writes (comments, imports) yields no
+        # An analyzed file whose text changed without symbol-level writes (comments, imports) yields no
         # write: nothing another agent could conflict with, so no edit event is sent for it.
         return sorted(set(reads) - set(writes)), list(writes.values())
 
@@ -561,7 +582,7 @@ class Analyzer:
 
 
 def file_key(rel: str) -> str:
-    """Whole-file symbol key for files the TS analyzer does not understand."""
+    """Whole-file symbol key for files no analyzer backend understands."""
     return f"{rel.replace(' ', '_')}#*"
 
 

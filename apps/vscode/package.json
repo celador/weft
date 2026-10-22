@@ -1,0 +1,102 @@
+{
+  "name": "@weft/vscode",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Weft for VS Code and every VS Code fork (Cursor, Windsurf, Kiro, Antigravity, VSCodium, Trae): the live Changes feed, Editing now, per-event diffs, squiggles linked to their cause, and Approve/Undo/Pause/Resume/Message.",
+  "license": "MIT",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:smoke": "node scripts/build.mjs && node test/smoke/run.mjs",
+    "package": "node scripts/build.mjs && node scripts/package.mjs",
+    "publish:vsce": "echo 'Not without John’s OK: npx @vscode/vsce publish --packagePath out/weft-$npm_package_version.vsix' && exit 1",
+    "publish:ovsx": "echo 'Not without John’s OK: npx ovsx publish out/weft-$npm_package_version.vsix' && exit 1"
+  },
+  "dependencies": {
+    "@weft/feed": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/vscode": "~1.88.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.6.2",
+    "esbuild": "^0.25.4",
+    "ovsx": "^0.10.6"
+  },
+  "weftExtension": {
+    "name": "weft",
+    "displayName": "Weft",
+    "publisher": "celador",
+    "description": "Red squiggles for teams of coding agents: the live Weft feed, Editing now, diffs per event, squiggles linked to the edit that caused them, and Approve/Undo/Pause/Resume/Message.",
+    "icon": "media/icon.png",
+    "galleryBanner": { "color": "#0b0d12", "theme": "dark" },
+    "homepage": "https://weft-site.elier.ai",
+    "repository": { "type": "git", "url": "https://github.com/celador/weft" },
+    "bugs": { "url": "https://github.com/celador/weft/issues" },
+    "license": "MIT",
+    "categories": ["AI", "Linters", "SCM Providers", "Other"],
+    "keywords": ["agents", "coding agents", "claude code", "copilot", "cursor", "conflicts", "coordination", "weft", "wcp"],
+    "engines": { "vscode": "^1.88.0" },
+    "main": "./dist/extension.cjs",
+    "activationEvents": ["onStartupFinished", "workspaceContains:.weft"],
+    "capabilities": {
+      "untrustedWorkspaces": { "supported": "limited", "description": "In an untrusted workspace Weft ignores the checkout's .weft/ folder (gateway URL and tokens); settings, WEFT_URL/WEFT_TOKEN and the saved token still work." },
+      "virtualWorkspaces": false
+    },
+    "contributes": {
+      "viewsContainers": {
+        "panel": [{ "id": "weft", "title": "Weft", "icon": "media/weft.svg" }]
+      },
+      "views": {
+        "weft": [{ "type": "webview", "id": "weft.feed", "name": "Feed", "icon": "media/weft.svg" }]
+      },
+      "commands": [
+        { "command": "weft.showFeed", "title": "Show feed", "category": "Weft", "icon": "$(pulse)" },
+        { "command": "weft.openEvent", "title": "Open event…", "category": "Weft" },
+        { "command": "weft.openDiff", "title": "Open diff for event…", "category": "Weft", "icon": "$(diff)" },
+        { "command": "weft.openCausingEvent", "title": "Open causing event", "category": "Weft" },
+        { "command": "weft.approve", "title": "Approve candidate…", "category": "Weft", "icon": "$(check)" },
+        { "command": "weft.undo", "title": "Undo landing…", "category": "Weft", "icon": "$(discard)" },
+        { "command": "weft.pause", "title": "Pause agent…", "category": "Weft", "icon": "$(debug-pause)" },
+        { "command": "weft.resume", "title": "Resume agent…", "category": "Weft", "icon": "$(debug-continue)" },
+        { "command": "weft.message", "title": "Message agent…", "category": "Weft", "icon": "$(comment)" },
+        { "command": "weft.setToken", "title": "Set token", "category": "Weft", "icon": "$(key)" },
+        { "command": "weft.clearToken", "title": "Remove saved token", "category": "Weft" },
+        { "command": "weft.reconnect", "title": "Reconnect", "category": "Weft", "icon": "$(refresh)" },
+        { "command": "weft.showLog", "title": "Show log", "category": "Weft" }
+      ],
+      "menus": {
+        "view/title": [
+          { "command": "weft.pause", "when": "view == weft.feed", "group": "navigation@1" },
+          { "command": "weft.resume", "when": "view == weft.feed", "group": "navigation@2" },
+          { "command": "weft.message", "when": "view == weft.feed", "group": "navigation@3" },
+          { "command": "weft.approve", "when": "view == weft.feed", "group": "navigation@4" },
+          { "command": "weft.undo", "when": "view == weft.feed", "group": "navigation@5" },
+          { "command": "weft.reconnect", "when": "view == weft.feed", "group": "navigation@9" },
+          { "command": "weft.setToken", "when": "view == weft.feed", "group": "settings@1" },
+          { "command": "weft.showLog", "when": "view == weft.feed", "group": "settings@2" }
+        ],
+        "commandPalette": [{ "command": "weft.openCausingEvent", "when": "false" }]
+      },
+      "configuration": {
+        "title": "Weft",
+        "properties": {
+          "weft.url": { "type": "string", "default": "", "markdownDescription": "Weft gateway URL. Empty: `WEFT_URL`, then the checkout's `.weft/` (written by `npx @celador/weft` or an adapter), then `http://localhost:8787`." },
+          "weft.repo": { "type": "string", "default": "", "markdownDescription": "Weft repo for this workspace. Empty: `WEFT_REPO`, then `.weft/`, then a visible repo named like the folder." },
+          "weft.squiggles": {
+            "type": "string",
+            "enum": ["auto", "repo", "off"],
+            "enumDescriptions": [
+              "This checkout's own changes (from its adapter config); the whole repo when the checkout has no agent.",
+              "Every open squiggle in the workspace's repos, whoever's change it is.",
+              "No squiggles in the editor (the feed still shows them)."
+            ],
+            "default": "auto",
+            "description": "Which open Weft squiggles to show in the editor and the Problems panel."
+          },
+          "weft.squiggleMaxAgeHours": { "type": "number", "default": 24, "minimum": 0, "description": "Hide open squiggles older than this many hours (0 = no limit)." }
+        }
+      }
+    }
+  }
+}

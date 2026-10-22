@@ -1,0 +1,47 @@
+{
+  "id": "CS.allow-after-adapting",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a75.2",
+  "title": "C#: after the deny, the call adapted to the new signature is allowed",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/Shop/Cart/CartSummary.cs",
+        "old_text": "        return $\"{items.Count} items\";",
+        "new_text": "        return $\"{items.Count} items, total {PriceCalculator.CalcTotal(items)}\";"
+      },
+      "expect_pre": {
+        "decision": "deny"
+      }
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/Shop/Cart/CartSummary.cs",
+        "old_text": "        return $\"{items.Count} items\";",
+        "new_text": "        return $\"{items.Count} items, total {PriceCalculator.CalcTotal(items, 0m)}\";"
+      },
+      "expect_pre": {
+        "decision": "not-deny"
+      },
+      "expect_applied": true
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "kind": "edit",
+        "status": "accepted",
+        "files_include": "src/Shop/Cart/CartSummary.cs",
+        "min": 1
+      }
+    }
+  ]
+}

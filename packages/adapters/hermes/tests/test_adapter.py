@@ -233,6 +233,30 @@ class EditTests(AdapterTestCase):
         self.assertEqual(commit[3]["tool"]["call_id"], "c1")
         self.assertIsNone(out, "no diagnostics -> tool result untouched")
 
+    @unittest.skipUnless(BUNDLE.exists(), "analyzer bundle not built")
+    def test_python_edit_gets_declaration_keys(self):
+        """Python goes through the bundle's tree-sitter backend: declaration keys, not path#*."""
+        shop = self.repo / "shop"
+        shop.mkdir()
+        (shop / "__init__.py").write_text("")
+        (shop / "pricing.py").write_text("def calc_total(items):\n    return sum(items)\n\n\ndef tax(x):\n    return x * 0.2\n")
+        path = shop / "cart.py"
+        content = "from shop.pricing import calc_total\n\n\nclass Cart:\n    def total(self, items):\n        return calc_total(items)\n"
+        self.run_edit("write_file", {"path": str(path), "content": content}, apply=lambda: path.write_text(content))
+        commit = self.client.submits("commit")[0][3]
+        self.assertEqual(sorted((w["key"], w["kind"]) for w in commit["writes"]),
+                         [("shop/cart.py#Cart", "new"), ("shop/cart.py#Cart.total", "new")])
+        self.assertIn("shop/pricing.py#calc_total", commit["reads"])
+        self.assertTrue(self.adapter.analyzer.analyzable("shop/cart.py"))
+        self.assertFalse(self.adapter.analyzer.analyzable("docs/notes.md"))
+        # a signature change on an existing function
+        pricing = shop / "pricing.py"
+        args = {"path": str(pricing), "old_string": "def calc_total(items):", "new_string": "def calc_total(items, discount=0):"}
+        self.run_edit("patch", args, call_id="c2", apply=lambda: pricing.write_text(
+            pricing.read_text().replace(args["old_string"], args["new_string"])))
+        self.assertEqual(self.client.submits("commit")[1][3]["writes"],
+                         [{"key": "shop/pricing.py#calc_total", "kind": "signature"}])
+
     def test_non_ts_files_use_whole_file_keys(self):
         path = self.repo / "docs" / "notes.md"
         args = {"path": str(path), "content": "hello world\n"}

@@ -26,6 +26,7 @@ const subjects = [
   { file: "cursor", subject: "Cursor CLI translator (@weft/adapter-cursor)", dialect: "cursor", b: bundle("cursor", "weft-cursor") },
   { file: "gemini", subject: "Gemini CLI translator (@weft/adapter-gemini)", dialect: "gemini", b: bundle("gemini", "weft-gemini") },
   { file: "copilot", subject: "GitHub Copilot adapter (@weft/adapter-copilot)", dialect: "copilot", b: bundle("copilot", "weft-copilot") },
+  { file: "antigravity", subject: "Antigravity translator (@weft/adapter-antigravity)", dialect: "antigravity", b: bundle("antigravity", "weft-antigravity") },
   { file: "core-binding", subject: "Core stdio binding (bridge → Claude Code adapter)", dialect: "core", b: bundle("claude-code", "weft-claude"), bridge: "claude-code" },
   { file: "claude-code-advise", subject: "Claude Code adapter in advisory mode (WEFT_MODE=advise)", dialect: "claude-code", b: bundle("claude-code", "weft-claude"), env: ["WEFT_MODE=advise"] },
 ];

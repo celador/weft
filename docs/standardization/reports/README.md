@@ -14,6 +14,7 @@ harness's native hook dialect, against a local WCP reference coordinator as the 
 | [Cursor CLI translator (@weft/adapter-cursor)](cursor.md) | `cursor` | L3 | **L3** | yes | pass | fail-open | 80 / 198 |
 | [Gemini CLI translator (@weft/adapter-gemini)](gemini.md) | `gemini` | L3 | **L3** | yes | pass | fail-open | 84 / 206 |
 | [GitHub Copilot adapter (@weft/adapter-copilot)](copilot.md) | `copilot` | L3 | **L3** | yes | pass | fail-open | 334 / 1171 |
+| [Antigravity translator (@weft/adapter-antigravity)](antigravity.md) | `antigravity` | L3 | **L3** | yes | pass | fail-open | 86 / 212 |
 | [Core stdio binding (bridge → Claude Code adapter)](core-binding.md) | `core` | L3 | **L3** | yes | pass | fail-open | 172 / 291 |
 | [Claude Code adapter in advisory mode (WEFT_MODE=advise)](claude-code-advise.md) | `claude-code` | L1 | **L1** | yes | fail | fail-open | 80 / 194 |
 

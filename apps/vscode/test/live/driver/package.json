@@ -1,0 +1,10 @@
+{
+  "name": "weft-live-driver",
+  "publisher": "celador",
+  "displayName": "Weft live-run driver (test only)",
+  "version": "0.0.0",
+  "private": true,
+  "engines": { "vscode": "^1.88.0" },
+  "main": "./main.cjs",
+  "activationEvents": ["onStartupFinished"]
+}

@@ -81,6 +81,12 @@ type ChangeState = {
   approved: boolean;
   /** Lead change of the merged group this change joined (spec §7.6). */
   merged_into?: string;
+  /**
+   * Told (spec §6.1): per key, the highest seq of another change's in-flight write this
+   * change has been told about — a verdict diagnostic on the key, or the §6.3 broadcast
+   * reaching it while it had a live session and the key in its reads/writes/claims.
+   */
+  told: Map<SymbolKey, Seq>;
   /** Open errors by key (spec §6.5): they belong to the change, not to a session. */
   open: Map<string, Diagnostic>;
   /** Where each open error came from and the record that opened it. */
@@ -138,6 +144,13 @@ const SYSTEM_KINDS = new Set<EventKind>(["land", "revert", "release", "checkpoin
 const PAUSABLE = new Set<EventKind>(["edit", "claim", "checkpoint"]);
 const NEGOTIATION_REPLIES = new Set<EventKind>(["negotiate.accept", "negotiate.reject", "negotiate.counter"]);
 const STRONG: WriteKind[] = ["deleted", "signature"];
+/** Verdict diagnostics that tell a change about another change's write (spec §6.1 told). */
+const TELLS = new Set(["stale_assumption", "stale_read"]);
+/**
+ * How an R2 diagnostic caused by an unseen in-flight write (U, spec §6.1) says when it
+ * happened: the record is at or below the agent's base, so "after your base" would be false.
+ */
+export const UNSEEN_NOTE = "and is not in your checkout: that change has not landed and was never delivered to you";
 
 const uniq = <T>(xs: Iterable<T>) => [...new Set(xs)];
 
@@ -209,6 +222,7 @@ export class ReferenceCoordinator {
         writes: new Map(),
         landed: false,
         approved: false,
+        told: new Map(),
         open: new Map(),
         openMeta: new Map(),
         ...(h.task ? { task: h.task.id } : {}),
@@ -406,6 +420,8 @@ export class ReferenceCoordinator {
       return this.verdict(s, "accept", "check", null, diagnostics);
     }
     const rec = this.append({ kind: e.kind, actor, session: s, draft: e, diagnostics, status: reject ? "rejected" : "accepted", mode: msg.mode });
+    const own = this.changes.get(s.change);
+    if (own) for (const d of diagnostics) if (TELLS.has(d.code)) this.tell(own, d.symbol, d.caused_by_seq);
     if (reject) {
       for (const d of diagnostics) if (d.severity === "error" && d.code !== "agent_paused") this.openSet(s.change, d, msg.mode, rec.seq);
       if (this.continueMode) for (const d of diagnostics) if (ownedElsewhere(d, s.agent)) this.notifyOwner(d, s.agent, e.kind);
@@ -575,6 +591,38 @@ export class ReferenceCoordinator {
     );
   }
 
+  /** told(c, k) over c's merged group (spec §6.1). */
+  private toldOf(change: string, key: SymbolKey): Seq {
+    let t = 0;
+    for (const c of this.changes.values()) if (this.sameGroup(c.id, change)) t = Math.max(t, c.told.get(key) ?? 0);
+    return t;
+  }
+
+  private tell(change: ChangeState, key: SymbolKey, seq: Seq): void {
+    if ((change.told.get(key) ?? 0) < seq) change.told.set(key, seq);
+  }
+
+  /**
+   * U (spec §6.1) for one key: accepted `edit` records writing `key` at or below `base` by
+   * another unlanded change (not the submitter's group, not an alternative) that the
+   * submitter's change was never told about. A checkout never contains another change's
+   * unlanded edits, so a base past them (a session that joined later, or whose base moved
+   * past an edit it had no interest in at the time) must not hide them. Oldest first.
+   */
+  private unseen(s: Session, base: Seq, key: SymbolKey): Array<{ r: EventRecord; w: Write }> {
+    const told = this.toldOf(s.change, key);
+    const out: Array<{ r: EventRecord; w: Write }> = [];
+    for (const r of this.log) {
+      if (r.seq > base) break;
+      if (r.seq <= told || r.status !== "accepted" || r.kind !== "edit") continue;
+      if (this.sameGroup(r.change, s.change) || this.alternatives(r.change, s.change)) continue;
+      if (r.change !== undefined && this.changes.get(r.change)?.landed) continue;
+      const w = r.writes.find((x) => x.key === key);
+      if (w) out.push({ r, w });
+    }
+    return out;
+  }
+
   private evaluate(s: Session, e: EventDraft): Diagnostic[] {
     const out: Diagnostic[] = [];
     if (s.paused_by !== undefined && PAUSABLE.has(e.kind)) {
@@ -590,7 +638,9 @@ export class ReferenceCoordinator {
       });
       return out;
     }
-    if (e.kind !== "edit" && e.kind !== "claim") return out;
+    // An `intent` that carries reads is a reads amendment (§6.2 R2a): checked like R2, never rejected.
+    const amendment = e.kind === "intent" && (e.reads?.length ?? 0) > 0;
+    if (e.kind !== "edit" && e.kind !== "claim" && !amendment) return out;
     const writes = e.writes ?? [];
     const W = this.log.filter(
       (r) =>
@@ -614,6 +664,29 @@ export class ReferenceCoordinator {
       ...(r.task ? { caused_by_task: r.task } : {}),
     });
 
+    // R2a reads amendment (intent with reads): R2 with every error downgraded to a warning.
+    if (amendment) {
+      for (const key of uniq(e.reads ?? [])) {
+        const strong = latest(key, (_r, w) => STRONG.includes(w.kind));
+        const body = strong ? undefined : latest(key, (_r, w) => w.kind === "body");
+        const hit = strong ?? body;
+        if (!hit) continue;
+        const who = hit.r.agent ?? hit.r.actor.id;
+        out.push({
+          severity: "warning",
+          code: strong ? "contract_changed" : "stale_read",
+          file: fileOf(key),
+          symbol: key,
+          message: strong
+            ? `${who} ${strong.w.kind === "deleted" ? "removed" : "changed the signature of"} ${key} (#${strong.r.seq}) after your base #${e.base_seq}, and your change uses it.`
+            : `${key} body changed in #${hit.r.seq} by ${who} after your base #${e.base_seq}; its contract is unchanged.`,
+          ...(strong ? { suggestion: `Re-read ${key} (event #${strong.r.seq}) and adapt your call sites, or negotiate with ${who}.` } : {}),
+          ...cause(hit.r),
+        });
+      }
+      return out;
+    }
+
     // R1 stale overwrite (edit only): a committed (landed/reverted) write since base.
     const r1 = new Set<SymbolKey>();
     if (e.kind === "edit") {
@@ -634,16 +707,23 @@ export class ReferenceCoordinator {
         });
       }
 
-      // R2 stale assumption / stale read.
+      // R2 stale assumption / stale read, over W and U (unseen in-flight writes, §6.1).
       for (const key of uniq(e.reads ?? [])) {
-        const strong = latest(key, (_r, w) => STRONG.includes(w.kind));
+        const u = this.unseen(s, e.base_seq, key);
+        const lastU = (pred: (w: Write) => boolean) => {
+          for (let i = u.length - 1; i >= 0; i--) if (pred(u[i]!.w)) return u[i];
+          return undefined;
+        };
+        const when = (r: EventRecord, inW: boolean) => (inW ? `after your base #${e.base_seq}` : UNSEEN_NOTE);
+        const strongW = latest(key, (_r, w) => STRONG.includes(w.kind));
+        const strong = strongW ?? lastU((w) => STRONG.includes(w.kind));
         if (strong) {
           out.push({
             severity: "error",
             code: "stale_assumption",
             file: fileOf(key),
             symbol: key,
-            message: `You use ${key}, whose ${strong.w.kind === "deleted" ? "declaration was removed" : "signature changed"} in #${strong.r.seq} by ${strong.r.agent ?? strong.r.actor.id} after your base #${e.base_seq}.`,
+            message: `You use ${key}, whose ${strong.w.kind === "deleted" ? "declaration was removed" : "signature changed"} in #${strong.r.seq} by ${strong.r.agent ?? strong.r.actor.id} ${when(strong.r, !!strongW)}.`,
             suggestion: this.continueMode
               ? `Keep editing your other tasks, but the commit gate stays closed while this error is open: report it instead of working around it. Do not adapt this call site to ${strong.r.agent ?? strong.r.actor.id}'s new ${key} (event #${strong.r.seq}) or adopt their partial work: ${strong.r.agent ?? strong.r.actor.id} owns the conflict.`
               : `Read the new ${key} (event #${strong.r.seq}) and update this call site, or negotiate with ${strong.r.agent ?? strong.r.actor.id}.`,
@@ -651,14 +731,15 @@ export class ReferenceCoordinator {
           });
           continue;
         }
-        const body = latest(key, (_r, w) => w.kind === "body");
+        const bodyW = latest(key, (_r, w) => w.kind === "body");
+        const body = bodyW ?? lastU((w) => w.kind === "body");
         if (body)
           out.push({
             severity: "warning",
             code: "stale_read",
             file: fileOf(key),
             symbol: key,
-            message: `${key} body changed in #${body.r.seq} by ${body.r.agent ?? body.r.actor.id} after your base #${e.base_seq}; its contract is unchanged.`,
+            message: `${key} body changed in #${body.r.seq} by ${body.r.agent ?? body.r.actor.id} ${when(body.r, !!bodyW)}; its contract is unchanged.`,
             ...cause(body.r),
           });
       }
@@ -1003,6 +1084,7 @@ export class ReferenceCoordinator {
         if (c.id === rec.change || c.landed) continue;
         if (rec.kind === "edit" && this.alternatives(c.id, rec.change)) continue;
         const targets = this.sessionsOf({ change: c.id });
+        if (targets.length && rec.kind === "edit") for (const w of rec.writes) if (this.touchesChange(c, w.key)) this.tell(c, w.key, rec.seq);
         if (rec.kind !== "edit") {
           const hit = rec.writes.filter((w) => this.touchesChange(c, w.key));
           if (!hit.length) continue;

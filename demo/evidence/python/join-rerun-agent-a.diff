@@ -1,0 +1,12 @@
+diff --git a/shop/pricing.py b/shop/pricing.py
+index 7beefd7..9d26e04 100644
+--- a/shop/pricing.py
++++ b/shop/pricing.py
+@@ -7,5 +7,5 @@ class Item:
+     qty: int
+ 
+ 
+-def calc_total(items: list[Item]) -> float:
+-    return sum(i.price * i.qty for i in items)
++def calc_total(items: list[Item], tax_rate: float) -> float:
++    return sum(i.price * i.qty for i in items) * (1 + tax_rate)

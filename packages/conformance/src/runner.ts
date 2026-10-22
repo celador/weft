@@ -16,7 +16,7 @@ type DecisionExpect = { decision: "allow" | "advise" | "deny" | "not-deny" | "an
 export type Step =
   | { event: CoreEventName; prompt?: string; expect?: DecisionExpect }
   | { tool: Omit<CoreTool, "call_id">; expect_pre?: DecisionExpect; expect_post?: DecisionExpect; expect_any?: DecisionExpect; expect_applied?: boolean; apply?: boolean }
-  | { peer: string }
+  | { peer: string; leave?: boolean }
   | { oracle: "down" }
   | { expect_join: Record<string, never> }
   | { expect_log: { agent?: string; kind?: string; status?: string; mode?: string; files_include?: string; reads_include?: string; min?: number; max?: number } }
@@ -280,6 +280,11 @@ export async function runFixture(fx: Fixture, ws: Workspace, d: Dialect, opts: R
           if (err) check("fixture applies", err);
           post = await send(event("tool.post", { tool: { ...tool, output: "ok" } }), `tool.post ${tool.kind}`);
           if (step.expect_post) check(`tool.post ${tool.kind}: ${step.expect_post.decision}`, post ? matchDecision(post, step.expect_post) : step.expect_post.decision === "any" ? undefined : "no decision");
+          // Delayed injection: the tool's advise reaches the model at the next model call.
+          if (d.deferredInject) {
+            const later = await send(event("prompt.submit", { prompt: "continue" }), `prompt.submit after ${tool.kind}`);
+            if (later?.decision === "advise") post = later;
+          }
         } else if (step.expect_post) check(`tool.post ${tool.kind}: ${step.expect_post.decision}`, "tool did not run");
         if (step.expect_any) {
           const errs = [pre, post].filter((x): x is CoreDecision => !!x).map((x) => matchDecision(x, step.expect_any!));
@@ -288,7 +293,7 @@ export async function runFixture(fx: Fixture, ws: Workspace, d: Dialect, opts: R
       } else if ("peer" in step) {
         const p = ws.peers[step.peer];
         if (!p) throw new Error(`unknown peer ${step.peer}`);
-        oracle.peer(p);
+        oracle.peer(p, { leave: step.leave === true });
       } else if ("oracle" in step) {
         await oracle.down();
       } else if ("expect_join" in step) {

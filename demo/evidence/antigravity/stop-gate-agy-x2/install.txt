@@ -1,0 +1,63 @@
+weft: installed antigravity adapter in <work>/agent-a
+  coordinator http://localhost:8799 repo demo-agy-stop-gate-20261022-171439 agent agy-a task T-1 change Icc533306dcf88b9b6bb0c2522b492bcf1e0c92cb
+  capabilities {"level":3,"observe":"sync","inject":"delayed","deny_edit":true,"refuse_stop":true,"commit_gate":"tool_interception"}
+  hooks: <work>/agent-a/.agents/hooks.json (Antigravity 2.0, CLI and IDE read workspace hooks from .agents/hooks.json)
+  git hooks: <work>/origin/.git/worktrees/agent-a/hooks/commit-msg, pre-commit
+  agent cli: <work>/agent-a/.weft/bin/weft
+weft: installed antigravity adapter in <work>/agent-b
+  coordinator http://localhost:8799 repo demo-agy-stop-gate-20261022-171439 agent agy-b task T-2 change Ibfba02d0138e5ebbe70b151bb4f643a5fc97f626
+  capabilities {"level":3,"observe":"sync","inject":"delayed","deny_edit":true,"refuse_stop":true,"commit_gate":"tool_interception"}
+  hooks: <work>/agent-b/.agents/hooks.json (Antigravity 2.0, CLI and IDE read workspace hooks from .agents/hooks.json)
+  git hooks: <work>/origin/.git/worktrees/agent-b/hooks/commit-msg, pre-commit
+  agent cli: <work>/agent-b/.weft/bin/weft
+
+--- agent-b/.agents/hooks.json
+{
+  "weft": {
+    "PreToolUse": [
+      {
+        "matcher": "edit_file|write_file|write_to_file|replace_file_content|multi_replace_file_content|run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/opt/node@24/bin/node ~/github/weft/.worktrees/adapter-antigravity/packages/adapters/antigravity/dist/weft-antigravity.mjs hook PreToolUse # weft-antigravity",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/opt/node@24/bin/node ~/github/weft/.worktrees/adapter-antigravity/packages/adapters/antigravity/dist/weft-antigravity.mjs hook PostToolUse # weft-antigravity",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "/opt/homebrew/opt/node@24/bin/node ~/github/weft/.worktrees/adapter-antigravity/packages/adapters/antigravity/dist/weft-antigravity.mjs hook SessionStart # weft-antigravity",
+        "timeout": 30
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "/opt/homebrew/opt/node@24/bin/node ~/github/weft/.worktrees/adapter-antigravity/packages/adapters/antigravity/dist/weft-antigravity.mjs hook PreInvocation # weft-antigravity",
+        "timeout": 30
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "/opt/homebrew/opt/node@24/bin/node ~/github/weft/.worktrees/adapter-antigravity/packages/adapters/antigravity/dist/weft-antigravity.mjs hook Stop # weft-antigravity",
+        "timeout": 30
+      }
+    ]
+  }
+}

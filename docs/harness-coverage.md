@@ -30,7 +30,7 @@ for cloud agents, git push events). **d** is an ACP proxy, which is experimental
 | Cursor CLI + Cursor IDE | CLI/IDE | L3 hooks (same `.cursor/hooks.json`) | a | L3 fixture-tested (`adapter-cursor`); live run blocked on login | live run |
 | Gemini CLI | CLI | L3 hooks | a | L3 fixture-tested (`adapter-gemini`) | low priority: the free tier moved to Antigravity |
 | **GitHub Copilot** (CLI, cloud coding agent, VS Code agent mode) | CLI/IDE/cloud | L3 hooks | a | **L3 verified** on Copilot CLI and VS Code agent mode (`adapter-copilot`, [evidence](../demo/evidence/copilot/README.md)); cloud agent unverified | cloud agent run (needs a paid Copilot plan; probe repo ready) |
-| **Google Antigravity** (2.0, CLI, IDE) | CLI/IDE | L3 hooks | a | watcher only | **card: Antigravity adapter** |
+| **Google Antigravity** (2.0, CLI, IDE) | CLI/IDE | L3 hooks | a | **L3 verified** live on agy 1.4.5 with a Claude Code peer (`adapter-antigravity`, inject delayed via `PreInvocation`) | IDE run |
 | **Windsurf / Devin Desktop** (Cascade) | IDE | L2 hooks | a | watcher only | **card: Windsurf adapter** |
 | Cline (extension + CLI) | IDE/CLI | L2 hooks (+ next-turn context) | a | watcher only | queued (adapter #4) |
 | Goose | CLI/desktop | L3 hooks | a | watcher only | queued (adapter #5; AAIF project) |
@@ -413,7 +413,21 @@ drafted as [Agent Hooks Core v0.1](protocol/hooks-core-v0.md). This map is new e
 4. Antigravity: does `PreInvocation` `injectSteps` reach the model reliably? Is the file-tool
    argument set (`TargetFile`, `ReplacementChunks`, ...) stable across the app, CLI and IDE?
 5. Cursor and Windsurf agents: do they read extension diagnostics (the VS Code extension's
-   squiggles as cooperative L1)?
+   squiggles as cooperative L1)? *Partly answered (2026-10-22, t_ece1e848,
+   [evidence](../demo/evidence/vscode/README.md)).* **VS Code Copilot agent mode: yes, verified.**
+   Asked "what errors are in this file?" on a file whose only diagnostic was the Weft squiggle,
+   it checked the file's problems and reported the calcTotal contract conflict.
+   **Cursor 1.128: the squiggle reaches its agent on a click**: Cursor adds *Fix with Agent* to the
+   squiggle's hover and *Fix in Agent* to its quick fixes, which send the diagnostic to the
+   agent. Whether the agent reads it unprompted (its `read_lints` tool reads the workspace's
+   linter errors) is not verified yet: a seeded clean profile left the agent signed out, and
+   Cursor 3 opens its own profile in the Agents window rather than on the folder.
+   **Windsurf: not probed** (not installed on the test Mac). Its docs list only human-triggered
+   paths for editor diagnostics ("Send to agent" / "Send all to agent" in the Problems panel,
+   *Explain and Fix*), plus auto-fixing lint errors in code Cascade itself just generated
+   ([Cascade docs](https://docs.windsurf.com/windsurf/cascade/cascade)). Until a live probe says
+   otherwise, treat Weft squiggles in Cursor and Windsurf as human-mediated L1 and rely on the
+   adapters (hooks, L2/L3) for the agent itself.
 6. The MCP server: when is the inbox delivered if the model calls no Weft tool? (Claude Code
    channels can push; other hosts can't.) Answer from t_70b3d8fe: on hosts without push, not until
    the next `weft_*` call. The watcher's verdicts wait for it, and open errors stay visible in the

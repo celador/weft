@@ -1,0 +1,12 @@
+{
+  "scenario": "stop-gate",
+  "agent_a": "agy-a",
+  "agent_b": "agy-b",
+  "stamp": "20261022-171439",
+  "url": "http://localhost:8799",
+  "repo": "demo-agy-stop-gate-20261022-171439",
+  "agy": "1.4.5",
+  "b_conversation": "c8939f1f-00d5-45cd-9be7-28da1b410e9b",
+  "a_session": "4bc54b45-14a7-48b9-bf62-cc7539354677",
+  "a2_session": "cbbb50a3-d6bf-4b39-8b3b-9f0745c9115d"
+}
