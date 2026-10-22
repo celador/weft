@@ -1,0 +1,47 @@
+/* The feed webview inside VS Code: @weft/feed/view (dist/feed.css) themed with the editor's
+   colours, plus the small bar above it. No inline styles anywhere (CSP style-src is this
+   extension's files only). Selectors are repeated to outrank feed.css's light-mode rule. */
+html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: var(--vscode-panel-background, var(--vscode-editor-background)); }
+body { display: flex; flex-direction: column; }
+#app { flex: 1; min-height: 0; }
+
+.wf-root.wf-root.wf-root {
+  --wf-bg: var(--vscode-panel-background, var(--vscode-editor-background));
+  --wf-panel: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  --wf-panel2: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.12));
+  --wf-line: var(--vscode-panel-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.25)));
+  --wf-fg: var(--vscode-foreground);
+  --wf-fg2: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  --wf-muted: var(--vscode-descriptionForeground);
+  --wf-accent: var(--vscode-focusBorder, var(--vscode-textLink-foreground));
+  --wf-err: var(--vscode-editorError-foreground, #f14c4c);
+  --wf-warn: var(--vscode-editorWarning-foreground, #cca700);
+  --wf-info: var(--vscode-editorInfo-foreground, #3794ff);
+  --wf-ok: var(--vscode-testing-iconPassed, #73c991);
+  --wf-add-bg: var(--vscode-diffEditor-insertedLineBackground, rgba(155, 185, 85, 0.2));
+  --wf-del-bg: var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.2));
+  --wf-mono: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  --wf-sans: var(--vscode-font-family, system-ui, sans-serif);
+  font-size: var(--vscode-font-size, 13px);
+}
+.wf-root .wf-header { padding: 6px 12px; }
+.wf-root .wf-title { font-size: 13px; }
+
+.wv-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 4px 12px; font: 12px var(--vscode-font-family, system-ui);
+  color: var(--vscode-foreground);
+  background: var(--vscode-editorWidget-background, transparent);
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+}
+.wv-bar[hidden] { display: none; }
+.wv-sel { color: var(--vscode-descriptionForeground); font-variant-numeric: tabular-nums; }
+.wv-btn {
+  font: inherit; cursor: pointer; border-radius: 2px; padding: 2px 8px;
+  color: var(--vscode-button-foreground); background: var(--vscode-button-background);
+  border: 1px solid var(--vscode-button-border, transparent);
+}
+.wv-btn:hover { background: var(--vscode-button-hoverBackground); }
+.wv-btn.wv-link { color: var(--vscode-textLink-foreground); background: transparent; border-color: transparent; padding: 2px 4px; }
+.wv-btn.wv-link:hover { text-decoration: underline; }
+.wv-note { color: var(--vscode-editorWarning-foreground); }

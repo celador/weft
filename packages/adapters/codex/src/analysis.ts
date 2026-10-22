@@ -2,7 +2,7 @@
 // The analyzer sees one file at a time; cross-file reads (what an edit imports from other
 // modules in the checkout) are added here by resolving relative imports against the
 // checkout, so `import { calcTotal } from "./pricing"` reads `src/pricing.ts#calcTotal`.
-import { analyze, analyzeSource, treeSitterLanguageFor, type Write } from "@weft/analyzer";
+import { analyze, analyzeSource, contractReads, treeSitterLanguageFor, type Write } from "@weft/analyzer";
 import ts from "typescript";
 import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { readInsideCheckout } from "../../claude-code/src/safe-read";
@@ -66,6 +66,14 @@ export function importReads(text: string, rel: string, root?: string, prefix = "
   return [...found];
 }
 
+function readText(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
 /** Reads/writes of a set of file changes. Unchanged files contribute nothing. */
 export function analyzeChanges(changes: FileChange[], root?: string, prefix = ""): Sets {
   const reads = new Set<string>();
@@ -78,7 +86,12 @@ export function analyzeChanges(changes: FileChange[], root?: string, prefix = ""
         const result = analyze(c.before ?? "", c.after ?? "", repoPath);
         for (const k of result.reads) reads.add(k);
         for (const w of result.writes) writes.set(w.key, w);
-        if (c.after) for (const k of importReads(c.after, c.rel, root, prefix)) reads.add(k);
+        if (c.after) {
+          const imported = importReads(c.after, c.rel, root, prefix);
+          for (const k of imported) reads.add(k);
+          // The contract types of what this file uses (`PriceOptions` of `calcTotal(opts: PriceOptions)`).
+          if (root) for (const k of contractReads(imported, (rel) => readText(join(root, rel)), prefix)) reads.add(k);
+        }
         continue;
       } catch {
         /* unparsable: fall back to a whole-file write */
