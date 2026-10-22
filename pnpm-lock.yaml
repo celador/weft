@@ -75,6 +75,22 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sequencer
 
+  packages/adapters/antigravity:
+    dependencies:
+      '@weft/analyzer':
+        specifier: workspace:*
+        version: link:../../analyzer
+      '@weft/protocol':
+        specifier: workspace:*
+        version: link:../../protocol
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+    devDependencies:
+      esbuild:
+        specifier: ^0.25.4
+        version: 0.25.4
+
   packages/adapters/claude-code:
     dependencies:
       '@weft/analyzer':
@@ -227,6 +243,16 @@ importers:
         specifier: ^0.25.4
         version: 0.25.4
 
+  packages/feed:
+    dependencies:
+      '@weft/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      esbuild:
+        specifier: ^0.25.4
+        version: 0.25.4
+
   packages/mcp:
     dependencies:
       typescript:
@@ -242,16 +268,6 @@ importers:
       '@weft/protocol':
         specifier: workspace:*
         version: link:../protocol
-      esbuild:
-        specifier: ^0.25.4
-        version: 0.25.4
-
-  packages/feed:
-    dependencies:
-      '@weft/protocol':
-        specifier: workspace:*
-        version: link:../protocol
-    devDependencies:
       esbuild:
         specifier: ^0.25.4
         version: 0.25.4
