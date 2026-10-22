@@ -1,0 +1,75 @@
+weft: installed copilot adapter in /private<work>/agent-a
+  coordinator http://localhost:8797 repo demo-copilot-stop-gate-20261022-161335 agent copilot-a task T-1 change If8c9eeba872ec37da0b54056828148591dff9bb2
+  capabilities {"level":3,"observe":"sync","inject":"immediate","deny_edit":true,"refuse_stop":true,"commit_gate":"tool_interception"}
+  hooks: /private<work>/agent-a/.github/hooks/weft.json (Copilot CLI, VS Code agent mode; headless CLI runs need a trusted folder: --trust-folder)
+  git hooks: /private<work>/origin/.git/worktrees/agent-a/hooks/commit-msg, pre-commit
+  agent cli: /private<work>/agent-a/.weft/bin/weft
+weft: installed copilot adapter in /private<work>/agent-b
+  coordinator http://localhost:8797 repo demo-copilot-stop-gate-20261022-161335 agent copilot-b task T-2 change I1a6c900634ff6a7f6a96a971e29a470b08146f46
+  capabilities {"level":3,"observe":"sync","inject":"immediate","deny_edit":true,"refuse_stop":true,"commit_gate":"tool_interception"}
+  hooks: /private<work>/agent-b/.github/hooks/weft.json (Copilot CLI, VS Code agent mode; headless CLI runs need a trusted folder: --trust-folder)
+  git hooks: /private<work>/origin/.git/worktrees/agent-b/hooks/commit-msg, pre-commit
+  agent cli: /private<work>/agent-b/.weft/bin/weft
+
+--- agent-b/.github/hooks/weft.json
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-copilot/packages/adapters/copilot/dist/weft-copilot.mjs hook sessionStart # weft-copilot",
+        "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-copilot/packages/adapters/copilot/dist/weft-copilot.mjs hook sessionStart # weft-copilot",
+        "timeoutSec": 30
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-copilot/packages/adapters/copilot/dist/weft-copilot.mjs hook userPromptSubmitted # weft-copilot",
+        "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-copilot/packages/adapters/copilot/dist/weft-copilot.mjs hook userPromptSubmitted # weft-copilot",
+        "timeoutSec": 30
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-copilot/packages/adapters/copilot/dist/weft-copilot.mjs hook preToolUse # weft-copilot",
+        "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-copilot/packages/adapters/copilot/dist/weft-copilot.mjs hook preToolUse # weft-copilot",
+        "timeoutSec": 30
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "bash": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-copilot/packages/adapters/copilot/dist/weft-copilot.mjs hook postToolUse # weft-copilot",
+        "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-copilot/packages/adapters/copilot/dist/weft-copilot.mjs hook postToolUse # weft-copilot",
+        "timeoutSec": 30
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "type": "command",
+        "bash": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-copilot/packages/adapters/copilot/dist/weft-copilot.mjs hook postToolUseFailure # weft-copilot",
+        "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-copilot/packages/adapters/copilot/dist/weft-copilot.mjs hook postToolUseFailure # weft-copilot",
+        "timeoutSec": 30
+      }
+    ],
+    "agentStop": [
+      {
+        "type": "command",
+        "bash": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-copilot/packages/adapters/copilot/dist/weft-copilot.mjs hook agentStop # weft-copilot",
+        "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-copilot/packages/adapters/copilot/dist/weft-copilot.mjs hook agentStop # weft-copilot",
+        "timeoutSec": 30
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-copilot/packages/adapters/copilot/dist/weft-copilot.mjs hook sessionEnd # weft-copilot",
+        "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-copilot/packages/adapters/copilot/dist/weft-copilot.mjs hook sessionEnd # weft-copilot",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}

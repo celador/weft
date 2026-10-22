@@ -1,0 +1,40 @@
+Copilot CLI 1.0.102 also runs .claude/settings*.json hooks (Claude-format) in a trusted folder.
+Checkout: agent-b of the reroute run, with BOTH the Copilot adapter (.github/hooks/weft.json) and the Claude Code adapter (.claude/settings.local.json) installed.
+Prompt: copilot -p "In src/orders.ts add the line '// orders module' as the very first line. Nothing else." --trust-folder --allow-all-tools
+
+BEFORE the guard (claude-code adapter answered too; records without a harness field are the claude-code adapter's):
+  copilot	SessionStart	
+  claude-code	SessionStart	
+  copilot	UserPromptSubmit	
+  claude-code	UserPromptSubmit	
+  copilot	PreToolUse	Bash
+  claude-code	PreToolUse	Bash
+  copilot	PostToolUse	view
+  claude-code	PostToolUse	Read
+  copilot	PostToolUse	Bash
+  claude-code	PostToolUse	Bash
+  copilot	PreToolUse	Write
+  claude-code	PreToolUse	Edit
+  copilot	PostToolUse	Write
+  claude-code	PostToolUse	Edit
+  copilot	PreToolUse	Bash
+  copilot	PreToolUse	Bash
+  claude-code	PreToolUse	Bash
+  claude-code	PreToolUse	Bash
+  copilot	PostToolUse	Bash
+  claude-code	PostToolUse	Bash
+  copilot	PostToolUse	Bash
+  claude-code	PostToolUse	Bash
+  copilot	Stop	
+  claude-code	Stop	
+  copilot	SessionEnd	
+  claude-code	SessionEnd	
+
+AFTER the guard (packages/adapters/claude-code/src/cli.ts: no-op when COPILOT_CLI=1 and .weft/copilot.json exists):
+  copilot	SessionStart	
+  copilot	UserPromptSubmit	
+  copilot	PostToolUse	view
+  copilot	PreToolUse	Edit
+  copilot	PostToolUse	Edit
+  copilot	Stop	
+  copilot	SessionEnd	

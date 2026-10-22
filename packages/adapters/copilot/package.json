@@ -1,0 +1,23 @@
+{
+  "name": "@weft/adapter-copilot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "WCP v0.1 adapter for GitHub Copilot hooks (Copilot CLI, VS Code agent mode, Copilot cloud agent): preToolUse deny (L2), postToolUse additionalContext (L1), agentStop block (L3).",
+  "bin": {
+    "weft-adapter-copilot": "./bin/weft-adapter-copilot.mjs"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node scripts/build.mjs && vitest run"
+  },
+  "dependencies": {
+    "@weft/analyzer": "workspace:*",
+    "@weft/protocol": "workspace:*",
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.4"
+  }
+}

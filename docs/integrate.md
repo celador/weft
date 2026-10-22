@@ -54,6 +54,7 @@ at the bundle in your Weft clone (`pnpm --filter <package> build` first).
 | Codex CLI | `@weft/adapter-codex` (`apply_patch` hooks) | L2 | L0 verified, rest documented |
 | Cursor CLI | `@weft/adapter-cursor` | L3 (documented) | fixture-tested |
 | Gemini CLI | `@weft/adapter-gemini` | L3 (documented) | fixture-tested only |
+| GitHub Copilot (CLI, VS Code agent mode, cloud agent) | `@weft/adapter-copilot` (`.github/hooks/weft.json`) | L3 | CLI and VS Code verified with real runs; cloud agent not yet (needs a paid plan) |
 | Anything else, humans | `@weft/adapter-watcher` (file watcher + git pre-commit) | L0 | verified |
 
 Each package's README has its install command and hook mapping. For a harness that is not

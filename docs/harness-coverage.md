@@ -29,7 +29,7 @@ for cloud agents, git push events). **d** is an ACP proxy, which is experimental
 | Hermes Agent | CLI | L3 plugin | a | **L3**, used on Weft's own build (`adapter-hermes`) | — |
 | Cursor CLI + Cursor IDE | CLI/IDE | L3 hooks (same `.cursor/hooks.json`) | a | L3 fixture-tested (`adapter-cursor`); live run blocked on login | live run |
 | Gemini CLI | CLI | L3 hooks | a | L3 fixture-tested (`adapter-gemini`) | low priority: the free tier moved to Antigravity |
-| **GitHub Copilot** (CLI, cloud coding agent, VS Code agent mode) | CLI/IDE/cloud | L3 hooks | a | watcher only | **card: Copilot adapter** |
+| **GitHub Copilot** (CLI, cloud coding agent, VS Code agent mode) | CLI/IDE/cloud | L3 hooks | a | **L3 verified** on Copilot CLI and VS Code agent mode (`adapter-copilot`, [evidence](../demo/evidence/copilot/README.md)); cloud agent unverified | cloud agent run (needs a paid Copilot plan; probe repo ready) |
 | **Google Antigravity** (2.0, CLI, IDE) | CLI/IDE | L3 hooks | a | watcher only | **card: Antigravity adapter** |
 | **Windsurf / Devin Desktop** (Cascade) | IDE | L2 hooks | a | watcher only | **card: Windsurf adapter** |
 | Cline (extension + CLI) | IDE/CLI | L2 hooks (+ next-turn context) | a | watcher only | queued (adapter #4) |
@@ -388,9 +388,14 @@ drafted as [Agent Hooks Core v0.1](protocol/hooks-core-v0.md). This map is new e
 ## 7. Open questions (each phase 2 card probes the ones it owns)
 
 1. Copilot coding agent: do hook commands get past the firewall to the gateway, and how does the
-   token get in (an Actions secret, `copilot-setup-steps`)?
+   token get in (an Actions secret, `copilot-setup-steps`)? *Still open (2026-10-22): job creation
+   returns 403 on Copilot Free; the probe repo is ready ([evidence](../demo/evidence/copilot/README.md#copilot-cloud-agent-probe)).*
 2. VS Code Local hooks: which file locations does the Local harness read? Does a Copilot-format
-   file in `.github/hooks/` fire for both Copilot CLI and VS Code?
+   file in `.github/hooks/` fire for both Copilot CLI and VS Code? *Answered (2026-10-22): yes. One
+   camelCase `.github/hooks/weft.json` fired in Copilot CLI 1.0.102 and in VS Code 1.135's Local
+   harness (mapped to its PascalCase events, with `tool_use_id`). Copilot CLI loads it only in a
+   trusted folder and also runs `.claude/settings*.json` hooks; VS Code reads Claude files only
+   with `chat.useClaudeHooks`.*
 3. Windsurf: is any post-hook output model-visible (L1)? Is there a stop hook? If neither, the
    adapter declares L2 with `inject:"delayed"`, delivering the inbox through the next pre-hook
    denial or the MCP server.
