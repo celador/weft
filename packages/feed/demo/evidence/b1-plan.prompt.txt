@@ -1,0 +1,3 @@
+claude  -p …
+
+Task T-2: src/cart.ts needs `export function cartTotal(items: Item[]): number` that returns the cart total, computed with the existing `calcTotal` helper from src/pricing.ts. For now only read src/pricing.ts and src/cart.ts and reply with a 3-line plan including the exact line you will write. Do not edit any file yet.
