@@ -657,12 +657,13 @@ class CauseActions implements vscode.CodeActionProvider {
   provideCodeActions(doc: vscode.TextDocument, range: vscode.Range | vscode.Selection, ctx: vscode.CodeActionContext): vscode.CodeAction[] {
     const out: vscode.CodeAction[] = [];
     const list = this.ours(doc.uri, range);
-    const seen = new Set(list.map((d) => d.weft?.cause));
-    const extra = (ctx.diagnostics as WeftDiagnostic[]).filter((d) => d.source === "Weft" && !seen.has(d.relatedInformation?.[0] ? causeFromUri(d.relatedInformation[0].location.uri) : undefined));
-    for (const d of [...list, ...extra]) {
+    const causeOf = (d: WeftDiagnostic) => d.weft?.cause ?? (d.relatedInformation?.[0] ? causeFromUri(d.relatedInformation[0].location.uri) : undefined);
+    const seen = new Set<string>();
+    for (const d of [...list, ...(ctx.diagnostics as WeftDiagnostic[])]) {
       if (d.source !== "Weft") continue;
-      const cause = d.weft?.cause ?? (d.relatedInformation?.[0] ? causeFromUri(d.relatedInformation[0].location.uri) : undefined);
-      if (!cause) continue;
+      const cause = causeOf(d);
+      if (!cause || seen.has(cause)) continue;
+      seen.add(cause);
       const p = parseId(cause)!;
       const a = new vscode.CodeAction(`Open causing event (#${p.seq})`, vscode.CodeActionKind.QuickFix);
       a.command = { command: "weft.openCausingEvent", title: "Open causing event", arguments: [cause] };

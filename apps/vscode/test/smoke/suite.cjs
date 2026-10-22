@@ -68,9 +68,13 @@ exports.run = async function run() {
 
   await check("code action “Open causing event” on the squiggle", async () => {
     await vscode.window.showTextDocument(pricing);
-    const actions = await vscode.commands.executeCommand("vscode.executeCodeActionProvider", pricing, diag.range);
-    const open = actions.find((a) => a.title === "Open causing event (#4)");
-    assert.ok(open, `actions: ${actions.map((a) => a.title).join(", ")}`);
+    // The editor's own lightbulb requests can cancel an in-flight provider call; ask until ours answers.
+    let titles = [];
+    const open = await until("Open causing event", async () => {
+      const actions = (await vscode.commands.executeCommand("vscode.executeCodeActionProvider", pricing, diag.range, vscode.CodeActionKind.QuickFix.value)) ?? [];
+      titles = actions.map((a) => a.title);
+      return actions.find((a) => a.title === "Open causing event (#4)");
+    }).catch((e) => assert.fail(`${e.message}; actions: ${titles.join(", ")}`));
     assert.deepEqual(open.command.arguments, [`${REPO}#4`]);
   });
 
@@ -90,6 +94,13 @@ exports.run = async function run() {
     assert.match(tab.label, /src\/pricing\.ts · claude-a/);
   });
 
+  await check("a live record (claude-b redoes the edit, #9) clears the squiggle", async () => {
+    const res = await fetch(`${STUB}/__test/append`, { method: "POST", body: JSON.stringify({ seq: 9 }) });
+    assert.equal(res.status, 200);
+    await until("squiggle cleared", () => vscode.languages.getDiagnostics(pricing).filter((d) => d.source === "Weft").length === 0);
+    assert.ok(api.session().log.event(REPO, 9));
+  });
+
   await check("Pause falls through the observe-only token to .weft/human-token and lands in the log", async () => {
     await vscode.commands.executeCommand("weft.pause", { repo: REPO, agent: "claude-b" });
     const { actions } = await (await fetch(`${STUB}/__test/actions`)).json();
@@ -98,13 +109,6 @@ exports.run = async function run() {
       ["human", "pause", "claude-b"],
     ]);
     await until("pause record in the log", () => api.session().log.combined.find((e) => e.kind === "control" && e.payload?.action === "pause"));
-  });
-
-  await check("a live record (claude-b redoes the edit, #9) clears the squiggle", async () => {
-    const res = await fetch(`${STUB}/__test/append`, { method: "POST", body: JSON.stringify({ seq: 9 }) });
-    assert.equal(res.status, 200);
-    await until("squiggle cleared", () => vscode.languages.getDiagnostics(pricing).filter((d) => d.source === "Weft").length === 0);
-    assert.ok(api.session().log.event(REPO, 9));
   });
 
   await check("status bar state: repo, agents editing, squiggles", async () => {
