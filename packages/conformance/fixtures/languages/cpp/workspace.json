@@ -1,0 +1,76 @@
+{
+  "description": "C++ conformance workspace (docs/languages.md). The contract is include/shop/cart.hpp (class shop::Cart); src/cart.cpp defines its members out of line, keyed like their in-class declarations on the header. The peer changes are another agent's edits; their reads/writes are exactly what @weft/analyzer's C++ backend derives from `after` (checked by packages/conformance/test/languages.test.ts).",
+  "language": "cpp",
+  "files": {
+    "include/shop/cart.hpp": "#pragma once\n#include <vector>\n\nnamespace shop {\n\nstruct Item {\n  long price;\n  int qty;\n};\n\nclass Cart {\n public:\n  explicit Cart(std::vector<Item> items);\n  long total() const;\n  int count() const;\n\n private:\n  std::vector<Item> items_;\n};\n\nstd::string format_price(long cents);\n\n}  // namespace shop\n",
+    "src/cart.cpp": "#include \"shop/cart.hpp\"\n\n#include <string>\n\nnamespace shop {\n\nCart::Cart(std::vector<Item> items) : items_(std::move(items)) {}\n\nlong Cart::total() const {\n  long sum = 0;\n  for (const Item &i : items_) sum += i.price * i.qty;\n  return sum;\n}\n\nint Cart::count() const { return static_cast<int>(items_.size()); }\n\nstd::string format_price(long cents) { return \"$\" + std::to_string(cents / 100); }\n\n}  // namespace shop\n",
+    "src/checkout.cpp": "#include \"shop/cart.hpp\"\n\nlong checkout_total(const shop::Cart &cart) {\n  return 0;\n}\n",
+    "src/receipt.cpp": "#include \"shop/cart.hpp\"\n\nstd::string receipt_line(long total) {\n  return \"Total\";\n}\n"
+  },
+  "peers": {
+    "change_signature": {
+      "agent": "peer-a",
+      "harness": "claude-code",
+      "task": "T-1",
+      "files": [
+        "include/shop/cart.hpp",
+        "src/cart.cpp"
+      ],
+      "writes": [
+        {
+          "key": "include/shop/cart.hpp#shop.Cart",
+          "kind": "body"
+        },
+        {
+          "key": "include/shop/cart.hpp#shop.Cart.total",
+          "kind": "signature"
+        }
+      ],
+      "reads": [
+        "include/shop/cart.hpp#shop.Cart.items_",
+        "include/shop/cart.hpp#shop.Item",
+        "include/shop/cart.hpp#shop.Item.price",
+        "include/shop/cart.hpp#shop.Item.qty"
+      ],
+      "intent": "Cart::total takes a tax rate",
+      "after": {
+        "include/shop/cart.hpp": "#pragma once\n#include <vector>\n\nnamespace shop {\n\nstruct Item {\n  long price;\n  int qty;\n};\n\nclass Cart {\n public:\n  explicit Cart(std::vector<Item> items);\n  long total(double tax_rate) const;\n  int count() const;\n\n private:\n  std::vector<Item> items_;\n};\n\nstd::string format_price(long cents);\n\n}  // namespace shop\n",
+        "src/cart.cpp": "#include \"shop/cart.hpp\"\n\n#include <string>\n\nnamespace shop {\n\nCart::Cart(std::vector<Item> items) : items_(std::move(items)) {}\n\nlong Cart::total(double tax_rate) const {\n  long sum = 0;\n  for (const Item &i : items_) sum += i.price * i.qty;\n  return static_cast<long>(sum * (1 + tax_rate));\n}\n\nint Cart::count() const { return static_cast<int>(items_.size()); }\n\nstd::string format_price(long cents) { return \"$\" + std::to_string(cents / 100); }\n\n}  // namespace shop\n"
+      }
+    },
+    "rename_helper": {
+      "agent": "peer-b",
+      "harness": "codex",
+      "task": "T-3",
+      "files": [
+        "include/shop/cart.hpp",
+        "src/cart.cpp"
+      ],
+      "writes": [
+        {
+          "key": "include/shop/cart.hpp#shop.format_money",
+          "kind": "new"
+        },
+        {
+          "key": "include/shop/cart.hpp#shop.format_price",
+          "kind": "deleted"
+        },
+        {
+          "key": "src/cart.cpp#shop.format_price",
+          "kind": "deleted"
+        }
+      ],
+      "reads": [
+        "include/shop/cart.hpp#shop.Cart.items_",
+        "include/shop/cart.hpp#shop.Item",
+        "include/shop/cart.hpp#shop.Item.price",
+        "include/shop/cart.hpp#shop.Item.qty"
+      ],
+      "intent": "rename format_price to format_money",
+      "after": {
+        "include/shop/cart.hpp": "#pragma once\n#include <vector>\n\nnamespace shop {\n\nstruct Item {\n  long price;\n  int qty;\n};\n\nclass Cart {\n public:\n  explicit Cart(std::vector<Item> items);\n  long total() const;\n  int count() const;\n\n private:\n  std::vector<Item> items_;\n};\n\nstd::string format_money(long cents);\n\n}  // namespace shop\n",
+        "src/cart.cpp": "#include \"shop/cart.hpp\"\n\n#include <string>\n\nnamespace shop {\n\nCart::Cart(std::vector<Item> items) : items_(std::move(items)) {}\n\nlong Cart::total() const {\n  long sum = 0;\n  for (const Item &i : items_) sum += i.price * i.qty;\n  return sum;\n}\n\nint Cart::count() const { return static_cast<int>(items_.size()); }\n\nstd::string format_money(long cents) { return \"$\" + std::to_string(cents / 100); }\n\n}  // namespace shop\n"
+      }
+    }
+  }
+}

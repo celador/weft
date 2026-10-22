@@ -49,7 +49,7 @@ function adapterFor(loaded: Loaded, calls?: Call[]): ClaudeAdapter {
   const transport = calls ? timed(http, calls) : http;
   return new ClaudeAdapter(loaded, {
     transport,
-    analyze: async (changes, root, prefix) => (await import("./analysis")).analyzeChanges(changes, root, prefix),
+    analyze: async (changes, root, prefix) => (await import("./analysis")).analyzeChangesAsync(changes, root, prefix),
     diff: async (rel, before, after) => (await import("./analysis")).unifiedDiff(rel, before, after),
     cli: cliFor(loaded.root),
     startHeartbeat: (claudeSession) => {
@@ -143,6 +143,9 @@ async function hook(byPath: boolean, args: string[] = []): Promise<void> {
         break;
       }
     }
+    // Copilot CLI also runs `.claude/settings*.json` hooks. In a checkout where the Copilot
+    // adapter is installed it owns the session; answering here too would double every event.
+    if (loaded && process.env.COPILOT_CLI === "1" && existsSync(join(loaded.root, ".weft/copilot.json"))) loaded = undefined;
     if (loaded && input) out = await adapterFor(loaded, calls).handle(input);
   } catch {
     out = undefined; // fail open: malformed input or a bug must not block the harness

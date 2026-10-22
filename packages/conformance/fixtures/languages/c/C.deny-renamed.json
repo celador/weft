@@ -1,0 +1,36 @@
+{
+  "id": "C.deny-renamed",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a74.1",
+  "title": "C: a call to a function another agent renamed (header + .c) is denied",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "rename_helper"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/report.c",
+        "old_text": "  return 0;",
+        "new_text": "  return format_price(total, out, size);"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "format_price"
+        ]
+      },
+      "expect_applied": false
+    },
+    {
+      "expect_file": {
+        "path": "src/report.c",
+        "unchanged": true
+      }
+    }
+  ]
+}

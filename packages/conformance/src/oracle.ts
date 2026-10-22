@@ -21,7 +21,11 @@ export type PeerChange = {
   after: Record<string, string>;
 };
 
-export type Workspace = { description?: string; files: Record<string, string>; peers: Record<string, PeerChange> };
+/**
+ * `language`: the language a fixture set under fixtures/languages tests; `interop`: other
+ * languages its peers may edit (a Kotlin set whose peer changes a Java file).
+ */
+export type Workspace = { description?: string; language?: string; interop?: string[]; files: Record<string, string>; peers: Record<string, PeerChange> };
 
 export const REPO = "conformance";
 

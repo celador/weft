@@ -1,0 +1,15 @@
+[weft diagnostics]
+[weft warning] contract_changed shop/pricing.py#calc_total: agent-a changed the signature of shop/pricing.py#calc_total (#4), which your change uses. (caused by agent-a · task T-1 · event #4). Suggestion: Re-read shop/pricing.py#calc_total and adapt your call sites before your next edit, or negotiate (e.g. keep the old signature as an overload).
+  ↳ event #4 by agent-a changed shop/pricing.py (their change is not in your checkout yet):
+    @@ -8,6 +8,7 @@
+         qty: int
+     
+     
+    -def calc_total(items: list[Item]) -> float:
+    -    """Sum of price * qty."""
+    -    return sum(i.price * i.qty for i in items)
+    +def calc_total(items: list[Item], tax_rate: float) -> float:
+    +    """Sum of price * qty, including tax."""
+    +    net = sum(i.price * i.qty for i in items)
+    +    return net * (1 + tax_rate)
+    

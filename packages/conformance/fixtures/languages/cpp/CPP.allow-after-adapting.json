@@ -1,0 +1,47 @@
+{
+  "id": "CPP.allow-after-adapting",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a75.2",
+  "title": "C++: after the deny, the call adapted to the new signature is allowed",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/checkout.cpp",
+        "old_text": "  return 0;",
+        "new_text": "  return cart.total();"
+      },
+      "expect_pre": {
+        "decision": "deny"
+      }
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/checkout.cpp",
+        "old_text": "  return 0;",
+        "new_text": "  return cart.total(0.0);"
+      },
+      "expect_pre": {
+        "decision": "not-deny"
+      },
+      "expect_applied": true
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "kind": "edit",
+        "status": "accepted",
+        "files_include": "src/checkout.cpp",
+        "min": 1
+      }
+    }
+  ]
+}

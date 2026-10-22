@@ -1,0 +1,7 @@
+tool_use Bash: {"command": "cat shop/cart.py; echo ---; cat shop/pricing.py", "description": "Show cart and pricing modules"}
+tool_use Write: {"file_path": "<demo>/shop-b/shop/cart.py", "content": "from shop.pricing import Item, calc_total\n\n\ndef cart_summary(items: list[Item]) -> str:\n    return f\"{len(items)} items, total {calc_total(items):.2f}\"\n"}
+tool_use Bash: {"command": "sleep 60 && python3 -c 'import shop.cart; print(\"import ok\")'", "description": "Run the project's slow import check", "timeout": 180000}
+tool_use Bash: {"command": "sleep 60 && python3 -c 'import shop.cart; print(\"import ok\")'", "description": "Run the project's slow import check in background", "timeout": 180000, "run_in_background": true}
+tool_use Bash: {"command": "cat <claude-tmp> echo ---; .weft/bin/weft inbox; echo ---; .weft/bin/weft negotiate --help", "description": "Read check output, weft inbox, negotiate help"}
+tool_use Read: {"file_path": "<claude-tmp>"}
+tool_use Bash: {"command": "<demo>/shop-b/.weft/bin/weft negotiate --help", "description": "Show weft negotiate usage"}

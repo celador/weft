@@ -1,0 +1,19 @@
+diff --git a/src/cart.ts b/src/cart.ts
+index 81f285c..d136a59 100644
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -1,4 +1,4 @@
+-import type { Item } from "./pricing";
++import { calcTotal, type Item } from "./pricing";
+ 
+ export class Cart {
+   private items: Item[] = [];
+@@ -10,4 +10,8 @@ export class Cart {
+   list(): Item[] {
+     return [...this.items];
+   }
++
++  total(): number {
++    return calcTotal(this.items, { taxRate: 0 });
++  }
+ }
