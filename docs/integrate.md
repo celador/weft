@@ -43,7 +43,8 @@ Every adapter declares what its harness lets it do (spec §8.1). Weft relies on 
 
 ## Adapters
 
-All live in `packages/adapters/`; none is published to npm yet, so `install` points the harness
+All live in `packages/adapters/`. `npx @celador/weft` ships them all and installs the right ones per
+checkout. From a clone, `install` points the harness
 at the bundle in your Weft clone (`pnpm --filter <package> build` first).
 
 | Harness | Package | Level | Status |

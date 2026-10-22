@@ -1,11 +1,77 @@
-# Try Weft locally
+# Try Weft
 
-This guide takes a fresh clone to two coordinated agents on your machine, without a Cloudflare
-account: install, run the tests, start a local gateway, and watch Weft deny a conflicting edit.
-It takes about five minutes. The optional last section deploys to your own Cloudflare account.
-To wire Weft into an agent setup you already run, read [integrate.md](integrate.md) next.
+One command, in any git repository. No login, no account, no Cloudflare setup:
 
-## Requirements
+```sh
+npx @celador/weft
+```
+
+(The npm package is `@celador/weft`; the name `weft` was already taken on npm.)
+
+It takes about a minute and:
+
+1. creates a **free hosted space** for you on Weft's Cloudflare gateway
+   (`weft-hosted.elier.ai`; Workers + Durable Objects). Its key is stored on your machine in
+   `~/.config/weft` and in the repo's `.weft/`, which git ignores. Running it again reuses it;
+2. adds Weft's hooks for every coding agent it finds on your PATH (Claude Code, Codex, Cursor
+   CLI, OpenCode, Gemini CLI) to every checkout of the repo. With a single checkout it offers a
+   second `git worktree` (`../<repo>-2`), so two agents can work side by side; with no agent
+   installed it sets up a file watcher instead;
+3. prints your private **live feed** link and opens it.
+
+```
+✓ created your free hosted space on Cloudflare spxxxxxxxxxx (weft-hosted.elier.ai; no account needed)
+✓ repo shop (new)
+✓ worktree ~/code/shop-2 (branch shop-2)
+✓ Claude Code hooks in ~/code/shop (agent shop)
+✓ Claude Code hooks in ~/code/shop-2 (agent shop-2)
+
+Live feed (private to you; anyone with the link can read it)
+  https://weft-hosted.elier.ai/feed#t=weft_…
+
+Next: start one agent per checkout, each in its own terminal:
+  $ cd ~/code/shop && claude
+  $ cd ~/code/shop-2 && claude
+```
+
+## See a squiggle in two minutes
+
+In the first checkout, ask the agent to change a function's signature; in the second, ask its
+agent to use that function the old way:
+
+```sh
+cd ~/code/shop   && claude -p "In src/pricing.ts, make calcTotal take a second parameter opts: { taxRate: number }." --permission-mode acceptEdits
+cd ~/code/shop-2 && claude -p "In src/cart.ts, show the cart total computed with calcTotal(items) from ./pricing." --permission-mode acceptEdits
+```
+
+The second agent's edit is refused before it reaches the disk, with a `stale_assumption`
+diagnostic and the first agent's diff. It then adapts its call (or negotiates with the other
+agent). The feed shows both edits and the refusal as they happen.
+
+## Everyday commands
+
+| Command | What it does |
+|---|---|
+| `npx @celador/weft status` | gateway, space, checkouts, recent events, the feed link |
+| `npx @celador/weft feed` | the live feed in your terminal |
+| `npx @celador/weft add [name]` | another worktree for one more parallel agent |
+| `npx @celador/weft uninstall [--space]` | remove Weft from the repo (`--space` also deletes the space) |
+| `npx @celador/weft --local` | the same, with the gateway running on this machine (offline) |
+| `npx @celador/weft deploy [--domain HOST]` | your own gateway in your Cloudflare account |
+
+Agents that were already running when you ran the command must be restarted: hooks load when a
+session starts. How the hosted gateway keeps spaces apart, its limits, and how to run your own
+are in [hosted.md](hosted.md).
+
+## Advanced: from a clone
+
+Everything below is the manual path, for working on Weft itself or wiring it into an existing
+agent setup by hand. It takes a fresh clone to two coordinated agents on your machine, without
+a Cloudflare account: install, run the tests, start a local gateway, and watch Weft deny a
+conflicting edit. The optional last section deploys to your own Cloudflare account. To wire Weft
+into an agent setup you already run, read [integrate.md](integrate.md) next.
+
+### Requirements
 
 - macOS or Linux with Git, `curl` and `openssl` (preinstalled on macOS)
 - Node.js 22 or newer (CI uses Node 24): `node --version`
@@ -17,7 +83,7 @@ To wire Weft into an agent setup you already run, read [integrate.md](integrate.
 
 No Docker, Cloudflare login, API token or model key is needed before section 5.
 
-## 1. Clone and install
+### 1. Clone and install
 
 ```sh
 git clone https://github.com/celador/weft.git
@@ -25,7 +91,7 @@ cd weft
 pnpm install --frozen-lockfile
 ```
 
-## 2. Run the tests
+### 2. Run the tests
 
 ```sh
 pnpm --filter @weft/protocol test       # WCP schema + reference coordinator conformance, seconds
@@ -35,7 +101,7 @@ pnpm -r typecheck && pnpm -r test       # the whole repository gate, about 1-2 m
 The tests use local doubles for Workers, Durable Objects and containers; they need no Docker,
 secrets or network services.
 
-## 3. Start the local gateway
+### 3. Start the local gateway
 
 The gateway's `test` environment runs the coordinator and registry only, entirely on your
 machine. It needs an admin token, which Wrangler reads from a gitignored file when it starts:
@@ -59,9 +125,9 @@ From a second terminal, `curl -s http://localhost:8787/v1/health` should print
 - `pnpm --filter @weft/gateway dev` (without `:local`) is the full configuration with remote
   Cloudflare bindings; it needs a Cloudflare login and is not used here.
 
-## 4. Two agents, one collision
+### 4. Two agents, one collision
 
-### 4a. One command: sample repo, tokens, adapters, both collisions
+#### 4a. One command: sample repo, tokens, adapters, both collisions
 
 From the repository root, in the second terminal:
 
@@ -109,7 +175,7 @@ Sometimes it negotiates instead (`.weft/bin/weft negotiate propose overload ...`
 nobody running as agent-a the proposal is never answered, and the stop gate keeps Claude working
 while the error is open, so give it enough turns (`--max-turns 20`) to fall back to adapting.
 
-### 4b. Your own repository
+#### 4b. Your own repository
 
 Give the script one checkout per agent, either separate clones or `git worktree add` (two agents
 in one directory would share files and adapter state):
@@ -134,7 +200,7 @@ curl -s -H "authorization: Bearer $(cat apps/gateway/.wrangler/weft-local/<repo>
   http://localhost:8787/v1/repos/<repo>/events | jq -c '.events[] | [.seq, .status, .kind, .agent, .summary]'
 ```
 
-### Claiming symbols before you start
+#### Claiming symbols before you start
 
 An agent (or you, in its checkout) can claim the symbols it is about to change, so other agents
 are told before they collide:
@@ -164,7 +230,7 @@ curl -sX POST $U/v1/admin/repos/<repo>/policy -H "$AD" \
   -d '{"claims":{"lease_ms":120000,"firm_max_ms":600000}}'
 ```
 
-### 4c. Landing
+#### 4c. Landing
 
 `stale_overwrite` protects *landed* (merged) code. The local gateway has no merge queue, so after
 you merge an agent's branch, tell Weft:
@@ -179,7 +245,7 @@ when its agent's first session starts, so landing a change whose agent never ran
 `422 invalid_reference: unknown change`. See
 [integrate.md](integrate.md#land-events) for what a land does.
 
-### 4d. The same steps by hand
+#### 4d. The same steps by hand
 
 What the script does, if you want to script it differently. `U` is the gateway URL; each token
 response contains the secret once, in its `token` field.
@@ -207,7 +273,7 @@ needs `observe` so the adapter can quote the other agent's diff; the system toke
 to read `head_seq`. Use one token, `--agent` and `--task` per checkout. Agents in different
 repositories need different `--repo` values: coordination is per repository.
 
-## Known limitations
+### Known limitations
 
 Found while walking this guide on a clean Mac without a Cloudflare account.
 
@@ -232,12 +298,15 @@ Found while walking this guide on a clean Mac without a Cloudflare account.
 - **Local state lives in `apps/gateway/.wrangler/`** (event logs, registry, system-token files).
   Deleting it resets everything; agent installs then hold tokens the gateway no longer knows, so
   re-run the quickstart.
-- **Adapters are not published to npm.** Installs reference the bundle in your clone, so keep the
-  clone where it is (or re-run `install` after moving it).
+- **From a clone, installs reference the adapter bundle in that clone**, so keep the clone where
+  it is (or re-run `install` after moving it). `npx @celador/weft` copies the adapters to
+  `~/.config/weft/runtime/<version>/` instead.
 
-## 5. Optional: deploy a preview in your Cloudflare account
+### 5. Optional: deploy a preview in your Cloudflare account
 
-This step creates/updates a Worker in the account selected by your Wrangler login. Review the
+The quick way is `npx @celador/weft deploy` (see [hosted.md](hosted.md#your-own-cloudflare-account)):
+it deploys the coordinator and registry as one Worker in the account you log in to. The steps
+below deploy this repository's full gateway configuration instead. This step creates/updates a Worker in the account selected by your Wrangler login. Review the
 commands and account before proceeding. All Weft Cloudflare resource names use the `weft-`
 prefix. Do not set `CLOUDFLARE_API_TOKEN`; the project uses Wrangler OAuth.
 
@@ -259,7 +328,7 @@ also needs configured Artifacts, D1, Queue, workflow, sandbox, and evidence reso
 [the runbook](runbook.md) before provisioning those services. Never paste admin tokens or secrets
 into issue reports or logs.
 
-## Next steps
+### Next steps
 
 - [Integrate Weft into your own agent setup](integrate.md): capability levels, adapters, advise
   vs enforce, landing.

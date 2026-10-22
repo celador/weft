@@ -8,7 +8,8 @@
     "test": "vitest run",
     "dev": "wrangler dev",
     "dev:local": "wrangler dev --env test",
-    "deploy:preview": "wrangler deploy --env preview"
+    "deploy:preview": "wrangler deploy --env preview",
+    "deploy:hosted": "wrangler deploy --env hosted"
   },
   "dependencies": {
     "@weft/artifacts": "workspace:*",

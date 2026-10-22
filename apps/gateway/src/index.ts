@@ -16,13 +16,14 @@ import {
   type RepoCoordinator,
   type Result,
 } from "@weft/sequencer";
-import { REPO_NAME, Registry, sha256Hex, type TokenSpec } from "./registry";
+import { REPO_NAME, Registry, sha256Hex, type SpaceGrant, type TokenSpec } from "./registry";
+import { spacesAdmin, spacesRoute, throttleSpace, type SpacesEnv, type SpacesKit } from "./spaces";
 import { artifactsAdmin, artifactsRoute, forwardApproval, handleArtifactsBatch, startRevert, type ArtifactsEnv, type Kit } from "./artifacts";
 
 export { RepoCoordinator } from "@weft/sequencer";
 export { Registry };
 
-export interface Env extends ArtifactsEnv {
+export interface Env extends ArtifactsEnv, SpacesEnv {
   WEFT_REPO: DurableObjectNamespace<RepoCoordinator>;
   WEFT_REGISTRY: DurableObjectNamespace<Registry>;
   /** Operator secret for /v1/admin (wrangler secret). The admin API is disabled when unset. */
@@ -81,7 +82,7 @@ function repoStub(env: Env, repo: string) {
   return env.WEFT_REPO.get(env.WEFT_REPO.idFromName(repo));
 }
 
-async function authenticate(req: Request, env: Env): Promise<Grant> {
+async function authenticate(req: Request, env: Env): Promise<SpaceGrant> {
   const token = bearer(req);
   if (!token) throw new HttpError("unauthorized", "missing bearer token");
   const key = await sha256Hex(token);
@@ -90,10 +91,26 @@ async function authenticate(req: Request, env: Env): Promise<Grant> {
   if (hit && hit.exp > Date.now()) grant = hit.grant;
   else {
     grant = await registry(env).verify(token);
-    grantCache.set(key, { grant, exp: Date.now() + GRANT_CACHE_MS });
+    // Space grants: short cache, so a viewer sees new repos and a deleted space stops at once.
+    grantCache.set(key, { grant, exp: Date.now() + (!grant || (grant as SpaceGrant).space ? 5_000 : GRANT_CACHE_MS) });
   }
   if (!grant) throw new HttpError("unauthorized", "invalid token");
-  return grant;
+  // Hosted spaces: per-space rate limit and the deploy-time kill switch.
+  await throttleSpace(env, spacesKit(env), grant as SpaceGrant);
+  return grant as SpaceGrant;
+}
+
+function spacesKit(env: Env): SpacesKit {
+  return {
+    fail(code, message, details) {
+      throw new HttpError(code, message, details);
+    },
+    json,
+    readJson,
+    authenticate: (req) => authenticate(req, env),
+    bearer,
+    isAdmin: (t) => Boolean(env.WEFT_ADMIN_TOKEN && t && timingSafeEqual(t, env.WEFT_ADMIN_TOKEN)),
+  };
 }
 
 /** Scope + repo check. A repo outside the token's list is 404 (do not leak existence). */
@@ -193,6 +210,10 @@ async function route(req: Request, env: Env): Promise<Response> {
     return json({ type: "health", service: "weft-gateway", protocol: `wcp/${WCP_VERSION}`, ok: true });
 
   if (path.startsWith("/v1/admin")) return admin(req, env, path, m);
+
+  // ----- hosted spaces (`npx weft`): signup, space API, private feed page
+  const sp = await spacesRoute(req, env, spacesKit(env), path);
+  if (sp) return sp;
 
   checkVersion(req);
 
@@ -404,6 +425,8 @@ async function admin(req: Request, env: Env, path: string, m: string): Promise<R
     if (!ok) throw new HttpError("not_found", "no such active token");
     return new Response(null, { status: 204 });
   }
+  const sa = await spacesAdmin(req, env, spacesKit(env), path);
+  if (sa) return sa;
   const aa = await artifactsAdmin(req, env, kit(env), path);
   if (aa) return aa;
   throw new HttpError("not_found", `no route ${m} ${path}`);

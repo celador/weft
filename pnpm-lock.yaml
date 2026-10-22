@@ -211,6 +211,37 @@ importers:
 
   packages/artifacts: {}
 
+  packages/cli:
+    dependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+    devDependencies:
+      '@weft/adapter-claude-code':
+        specifier: workspace:*
+        version: link:../adapters/claude-code
+      '@weft/adapter-codex':
+        specifier: workspace:*
+        version: link:../adapters/codex
+      '@weft/adapter-cursor':
+        specifier: workspace:*
+        version: link:../adapters/cursor
+      '@weft/adapter-gemini':
+        specifier: workspace:*
+        version: link:../adapters/gemini
+      '@weft/adapter-opencode':
+        specifier: workspace:*
+        version: link:../adapters/opencode
+      '@weft/adapter-watcher':
+        specifier: workspace:*
+        version: link:../adapters/watcher
+      '@weft/gateway':
+        specifier: workspace:*
+        version: link:../../apps/gateway
+      esbuild:
+        specifier: ^0.25.4
+        version: 0.25.4
+
   packages/conformance:
     dependencies:
       '@weft/protocol':

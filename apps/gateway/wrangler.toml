@@ -168,3 +168,48 @@ migrations_dir = "migrations"
 
 [env.test.vars]
 WEFT_ARTIFACTS_NAMESPACE = "weft-test"
+
+# Hosted spaces for `npx weft` (docs/hosted.md): a separate Worker with its own Registry, so
+# free spaces never share storage with the team gateways above. Coordinator + registry only
+# (no D1, Artifacts, Queues or Workflows). Kill switch: POST /v1/admin/hosted {"mode":"off"},
+# or set WEFT_HOSTED_OFF = "1" and redeploy. Secret: WEFT_ADMIN_TOKEN (--env hosted).
+[env.hosted]
+name = "weft-hosted"
+workers_dev = false   # never expose *.workers.dev: that subdomain isn't ours to show (see AGENTS.md)
+routes = [{ pattern = "weft-hosted.elier.ai", custom_domain = true }]
+
+[[env.hosted.durable_objects.bindings]]
+name = "WEFT_REPO"
+class_name = "RepoCoordinator"
+
+[[env.hosted.durable_objects.bindings]]
+name = "WEFT_REGISTRY"
+class_name = "Registry"
+
+[[env.hosted.migrations]]
+tag = "v1"
+new_sqlite_classes = ["RepoCoordinator", "Registry"]
+
+# Workers Rate Limiting: per space (all requests) and per client IP (POST /v1/spaces).
+[[env.hosted.ratelimits]]
+name = "WEFT_RATE"
+namespace_id = "7301"
+simple = { limit = 600, period = 60 }
+
+[[env.hosted.ratelimits]]
+name = "WEFT_SIGNUP_RATE"
+namespace_id = "7302"
+simple = { limit = 5, period = 60 }
+
+[env.hosted.vars]
+WEFT_ARTIFACTS_NAMESPACE = "weft-hosted"
+WEFT_SIGNUPS = "open"
+WEFT_HOSTED_OFF = "0"
+WEFT_SIGNUPS_PER_IP_DAY = "20"
+WEFT_SIGNUPS_PER_DAY = "2000"
+WEFT_MAX_SPACES = "20000"
+WEFT_SPACE_MAX_REPOS = "20"
+WEFT_SPACE_MAX_TOKENS = "200"
+
+[env.hosted.observability]
+enabled = true

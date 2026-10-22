@@ -18,7 +18,16 @@ export default defineWorkersConfig(async () => {
           main: "./src/index.ts",
           wrangler: { configPath: "./wrangler.toml", environment: "test" },
           miniflare: {
-            bindings: { WEFT_ADMIN_TOKEN: "test-admin-token", TEST_MIGRATIONS: migrations },
+            bindings: {
+              WEFT_ADMIN_TOKEN: "test-admin-token",
+              TEST_MIGRATIONS: migrations,
+              // hosted spaces (test/spaces.test.ts): open signups, small limits
+              WEFT_SIGNUPS: "open",
+              WEFT_SIGNUPS_PER_IP_DAY: "3",
+              WEFT_SPACE_MAX_REPOS: "3",
+              WEFT_SPACE_MAX_TOKENS: "6",
+              WEFT_SPACE_RPM: "20",
+            },
           },
         },
       },

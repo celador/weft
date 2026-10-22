@@ -1,0 +1,34 @@
+{
+  "name": "@celador/weft",
+  "version": "0.1.0",
+  "description": "Red squiggles for teams of coding agents. `npx @celador/weft` in any git repo: a free hosted space, hooks for Claude Code, Codex, Cursor, OpenCode and Gemini, and a live feed.",
+  "license": "MIT",
+  "type": "module",
+  "homepage": "https://github.com/celador/weft#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/celador/weft.git", "directory": "packages/cli" },
+  "bugs": "https://github.com/celador/weft/issues",
+  "keywords": ["ai", "agents", "coding-agents", "claude-code", "codex", "cursor", "coordination", "cloudflare", "durable-objects", "merge-conflicts"],
+  "bin": { "weft": "dist/weft.mjs" },
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node scripts/build.mjs && vitest run",
+    "prepack": "node scripts/build.mjs"
+  },
+  "dependencies": {
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "@weft/adapter-claude-code": "workspace:*",
+    "@weft/adapter-codex": "workspace:*",
+    "@weft/adapter-cursor": "workspace:*",
+    "@weft/adapter-gemini": "workspace:*",
+    "@weft/adapter-opencode": "workspace:*",
+    "@weft/adapter-watcher": "workspace:*",
+    "@weft/gateway": "workspace:*",
+    "esbuild": "^0.25.4"
+  },
+  "publishConfig": { "access": "public" }
+}

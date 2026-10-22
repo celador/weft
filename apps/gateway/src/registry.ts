@@ -97,7 +97,12 @@ export class Registry extends DurableObject<RegistryEnv> {
     return { token, info: { ...grant, ...(spec.label ? { label: spec.label } : {}), created_at } };
   }
 
+  /** Token -> grant, with hosted-space semantics (see verifySpace below). Also used by RepoCoordinator for socket auth frames. */
   async verify(token: string): Promise<Grant | null> {
+    return this.verifySpace(token);
+  }
+
+  private async verifyRaw(token: string): Promise<Grant | null> {
     const h = await sha256Hex(token);
     const r = this.sql.exec<{ grant_json: string }>(`SELECT grant_json FROM tokens WHERE hash = ? AND revoked_at IS NULL`, h).toArray()[0];
     return r ? (JSON.parse(r.grant_json) as Grant) : null;
@@ -119,4 +124,211 @@ export class Registry extends DurableObject<RegistryEnv> {
     const n = this.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`, new Date().toISOString(), id).rowsWritten;
     return n > 0;
   }
+
+  // ------------------------------------------------------------------ hosted spaces
+  //
+  // A space is an anonymous tenant on a hosted gateway (`npx weft`): no login, no account.
+  // POST /v1/spaces mints a space; its owner token can only create repos named
+  // `<space>-<name>` and mint tokens bound to those repos. Every token minted for a space
+  // carries `space` in its grant (rate limits) and in the `space` column (quota + revoke).
+  // A viewer token's repo list is expanded at verify time to the space's current repos, so
+  // a feed link keeps working as repos are added, and never sees another space's repo.
+
+  private spacesReady = false;
+
+  private ensureSpaces(): void {
+    if (this.spacesReady) return;
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS spaces (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'active', label TEXT, ip_hash TEXT, created_at TEXT NOT NULL, deleted_at TEXT)`,
+    );
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS signup_counts (day TEXT NOT NULL, ip_hash TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, ip_hash))`);
+    for (const [table, col] of [
+      ["repos", "space"],
+      ["tokens", "space"],
+    ] as const) {
+      const cols = this.sql.exec<{ name: string }>(`PRAGMA table_info(${table})`).toArray().map((c) => c.name);
+      if (!cols.includes(col)) this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${col} TEXT`);
+    }
+    this.sql.exec(`CREATE INDEX IF NOT EXISTS repos_space ON repos(space)`);
+    this.sql.exec(`CREATE INDEX IF NOT EXISTS tokens_space ON tokens(space)`);
+    this.spacesReady = true;
+  }
+
+  /** Operator kill switch: `open` (default), `no-signups` (existing spaces keep working), `off` (every space token refused). */
+  async hostedMode(): Promise<HostedMode> {
+    this.ensureSpaces();
+    const v = this.sql.exec<{ value: string }>(`SELECT value FROM settings WHERE key = 'hosted'`).toArray()[0]?.value;
+    return v === "off" || v === "no-signups" ? v : "open";
+  }
+
+  async setHostedMode(mode: HostedMode): Promise<HostedMode> {
+    this.ensureSpaces();
+    this.sql.exec(`INSERT INTO settings (key, value) VALUES ('hosted', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, mode);
+    return mode;
+  }
+
+  async createSpace(req: { ipHash: string; label?: string; limits: SignupLimits; bypassQuota?: boolean }): Promise<{ space: SpaceInfo; token: string } | { error: string; code: "quota" | "closed" }> {
+    this.ensureSpaces();
+    const mode = await this.hostedMode();
+    if (mode !== "open" && !req.bypassQuota) return { error: "new spaces are paused on this gateway; try again later", code: "closed" };
+    const day = new Date().toISOString().slice(0, 10);
+    if (!req.bypassQuota) {
+      const total = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM spaces WHERE status = 'active'`).one().n;
+      if (total >= req.limits.maxSpaces) return { error: "this gateway is full; try again later or run your own (`npx @celador/weft deploy`)", code: "quota" };
+      const today = this.sql.exec<{ n: number }>(`SELECT COALESCE(SUM(n), 0) AS n FROM signup_counts WHERE day = ?`, day).one().n;
+      if (today >= req.limits.perDay) return { error: "too many new spaces today; try again tomorrow", code: "quota" };
+      const mine = this.sql.exec<{ n: number }>(`SELECT n FROM signup_counts WHERE day = ? AND ip_hash = ?`, day, req.ipHash).toArray()[0]?.n ?? 0;
+      if (mine >= req.limits.perIpDay) return { error: "too many new spaces from your network today; reuse the one you have (it is in ~/.config/weft)", code: "quota" };
+    }
+    this.sql.exec(`INSERT INTO signup_counts (day, ip_hash, n) VALUES (?, ?, 1) ON CONFLICT(day, ip_hash) DO UPDATE SET n = n + 1`, day, req.ipHash);
+    // Prune counters older than a week (cheap: tiny table).
+    this.sql.exec(`DELETE FROM signup_counts WHERE day < ?`, new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10));
+    const id = spaceId();
+    const created_at = new Date().toISOString();
+    const label = typeof req.label === "string" ? req.label.slice(0, 80) : null;
+    this.sql.exec(`INSERT INTO spaces (id, status, label, ip_hash, created_at) VALUES (?, 'active', ?, ?, ?)`, id, label, req.ipHash, created_at);
+    const token = randomToken();
+    const grant: SpaceGrant = { id: `tok_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`, principal: `space:${id}`, scopes: [], repos: [], space: id, role: "owner" };
+    this.sql.exec(
+      `INSERT INTO tokens (id, hash, grant_json, label, created_at, space) VALUES (?, ?, ?, ?, ?, ?)`,
+      grant.id,
+      await sha256Hex(token),
+      JSON.stringify(grant),
+      "space owner",
+      created_at,
+      id,
+    );
+    return { space: { id, status: "active", created_at, ...(label ? { label } : {}) }, token };
+  }
+
+  /** The space's own repos: [{name (as the user calls it), repo (full name on the gateway)}]. */
+  private spaceRepos(space: string): Array<{ name: string; repo: string; created_at: string }> {
+    return this.sql
+      .exec<{ repo: string; created_at: string }>(`SELECT repo, created_at FROM repos WHERE space = ? ORDER BY repo`, space)
+      .toArray()
+      .map((r) => ({ repo: r.repo, name: r.repo.slice(space.length + 1), created_at: r.created_at }));
+  }
+
+  private activeSpace(space: string): SpaceInfo | undefined {
+    this.ensureSpaces();
+    const r = this.sql.exec<{ id: string; status: string; label: string | null; created_at: string }>(`SELECT id, status, label, created_at FROM spaces WHERE id = ?`, space).toArray()[0];
+    if (!r || r.status !== "active") return undefined;
+    return { id: r.id, status: "active", created_at: r.created_at, ...(r.label ? { label: r.label } : {}) };
+  }
+
+  async spaceInfo(space: string): Promise<(SpaceInfo & { repos: Array<{ name: string; repo: string; created_at: string }>; tokens: number }) | undefined> {
+    const s = this.activeSpace(space);
+    if (!s) return undefined;
+    const tokens = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM tokens WHERE space = ? AND revoked_at IS NULL`, space).one().n;
+    return { ...s, repos: this.spaceRepos(space), tokens };
+  }
+
+  async spaceCreateRepo(space: string, name: string, maxRepos: number): Promise<{ created: boolean; name: string; repo: string } | { error: string; code: "invalid" | "quota" | "gone" }> {
+    if (!this.activeSpace(space)) return { error: "space not found", code: "gone" };
+    if (!SPACE_REPO_NAME.test(name)) return { error: "repo name must be 1-48 chars of a-z, 0-9, '.', '_' or '-', starting with a letter or digit", code: "invalid" };
+    const repo = `${space}-${name}`;
+    const existing = this.sql.exec<{ space: string | null }>(`SELECT space FROM repos WHERE repo = ?`, repo).toArray()[0];
+    if (existing) {
+      if (existing.space !== space) return { error: "repo name not available", code: "invalid" };
+      return { created: false, name, repo };
+    }
+    if (this.spaceRepos(space).length >= maxRepos) return { error: `a space holds at most ${maxRepos} repos`, code: "quota" };
+    const r = await this.createRepo({ repo });
+    if ("error" in r) return { error: r.error, code: "invalid" };
+    this.sql.exec(`UPDATE repos SET space = ? WHERE repo = ?`, space, repo);
+    return { created: r.created, name, repo };
+  }
+
+  async spaceIssueToken(
+    space: string,
+    spec: { kind: "agent" | "system" | "viewer"; repo?: string; agent?: string; label?: string },
+    maxTokens: number,
+  ): Promise<{ token: string; info: TokenInfo } | { error: string; code: "invalid" | "quota" | "gone" | "repo" }> {
+    if (!this.activeSpace(space)) return { error: "space not found", code: "gone" };
+    const n = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM tokens WHERE space = ? AND revoked_at IS NULL`, space).one().n;
+    if (n >= maxTokens) return { error: `a space holds at most ${maxTokens} active tokens; run \`npx @celador/weft uninstall\` in checkouts you no longer use`, code: "quota" };
+    let grant: SpaceGrant;
+    const id = `tok_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    if (spec.kind === "viewer") {
+      grant = { id, principal: `space:${space}:viewer`, scopes: ["observe"], repos: [], space, role: "viewer" };
+    } else {
+      const repo = spec.repo ?? "";
+      if (!this.spaceRepos(space).some((r) => r.repo === repo)) return { error: `repo ${repo} not found in this space`, code: "repo" };
+      if (spec.kind === "agent") {
+        if (!spec.agent || !AGENT_ID.test(spec.agent)) return { error: "agent must be 1-64 chars of letters, digits, '.', '_' or '-'", code: "invalid" };
+        grant = { id, principal: spec.agent, scopes: ["agent", "observe"], repos: [repo], agent: spec.agent, space, role: "agent" };
+      } else if (spec.kind === "system") {
+        grant = { id, principal: `space:${space}:lander`, scopes: ["system", "observe"], repos: [repo], space, role: "system" };
+      } else return { error: "kind must be agent, system or viewer", code: "invalid" };
+    }
+    const token = randomToken();
+    const created_at = new Date().toISOString();
+    const label = spec.label?.slice(0, 120) ?? null;
+    this.sql.exec(`INSERT INTO tokens (id, hash, grant_json, label, created_at, space) VALUES (?, ?, ?, ?, ?, ?)`, id, await sha256Hex(token), JSON.stringify(grant), label, created_at, space);
+    return { token, info: { ...grant, ...(label ? { label } : {}), created_at } };
+  }
+
+  /** Revoke one of the space's own tokens (never the owner token, never another space's). */
+  async spaceRevoke(space: string, tokenId: string): Promise<boolean> {
+    const r = this.sql.exec<{ grant_json: string }>(`SELECT grant_json FROM tokens WHERE id = ? AND space = ? AND revoked_at IS NULL`, tokenId, space).toArray()[0];
+    if (!r || (JSON.parse(r.grant_json) as SpaceGrant).role === "owner") return false;
+    return this.revoke(tokenId);
+  }
+
+  /** Delete a space: every token (owner included) is revoked at once; its repos stop being reachable. */
+  async deleteSpace(space: string, status: "deleted" | "suspended" = "deleted"): Promise<boolean> {
+    this.ensureSpaces();
+    const n = this.sql.exec(`UPDATE spaces SET status = ?, deleted_at = ? WHERE id = ? AND status = 'active'`, status, new Date().toISOString(), space).rowsWritten;
+    this.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE space = ? AND revoked_at IS NULL`, new Date().toISOString(), space);
+    return n > 0;
+  }
+
+  async listSpaces(): Promise<Array<SpaceInfo & { repos: number; tokens: number }>> {
+    this.ensureSpaces();
+    return this.sql
+      .exec<{ id: string; status: string; label: string | null; created_at: string; repos: number; tokens: number }>(
+        `SELECT s.id, s.status, s.label, s.created_at,
+           (SELECT COUNT(*) FROM repos r WHERE r.space = s.id) AS repos,
+           (SELECT COUNT(*) FROM tokens t WHERE t.space = s.id AND t.revoked_at IS NULL) AS tokens
+         FROM spaces s ORDER BY s.created_at`,
+      )
+      .toArray()
+      .map((r) => ({ id: r.id, status: r.status as SpaceInfo["status"], created_at: r.created_at, ...(r.label ? { label: r.label } : {}), repos: r.repos, tokens: r.tokens }));
+  }
+
+  /** First runs per day (spaces created), the last `days` days: the funnel's last step. */
+  async signupStats(days = 30): Promise<Array<{ day: string; spaces: number }>> {
+    this.ensureSpaces();
+    const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+    return this.sql
+      .exec<{ day: string; n: number }>(`SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n FROM spaces WHERE created_at >= ? GROUP BY day ORDER BY day`, since)
+      .toArray()
+      .map((r) => ({ day: r.day, spaces: r.n }));
+  }
+
+  /** verify() plus space semantics: suspended/deleted spaces and `off` mode refuse; viewers see the space's current repos. */
+  async verifySpace(token: string): Promise<SpaceGrant | null> {
+    const g = (await this.verifyRaw(token)) as SpaceGrant | null;
+    if (!g || !g.space) return g;
+    if (!this.activeSpace(g.space)) return null;
+    if ((await this.hostedMode()) === "off") return null;
+    if (g.role === "viewer") return { ...g, repos: this.spaceRepos(g.space).map((r) => r.repo) };
+    return g;
+  }
+}
+
+export type HostedMode = "open" | "no-signups" | "off";
+export type SignupLimits = { perIpDay: number; perDay: number; maxSpaces: number };
+export type SpaceInfo = { id: string; status: "active" | "deleted" | "suspended"; label?: string; created_at: string };
+/** A grant minted for a hosted space. `role` owner = the space API only (no WCP scopes). */
+export type SpaceGrant = Grant & { space?: string; role?: "owner" | "agent" | "system" | "viewer" };
+
+export const SPACE_REPO_NAME = /^[a-z0-9][a-z0-9._-]{0,47}$/;
+const AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/** `sp` + 10 base-36 chars: short enough for repo names (`<space>-<name>` <= 64 chars), ~51 bits. */
+function spaceId(): string {
+  const b = crypto.getRandomValues(new Uint8Array(10));
+  return `sp${[...b].map((x) => "abcdefghijklmnopqrstuvwxyz0123456789"[x % 36]).join("")}`;
 }
