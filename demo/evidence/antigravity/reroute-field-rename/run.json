@@ -1,0 +1,13 @@
+{
+  "scenario": "reroute",
+  "agent_a": "claude-a",
+  "agent_b": "agy-b",
+  "stamp": "20261022-231755",
+  "url": "http://localhost:8811",
+  "repo": "demo-agy-reroute-20261022-231755",
+  "agy": "1.4.5",
+  "claude": "2.1.309 (Claude Code)",
+  "b_conversation": "e011b389-b4f0-4523-b63f-e6ce093bcb19",
+  "a_session": "687ae2b2-0e35-44b2-88a8-defa17580010",
+  "a2_session": "dde328b7-d374-438f-9730-4602bb7c76ea"
+}

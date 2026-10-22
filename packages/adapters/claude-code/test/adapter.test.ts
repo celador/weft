@@ -186,6 +186,53 @@ describe("Claude Code hooks against the reference coordinator", () => {
     expect(coord.log.slice(-2).map((r) => `${r.kind}${r.payload?.reason ? `:${String(r.payload.reason)}` : ""}`)).toEqual(["leave", "release:session_ended"]);
   });
 
+  // Live Antigravity reroute run (demo/evidence/antigravity/reroute): A renames the field
+  // PriceOptions.taxRate to rate. calcTotal's text is unchanged, its contract is not.
+  describe("a field rename in a parameter type reaches the function's callers", () => {
+    const RENAMED = PRICING_V2.replace("{ taxRate: number }", "{ rate: number }").replace("opts.taxRate", "opts.rate");
+    const USE = "return `total ${calcTotal(items, { taxRate: 0 })}`;";
+    const setup = (name: string) => {
+      const coord = new ReferenceCoordinator({ repo: "demo", now: () => 1_790_000_000_000 });
+      const t = refTransport(coord);
+      const rootA = checkout(`${name}a`);
+      const rootB = checkout(`${name}b`);
+      for (const root of [rootA, rootB]) writeFileSync(join(root, "src/pricing.ts"), PRICING_V2);
+      return { coord, rootA, rootB, A: adapter(rootA, "claude-a", "T-1", t), B: adapter(rootB, "claude-b", "T-2", t) };
+    };
+
+    it("the rename is a signature write of calcTotal, and a caller reads PriceOptions", async () => {
+      const { coord, rootA, rootB, A, B } = setup("fr1");
+      await B.handle(hook("sb", rootB, { hook_event_name: "SessionStart" }));
+      await A.handle(hook("sa", rootA, { hook_event_name: "SessionStart" }));
+      expect((await edit(B, "sb", rootB, "tB1", "src/cart.ts", "return `${items.length} items`;", USE)).applied).toBe(true);
+      const bEdit = coord.log.find((r) => r.kind === "edit" && r.agent === "claude-b")!;
+      expect(bEdit.reads).toEqual(expect.arrayContaining(["src/pricing.ts#calcTotal", "src/pricing.ts#PriceOptions"]));
+      expect((await edit(A, "sa", rootA, "tA1", "src/pricing.ts", PRICING_V2, RENAMED)).applied).toBe(true);
+      const aEdit = coord.log.find((r) => r.kind === "edit" && r.agent === "claude-a")!;
+      expect(aEdit.writes).toEqual([
+        { key: "src/pricing.ts#calcTotal", kind: "signature" },
+        { key: "src/pricing.ts#PriceOptions", kind: "signature" },
+      ]);
+      // B, whose accepted code passes { taxRate }, is told on its next hook.
+      const post = (await B.handle(hook("sb", rootB, { hook_event_name: "PostToolUse", tool_name: "Read", tool_input: { file_path: join(rootB, "src/cart.ts") }, tool_use_id: "tB2" }))) as any;
+      const ctx = post.hookSpecificOutput.additionalContext as string;
+      expect(ctx).toContain("[weft warning] contract_changed");
+      expect(ctx).toContain("src/pricing.ts#calcTotal");
+      expect(ctx).toContain("src/pricing.ts#PriceOptions");
+    });
+
+    it("a caller still on the old field is denied with stale_assumption and the commit gate refuses", async () => {
+      const { rootA, rootB, A, B } = setup("fr2");
+      await B.handle(hook("sb", rootB, { hook_event_name: "SessionStart" }));
+      await A.handle(hook("sa", rootA, { hook_event_name: "SessionStart" }));
+      expect((await edit(A, "sa", rootA, "tA1", "src/pricing.ts", PRICING_V2, RENAMED)).applied).toBe(true);
+      const b1 = await edit(B, "sb", rootB, "tB1", "src/cart.ts", "return `${items.length} items`;", USE);
+      expect(b1.applied).toBe(false);
+      expect((b1.pre as any).hookSpecificOutput.permissionDecisionReason).toMatch(/\[weft error\] stale_assumption .*src\/pricing\.ts#(?:calcTotal|PriceOptions), whose signature changed/);
+      expect(await B.commitGate("sb")).toContain("stale_assumption");
+    });
+  });
+
   it("pushes contract_changed to a change that already uses the symbol (PostToolUse injection)", async () => {
     const coord = new ReferenceCoordinator({ repo: "demo", now: () => 1_790_000_000_000 });
     const t = refTransport(coord);

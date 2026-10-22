@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyze, analyzeDiff } from "./index.js";
+import { analyze, analyzeDiff, contractReads } from "./index.js";
 
 const path = "src/math.ts";
 
@@ -75,6 +75,78 @@ describe("@weft/analyzer", () => {
         { key: "src/new.ts#fresh", kind: "new" },
         { key: "src/old.ts#old", kind: "deleted" },
       ],
+    });
+  });
+
+  describe("contract changes propagate through the types a signature names", () => {
+    // The live Antigravity reroute run: claude-a renamed PriceOptions.taxRate to rate. calcTotal's
+    // own text did not change, but its contract did: callers passing { taxRate } stop compiling.
+    const before = [
+      "export type Item = { sku: string; price: number; qty: number };",
+      "export type PriceOptions = { taxRate: number };",
+      "export function calcTotal(items: Item[], opts: PriceOptions): number {",
+      "  const net = items.reduce((sum, item) => sum + item.price * item.qty, 0);",
+      "  return net * (1 + opts.taxRate);",
+      "}",
+    ].join("\n");
+    const after = before.replace("{ taxRate: number }", "{ rate: number }").replace("opts.taxRate", "opts.rate");
+
+    it("a field rename in a parameter type is a signature change of the function", () => {
+      expect(analyze(before, after, "src/pricing.ts").writes).toEqual([
+        { key: "src/pricing.ts#calcTotal", kind: "signature" },
+        { key: "src/pricing.ts#PriceOptions", kind: "signature" },
+      ]);
+    });
+
+    it("propagates transitively, through return types, heritage and typeof, but not through bodies", () => {
+      const base = [
+        "export type Rate = { value: number };",
+        "export type Options = { rate: Rate };",
+        "export function make(): Options { return { rate: { value: 0 } }; }",
+        "export interface Taxed extends Options { label: string }",
+        "export const defaults: Options = make();",
+        "export function same(o: typeof defaults) { return o; }",
+        "export function usesInBodyOnly(n: number) { const r: Rate = { value: n }; return r.value; }",
+        "export class Shop { price(o: Options) { return o.rate.value; } other() { return 1; } }",
+      ].join("\n");
+      const changed = base.replace("{ value: number }", "{ amount: number }");
+      expect(analyze(base, changed, path).writes.map(({ key, kind }) => [key, kind])).toEqual([
+        ["src/math.ts#defaults", "signature"],
+        ["src/math.ts#make", "signature"],
+        ["src/math.ts#Options", "signature"],
+        ["src/math.ts#Rate", "signature"],
+        ["src/math.ts#same", "signature"],
+        ["src/math.ts#Shop.price", "signature"],
+        ["src/math.ts#Taxed", "signature"],
+      ]);
+    });
+
+    it("a body-only change to a type's user does not upgrade anything", () => {
+      const changed = before.replace("1 + opts.taxRate", "1 + opts.taxRate * 1");
+      expect(analyze(before, changed, "src/pricing.ts").writes).toEqual([{ key: "src/pricing.ts#calcTotal", kind: "body" }]);
+    });
+  });
+
+  describe("contractReads", () => {
+    const files: Record<string, string> = {
+      "src/types.ts": "export type PriceOptions = { taxRate: number };\n",
+      "src/pricing.ts": [
+        "import type { PriceOptions as Opts } from \"./types\";",
+        "export type Item = { sku: string; price: number; qty: number };",
+        "export function calcTotal(items: Item[], opts: Opts): number { return 0; }",
+        "export function plain(n: number): number { return n; }",
+      ].join("\n"),
+    };
+    const readFile = (rel: string) => files[rel];
+
+    it("a caller of calcTotal reads its parameter types, in its file or the file they are imported from", () => {
+      expect(contractReads(["src/pricing.ts#calcTotal"], readFile)).toEqual(["src/pricing.ts#Item", "src/types.ts#PriceOptions"]);
+      expect(contractReads(["app/src/pricing.ts#calcTotal"], readFile, "app/")).toEqual(["app/src/pricing.ts#Item", "app/src/types.ts#PriceOptions"]);
+    });
+
+    it("adds nothing for primitives, missing files, or keys already read", () => {
+      expect(contractReads(["src/pricing.ts#plain", "src/missing.ts#x", "README.md#*"], readFile)).toEqual([]);
+      expect(contractReads(["src/pricing.ts#calcTotal", "src/pricing.ts#Item"], readFile)).toEqual(["src/types.ts#PriceOptions"]);
     });
   });
 
