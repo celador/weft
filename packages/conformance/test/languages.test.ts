@@ -15,8 +15,8 @@ const repo = join(here, "..", "..", "..");
 const CLAUDE = join(repo, "packages/adapters/claude-code/dist/weft-claude.mjs");
 
 describe("language fixture sets", () => {
-  it("ship Python", () => {
-    expect(languageFixtureSets()).toContain("python");
+  it("ship Python, Java and Kotlin", () => {
+    expect(languageFixtureSets()).toEqual(expect.arrayContaining(["python", "java", "kotlin"]));
   });
 
   for (const set of languageFixtureSets()) {
@@ -36,7 +36,7 @@ describe("language fixture sets", () => {
           const reads = new Set<string>();
           const writes: Array<{ key: string; kind: string }> = [];
           for (const [path, after] of Object.entries(peer.after ?? {})) {
-            expect(treeSitterLanguageFor(path)?.id).toBe(set);
+            expect([set, ...(workspace.interop ?? [])]).toContain(treeSitterLanguageFor(path)?.id);
             const r = await analyzeSource({ path, before: workspace.files[path] ?? null, after }, { exists });
             r.reads.forEach((k) => reads.add(k));
             writes.push(...r.writes);
