@@ -6,6 +6,7 @@
 // Native shapes follow docs/research/hooks.md (official docs, 2026-10-03) and the
 // mapping table in hooks-core-v0.md §10.
 import { isAbsolute, join } from "node:path";
+import { antigravity } from "./dialects/antigravity";
 import { HOOKS_CORE_VERSION, checkDecision, type CoreDecision, type CoreEvent, type CoreTool } from "./core";
 
 /** What a hook process returned. */
@@ -19,6 +20,8 @@ export type Dialect = {
   encode(ev: CoreEvent): unknown | undefined;
   /** Native output -> core decision; `problems` lists wire-level non-conformities. */
   decode(ev: CoreEvent, raw: RawResult): Decoded;
+  /** Advise text reaches the model only at the next model call (inject "delayed"): the runner fires prompt.submit after each tool.post. */
+  deferredInject?: boolean;
 };
 
 const abs = (ev: CoreEvent, p: string | undefined) => (p === undefined ? undefined : isAbsolute(p) ? p : join(ev.cwd, p));
@@ -299,7 +302,7 @@ export const opencode: Dialect = {
   },
 };
 
-export const DIALECTS: Record<string, Dialect> = { core, "claude-code": claudeCode, codex, cursor, gemini, opencode };
+export const DIALECTS: Record<string, Dialect> = { core, "claude-code": claudeCode, codex, cursor, gemini, opencode, antigravity };
 
 export function dialect(name: string): Dialect {
   const d = DIALECTS[name];

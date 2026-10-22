@@ -1,0 +1,23 @@
+{
+  "name": "@weft/adapter-antigravity",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "WCP v0.1 adapter for Google Antigravity hooks (Antigravity 2.0, Antigravity CLI `agy`, Antigravity IDE): PreToolUse deny (L2), PreInvocation injectSteps (delayed L1), Stop continue (L3).",
+  "bin": {
+    "weft-adapter-antigravity": "./bin/weft-adapter-antigravity.mjs"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node scripts/build.mjs && vitest run"
+  },
+  "dependencies": {
+    "@weft/analyzer": "workspace:*",
+    "@weft/protocol": "workspace:*",
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.4"
+  }
+}

@@ -236,6 +236,11 @@ export async function runFixture(fx: Fixture, ws: Workspace, d: Dialect, opts: R
           if (err) check("fixture applies", err);
           post = await send(event("tool.post", { tool: { ...tool, output: "ok" } }), `tool.post ${tool.kind}`);
           if (step.expect_post) check(`tool.post ${tool.kind}: ${step.expect_post.decision}`, post ? matchDecision(post, step.expect_post) : step.expect_post.decision === "any" ? undefined : "no decision");
+          // Delayed injection: the tool's advise reaches the model at the next model call.
+          if (d.deferredInject) {
+            const later = await send(event("prompt.submit", { prompt: "continue" }), `prompt.submit after ${tool.kind}`);
+            if (later?.decision === "advise") post = later;
+          }
         } else if (step.expect_post) check(`tool.post ${tool.kind}: ${step.expect_post.decision}`, "tool did not run");
         if (step.expect_any) {
           const errs = [pre, post].filter((x): x is CoreDecision => !!x).map((x) => matchDecision(x, step.expect_any!));

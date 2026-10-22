@@ -54,11 +54,12 @@ at the bundle in your Weft clone (`pnpm --filter <package> build` first).
 | Codex CLI | `@weft/adapter-codex` (`apply_patch` hooks) | L2 | L0 verified, rest documented |
 | Cursor CLI | `@weft/adapter-cursor` | L3 (documented) | fixture-tested |
 | Gemini CLI | `@weft/adapter-gemini` | L3 (documented) | fixture-tested only |
+| Google Antigravity (2.0, CLI `agy`, IDE) | `@weft/adapter-antigravity` (`.agents/hooks.json`) | L3, delayed inject | conformance L3; live `agy` run pending login |
 | Anything else, humans | `@weft/adapter-watcher` (file watcher + git pre-commit) | L0 | verified |
 
 Each package's README has its install command and hook mapping. For a harness that is not
 listed: if it has pre/post tool hooks with a deny + reason, copy the Claude Code adapter's
-`host.ts` translator pattern (the Cursor, OpenCode and Gemini adapters are 200-300 lines of
+`host.ts` translator pattern (the Cursor, OpenCode, Gemini and Antigravity adapters are 200-300 lines of
 translation onto the same core); if it has none, run the watcher in its checkout.
 Every known harness, its hook surface and Weft's plan for it: [harness-coverage.md](harness-coverage.md).
 
