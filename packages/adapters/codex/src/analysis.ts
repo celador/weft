@@ -4,7 +4,7 @@
 // checkout, so `import { calcTotal } from "./pricing"` reads `src/pricing.ts#calcTotal`.
 import { analyze, analyzeSource, treeSitterLanguageFor, type Write } from "@weft/analyzer";
 import ts from "typescript";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { readInsideCheckout } from "../../claude-code/src/safe-read";
 import { join, posix } from "node:path";
 
@@ -93,7 +93,7 @@ export function analyzeChanges(changes: FileChange[], root?: string, prefix = ""
 }
 
 /**
- * `analyzeChanges` plus the tree-sitter languages (Python, C, C++, ...): what the hooks call. TypeScript
+ * `analyzeChanges` plus the tree-sitter languages (Python, C/C++, Java, Kotlin, Swift, C#, Ruby, PHP, Go, Rust): what the hooks call. TypeScript
  * and JavaScript go through exactly the same path as `analyzeChanges`; files of a tree-sitter
  * language get declaration-level keys and import-resolved reads instead of a whole-file key.
  */
@@ -102,8 +102,9 @@ export async function analyzeChangesAsync(changes: FileChange[], root?: string, 
   const base = analyzeChanges(typescriptOrOther, root, prefix);
   const reads = new Set(base.reads);
   const writes = new Map(base.writes.map((w) => [w.key, w] as const));
-  // Files this same tool call changes are read as they will be after it (a C header + its .c,
-  // two files of one Go package).
+  // The analyzer reads other checkout files: C/C++ `#include`d headers, Go's go.mod and package
+  // files, the Swift/C# module index. Files this same tool call changes are read as they will be
+  // after it (a C header + its .c, two files of one Go package).
   const pending = new Map(changes.map((c) => [c.rel, c.after] as const));
   const checkout = root ? checkoutAccess(root, pending) : {};
   for (const c of changes) {
@@ -121,19 +122,68 @@ export async function analyzeChangesAsync(changes: FileChange[], root?: string, 
   return { reads: [...reads].sort(), writes: [...writes.values()].sort((a, b) => a.key.localeCompare(b.key)) };
 }
 
+/** Files larger than this are not read (generated code, bundles). */
+const MAX_CHECKOUT_READ = 1 << 20;
+
+/** `rel` as a clean checkout-relative path, or undefined when it is absolute or leaves the checkout. */
+function insideRel(rel: string): string | undefined {
+  const clean = posix.normalize(rel || ".");
+  if (clean === ".." || clean.startsWith("../") || posix.isAbsolute(clean) || /^[A-Za-z]:/.test(clean)) return undefined;
+  return clean === "." ? "" : clean.replace(/\/$/, "");
+}
+
 /**
- * What a tree-sitter language may look at besides the edited file (C/C++ included headers; Go
- * go.mod and the other files of a package): existence, listings, and reads that follow the
- * adapters' read rule (no symlinks, nothing outside the checkout, at most 1 MiB). `pending`
- * holds the post-edit text of files the same tool call changes (null = deleted).
+ * The one way the analyzer sees the checkout besides the edited file (C/C++ included headers,
+ * Go go.mod and package files, the Swift/C# module index): existence, directory listings and
+ * reads. Paths are checkout-relative; `..` and absolute paths are refused. Reads follow the
+ * adapters' read rule (`readInsideCheckout`: no symlinks anywhere on the path, regular files
+ * only, at most 1 MiB); listings refuse a directory reached through a symlink and omit symlinked
+ * entries. `pending` holds the post-edit text of files the same tool call changes (null =
+ * deleted): they exist, read and list as they will after the call.
  */
-export function checkoutAccess(root: string, pending: Map<string, string | null> = new Map()) {
+export function checkoutAccess(
+  root: string,
+  pending: Map<string, string | null> = new Map(),
+): { exists: (rel: string) => boolean; read: (rel: string) => string | undefined; list: (dir: string) => string[] | undefined } {
+  let realRoot: string | undefined;
+  const pendingRel = new Map<string, string | null>();
+  for (const [rel, text] of pending) {
+    const clean = insideRel(rel);
+    if (clean) pendingRel.set(clean, text);
+  }
   return {
-    exists: (rel: string) => (pending.has(rel) ? pending.get(rel) !== null : existsSync(join(root, rel))),
-    read: (rel: string): string | undefined => (pending.has(rel) ? (pending.get(rel) ?? undefined) : (readInsideCheckout(root, join(root, rel), 1 << 20) ?? undefined)),
-    list: (rel: string): string[] | undefined => {
+    exists(rel) {
+      const clean = insideRel(rel);
+      if (clean === undefined) return false;
+      if (pendingRel.has(clean)) return pendingRel.get(clean) !== null;
+      return existsSync(join(root, clean));
+    },
+    read(rel) {
+      const clean = insideRel(rel);
+      if (!clean) return undefined;
+      if (pendingRel.has(clean)) return pendingRel.get(clean) ?? undefined;
+      return readInsideCheckout(root, join(root, clean), MAX_CHECKOUT_READ) ?? undefined;
+    },
+    list(dir) {
+      const clean = insideRel(dir);
+      if (clean === undefined) return undefined;
       try {
-        return readdirSync(join(root, rel), { withFileTypes: true }).map((e) => (e.isDirectory() ? `${e.name}/` : e.name));
+        realRoot ??= realpathSync(root);
+        const abs = join(root, clean);
+        if (realpathSync(abs) !== (clean ? join(realRoot, clean) : realRoot)) return undefined; // via a symlink
+        const entries = new Set(
+          readdirSync(abs, { withFileTypes: true })
+            .filter((e) => !e.isSymbolicLink())
+            .map((e) => (e.isDirectory() ? `${e.name}/` : e.name)),
+        );
+        // Files this tool call creates appear; files it deletes disappear.
+        for (const [rel, text] of pendingRel) {
+          if (posix.dirname(rel) !== (clean || ".")) continue;
+          const name = posix.basename(rel);
+          if (text === null) entries.delete(name);
+          else entries.add(name);
+        }
+        return [...entries];
       } catch {
         return undefined;
       }

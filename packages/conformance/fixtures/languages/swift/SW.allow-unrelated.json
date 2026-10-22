@@ -1,0 +1,36 @@
+{
+  "id": "SW.allow-unrelated",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a74.1",
+  "title": "Swift: an edit that does not use the changed declaration is not blocked",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "Sources/Shop/Report.swift",
+        "old_text": "    \"Total\"",
+        "new_text": "    \"Total: \" + formatPrice(total)"
+      },
+      "expect_pre": {
+        "decision": "not-deny"
+      },
+      "expect_applied": true
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "kind": "edit",
+        "status": "accepted",
+        "files_include": "Sources/Shop/Report.swift",
+        "min": 1
+      }
+    }
+  ]
+}

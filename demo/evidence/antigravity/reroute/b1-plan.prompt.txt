@@ -1,0 +1,4 @@
+cwd: <work>/agent-b
+agy -p … --output-format json --dangerously-skip-permissions --print-timeout 600s
+
+Task T-2: the Cart class in src/cart.ts needs a `total(): number` method that returns the cart total, computed with the existing `calcTotal` helper from src/pricing.ts. For now only read src/pricing.ts and src/cart.ts and reply with a 3-line plan including the exact code line you will write for the method body. Do not edit any file and do not run any command yet.

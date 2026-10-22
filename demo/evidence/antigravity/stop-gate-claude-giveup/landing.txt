@@ -1,0 +1,39 @@
+agent-a: committed
+agent-b: commit refused: weft: commit refused — 1 open error(s):
+[weft error] stale_assumption src/pricing.ts:4:17: You use src/pricing.ts#calcTotal, whose signature changed in #3 by claude-a after your base #1. (caused by claude-a · task T-1 · event #3). Suggestion: Read the new src/pricing.ts#calcTotal (event #3) and update this call site, or negotiate with claude-a.
+  ↳ event #3 by claude-a changed src/pricing.ts (their change is not in your checkout yet):
+    @@ -1,6 +1,9 @@
+     export type Item = { sku: string; price: number; qty: number };
+     
+    -/** Sum of price × quantity over the cart. */
+    -export function calcTotal(items: Item[]): number {
+    -  return items.reduce((sum, item) => sum + item.price * item.qty, 0);
+    +export type PriceOptions = { taxRate: number };
+    +
+    +/** Sum of price × quantity over the cart, including tax. */
+    +export function calcTotal(items: Item[], opts: PriceOptions): number {
+    +  const net = items.reduce((sum, item) => sum + item.price * item.qty, 0);
+    +  return net * (1 + opts.taxRate);
+     }
+    
+  ↳ Your options: retreat (rework without that code) | wait (until claude-a lands or releases it) | negotiate: `/private<work>/agent-b/.weft/bin/weft negotiate propose overload "<what claude-a should keep working for you>" --wait 240` (terms: overload | transfer | share | sequence | merge_tasks | other; it is delivered to claude-a and you get the reply) | escalate: `/private<work>/agent-b/.weft/bin/weft negotiate escalate "<why>"` (the coordinator merges your two tasks).
+
+--- agent-b:src/cart.ts
+import type { Item } from "./pricing";
+
+export class Cart {
+  private items: Item[] = [];
+
+  add(item: Item): void {
+    this.items.push(item);
+  }
+
+  list(): Item[] {
+    return [...this.items];
+  }
+}
+
+--- main after merging agent-a then agent-b:
+cfacb16 pricing: apply tax in calcTotal
+9f97003 ts-shop: initial
+tsc: exit 0 (clean)

@@ -1,0 +1,15 @@
+gateway http://localhost:8833, repo shop-lsp-mvjs1lpj
+  agent-a <tmp>/lsp-e2e-negrun/shop
+  agent-b <tmp>/lsp-e2e-negrun/shop-b
+
+1) agent-b: Cart.total calls calc_total (via the package re-export) and Pricer.quote (via self.pricer)
+  edit (tree-sitter keys): #3 accepted edit agent-b reads=["shop/__init__.py#calc_total","shop/pricing.py#Pricer"] writes=[["shop/cart.py#Cart","body"],["shop/cart.py#Cart.total","body"]]
+
+2) agent-a: changes calc_total's signature (adds a required `tax`)
+  #4 accepted edit agent-a reads=[] writes=[["shop/pricing.py#calc_total","signature"]]
+
+3) WEFT_LSP=off: what agent-b hears about agent-a's change in the next 5 s:
+    (nothing)
+
+result:
+  ok   without the language server, agent-b is not told (tree-sitter keyed the read to the re-export)

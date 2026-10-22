@@ -1,0 +1,36 @@
+{
+  "id": "RB.deny-renamed",
+  "level": 2,
+  "required": true,
+  "spec": "§4.1",
+  "title": "Ruby: a call to a method another agent renamed is denied",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "rename_helper"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "lib/report.rb",
+        "old_text": "    \"Total\"",
+        "new_text": "    \"Total: \" + Pricing.format_price(total)"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "format_price"
+        ]
+      },
+      "expect_applied": false
+    },
+    {
+      "expect_file": {
+        "path": "lib/report.rb",
+        "unchanged": true
+      }
+    }
+  ]
+}

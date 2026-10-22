@@ -201,3 +201,9 @@ export function analyzeDiff(diff: string, readFile: ReadFile): Analysis {
 export type { AnalyzeOptions, BackendId, Checkout, Definition, Exists, ListCheckoutDir, ReadCheckoutFile, ImportBinding, Reference, SourceChange, SyntaxNode, TreeSitterLanguage } from "./language.js";
 export { analyzeSource, languageFor, treeSitterLanguageFor, treeSitterLanguages, type LanguageInfo } from "./languages/index.js";
 export { analyzeTreeSitter, normalize } from "./treesitter.js";
+
+// ---- `lsp` backend: asynchronous language-server enrichment (src/lsp/, docs/languages.md) ----
+export { LspEnricher, attribute, changedSpan, declarationAt, offsetAt, positionAt, splitKey, type Breakage, type EnrichResult, type LspDiagnostic, type LspOptions, type Position, type Range } from "./lsp/enrich.js";
+export { detectServer, lspServers, lspSpecFor, which, type DetectedServer, type LspServerSpec } from "./lsp/servers.js";
+export { JsonRpc, RpcError, spawnServer } from "./lsp/jsonrpc.js";
+export { outlineTreeSitter, type Identifier, type Outline } from "./treesitter.js";

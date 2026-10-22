@@ -9,6 +9,7 @@ import { posix } from "node:path";
 import { Language, Parser, type Tree } from "web-tree-sitter";
 import { findGrammar, findRuntimeWasm } from "./assets.js";
 import type { Analysis, AnalyzeOptions, Definition, ImportBinding, Reference, SyntaxNode, TreeSitterLanguage, Write } from "./language.js";
+import { type IndexHit, longestDefined, ModuleLookup } from "./moduleindex.js";
 
 let runtime: Promise<void> | undefined;
 const parsers = new Map<string, Promise<Parser>>();
@@ -151,15 +152,6 @@ function includedDeclarations(
   return out;
 }
 
-/** Longest prefix of `ref` (only the whole of it when `exact`) that `has` accepts. */
-function longestDefined(ref: Reference, has: (name: string) => boolean): string | undefined {
-  for (let n = ref.length; n >= (ref.exact ? ref.length : 1); n--) {
-    const name = ref.slice(0, n).join(".");
-    if (has(name)) return name;
-  }
-  return undefined;
-}
-
 const KIND_RANK: Record<Write["kind"], number> = { deleted: 3, signature: 2, new: 1, body: 0 };
 
 /**
@@ -279,52 +271,81 @@ export async function analyzeTreeSitter(
       }
       return found;
     };
-    for (const ref of language.references(afterRoot)) {
-      // 1. This file's own declarations: the longest defined prefix (`Cart.tax`, else `Cart`).
-      const local = longestDefined(ref, (name) => newDefs.has(name));
-      if (local) {
-        reads.add(ownKey(local));
-        continue;
-      }
-      // 2. Declarations of included files (C/C++ headers), keyed to the declaring file.
-      if (included.size) {
-        const name = longestDefined(ref, (n) => included.has(n));
-        if (name) {
-          reads.add(key(included.get(name)!, name));
-          continue;
-        }
-      }
-      // 3. Imports: `name.rest` through a member binding, `module.member` through a module one.
+    /**
+     * 3. Imports: `name.rest` through a member binding, `module.member` through a module one.
+     * "read" when the reference resolved through an import into the checkout; "outside" when it
+     * names an import that resolves outside it (stdlib, third-party), which hides same-package
+     * names; undefined when no import binds it.
+     */
+    const viaImport = (ref: Reference): "read" | "outside" | undefined => {
       const hit = longestBinding(ref, bindings);
-      const file = hit && resolve(hit.binding.module);
-      if (hit && file) {
-        if (packageImports) {
-          if (hit.binding.name === undefined && hit.rest.length) packageReads(file, hit.rest);
-        } else if (hit.binding.name !== undefined) {
-          reads.add(key(file, hit.binding.name));
-          if (hit.rest.length) reads.add(key(file, `${hit.binding.name}.${hit.rest[0]}`));
-        } else if (hit.rest.length) {
-          // `util.money.round` through module `util`: descend into submodules that are files.
-          let module = hit.binding.module;
-          let target = file;
-          let rest = hit.rest;
-          while (rest.length > 1 && language.memberModule && opts.exists) {
-            const sub = language.memberModule(module, rest[0]);
-            const subFile = resolve(sub);
-            if (!subFile) break;
-            module = sub;
-            target = subFile;
-            rest = rest.slice(1);
-          }
-          reads.add(key(target, rest[0]));
-          if (rest.length > 1) reads.add(key(target, `${rest[0]}.${rest[1]}`));
+      if (!hit) return undefined;
+      const file = resolve(hit.binding.module);
+      // A guessed class name of the file's own package (Kotlin `implicit`) hides nothing.
+      if (!file) return hit.binding.implicit && language.importsFiles ? undefined : "outside";
+      if (packageImports) {
+        if (hit.binding.name === undefined && hit.rest.length) packageReads(file, hit.rest);
+      } else if (hit.binding.name !== undefined) {
+        reads.add(key(file, hit.binding.name));
+        if (hit.rest.length) reads.add(key(file, `${hit.binding.name}.${hit.rest[0]}`));
+      } else if (hit.rest.length) {
+        // `util.money.round` through module `util`: descend into submodules that are files.
+        let module = hit.binding.module;
+        let target = file;
+        let rest = hit.rest;
+        while (rest.length > 1 && language.memberModule && opts.exists) {
+          const sub = language.memberModule(module, rest[0]);
+          const subFile = resolve(sub);
+          if (!subFile) break;
+          module = sub;
+          target = subFile;
+          rest = rest.slice(1);
         }
-        continue;
+        reads.add(key(target, rest[0]));
+        if (rest.length > 1) reads.add(key(target, `${rest[0]}.${rest[1]}`));
       }
-      // An import outside the checkout hides same-package names; a guessed class name does not.
-      if (hit && !(hit.binding.implicit && language.importsFiles)) continue;
-      // 4. Package-scoped languages (Go, Kotlin): the other files of this file's own package.
-      if (packages && ref.length) packageReads(dirOf(path), ref.exact ? ref : ref.slice(0, 2), ref.exact);
+      return "read";
+    };
+    // 4a. Module index (Swift, C#): declarations of other files in the module/namespace.
+    const fs = language.index && opts.list && opts.read
+      ? { exists: opts.exists ?? ((rel: string) => opts.read!(rel) !== undefined), list: opts.list, read: opts.read }
+      : undefined;
+    let index: ModuleLookup | undefined;
+    const viaIndex = (ref: Reference): IndexHit | undefined => {
+      if (!language.index || !fs) return undefined;
+      index ??= new ModuleLookup(language, language.index, parser, path, afterRoot!, bindings, fs, parse, definitionMap);
+      return index.lookup(ref);
+    };
+
+    for (const first of language.references(afterRoot)) {
+      // `ref.or`: alternatives tried in order when a reference resolves nowhere (Swift/C# implicit `self`).
+      for (let ref: Reference | undefined = first; ref; ref = ref.or) {
+        // 1. This file's own declarations: the longest defined prefix (`Cart.tax`, else `Cart`).
+        const local = longestDefined(ref, newDefs);
+        // A longer match elsewhere wins (`Cart.rate` declared in an extension in another file).
+        const elsewhere = !local || local.depth < ref.length ? viaIndex(ref) : undefined;
+        if (elsewhere && (!local || elsewhere.depth > local.depth)) {
+          for (const k of elsewhere.keys) reads.add(key(k.file, k.name));
+          break;
+        }
+        if (local) {
+          reads.add(ownKey(local.name));
+          break;
+        }
+        // 2. Declarations of included files (C/C++ headers), keyed to the declaring file.
+        if (included.size) {
+          const inc = longestDefined(ref, included);
+          if (inc) {
+            reads.add(key(included.get(inc.name)!, inc.name));
+            break;
+          }
+        }
+        const imported = viaImport(ref);
+        if (imported === "read") break;
+        // 4b. Package index (Go, Kotlin): the other files of this file's own package. An import
+        // that resolves outside the checkout hides same-package names.
+        if (imported === undefined && packages && ref.length && packageReads(dirOf(path), ref.exact ? ref : ref.slice(0, 2), ref.exact)) break;
+      }
     }
   }
   return { reads: [...reads].sort(), writes: writes.sort((a, b) => a.key.localeCompare(b.key)) };
@@ -435,4 +456,23 @@ export function firstExisting(candidates: string[], exists?: (rel: string) => bo
   const clean = candidates.map((c) => posix.normalize(c).replace(/^\.\//, "")).filter((c) => !c.startsWith("../"));
   if (!exists) return clean[0];
   return clean.find((c) => exists(c));
+}
+
+/** An identifier occurrence: its text and JS string offsets in the parsed text. */
+export type Identifier = { text: string; start: number; end: number };
+/** Declarations (with offsets, when the spec provides them) and identifiers of one text. */
+export type Outline = { definitions: Definition[]; identifiers: Identifier[] };
+
+/** Parse `text` once and list its declarations and identifiers (used by the `lsp` backend). */
+export async function outlineTreeSitter(language: TreeSitterLanguage, text: string): Promise<Outline> {
+  const parser = await parserFor(language);
+  const root = parse(parser, text);
+  const types = new Set(language.identifierTypes ?? ["identifier"]);
+  const identifiers: Identifier[] = [];
+  const visit = (node: SyntaxNode): void => {
+    if (types.has(node.type)) identifiers.push({ text: node.text, start: node.startIndex, end: node.endIndex });
+    for (const c of node.namedChildren) if (c) visit(c);
+  };
+  visit(root);
+  return { definitions: language.definitions(root), identifiers };
 }

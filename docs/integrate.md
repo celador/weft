@@ -56,11 +56,12 @@ at the bundle in your Weft clone (`pnpm --filter <package> build` first).
 | Gemini CLI | `@weft/adapter-gemini` | L3 (documented) | fixture-tested only |
 | GitHub Copilot (CLI, VS Code agent mode, cloud agent) | `@weft/adapter-copilot` (`.github/hooks/weft.json`) | L3 | CLI and VS Code verified with real runs; cloud agent not yet (needs a paid plan) |
 | Any MCP harness without hooks (Zed, Warp, JetBrains, Trae, Xcode, Continue, Copilot cloud MCP) | `@weft/mcp` (`packages/mcp`, `dist/weft-mcp.mjs`: MCP server + embedded watcher) | L0 (+ delayed L1 through tool results) | verified with a real hookless run (Claude Code with only the MCP server; `demo/evidence/mcp/`) |
+| Google Antigravity (2.0, CLI `agy`, IDE) | `@weft/adapter-antigravity` (`.agents/hooks.json`) | L3, delayed inject | L3 verified live on agy 1.4.5 (`demo/evidence/antigravity/`) |
 | Anything else, humans | `@weft/adapter-watcher` (file watcher + git pre-commit) | L0 | verified |
 
 Each package's README has its install command and hook mapping. For a harness that is not
 listed: if it has pre/post tool hooks with a deny + reason, copy the Claude Code adapter's
-`host.ts` translator pattern (the Cursor, OpenCode and Gemini adapters are 200-300 lines of
+`host.ts` translator pattern (the Cursor, OpenCode, Gemini and Antigravity adapters are 200-300 lines of
 translation onto the same core); if it has none but speaks MCP, configure `@weft/mcp` (its README has
 copy-paste configs for Zed, Claude Code, Codex, Cursor, VS Code, JetBrains and Warp); otherwise run
 the watcher in its checkout.

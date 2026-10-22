@@ -3,14 +3,18 @@ import { posix } from "node:path";
 import type { Analysis, AnalyzeOptions, BackendId, SourceChange, TreeSitterLanguage } from "../language.js";
 import { analyzeTreeSitter } from "../treesitter.js";
 import { c, cpp } from "./c.js";
+import { csharp } from "./csharp.js";
 import { go } from "./go.js";
 import { java } from "./java.js";
 import { kotlin } from "./kotlin.js";
+import { php } from "./php.js";
 import { python } from "./python.js";
+import { ruby } from "./ruby.js";
 import { rust } from "./rust.js";
+import { swift } from "./swift.js";
 
 /** Languages on the tree-sitter backend. Add a spec + grammar + conformance fixture per language. */
-export const treeSitterLanguages: TreeSitterLanguage[] = [python, c, cpp, java, kotlin, go, rust];
+export const treeSitterLanguages: TreeSitterLanguage[] = [python, c, cpp, java, kotlin, swift, csharp, ruby, php, go, rust];
 
 export type LanguageInfo = { id: string; name: string; backend: BackendId };
 
@@ -25,7 +29,8 @@ export function languageFor(path: string): LanguageInfo | undefined {
 
 /**
  * The tree-sitter language for a path. With `text`, a language that shares an extension may
- * hand the file to another (`.h` is C unless the text is C++).
+ * hand the file to another (`.h` is C unless the text is C++); `analyzeSource` passes the
+ * edit's text, so `.rb`/`.php` and every other extension resolve by path alone.
  */
 export function treeSitterLanguageFor(path: string, text?: string | null): TreeSitterLanguage | undefined {
   const ext = posix.extname(path).toLowerCase();
@@ -35,11 +40,12 @@ export function treeSitterLanguageFor(path: string, text?: string | null): TreeS
 }
 
 /**
- * Analyze one file of an edit with its tree-sitter language (Python, C, C++, Go, Rust, ...). Keys are
+ * Analyze one file of an edit with its tree-sitter language (Python, C, C++, Ruby, PHP, Go, Rust, ...). Keys are
  * `${prefix}${path}#Name`; reads include imports resolved inside the checkout.
  * Throws for paths no tree-sitter language claims; check `treeSitterLanguageFor` first.
  */
 export async function analyzeSource(change: SourceChange, opts: AnalyzeOptions = {}): Promise<Analysis> {
+  // The edit's text lets a shared extension pick its language (`.h`: C or C++).
   const language = treeSitterLanguageFor(change.path, change.after ?? change.before);
   if (!language) throw new Error(`no tree-sitter language for ${change.path}`);
   return analyzeTreeSitter(language, change.before ?? "", change.after ?? "", change.path, opts);

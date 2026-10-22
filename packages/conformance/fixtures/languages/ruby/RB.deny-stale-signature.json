@@ -1,0 +1,46 @@
+{
+  "id": "RB.deny-stale-signature",
+  "level": 2,
+  "required": true,
+  "spec": "§4.1, §5.2",
+  "title": "Ruby: a call built on a signature another agent just changed is denied before it runs",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "lib/cart.rb",
+        "old_text": "    \"#{items.size} items\"",
+        "new_text": "    \"#{items.size} items, total #{Pricing.calc_total(items)}\""
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "stale_assumption",
+          "calc_total"
+        ]
+      },
+      "expect_applied": false
+    },
+    {
+      "expect_file": {
+        "path": "lib/cart.rb",
+        "unchanged": true
+      }
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "status": "rejected",
+        "mode": "check",
+        "reads_include": "lib/pricing.rb#Pricing.calc_total",
+        "min": 1
+      }
+    }
+  ]
+}

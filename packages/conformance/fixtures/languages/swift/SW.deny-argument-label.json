@@ -1,0 +1,30 @@
+{
+  "id": "SW.deny-argument-label",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a74.1",
+  "title": "Swift: a call using an argument label another agent removed is denied (labels are signature)",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "relabel"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "Sources/Shop/Cart+Summary.swift",
+        "old_text": "        \"\\(items.count) items\"",
+        "new_text": "        \"\\(items.count) items, total \\(calcTotal(items: items))\""
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "calcTotal"
+        ]
+      },
+      "expect_applied": false
+    }
+  ]
+}

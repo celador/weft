@@ -1,0 +1,62 @@
+weft: installed Claude Code adapter in /private<work>/agent-a
+  coordinator http://localhost:8799 repo demo-agy-reroute-20261022-224419 agent claude-a task T-1 change Ieda3eb463bd67b60e7bbf53c83afe1b16825b181
+  hooks: /private<work>/agent-a/.claude/settings.local.json
+  git hooks: /private<work>/origin/.git/worktrees/agent-a/hooks/commit-msg, pre-commit
+  agent cli: /private<work>/agent-a/.weft/bin/weft
+weft: installed antigravity adapter in /private<work>/agent-b
+  coordinator http://localhost:8799 repo demo-agy-reroute-20261022-224419 agent agy-b task T-2 change I1e3419ca0a7990e0b054cfd6eaa83020c53cc101
+  capabilities {"level":3,"observe":"sync","inject":"delayed","deny_edit":true,"refuse_stop":true,"commit_gate":"tool_interception"}
+  hooks: /private<work>/agent-b/.agents/hooks.json (Antigravity 2.0, CLI and IDE read workspace hooks from .agents/hooks.json)
+  git hooks: /private<work>/origin/.git/worktrees/agent-b/hooks/commit-msg, pre-commit
+  agent cli: /private<work>/agent-b/.weft/bin/weft
+
+--- agent-b/.agents/hooks.json
+{
+  "weft": {
+    "PreToolUse": [
+      {
+        "matcher": "edit_file|write_file|write_to_file|replace_file_content|multi_replace_file_content|run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-antigravity/packages/adapters/antigravity/dist/weft-antigravity.mjs hook PreToolUse # weft-antigravity",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-antigravity/packages/adapters/antigravity/dist/weft-antigravity.mjs hook PostToolUse # weft-antigravity",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-antigravity/packages/adapters/antigravity/dist/weft-antigravity.mjs hook SessionStart # weft-antigravity",
+        "timeout": 30
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-antigravity/packages/adapters/antigravity/dist/weft-antigravity.mjs hook PreInvocation # weft-antigravity",
+        "timeout": 30
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "~/.hermes/node/bin/node ~/github/weft/.worktrees/adapter-antigravity/packages/adapters/antigravity/dist/weft-antigravity.mjs hook Stop # weft-antigravity",
+        "timeout": 30
+      }
+    ]
+  }
+}

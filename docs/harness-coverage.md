@@ -30,7 +30,7 @@ for cloud agents, git push events). **d** is an ACP proxy, which is experimental
 | Cursor CLI + Cursor IDE | CLI/IDE | L3 hooks (same `.cursor/hooks.json`) | a | L3 fixture-tested (`adapter-cursor`); live run blocked on login | live run |
 | Gemini CLI | CLI | L3 hooks | a | L3 fixture-tested (`adapter-gemini`) | low priority: the free tier moved to Antigravity |
 | **GitHub Copilot** (CLI, cloud coding agent, VS Code agent mode) | CLI/IDE/cloud | L3 hooks | a | **L3 verified** on Copilot CLI and VS Code agent mode (`adapter-copilot`, [evidence](../demo/evidence/copilot/README.md)); cloud agent unverified | cloud agent run (needs a paid Copilot plan; probe repo ready) |
-| **Google Antigravity** (2.0, CLI, IDE) | CLI/IDE | L3 hooks | a | watcher only | **card: Antigravity adapter** |
+| **Google Antigravity** (2.0, CLI, IDE) | CLI/IDE | L3 hooks | a | **L3 verified** live on agy 1.4.5 with a Claude Code peer (`adapter-antigravity`, inject delayed via `PreInvocation`) | IDE run |
 | **Windsurf / Devin Desktop** (Cascade) | IDE | L2 hooks | a | watcher only | **card: Windsurf adapter** |
 | Cline (extension + CLI) | IDE/CLI | L2 hooks (+ next-turn context) | a | watcher only | queued (adapter #4) |
 | Goose | CLI/desktop | L3 hooks | a | watcher only | queued (adapter #5; AAIF project) |

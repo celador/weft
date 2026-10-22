@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handle, importReads } from "./analyze-cli";
+import { handle, handleAsync, importReads, languages } from "./analyze-cli";
 
 describe("analyze-cli handle()", () => {
   it("classifies signature/body/new writes and keeps reads", () => {
@@ -65,5 +65,52 @@ describe("importReads()", () => {
       files: [{ path: "src/api/client.ts", before: "", after: 'import { refreshToken } from "../auth/session";\nexport function fetchWithAuth() { return refreshToken() }\n' }],
     });
     expect(res.ok && res.reads).toContain("src/auth/session.ts#refreshToken");
+  });
+});
+
+describe("tree-sitter languages (handleAsync)", () => {
+  it("lists every extension the bundle analyzes", () => {
+    const info = languages();
+    expect(info.extensions).toEqual(expect.arrayContaining([".ts", ".tsx", ".js", ".py"]));
+    expect(info.languages.map((l) => l.id)).toEqual(expect.arrayContaining(["typescript", "python"]));
+  });
+
+  it("gives Python edits declaration keys and checkout-resolved reads, with the prefix", async () => {
+    const root = mkdtempSync(join(tmpdir(), "weft-py-"));
+    mkdirSync(join(root, "shop"), { recursive: true });
+    writeFileSync(join(root, "shop/__init__.py"), "");
+    writeFileSync(join(root, "shop/pricing.py"), "def calc_total(items):\n    return sum(items)\n");
+    const res = await handleAsync({
+      root,
+      prefix: "app/",
+      files: [
+        {
+          path: "app/shop/cart.py",
+          before: "class Cart:\n    def total(self, items):\n        return 0\n",
+          after: "from shop.pricing import calc_total\n\nclass Cart:\n    def total(self, items, tip):\n        return calc_total(items)\n\ndef helper():\n    pass\n",
+        },
+        { path: "app/src/a.ts", before: "export function k() { return 1 }\n", after: "export function k() { return 2 }\n" },
+        { path: "app/README.md", before: "a", after: "b" },
+      ],
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.writes).toEqual(
+      expect.arrayContaining([
+        { key: "app/shop/cart.py#Cart.total", kind: "signature" },
+        { key: "app/shop/cart.py#helper", kind: "new" },
+        { key: "app/src/a.ts#k", kind: "body" },
+      ]),
+    );
+    expect(res.reads).toContain("app/shop/pricing.py#calc_total");
+    expect(res.analyzed.sort()).toEqual(["app/shop/cart.py", "app/src/a.ts"]);
+    expect(res.languages).toEqual(["python", "typescript"]);
+  });
+
+  it("keeps the TS-only path identical", async () => {
+    const req = { files: [{ path: "src/a.ts", before: "export function f() { return 1 }\n", after: "export function f(x = 1) { return x }\n" }] };
+    const { languages: used, ...rest } = (await handleAsync(req)) as Extract<Awaited<ReturnType<typeof handleAsync>>, { ok: true }>;
+    expect(rest).toEqual(handle(req));
+    expect(used).toEqual(["typescript"]);
   });
 });

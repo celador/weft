@@ -1,0 +1,80 @@
+{
+  "description": "Swift conformance workspace (docs/languages.md): a SwiftPM package. Swift has no per-file imports, so the callers in Sources/Shop read Pricing.swift through the module index. The peer changes are another agent's edits to Sources/Shop/Pricing.swift; their reads/writes are exactly what @weft/analyzer's Swift backend derives from `after` (checked by packages/conformance/test/languages.test.ts).",
+  "language": "swift",
+  "files": {
+    "Package.swift": "// swift-tools-version:5.9\nimport PackageDescription\n\nlet package = Package(name: \"Shop\", targets: [.target(name: \"Shop\")])\n",
+    "Sources/Shop/Pricing.swift": "import Foundation\n\npublic struct Item {\n    public let price: Double\n    public let qty: Int\n}\n\npublic func calcTotal(items: [Item]) -> Double {\n    items.reduce(0) { $0 + $1.price * Double($1.qty) }\n}\n\npublic func formatPrice(_ amount: Double) -> String {\n    String(format: \"$%.2f\", amount)\n}\n",
+    "Sources/Shop/Cart.swift": "struct Cart {\n    var items: [Item]\n}\n",
+    "Sources/Shop/Cart+Summary.swift": "extension Cart {\n    func summary() -> String {\n        \"\\(items.count) items\"\n    }\n}\n",
+    "Sources/Shop/Report.swift": "func reportLine(total: Double) -> String {\n    \"Total\"\n}\n"
+  },
+  "peers": {
+    "change_signature": {
+      "agent": "peer-a",
+      "harness": "claude-code",
+      "task": "T-1",
+      "files": [
+        "Sources/Shop/Pricing.swift"
+      ],
+      "writes": [
+        {
+          "key": "Sources/Shop/Pricing.swift#calcTotal",
+          "kind": "signature"
+        }
+      ],
+      "reads": [
+        "Sources/Shop/Pricing.swift#Item"
+      ],
+      "intent": "calcTotal(items:) takes a taxRate",
+      "after": {
+        "Sources/Shop/Pricing.swift": "import Foundation\n\npublic struct Item {\n    public let price: Double\n    public let qty: Int\n}\n\npublic func calcTotal(items: [Item], taxRate: Double) -> Double {\n    (1 + taxRate) * items.reduce(0) { $0 + $1.price * Double($1.qty) }\n}\n\npublic func formatPrice(_ amount: Double) -> String {\n    String(format: \"$%.2f\", amount)\n}\n"
+      }
+    },
+    "rename_helper": {
+      "agent": "peer-b",
+      "harness": "codex",
+      "task": "T-3",
+      "files": [
+        "Sources/Shop/Pricing.swift"
+      ],
+      "writes": [
+        {
+          "key": "Sources/Shop/Pricing.swift#formatMoney",
+          "kind": "new"
+        },
+        {
+          "key": "Sources/Shop/Pricing.swift#formatPrice",
+          "kind": "deleted"
+        }
+      ],
+      "reads": [
+        "Sources/Shop/Pricing.swift#Item"
+      ],
+      "intent": "rename formatPrice to formatMoney",
+      "after": {
+        "Sources/Shop/Pricing.swift": "import Foundation\n\npublic struct Item {\n    public let price: Double\n    public let qty: Int\n}\n\npublic func calcTotal(items: [Item]) -> Double {\n    items.reduce(0) { $0 + $1.price * Double($1.qty) }\n}\n\npublic func formatMoney(_ amount: Double) -> String {\n    String(format: \"$%.2f\", amount)\n}\n"
+      }
+    },
+    "relabel": {
+      "agent": "peer-c",
+      "harness": "gemini-cli",
+      "task": "T-4",
+      "files": [
+        "Sources/Shop/Pricing.swift"
+      ],
+      "writes": [
+        {
+          "key": "Sources/Shop/Pricing.swift#calcTotal",
+          "kind": "signature"
+        }
+      ],
+      "reads": [
+        "Sources/Shop/Pricing.swift#Item"
+      ],
+      "intent": "calcTotal drops its argument label",
+      "after": {
+        "Sources/Shop/Pricing.swift": "import Foundation\n\npublic struct Item {\n    public let price: Double\n    public let qty: Int\n}\n\npublic func calcTotal(_ items: [Item]) -> Double {\n    items.reduce(0) { $0 + $1.price * Double($1.qty) }\n}\n\npublic func formatPrice(_ amount: Double) -> String {\n    String(format: \"$%.2f\", amount)\n}\n"
+      }
+    }
+  }
+}

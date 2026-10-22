@@ -1,0 +1,7 @@
+{"ts":"2026-10-22T16:53:26.241Z","event":"SessionStart","session":"sb","total_ms":116,"handle_ms":78,"calls":[{"op":"hello","ms":42},{"op":"drain","ms":8}],"injected_chars":1038,"weft_chars":1038}
+{"ts":"2026-10-22T16:53:26.627Z","event":"PreToolUse","tool":"Edit","session":"sb","total_ms":294,"handle_ms":259,"calls":[{"op":"submit","ms":45}],"injected_chars":0,"weft_chars":0}
+{"ts":"2026-10-22T16:53:26.987Z","event":"PostToolUse","tool":"Edit","session":"sb","total_ms":320,"handle_ms":287,"calls":[{"op":"submit","ms":47}],"lsp_ms":4,"lsp_jobs":["enrich"],"injected_chars":0,"weft_chars":0}
+{"ts":"2026-10-22T16:53:30.090Z","event":"PostToolUse","tool":"Read","session":"sb","total_ms":96,"handle_ms":69,"calls":[{"op":"drain","ms":49}],"injected_chars":967,"weft_chars":967}
+{"ts":"2026-10-22T16:53:31.230Z","event":"UserPromptSubmit","session":"sb","total_ms":179,"handle_ms":106,"calls":[{"op":"drain","ms":52},{"op":"event","ms":27}],"lsp_ms":12,"lsp_jobs":["breakage"],"injected_chars":753,"weft_chars":753}
+{"ts":"2026-10-22T16:53:33.087Z","event":"PostToolUse","tool":"Read","session":"sb","total_ms":45,"handle_ms":8,"calls":[],"injected_chars":254,"weft_chars":254}
+{"ts":"2026-10-22T16:53:33.357Z","event":"SessionEnd","session":"sb","total_ms":96,"handle_ms":62,"calls":[{"op":"gate","ms":45},{"op":"bye","ms":9}],"lsp_ms":1,"lsp_jobs":["end"],"injected_chars":0,"weft_chars":0}

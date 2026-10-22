@@ -1,8 +1,11 @@
 // Bundle src/analyze-cli.ts (+ @weft/analyzer + typescript) into one self-contained ESM file
 // that the Python plugin can spawn with plain `node`, without the weft checkout or node_modules.
+// The tree-sitter runtime + grammars (Python, ...) go to `<outdir>/grammars/*.wasm`, where the
+// bundle looks for them at runtime; install.py copies that directory next to analyze.mjs.
 //
 //   node scripts/build.mjs [outfile]      (default: dist/analyze.mjs)
 import { build } from "esbuild";
+import { copyAnalyzerAssets } from "../../../analyzer/scripts/copy-assets.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -30,4 +33,5 @@ await build({
     ].join(" "),
   },
 });
-console.log(`built ${outfile}`);
+const grammars = copyAnalyzerAssets(dirname(outfile));
+console.log(`built ${outfile} (+ ${grammars})`);

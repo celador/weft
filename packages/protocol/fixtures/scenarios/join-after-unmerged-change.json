@@ -1,0 +1,264 @@
+{
+  "name": "join-after-unmerged-change",
+  "description": "U (\u00a76.1): A changes X's signature and its session ends before B's first session joins, so the \u00a76.3 broadcast never reaches B and B's base (the head at join) is past A's edit, although B's checkout lacks it (A has not landed). B's first edit that calls X is still rejected with stale_assumption caused by A's edit; that verdict tells B, so after draining the same edit is accepted. Once A lands, a change that joins later (C, checked out from trunk) is not warned.",
+  "covers": [
+    "6.1 U",
+    "6.2 R2",
+    "5.2",
+    "6.3"
+  ],
+  "repo": "demo",
+  "start": "2026-10-22T14:00:00.000Z",
+  "steps": [
+    {
+      "op": "hello",
+      "as": "A",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "claude-a",
+          "harness": "claude-code"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-1"
+        },
+        "change": "I-a"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s1",
+        "head_seq": 1,
+        "delivered_through": 1
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 1,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "signature"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 2,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "bye",
+      "as": "A"
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "codex-b",
+          "harness": "codex"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s2",
+        "head_seq": 5,
+        "delivered_through": 5
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "check",
+        "event": {
+          "kind": "edit",
+          "base_seq": 5,
+          "writes": [
+            {
+              "key": "src/api/client.ts#fetchWithAuth",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "src/auth/session.ts#refreshToken"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "reject",
+        "mode": "check",
+        "seq": 6,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "stale_assumption",
+            "symbol": "src/auth/session.ts#refreshToken",
+            "caused_by_seq": 2,
+            "caused_by_agent": "claude-a",
+            "caused_by_task": "T-1"
+          }
+        ],
+        "inbox": [],
+        "context": "$any"
+      }
+    },
+    {
+      "op": "event",
+      "seq": 6,
+      "expect": {
+        "status": "rejected",
+        "mode": "check",
+        "kind": "edit"
+      }
+    },
+    {
+      "op": "drain",
+      "as": "B",
+      "ack": "last",
+      "expect": {
+        "items": [],
+        "delivered_through": 6
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 6,
+          "writes": [
+            {
+              "key": "src/api/client.ts#fetchWithAuth",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "src/auth/session.ts#refreshToken"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 7,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "stop",
+      "expect": {
+        "allow": true
+      }
+    },
+    {
+      "op": "system",
+      "draft": {
+        "kind": "land",
+        "base_seq": 7,
+        "change": "I-a",
+        "payload": {
+          "sha": "4c0ffee1",
+          "op_id": "op_1"
+        }
+      },
+      "expect": {
+        "seq": 8,
+        "kind": "land",
+        "status": "accepted"
+      }
+    },
+    {
+      "op": "hello",
+      "as": "C",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "gemini-c",
+          "harness": "gemini-cli"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-3"
+        },
+        "change": "I-c"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s3",
+        "head_seq": 9,
+        "delivered_through": 9
+      }
+    },
+    {
+      "op": "submit",
+      "as": "C",
+      "submit": {
+        "type": "submit",
+        "mode": "check",
+        "event": {
+          "kind": "edit",
+          "base_seq": 9,
+          "writes": [
+            {
+              "key": "src/api/retry.ts#withRetry",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "src/auth/session.ts#refreshToken"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": null,
+        "diagnostics": []
+      }
+    }
+  ]
+}

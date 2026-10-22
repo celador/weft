@@ -15,8 +15,8 @@ const repo = join(here, "..", "..", "..");
 const CLAUDE = join(repo, "packages/adapters/claude-code/dist/weft-claude.mjs");
 
 describe("language fixture sets", () => {
-  it("ship Python, C, C++, Java, Kotlin, Go and Rust", () => {
-    expect(languageFixtureSets()).toEqual(expect.arrayContaining(["python", "c", "cpp", "java", "kotlin", "go", "rust"]));
+  it("ship Python, C, C++, Java, Kotlin, Swift, C#, Ruby, PHP, Go and Rust", () => {
+    expect(languageFixtureSets()).toEqual(expect.arrayContaining(["c", "cpp", "csharp", "go", "java", "kotlin", "php", "python", "ruby", "rust", "swift"]));
   });
 
   for (const set of languageFixtureSets()) {
@@ -32,23 +32,29 @@ describe("language fixture sets", () => {
 
       for (const [name, peer] of Object.entries(workspace.peers)) {
         it(`peer ${name}: declared reads/writes = analyzer output`, async () => {
-          // The same checkout access the adapters give the analyzer (exists / list / read).
           const exists = (rel: string) => rel in workspace.files;
-          // C/C++ read included headers and Go reads go.mod and its package's files; like the
-          // adapters, a change sees its own other changed files.
-          const read = (rel: string): string | undefined => peer.after?.[rel] ?? workspace.files[rel];
+          // Directory listing of the workspace: Go/Kotlin package index, Swift/C# module index.
           const list = (dir: string): string[] | undefined => {
             const prefix = dir ? `${dir}/` : "";
             const entries = new Set<string>();
-            for (const f of Object.keys(workspace.files)) if (f.startsWith(prefix)) entries.add(f.slice(prefix.length).replace(/\/.*$/, "/"));
+            for (const f of Object.keys(workspace.files)) {
+              if (!f.startsWith(prefix)) continue;
+              const rest = f.slice(prefix.length);
+              const slash = rest.indexOf("/");
+              entries.add(slash < 0 ? rest : rest.slice(0, slash + 1));
+            }
             return entries.size ? [...entries] : undefined;
           };
+          // The same checkout access the adapters give the analyzer (exists / list / read). C/C++
+          // read included headers, Go go.mod; Swift/C# index their module; like the adapters, a change sees
+          // its own other changed files as they will be after it.
+          const read = (rel: string): string | undefined => (peer.after && rel in peer.after ? (peer.after[rel] ?? undefined) : workspace.files[rel]);
           const reads = new Set<string>();
           // One key per symbol, as the adapters merge them (a header and its .c share keys).
           const writes = new Map<string, { key: string; kind: string }>();
           for (const [path, after] of Object.entries(peer.after ?? {})) {
             expect([set, ...(workspace.interop ?? [])]).toContain(treeSitterLanguageFor(path, after)?.id);
-            const r = await analyzeSource({ path, before: workspace.files[path] ?? null, after }, { exists, read, list });
+            const r = await analyzeSource({ path, before: workspace.files[path] ?? null, after }, { exists, list, read });
             r.reads.forEach((k) => reads.add(k));
             for (const w of r.writes) writes.set(w.key, w);
           }

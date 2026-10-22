@@ -1,0 +1,56 @@
+{
+ "probe": {
+  "SessionStart": [
+   {
+    "type": "command",
+    "command": "node <probe>/probe.mjs SessionStart",
+    "timeout": 30
+   }
+  ],
+  "PreToolUse": [
+   {
+    "matcher": "*",
+    "hooks": [
+     {
+      "type": "command",
+      "command": "node <probe>/probe.mjs PreToolUse",
+      "timeout": 30
+     }
+    ]
+   }
+  ],
+  "PostToolUse": [
+   {
+    "matcher": "*",
+    "hooks": [
+     {
+      "type": "command",
+      "command": "node <probe>/probe.mjs PostToolUse",
+      "timeout": 30
+     }
+    ]
+   }
+  ],
+  "PreInvocation": [
+   {
+    "type": "command",
+    "command": "node <probe>/probe.mjs PreInvocation",
+    "timeout": 30
+   }
+  ],
+  "PostInvocation": [
+   {
+    "type": "command",
+    "command": "node <probe>/probe.mjs PostInvocation",
+    "timeout": 30
+   }
+  ],
+  "Stop": [
+   {
+    "type": "command",
+    "command": "node <probe>/probe.mjs Stop",
+    "timeout": 30
+   }
+  ]
+ }
+}
