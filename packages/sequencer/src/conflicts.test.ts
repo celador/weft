@@ -215,6 +215,32 @@ describe("conflicts: continue (repo config)", () => {
     expect(r.diagnostics.find((d) => d.code === "stale_overwrite")?.suggestion).toMatch(/claude-a owns the conflict and is told about it if it has a live session\.$/);
   });
 
+  it("use first, contract change second: the user's change gets a gate-closing stale_assumption in continue wording, the owner a notice (sequencer and reference)", () => {
+    const { j } = repo(init);
+    const ref = new ReferenceCoordinator({ repo: "r", conflicts: "continue", now: () => Date.parse("2026-10-05T12:00:00.000Z") });
+    const use: Submit = { type: "submit", mode: "commit", event: { kind: "edit", base_seq: 2, files: ["src/cart.ts"], reads: ["src/pricing.ts#calcTotal"], writes: [{ key: "src/cart.ts#cartSummary", kind: "body" }] } };
+    const change: Submit = { type: "submit", mode: "commit", event: { kind: "edit", base_seq: 1, files: ["src/pricing.ts"], reads: [], writes: [{ key: "src/pricing.ts#calcTotal", kind: "signature" }] } };
+    const a = j.call<{ session: string }>("hello", hello("claude-a", "I-a"));
+    const b = j.call<{ session: string }>("hello", hello("claude-b", "I-b"));
+    j.call("submit", b.session, use);
+    const owner = j.call<{ verdict: string; inbox: Array<{ diagnostic?: { severity: string; code: string } }> }>("submit", a.session, change);
+    const ra = ref.hello(hello("claude-a", "I-a"));
+    const rb = ref.hello(hello("claude-b", "I-b"));
+    ref.submit(rb.session, use);
+    expect(ref.submit(ra.session, change)).toEqual(owner);
+    expect(owner.verdict).toBe("accept");
+    expect(owner.inbox.map((i) => [i.diagnostic?.severity, i.diagnostic?.code])).toEqual([["warning", "stale_assumption"]]);
+    const told = j.call<{ items: Array<{ diagnostic?: { code: string; severity: string; suggestion?: string } }> }>("drain", b.session, 0);
+    expect(told).toEqual(ref.drain(rb.session, 0));
+    expect(told.items.map((i) => i.diagnostic?.code)).toEqual(["stale_assumption"]);
+    expect(told.items[0]!.diagnostic?.suggestion).toBe(
+      "Keep editing your other tasks, but the commit gate stays closed while this error is open: report it instead of working around it. Do not adapt your call sites to claude-a's new src/pricing.ts#calcTotal (event #4) or adopt their partial work: claude-a owns the conflict.",
+    );
+    const gate = j.call<{ allow: boolean }>("gate", b.session, { type: "gate", gate: "commit" });
+    expect(gate.allow).toBe(false);
+    expect(gate).toEqual(ref.gate(rb.session, { type: "gate", gate: "commit" }));
+  });
+
   it("matches the reference coordinator for the same repo config", () => {
     const { j } = repo(init);
     const { b, r } = staleCall(j);

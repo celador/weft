@@ -9,6 +9,7 @@ import { renderContext, renderDue } from "./context";
 import { addresseeOf, agreementOf, negotiationDues } from "./negotiation";
 import { WcpProtocolError } from "./errors";
 import { fileOf } from "./summary";
+import { contractError, RELEASABLE } from "./contract";
 import { summarize } from "./summary";
 import type {
   ActionResult,
@@ -86,8 +87,11 @@ type ChangeState = {
   openMeta: Map<string, OpenMeta>;
 };
 
-/** `check`/`commit`: a rejected record of that mode; `push`: a claim_wounded (spec §6.5). */
-type OpenOrigin = "check" | "commit" | "push";
+/**
+ * `check`/`commit`: a rejected record of that mode; `push`: a claim_wounded; `contract`: a
+ * signature change / deletion of a symbol the change's accepted edits already use (spec §6.3, §6.5).
+ */
+type OpenOrigin = "check" | "commit" | "push" | "contract";
 type OpenMeta = { origin: OpenOrigin; seq: Seq };
 
 type Claim = {
@@ -303,11 +307,16 @@ export class ReferenceCoordinator {
 
   // ---------------------------------------------------------------- open errors (§6.5)
 
+  /**
+   * A later error on the same key replaces the entry, but never turns an origin a release cannot
+   * clear (commit, contract) into one it can (check, push): the code is still in the workspace (§6.5).
+   */
   private openSet(changeId: string, d: Diagnostic, origin: OpenOrigin, seq: Seq): void {
     const c = this.changes.get(changeId);
     if (!c) return;
+    const prev = c.openMeta.get(d.symbol)?.origin;
     c.open.set(d.symbol, d);
-    c.openMeta.set(d.symbol, { origin, seq });
+    c.openMeta.set(d.symbol, { origin: prev && !RELEASABLE.includes(prev) && RELEASABLE.includes(origin) ? prev : origin, seq });
   }
 
   private openDelete(changeId: string | undefined, key: string): void {
@@ -825,6 +834,22 @@ export class ReferenceCoordinator {
     return c.reads.has(key) || c.writes.has(key) || this.claims.some((x) => x.change === c.id && x.key === key);
   }
 
+  /**
+   * Spec §6.3 step 6: does accepted record `rec` (a signature/deleted write of `key`) change the
+   * contract under code change `c` already has in its workspace? True when an accepted edit of `c`
+   * reads `key` (intents are plans, not code), `c` does not write `key` itself (claims arbitrate
+   * that), `c` is not in `rec`'s merged group, and — for a `land` — the landing change did not
+   * already announce the strong write with an edit (every reader was told then).
+   */
+  private usesBeforeContract(c: ChangeState, rec: EventRecord, key: SymbolKey): boolean {
+    if (!c.reads.has(key) || c.writes.has(key) || this.sameGroup(c.id, rec.change ?? undefined)) return false;
+    if (rec.kind === "land") {
+      const announced = rec.change ? this.changes.get(rec.change)?.writes.get(key) : undefined;
+      if (announced && STRONG.includes(announced)) return false;
+    }
+    return this.log.some((r) => r.status === "accepted" && r.kind === "edit" && r.change === c.id && r.reads.includes(key));
+  }
+
   private applyAccepted(rec: EventRecord, s?: Session): void {
     const now = this.now();
     const change = rec.change ? this.changes.get(rec.change) : undefined;
@@ -911,9 +936,10 @@ export class ReferenceCoordinator {
         const keys = p.keys as SymbolKey[] | undefined;
         this.claims = this.claims.filter((c) => !(c.change === rec.change && (!keys || keys.includes(c.key))));
         // An agent's release is a retreat: it clears only errors whose edit never reached the
-        // workspace (check) or wounds (push) on the released keys — never commit-mode ones (§6.5).
+        // workspace (check) or wounds (push) on the released keys — never commit-mode or contract
+        // ones, whose code is in the workspace (§6.5).
         if (s && change)
-          for (const [k, m] of [...change.openMeta]) if ((!keys || keys.includes(k)) && m.origin !== "commit") this.openDelete(change.id, k);
+          for (const [k, m] of [...change.openMeta]) if ((!keys || keys.includes(k)) && RELEASABLE.includes(m.origin)) this.openDelete(change.id, k);
         break;
       }
       case "land": {
@@ -970,12 +996,13 @@ export class ReferenceCoordinator {
     }
 
     // Broadcast contract changes and trunk movement to intersecting changes (spec §6.3).
+    // A contract change to a symbol another change already uses also opens an error on that
+    // change, recorded even when it has no live session (like claim_wounded).
     if (rec.kind === "edit" || rec.kind === "land" || rec.kind === "revert") {
       for (const c of this.changes.values()) {
         if (c.id === rec.change || c.landed) continue;
         if (rec.kind === "edit" && this.alternatives(c.id, rec.change)) continue;
         const targets = this.sessionsOf({ change: c.id });
-        if (!targets.length) continue;
         if (rec.kind !== "edit") {
           const hit = rec.writes.filter((w) => this.touchesChange(c, w.key));
           if (!hit.length) continue;
@@ -998,6 +1025,13 @@ export class ReferenceCoordinator {
         }
         for (const w of rec.writes) {
           if (!STRONG.includes(w.kind) || !this.touchesChange(c, w.key)) continue;
+          if (this.usesBeforeContract(c, rec, w.key)) {
+            const d = contractError(rec, w, this.continueMode);
+            this.openSet(c.id, d, "contract", rec.seq);
+            for (const ts of targets) this.push(ts, { seq: rec.seq, kind: "diagnostic", diagnostic: d });
+            if (this.continueMode) this.notifyOwner(d, c.agent, "edit");
+            continue;
+          }
           for (const ts of targets)
             this.push(ts, {
               seq: rec.seq,

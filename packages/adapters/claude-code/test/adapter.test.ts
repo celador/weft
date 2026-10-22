@@ -213,12 +213,17 @@ describe("Claude Code hooks against the reference coordinator", () => {
         { key: "src/pricing.ts#calcTotal", kind: "signature" },
         { key: "src/pricing.ts#PriceOptions", kind: "signature" },
       ]);
-      // B, whose accepted code passes { taxRate }, is told on its next hook.
+      // B, whose accepted code passes { taxRate }, is told on its next hook, and its commit gate
+      // closes: the use came first, so the contract change opens the error (spec §6.3 step 6).
       const post = (await B.handle(hook("sb", rootB, { hook_event_name: "PostToolUse", tool_name: "Read", tool_input: { file_path: join(rootB, "src/cart.ts") }, tool_use_id: "tB2" }))) as any;
       const ctx = post.hookSpecificOutput.additionalContext as string;
-      expect(ctx).toContain("[weft warning] contract_changed");
+      expect(ctx).toContain("[weft error] stale_assumption");
+      expect(ctx).not.toContain("contract_changed");
       expect(ctx).toContain("src/pricing.ts#calcTotal");
       expect(ctx).toContain("src/pricing.ts#PriceOptions");
+      const gate = await B.commitGate("sb");
+      expect(gate).toContain("stale_assumption");
+      expect(gate).toContain("src/pricing.ts#calcTotal");
     });
 
     it("a caller still on the old field is denied with stale_assumption and the commit gate refuses", async () => {
@@ -233,7 +238,7 @@ describe("Claude Code hooks against the reference coordinator", () => {
     });
   });
 
-  it("pushes contract_changed to a change that already uses the symbol (PostToolUse injection)", async () => {
+  it("pushes a gate-closing stale_assumption to a change that already uses the symbol (PostToolUse injection)", async () => {
     const coord = new ReferenceCoordinator({ repo: "demo", now: () => 1_790_000_000_000 });
     const t = refTransport(coord);
     const rootA = checkout("a2");
@@ -245,12 +250,17 @@ describe("Claude Code hooks against the reference coordinator", () => {
     // B first uses calcTotal (accepted: nothing changed yet)
     const b1 = await edit(B, "sb", rootB, "tB1", "src/cart.ts", "return `${items.length} items`;", "return `total ${calcTotal(items)}`;");
     expect(b1.applied).toBe(true);
-    // then A changes its signature -> B gets a pushed warning on its next hook
+    // then A changes its signature -> B gets a pushed error on its next hook, and its gate closes
     await edit(A, "sa", rootA, "tA1", "src/pricing.ts", PRICING_V1, PRICING_V2);
     const post = (await B.handle(hook("sb", rootB, { hook_event_name: "PostToolUse", tool_name: "Read", tool_input: { file_path: join(rootB, "src/pricing.ts") }, tool_use_id: "tB2" }))) as any;
     const ctx = post.hookSpecificOutput.additionalContext as string;
-    expect(ctx).toMatch(/\[weft warning\] contract_changed src\/pricing\.ts:3:17: claude-a changed the signature of src\/pricing\.ts#calcTotal/);
+    expect(ctx).toMatch(/\[weft error\] stale_assumption src\/pricing\.ts:3:17: claude-a changed the signature of src\/pricing\.ts#calcTotal \(#\d+\) after your change started using it/);
     expect(ctx).toContain("opts: PriceOptions");
+    expect(await B.commitGate("sb")).toContain("stale_assumption");
+    // Updating the call site against the new signature clears it.
+    const b2 = await edit(B, "sb", rootB, "tB3", "src/cart.ts", "return `total ${calcTotal(items)}`;", "return `total ${calcTotal(items, { taxRate: 0 })}`;");
+    expect(b2.applied).toBe(true);
+    expect(await B.commitGate("sb")).toBeUndefined();
   });
 
   it("fails open when the coordinator is unreachable", async () => {
