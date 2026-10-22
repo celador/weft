@@ -1,0 +1,46 @@
+{
+  "id": "KT.deny-stale-signature",
+  "level": 2,
+  "required": true,
+  "spec": "§4.1, §5.2",
+  "title": "Kotlin: a call built on a signature another agent just changed is denied before it runs",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/main/kotlin/com/shop/cart/CartSummary.kt",
+        "old_text": "    return \"${items.size} items\"",
+        "new_text": "    return \"${items.size} items, total \" + calcTotal(items)"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "stale_assumption",
+          "calcTotal"
+        ]
+      },
+      "expect_applied": false
+    },
+    {
+      "expect_file": {
+        "path": "src/main/kotlin/com/shop/cart/CartSummary.kt",
+        "unchanged": true
+      }
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "status": "rejected",
+        "mode": "check",
+        "reads_include": "src/main/kotlin/com/shop/pricing/Pricing.kt#calcTotal",
+        "min": 1
+      }
+    }
+  ]
+}
