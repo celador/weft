@@ -14,8 +14,9 @@
 //   - "typescript": the TypeScript compiler API (`analyze` in index.ts), unchanged.
 //   - "tree-sitter": a WASM tree-sitter grammar plus a small per-language spec
 //     (`TreeSitterLanguage` below). Fast (single-digit ms per file), no native code, no toolchain.
-//   - "lsp" (planned): a language server, when installed, enriches reads asynchronously with
-//     precise cross-file references. Never on the edit-time path.
+//   - "lsp": a language server, when installed, enriches reads asynchronously with precise
+//     cross-file definitions/references and type diagnostics (src/lsp/). Never on the
+//     edit-time path; it maps locations back to keys with the tree-sitter spec.
 
 /** What a change does to one declaration. */
 export type WriteKind = "signature" | "body" | "new" | "deleted";
@@ -27,8 +28,13 @@ export type BackendId = "typescript" | "tree-sitter" | "lsp";
 /** Does `rel` (checkout-relative, `/`-separated) exist in the checkout? */
 export type Exists = (rel: string) => boolean;
 
-/** One declaration in one file. `name` is qualified within the file (`Cart.total`). */
-export type Definition = { name: string; signature: string; body: string };
+/**
+ * One declaration in one file. `name` is qualified within the file (`Cart.total`). The optional
+ * offsets (JS string indices into the parsed text) let the `lsp` backend map a server location
+ * back to the declaration that contains it: `start`/`end` span the whole declaration (decorators
+ * included), `nameStart`/`nameEnd` its name.
+ */
+export type Definition = { name: string; signature: string; body: string; start?: number; end?: number; nameStart?: number; nameEnd?: number };
 
 /**
  * A use of a name, as a dotted path of identifiers: `calc_total(...)` is `["calc_total"]`,
@@ -69,6 +75,8 @@ export interface TreeSitterLanguage {
    * for member `name` of `module`. When it resolves to a file, the binding is a module binding.
    */
   memberModule?(module: string, name: string): string;
+  /** Node types that are identifiers (what the `lsp` backend asks definitions for). Default `["identifier"]`. */
+  identifierTypes?: string[];
 }
 
 /**

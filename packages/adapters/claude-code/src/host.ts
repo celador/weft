@@ -14,6 +14,7 @@ import { NEGOTIATE_USAGE, parseNegotiate } from "@weft/protocol";
 import { HttpTransport, type Transport } from "./client";
 import { currentSession, loadConfig, readState, stateDir, withLock, writeState, type AdapterConfig, type Loaded } from "./config";
 import { ClaudeAdapter, type HookInput, type HookOutput } from "./hooks";
+import { flushJobs, type LspJob } from "./lsp-queue";
 import { stableNodePath } from "./node-path";
 
 // Not imported from ./cli: that module runs Claude's main() when it is the entry bundle,
@@ -106,7 +107,7 @@ export class Host {
     return existsSync(wrapper) ? wrapper : `${shellQuote(process.execPath)} ${shellQuote(this.spec.self)}`;
   }
 
-  adapter(loaded: Loaded, calls?: Call[]): ClaudeAdapter {
+  adapter(loaded: Loaded, calls?: Call[], lspJobs?: LspJob[]): ClaudeAdapter {
     const http = new HttpTransport(loaded.config.url, loaded.token, loaded.config.repo, loaded.config.timeoutMs ?? 8000);
     const transport = calls ? timed(http, calls) : http;
     const self = this.spec.self;
@@ -116,6 +117,7 @@ export class Host {
       diff: async (rel, before, after) => (await import("./analysis")).unifiedDiff(rel, before, after),
       cli: this.cliFor(loaded.root),
       identity: { harness: this.spec.harness, adapter: this.spec.adapter, capabilities: this.spec.capabilities },
+      ...(lspJobs ? { lsp: (job: LspJob) => void lspJobs.push(job) } : {}),
       startHeartbeat: (session) => {
         try {
           spawn(process.execPath, [self, "heartbeat-loop", session, "--root", loaded.root], { detached: true, stdio: "ignore" }).unref();
@@ -133,13 +135,16 @@ export class Host {
    */
   async run(loaded: Loaded, input: HookInput, extra: Record<string, unknown> = {}): Promise<HookOutput> {
     const calls: Call[] = [];
+    const lspJobs: LspJob[] = [];
     const start = performance.now();
     let out: HookOutput;
     try {
-      out = await this.adapter(loaded, calls).handle(input);
+      out = await this.adapter(loaded, calls, lspJobs).handle(input);
     } catch {
       out = undefined;
     }
+    // Language-server enrichment runs in a per-checkout daemon (src/lsp.ts); this only queues.
+    if (lspJobs.length) flushJobs(loaded, lspJobs, this.spec.self);
     try {
       const o = out as { decision?: string; reason?: string; hookSpecificOutput?: { permissionDecision?: string; additionalContext?: string; permissionDecisionReason?: string } } | undefined;
       const injected = [o?.reason, o?.hookSpecificOutput?.additionalContext, o?.hookSpecificOutput?.permissionDecisionReason].filter((x): x is string => typeof x === "string").join("\n");
@@ -304,6 +309,15 @@ export class Host {
     return 1;
   }
 
+  /** The checkout's language-server enrichment daemon (src/lsp.ts). */
+  async lspDaemon(rootArg?: string): Promise<void> {
+    const loaded = this.load(rootArg ?? process.cwd());
+    if (!loaded) return;
+    const { LspWorker, runDaemon } = await import("./lsp");
+    const transport = new HttpTransport(loaded.config.url, loaded.token, loaded.config.repo, loaded.config.timeoutMs ?? 8000);
+    await runDaemon(loaded.root, new LspWorker(loaded, { transport }));
+  }
+
   async heartbeatLoop(session: string, rootArg?: string): Promise<void> {
     const loaded = this.load(rootArg ?? process.cwd());
     if (!loaded) return;
@@ -380,6 +394,8 @@ export class Host {
         return;
       case "heartbeat-loop":
         return this.heartbeatLoop(args[0]!, arg(args, "root"));
+      case "lsp-daemon":
+        return this.lspDaemon(arg(args, "root"));
       case "status":
         return this.status();
       case "negotiate":

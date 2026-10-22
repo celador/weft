@@ -2,7 +2,9 @@
 
 `@weft/analyzer` derives the read/write sets sent with a WCP edit event: TypeScript/JavaScript
 through the TypeScript compiler API, other languages (Python today) through a tree-sitter
-backend. Support matrix and how to add a language: [docs/languages.md](../../docs/languages.md).
+backend, plus an asynchronous `lsp` backend (`src/lsp/`: a minimal JSON-RPC stdio client,
+`LspEnricher` for precise reads / callers / type breakage from an installed language server).
+Support matrix, the LSP design and how to add a language: [docs/languages.md](../../docs/languages.md).
 
 ## Runtime boundary
 

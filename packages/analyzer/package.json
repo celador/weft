@@ -5,10 +5,11 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./lsp/servers": "./src/lsp/servers.ts",
     "./grammars/*": "./grammars/*"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit --strict --target ES2022 --module ESNext --moduleResolution Bundler --skipLibCheck --types vitest/globals,node src/*.ts src/languages/*.ts",
+    "typecheck": "tsc --noEmit --strict --target ES2022 --module ESNext --moduleResolution Bundler --skipLibCheck --types vitest/globals,node src/*.ts src/languages/*.ts src/lsp/*.ts",
     "test": "vitest run src"
   },
   "dependencies": {

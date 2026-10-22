@@ -7,22 +7,25 @@ per language family.
 
 ## Support matrix
 
-| Language | Extensions | Backend | Declarations (writes) | Uses (reads) | Signature vs body | Renames | Tested |
-|---|---|---|---|---|---|---|---|
-| TypeScript / JavaScript | `.ts .tsx .mts .cts .js .jsx .mjs .cjs` | `typescript` (TS compiler API) | functions, classes, methods, properties, interfaces, type aliases, enums, variables | calls, `new`, type references, named/namespace/default imports of relative modules | yes | deleted + new | unit tests, core conformance fixtures (L0–L3), real agent runs |
-| Python | `.py .pyi` | `tree-sitter` (tree-sitter-python 0.25.0) | functions, classes, methods (`Cart.total`), module- and class-level assignments | calls, decorators, base classes, type annotations, attribute chains (`pricing.calc_total`, `self.tax`), every imported member that resolves into the checkout | yes (decorators count as signature; whitespace and trailing commas do not; an assignment's annotation is its signature and its value its body) | deleted + new | 13 analyzer tests, 5 conformance fixtures (`fixtures/languages/python`), real two-agent Claude Code run ([record](research/python-real-run-2026-10-22.md)) |
-| Go, Rust | | `tree-sitter` | planned | | | | card t_41439699 |
-| Java, Kotlin | | `tree-sitter` | planned | | | | card t_5184c50b |
-| Swift, C# | | `tree-sitter` | planned | | | | card t_232556f9 |
-| Ruby, PHP | | `tree-sitter` | planned | | | | card t_da702770 |
-| C, C++ | | `tree-sitter` | planned | | | | card t_538b9b81 |
-| Anything else | | none | whole file: `path#*` | none | no | no | the adapters' existing fallback |
+| Language | Extensions | Backend | Declarations (writes) | Uses (reads) | Signature vs body | Renames | LSP enrichment (async) | Tested |
+|---|---|---|---|---|---|---|---|---|
+| TypeScript / JavaScript | `.ts .tsx .mts .cts .js .jsx .mjs .cjs` | `typescript` (TS compiler API) | functions, classes, methods, properties, interfaces, type aliases, enums, variables | calls, `new`, type references, named/namespace/default imports of relative modules | yes | deleted + new | not needed (the compiler API already resolves types) | unit tests, core conformance fixtures (L0–L3), real agent runs |
+| Python | `.py .pyi` | `tree-sitter` (tree-sitter-python 0.25.0) | functions, classes, methods (`Cart.total`), module- and class-level assignments | calls, decorators, base classes, type annotations, attribute chains (`pricing.calc_total`, `self.tax`), every imported member that resolves into the checkout | yes (decorators count as signature; whitespace and trailing commas do not; an assignment's annotation is its signature and its value its body) | deleted + new | **yes**: `pyright-langserver` or `basedpyright-langserver` on PATH — precise reads (re-exports, instance attributes), callers of a signature change, type breakage | 13 analyzer tests, 5 conformance fixtures (`fixtures/languages/python`), real two-agent Claude Code run ([record](research/python-real-run-2026-10-22.md)); LSP: analyzer `src/lsp/lsp.test.ts` (fake server + real pyright), adapter `test/lsp.test.ts`, end to end `scripts/lsp-e2e.mjs` ([record](research/lsp-enrichment-2026-10-22.md)) |
+| Go, Rust | | `tree-sitter` | planned | | | | registered, starts once the spec lands | card t_41439699 |
+| Java, Kotlin | | `tree-sitter` | planned | | | | registered, starts once the spec lands | card t_5184c50b |
+| Swift, C# | | `tree-sitter` | planned | | | | registered, starts once the spec lands | card t_232556f9 |
+| Ruby, PHP | | `tree-sitter` | planned | | | | registered, starts once the spec lands | card t_da702770 |
+| C, C++ | | `tree-sitter` | planned | | | | registered, starts once the spec lands | card t_538b9b81 |
+| Anything else | | none | whole file: `path#*` | none | no | no | no | the adapters' existing fallback |
 
 A file in a language without a backend still takes part: its edits write `path#*`, so two
 agents editing the same file in the same window still see each other, at file granularity.
 
-Language-server enrichment (`lsp` backend: pyright/basedpyright, gopls, rust-analyzer, jdtls,
-kotlin-lsp, sourcekit-lsp, clangd, ruby-lsp, csharp-ls) is designed below and not built yet.
+Language-server enrichment (`lsp` backend, [below](#lsp-enrichment)) adds precise reads and
+type-aware warnings asynchronously, after the edit-time check has answered. Python uses it
+today; the servers for the other languages (gopls, rust-analyzer, jdtls, kotlin-lsp,
+sourcekit-lsp, clangd, ruby-lsp, csharp-ls) are registered and start as soon as that language's
+tree-sitter spec exists (keys are mapped back with the spec).
 
 ## How the tree-sitter backend works
 
@@ -83,20 +86,69 @@ M-series MacBook Pro (Node 24):
    `node packages/conformance/bin/wcp-hook-conformance.mjs run --fixtures <lang> ...`.
 5. Update the matrix above.
 
-## LSP enrichment (design, not built)
+## LSP enrichment
 
-tree-sitter sees one file plus import statements; it cannot see through re-exports, dynamic
-dispatch, or type inference. Where a language server is installed, an asynchronous enrichment
-step can add precise reads after the edit-time check has answered:
+tree-sitter sees one file plus its import statements: it cannot see through a package
+re-export (`from shop import calc_total`, where `shop/__init__.py` re-exports
+`shop/pricing.py#calc_total`), through an instance attribute (`self.pricer.quote(...)`), or
+type inference. Where a language server is installed, the `lsp` backend
+(`packages/analyzer/src/lsp/`) answers those questions **after** the edit-time check:
 
-- The adapter keeps one language server per language per checkout, started lazily.
-- After `PostToolUse` commits an edit, it asks the server for references to each written
-  symbol and for definitions of the identifiers the edit touched, maps the locations back to
-  `path#Qualified.name` keys with the tree-sitter spec, and submits the extra reads as a
-  follow-up `reads` amendment. Nothing on the edit-time path waits for the server.
-- Type-aware breakage (an argument type change that keeps the arity) comes from the server's
-  diagnostics on the agent's checkout after merging the peer's change, reported as a warning.
+- **Precise reads.** After `PostToolUse` commits an edit, the adapter asks the server for
+  `textDocument/definition` of every identifier in the changed lines and maps each location
+  back to a key with the tree-sitter spec (a location inside a declaration's name is that
+  declaration, else the innermost declaration containing it). Keys the edit did not already
+  send go to the coordinator as a **reads amendment**: an `intent` event carrying `reads`
+  (WCP §6.2 R2a). The coordinator checks it like R2 but only warns: a signature change since
+  the edit's base comes back as `contract_changed`, a body change as `stale_read`. Accepted,
+  the reads join the change, so later contract changes to them are pushed like any read.
+- **Callers of a signature change.** For each `signature`/`deleted` write,
+  `textDocument/references` lists the declarations that use it; the writer is told
+  (`[weft info] lsp_dependents …`) which call sites outside its edit to update.
+- **Type-aware breakage.** When a `contract_changed` reaches an agent (pushed, or on its
+  amendment's verdict), the adapter applies the peer's diff to the peer's files **in the
+  server's memory only**, finds the files of this checkout that reference the changed key, and
+  diffs their error diagnostics with and without the peer's version. New errors become
+  `[weft warning] type_breakage <file>:<line>:<col>: pyright: Argument missing for parameter
+  "tax" — once agent-a's change #4 to shop/pricing.py#calc_total lands …`.
+- **Never on the edit-time path.** `PreToolUse` never waits for a server; the hooks only append
+  a job to `.weft/lsp/queue/` (1–12 ms measured, `lsp_ms` in `.weft/log/hooks.jsonl`). The
+  daemon's findings are injected at the agent's next hook (`PostToolUse`, `UserPromptSubmit`).
 
-Tracked as card t_082661b7. The Hermes adapter's own analyzer bundle still sends whole-file
-keys for Python until card t_8ac721b0; the Claude Code, Codex, Cursor, Gemini CLI, OpenCode and
-watcher adapters use the tree-sitter backend now.
+Process model: hooks are short-lived processes, so the servers live in one detached daemon per
+checkout (`weft-adapter-claude lsp-daemon`, or the translator's own CLI), started by the first
+hook that has work for it. One server per language per checkout, started lazily on the first
+file of that language; the daemon shuts the servers down when the last session that sent it
+work ends (`SessionEnd`), or after 30 idle minutes. A lock (`.weft/lsp/daemon.lock`) keeps it
+to one daemon per checkout.
+
+Servers (`packages/analyzer/src/lsp/servers.ts`), each optional and auto-detected on PATH; the
+first installed command wins:
+
+| Language | Server(s) | Used today |
+|---|---|---|
+| Python | `pyright-langserver --stdio`, `basedpyright-langserver --stdio` | yes |
+| Go | `gopls` | when the Go spec lands (card t_41439699) |
+| Rust | `rust-analyzer` | when the Rust spec lands (card t_41439699) |
+| Java, Kotlin | `jdtls`, `kotlin-lsp --stdio` | when the specs land (card t_5184c50b) |
+| Swift | `sourcekit-lsp` | when the spec lands (card t_232556f9) |
+| C# | `csharp-ls` | when the spec lands (card t_232556f9) |
+| Ruby | `ruby-lsp` | when the spec lands (card t_da702770) |
+| C, C++ | `clangd` | when the specs land (card t_538b9b81) |
+
+`WEFT_LSP_<LANGUAGE>` names a command explicitly (`WEFT_LSP_PYTHON="basedpyright-langserver
+--stdio"`, or `off`); `WEFT_LSP=off` disables enrichment entirely. pyright is configured with
+`diagnosticMode: openFilesOnly` and `typeCheckingMode: basic`, so it only checks the files the
+backend opens.
+
+Measured (M-series MacBook Pro under heavy load, pyright 1.1.388; record:
+[research/lsp-enrichment-2026-10-22.md](research/lsp-enrichment-2026-10-22.md)): first
+enrichment including server start 0.7–2 s, a breakage check 0.7–1.7 s; nothing of it is on a
+hook's path.
+
+Limits: a peer's diff is applied to this checkout's version of the file (±50 lines of drift);
+if it does not apply, the breakage check is skipped (logged). An amendment covers keys whose
+declarations live in the checkout (stdlib and site-packages are ignored). Adapters that do not
+reuse the Claude Code core (Codex, the Hermes adapter, the watcher) do not enrich yet. The
+Hermes adapter's own analyzer bundle still sends whole-file keys for Python until card
+t_8ac721b0.

@@ -170,7 +170,7 @@ present (possibly empty).
 
 | kind | emitted by | payload (`$defs/…Payload`) | validated by §6? |
 |---|---|---|---|
-| `intent` | agent | — | no |
+| `intent` | agent | — (with `reads` and no `writes`: a reads amendment, §6.2 R2a) | R2a when it carries `reads` |
 | `edit` | agent | — (`writes` required, non-empty) | R0–R3 |
 | `checkpoint` | agent, system | `{sha, ref?}` (a push of the change's fork; the system appends it when the Artifacts `pushed` event arrives, attributed to the change) | R0 (agent only) |
 | `claim` | agent | `{firm, source: explicit\|predicted, ttl_ms?}`; keys in `writes` | R0, R3 |
@@ -314,6 +314,15 @@ keys appear in E (`writes` for R1/R3, `reads` for R2).
   `body`, emit `stale_read` (warning) caused by the latest. `new` writes are ignored.
   Committed and in-flight writers are treated alike: an accepted signature change is a
   fact of the log, and the call site must be checked against it now.
+- **R2a reads amendment** (`intent` with non-empty `reads`): an adapter that learns more
+  precise reads after an edit (a language server answering asynchronously, §8.3 step 3a)
+  submits them as an `intent` whose `reads` are the extra keys, with the edit's `base_seq`.
+  Each read key is checked exactly as in R2, but the diagnostics are warnings: a
+  `signature`/`deleted` write since the base becomes `contract_changed` (warning), a `body`
+  write `stale_read` (warning). An amendment is therefore never rejected and never opens an
+  error: the edit it amends was already accepted, and the agent learns about the conflict
+  instead of being blocked by facts it could not have had at edit time. Accepted, its reads
+  join the change (§6.3 step 1), so later contract changes to them are pushed (§6.3 step 6).
 - **R3 claim overlap** (`edit`, `claim`): for each write key k with active claims, apply
   arbitration (§7). Predicted claims never arbitrate (§7.5).
 - `land` drafts (system) are checked with R1 only, against committed records in W: this
@@ -621,6 +630,12 @@ the arrow.
    host can carry pre-tool context.
 3. After an edit tool ran [`tool.post`] → derive the real diff (`git diff` of touched files),
    submit `mode:"commit"`, inject `verdict.context` → `advise` (L1). Ack the inbox ids injected.
+   3a. Optionally, afterwards and off the hook's path: precise reads from a language server
+   (`textDocument/definition` for identifiers in the changed ranges, mapped back to keys).
+   Keys the edit did not already read are submitted as a reads amendment (§6.2 R2a): `kind:
+   "intent"`, `reads` = the extra keys, `base_seq` = the edit's base, `tool.name` =
+   `lsp:<server>`. Its warnings are injected at the next hook point like inbox items. Nothing
+   before or during the edit waits for the server.
 4. On user prompt / turn start [`prompt.submit`] → `drain` and inject → `advise` (L1).
 5. Before stop [`agent.stop`] (L3) → `gate {gate:"stop"}`; if `allow` is false → `deny` with
    `reason`. Before a shell `git commit` [`tool.pre`, kind `shell`] (`commit_gate`) →
@@ -963,3 +978,9 @@ Proposed for `docs/design.md` (rule 7 of agent-rules):
     `negotiate.escalate` whose only conflict evidence was such an error). Scenarios
     `lease-soft-claim`, `lease-firm-hard-limit`, `release-on-exit`, `open-errors-persist`,
     `claims-legacy-and-migration`.
+- 0.1 addition (2026-10-22, t_082661b7; additive): reads amendments (§6.2 R2a). An `intent`
+  carrying `reads` is checked with R2 at warning severity (`contract_changed` / `stale_read`)
+  and never rejected; §8.3 step 3a describes the adapter side (asynchronous language-server
+  enrichment). Before, such an intent was not validated (its reads already joined the change,
+  so only contract changes after it were pushed). No adapter sent intents with reads before
+  this change, so existing logs replay unchanged. Scenario `reads-amendment`.

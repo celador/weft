@@ -12,6 +12,8 @@
 //   commit-msg F   git commit-msg hook
 //   pre-commit     git pre-commit hook (last gate: refuses while the session has open errors)
 //   heartbeat-loop keep a WCP session alive between hooks (spawned detached by SessionStart)
+//   lsp-daemon     language-server enrichment for this checkout (spawned detached by the first
+//                  hook that has work for it; src/lsp.ts). WEFT_LSP=off disables it.
 //   status         print config (never the token) and session state
 //   negotiate …    the agent's shell command for WCP negotiation (propose/accept/reject/counter/escalate)
 //   inbox          print what is waiting for this agent (inbox, open errors, negotiations owed)
@@ -26,6 +28,7 @@ import { HttpTransport, type Transport } from "./client";
 import { BASH_TARGET_FORMS, CONFIG_REL, appendAdapterLog, bashTargetDir, configStarts, withoutPinnedOverrides, currentSession, findRoot, loadConfig, hasDotDot, pinMatches, throughSymlink, readConfigFile, readState, stateDir, type AdapterConfig, type Loaded, type Pin } from "./config";
 import { EDIT_TOOLS, editPath } from "./edits";
 import { ClaudeAdapter, type HookInput } from "./hooks";
+import { flushJobs, type LspJob } from "./lsp-queue";
 import { stableNodePath } from "./node-path";
 
 const SELF = fileURLToPath(import.meta.url);
@@ -44,7 +47,7 @@ async function readStdin(): Promise<string> {
   return text;
 }
 
-function adapterFor(loaded: Loaded, calls?: Call[]): ClaudeAdapter {
+function adapterFor(loaded: Loaded, calls?: Call[], lspJobs?: LspJob[]): ClaudeAdapter {
   const http = new HttpTransport(loaded.config.url, loaded.token, loaded.config.repo, loaded.config.timeoutMs ?? 8000);
   const transport = calls ? timed(http, calls) : http;
   return new ClaudeAdapter(loaded, {
@@ -52,6 +55,7 @@ function adapterFor(loaded: Loaded, calls?: Call[]): ClaudeAdapter {
     analyze: async (changes, root, prefix) => (await import("./analysis")).analyzeChangesAsync(changes, root, prefix),
     diff: async (rel, before, after) => (await import("./analysis")).unifiedDiff(rel, before, after),
     cli: cliFor(loaded.root),
+    ...(lspJobs ? { lsp: (job: LspJob) => void lspJobs.push(job) } : {}),
     startHeartbeat: (claudeSession) => {
       try {
         spawn(process.execPath, [SELF, "heartbeat-loop", claudeSession, "--root", loaded.root], { detached: true, stdio: "ignore" }).unref();
@@ -106,6 +110,7 @@ async function hook(byPath: boolean, args: string[] = []): Promise<void> {
   let input: HookInput | undefined;
   let loaded: Loaded | undefined;
   const calls: Call[] = [];
+  const lspJobs: LspJob[] = [];
   const handleStart = performance.now();
   const pinMode = arg(args, "mode") === "advise" ? "advise" : "enforce";
   const pin: Pin | undefined = arg(args, "url") && arg(args, "repo") ? { url: arg(args, "url")!, repo: arg(args, "repo")!, mode: pinMode } : undefined;
@@ -143,11 +148,14 @@ async function hook(byPath: boolean, args: string[] = []): Promise<void> {
         break;
       }
     }
-    if (loaded && input) out = await adapterFor(loaded, calls).handle(input);
+    if (loaded && input) out = await adapterFor(loaded, calls, lspJobs).handle(input);
   } catch {
     out = undefined; // fail open: malformed input or a bug must not block the harness
   }
   if (out) process.stdout.write(JSON.stringify(out));
+  const lspStart = performance.now();
+  if (loaded && lspJobs.length) flushJobs(loaded, lspJobs, SELF);
+  const lspMs = lspJobs.length ? Math.round(performance.now() - lspStart) : undefined;
   if (loaded && input) {
     // Per-hook timing: total = since this node process started (incl. boot), handle = hook
     // logic incl. coordinator calls; injected = chars of text that reached the model.
@@ -162,6 +170,8 @@ async function hook(byPath: boolean, args: string[] = []): Promise<void> {
         total_ms: Math.round(performance.now()),
         handle_ms: Math.round(performance.now() - handleStart),
         calls,
+        // Time spent handing jobs to the language-server daemon (queue write, daemon spawn).
+        ...(lspMs !== undefined ? { lsp_ms: lspMs, lsp_jobs: lspJobs.map((j) => j.type) } : {}),
         decision: o?.hookSpecificOutput?.permissionDecision ?? o?.decision,
         injected_chars: injected.length,
         weft_chars: /\[weft/.test(injected) ? injected.length : 0,
@@ -410,6 +420,14 @@ async function preCommit(): Promise<number> {
   return 1;
 }
 
+async function lspDaemon(rootArg?: string): Promise<void> {
+  const loaded = loadConfig(rootArg ?? process.cwd());
+  if (!loaded) return;
+  const { LspWorker, runDaemon } = await import("./lsp");
+  const transport = new HttpTransport(loaded.config.url, loaded.token, loaded.config.repo, loaded.config.timeoutMs ?? 8000);
+  await runDaemon(loaded.root, new LspWorker(loaded, { transport }));
+}
+
 async function heartbeatLoop(claudeSession: string, rootArg?: string): Promise<void> {
   const loaded = loadConfig(rootArg ?? process.cwd());
   if (!loaded) return;
@@ -512,6 +530,8 @@ async function main(): Promise<void> {
       return;
     case "heartbeat-loop":
       return heartbeatLoop(args[0], arg(args, "root"));
+    case "lsp-daemon":
+      return lspDaemon(arg(args, "root"));
     case "status":
       return status();
     case "negotiate":

@@ -33,7 +33,7 @@ function definitions(root: SyntaxNode): Definition[] {
         const qualified = [...scope, nameNode.text];
         const outer = child; // includes decorators when decorated
         const signature = body ? outer.text.slice(0, body.startIndex - outer.startIndex) : outer.text;
-        out.push({ name: qualified.join("."), signature, body: body?.text ?? "" });
+        out.push({ name: qualified.join("."), signature, body: body?.text ?? "", start: outer.startIndex, end: outer.endIndex, nameStart: nameNode.startIndex, nameEnd: nameNode.endIndex });
         if (body) walk(body, qualified, def.type === "function_definition");
         continue;
       }
@@ -47,6 +47,10 @@ function definitions(root: SyntaxNode): Definition[] {
             name: [...scope, left.text].join("."),
             signature: assignment.childForFieldName("type")?.text ?? "",
             body: assignment.childForFieldName("right")?.text ?? "",
+            start: assignment.startIndex,
+            end: assignment.endIndex,
+            nameStart: left.startIndex,
+            nameEnd: left.endIndex,
           });
         }
         continue;

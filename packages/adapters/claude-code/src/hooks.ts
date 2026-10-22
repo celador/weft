@@ -34,6 +34,7 @@ import { appendAdapterLog, readState, withLock, writeState, type Loaded, type Se
 import { EDIT_TOOLS, editPath, isGitCommit, proposedText } from "./edits";
 import { renderDues, renderForModel, type EditedFile, type RenderCtx } from "./render";
 import type { Sets, FileChange } from "./analysis";
+import type { LspJob } from "./lsp-queue";
 import { outsideRoot, readCheckoutFile } from "./safe-read";
 
 export const ADAPTER_VERSION = "0.1.0";
@@ -102,6 +103,11 @@ export type AdapterDeps = {
    * they actually achieve on that harness (spec §8.1: declare what you deliver).
    */
   identity?: { harness: string; adapter: string; capabilities: Capabilities };
+  /**
+   * Hand a job to the asynchronous language-server enrichment (src/lsp.ts): fire and forget,
+   * never awaited by a hook. Absent = no enrichment (tests, harnesses without a daemon).
+   */
+  lsp?: (job: LspJob) => void;
 };
 
 export type CliResult = { text: string; code: number };
@@ -298,6 +304,7 @@ export class ClaudeAdapter {
   /** Note trunk items (spec §5.2): keep base below a landing until the checkout has it. */
   private noteItems(st: SessionState, items: InboxItem[]): number {
     let top = 0;
+    this.lspBreakage(st, items);
     for (const item of items) {
       top = Math.max(top, item.id);
       if (item.kind === "trunk" && item.requires_rebase) {
@@ -306,6 +313,36 @@ export class ClaudeAdapter {
       }
     }
     return top;
+  }
+
+  /** A peer's contract change reached us: ask the language server what it breaks here (async). */
+  private lspBreakage(st: SessionState, items: InboxItem[]): void {
+    if (!this.deps.lsp) return;
+    const seen = new Set(st.lspSeen ?? []);
+    const bySeq = new Map<number, string[]>();
+    for (const item of items) {
+      const d = item.diagnostic;
+      if (!d || d.code !== "contract_changed" || seen.has(item.seq) || d.caused_by_agent === this.loaded.config.agent) continue;
+      bySeq.set(item.seq, [...(bySeq.get(item.seq) ?? []), d.symbol]);
+    }
+    for (const [seq, keys] of bySeq) {
+      this.deps.lsp({ type: "breakage", session: st.claudeSession, seq, keys });
+      seen.add(seq);
+    }
+    if (bySeq.size) st.lspSeen = [...seen].slice(-200);
+  }
+
+  /** Accepted edit: let the language server find the reads the edit-time check could not (async). */
+  private lspEnrich(st: SessionState, verdict: Verdict, base: number, changes: FileChange[], sets: Sets): void {
+    if (!this.deps.lsp || verdict.verdict !== "accept" || !verdict.seq || !st.wcpSession) return;
+    this.deps.lsp({ type: "enrich", session: st.claudeSession, wcpSession: st.wcpSession, base, seq: verdict.seq, changes, reads: sets.reads, writes: sets.writes });
+  }
+
+  /** Notes the enrichment daemon left since the last hook (injected once, then cleared). */
+  private takeNotes(st: SessionState): string {
+    const notes = st.lspNotes ?? [];
+    st.lspNotes = undefined;
+    return notes.join("\n");
   }
 
   private refreshFloor(st: SessionState): void {
@@ -425,7 +462,7 @@ export class ClaudeAdapter {
 
   private async promptSubmit(st: SessionState): Promise<HookOutput> {
     const batch = await this.call(st, (s) => this.deps.transport.drain(s, this.ack(st)));
-    const text = this.delivered(st, await renderForModel([], batch.items, this.ctx()), batch.delivered_through, batch.items);
+    const text = [this.delivered(st, await renderForModel([], batch.items, this.ctx()), batch.delivered_through, batch.items), this.takeNotes(st)].filter(Boolean).join("\n");
     return text ? { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: `[weft diagnostics]\n${text}` } } : undefined;
   }
 
@@ -530,6 +567,7 @@ export class ClaudeAdapter {
     });
     const verdict = await this.submit(st, "commit", event, callId || `anon-${this.now()}`);
     st.lastContact = this.now();
+    this.lspEnrich(st, verdict, event.base_seq, [{ rel: t.rel, before, after }], sets);
     this.log(`commit ${t.rel} base #${event.base_seq} -> ${verdict.verdict} #${verdict.seq} (${verdict.diagnostics.map((d) => d.code).join(",") || "clean"})`);
     const full = await renderForModel(verdict.diagnostics, verdict.inbox, this.ctx({ rel: t.rel, before, after }));
     const shown = new Set(pend?.shown ?? []);
@@ -538,7 +576,7 @@ export class ClaudeAdapter {
       verdict.verdict === "reject"
         ? `[weft] Your edit to ${this.prefix + t.rel} was applied in your checkout but REJECTED by the coordinator (log #${verdict.seq}); it stays an open error until you rework it:\n`
         : "[weft diagnostics]\n";
-    const text = this.delivered(st, fresh ? header + fresh : "", verdict.delivered_through, verdict.inbox);
+    const text = [this.delivered(st, fresh ? header + fresh : "", verdict.delivered_through, verdict.inbox), this.takeNotes(st)].filter(Boolean).join("\n");
     return text ? { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: text } } : undefined;
   }
 
@@ -585,6 +623,7 @@ export class ClaudeAdapter {
           tool: { name: "Bash", call_id: callId.slice(0, 200), harness_event: input.hook_event_name },
         });
         const verdict = await this.submit(st, "commit", event, callId);
+        this.lspEnrich(st, verdict, event.base_seq, changes, sets);
         this.log(`bash commit ${changes.map((c) => c.rel).join(",")} base #${event.base_seq} -> ${verdict.verdict} #${verdict.seq} (${verdict.diagnostics.map((d) => d.code).join(",") || "clean"})`);
         const full = await renderForModel(verdict.diagnostics, verdict.inbox, this.ctx());
         const header =
@@ -616,12 +655,14 @@ export class ClaudeAdapter {
         checkpointText = this.delivered(st, await renderForModel(verdict.diagnostics, verdict.inbox, this.ctx()), verdict.delivered_through, verdict.inbox);
       } else if (head) st.head = head;
     }
-    if (!checkpointText && this.now() - st.lastContact < DRAIN_MIN_INTERVAL_MS) return undefined;
+    const notes = this.takeNotes(st);
+    if (!checkpointText && this.now() - st.lastContact < DRAIN_MIN_INTERVAL_MS) return notes ? { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: `[weft diagnostics]\n${notes}` } } : undefined;
     let text = checkpointText;
     if (!text) {
       const batch = await this.call(st, (s) => this.deps.transport.drain(s, this.ack(st)));
       text = this.delivered(st, await renderForModel([], batch.items, this.ctx()), batch.delivered_through, batch.items);
     }
+    text = [text, notes].filter(Boolean).join("\n");
     return text ? { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: `[weft diagnostics]\n${text}` } } : undefined;
   }
 
@@ -661,6 +702,7 @@ export class ClaudeAdapter {
   }
 
   private async sessionEnd(input: HookInput, st: SessionState): Promise<HookOutput> {
+    this.deps.lsp?.({ type: "end", session: st.claudeSession });
     if (!st.wcpSession) return undefined;
     // Open errors live on the change (spec §6.5), so a bye forgives nothing. A session with
     // open errors still stays alive (heartbeat loop, 30 min idle limit) because the git

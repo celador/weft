@@ -151,3 +151,22 @@ export function firstExisting(candidates: string[], exists?: (rel: string) => bo
   if (!exists) return clean[0];
   return clean.find((c) => exists(c));
 }
+
+/** An identifier occurrence: its text and JS string offsets in the parsed text. */
+export type Identifier = { text: string; start: number; end: number };
+/** Declarations (with offsets, when the spec provides them) and identifiers of one text. */
+export type Outline = { definitions: Definition[]; identifiers: Identifier[] };
+
+/** Parse `text` once and list its declarations and identifiers (used by the `lsp` backend). */
+export async function outlineTreeSitter(language: TreeSitterLanguage, text: string): Promise<Outline> {
+  const parser = await parserFor(language);
+  const root = parse(parser, text);
+  const types = new Set(language.identifierTypes ?? ["identifier"]);
+  const identifiers: Identifier[] = [];
+  const visit = (node: SyntaxNode): void => {
+    if (types.has(node.type)) identifiers.push({ text: node.text, start: node.startIndex, end: node.endIndex });
+    for (const c of node.namedChildren) if (c) visit(c);
+  };
+  visit(root);
+  return { definitions: language.definitions(root), identifiers };
+}
