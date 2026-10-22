@@ -8,6 +8,11 @@ npx @celador/weft
 
 (The npm package is `@celador/weft`; the name `weft` was already taken on npm.)
 
+Watch it: [a first run on a clean macOS account](https://weft-media.elier.ai/weft-npx-first-run.mp4)
+(1:50, only node and Claude Code installed). `npx` starts at 19:42:36; at 19:43:19 Weft stops
+the second Claude Code agent's edit, which calls `calcTotal(items)` after the first agent changed
+its signature in the other worktree, and the two agents negotiate. 43 seconds, end to end.
+
 It takes about a minute and:
 
 1. creates a **free hosted space** for you on Weft's Cloudflare gateway
