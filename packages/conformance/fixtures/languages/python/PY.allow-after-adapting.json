@@ -1,0 +1,47 @@
+{
+  "id": "PY.allow-after-adapting",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a75.2",
+  "title": "Python: after the deny, the call adapted to the new signature is allowed",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "app/cart.py",
+        "old_text": "    return f\"{len(items)} items\"",
+        "new_text": "    return f\"{len(items)} items, total {calc_total(items)}\""
+      },
+      "expect_pre": {
+        "decision": "deny"
+      }
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "app/cart.py",
+        "old_text": "    return f\"{len(items)} items\"",
+        "new_text": "    return f\"{len(items)} items, total {calc_total(items, tax_rate=0.0)}\""
+      },
+      "expect_pre": {
+        "decision": "not-deny"
+      },
+      "expect_applied": true
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "kind": "edit",
+        "status": "accepted",
+        "files_include": "app/cart.py",
+        "min": 1
+      }
+    }
+  ]
+}

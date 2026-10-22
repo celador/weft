@@ -41,7 +41,7 @@ function adapterFor(loaded: Loaded, calls?: Call[]): CodexAdapter {
   const transport = calls ? timed(http, calls) : http;
   return new CodexAdapter(loaded, {
     transport,
-    analyze: async (changes, root, prefix) => (await import("./analysis")).analyzeChanges(changes, root, prefix),
+    analyze: async (changes, root, prefix) => (await import("./analysis")).analyzeChangesAsync(changes, root, prefix),
     diff: async (rel, before, after) => (await import("./analysis")).unifiedDiff(rel, before, after),
     cli: cliFor(loaded.root),
     startHeartbeat: (codexSession) => {

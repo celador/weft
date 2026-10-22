@@ -196,3 +196,8 @@ export function analyzeDiff(diff: string, readFile: ReadFile): Analysis {
     writes: results.flatMap((result) => result.writes).sort((a, b) => a.key.localeCompare(b.key)),
   };
 }
+
+// ---- Language-agnostic API (tree-sitter backend; see src/language.ts and docs/languages.md) ----
+export type { AnalyzeOptions, BackendId, Definition, Exists, ImportBinding, Reference, SourceChange, SyntaxNode, TreeSitterLanguage } from "./language.js";
+export { analyzeSource, languageFor, treeSitterLanguageFor, treeSitterLanguages, type LanguageInfo } from "./languages/index.js";
+export { analyzeTreeSitter, normalize } from "./treesitter.js";

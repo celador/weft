@@ -21,7 +21,7 @@ export type PeerChange = {
   after: Record<string, string>;
 };
 
-export type Workspace = { description?: string; files: Record<string, string>; peers: Record<string, PeerChange> };
+export type Workspace = { description?: string; language?: string; files: Record<string, string>; peers: Record<string, PeerChange> };
 
 export const REPO = "conformance";
 

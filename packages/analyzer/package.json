@@ -3,12 +3,20 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./grammars/*": "./grammars/*"
+  },
   "scripts": {
-    "typecheck": "tsc --noEmit --strict --target ES2022 --module ESNext --moduleResolution Bundler --types vitest/globals,node src/index.ts src/index.test.ts",
-    "test": "vitest run src/index.test.ts"
+    "typecheck": "tsc --noEmit --strict --target ES2022 --module ESNext --moduleResolution Bundler --skipLibCheck --types vitest/globals,node src/*.ts src/languages/*.ts",
+    "test": "vitest run src"
   },
   "dependencies": {
-    "typescript": "^5.9.3"
-  }
+    "typescript": "^5.9.3",
+    "web-tree-sitter": "0.25.10"
+  },
+  "files": [
+    "src",
+    "grammars"
+  ]
 }

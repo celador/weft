@@ -1,0 +1,36 @@
+{
+  "id": "PY.allow-unrelated",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a74.1",
+  "title": "Python: an edit that does not use the changed function is not blocked",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "app/report.py",
+        "old_text": "    return \"Total\"",
+        "new_text": "    return \"Total: \" + format_price(total)"
+      },
+      "expect_pre": {
+        "decision": "not-deny"
+      },
+      "expect_applied": true
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "kind": "edit",
+        "status": "accepted",
+        "files_include": "app/report.py",
+        "min": 1
+      }
+    }
+  ]
+}

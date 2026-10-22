@@ -80,7 +80,8 @@ For incoming event E with base `b`, let W = writes of all accepted events with s
 
 Symbol keys: `path#qualified.name` (e.g. `src/auth/session.ts#refreshToken`). Reads =
 referenced symbols (calls, imports, types). Writes = symbols whose span the diff touches;
-signature-vs-body distinguished. TypeScript only for v0 (TS compiler API / tree-sitter).
+signature-vs-body distinguished. TypeScript/JavaScript via the TS compiler API; other
+languages via tree-sitter (Python first). Support matrix: [languages.md](languages.md).
 
 Arbitration: earlier seq keeps the area by default. Higher-priority task may wound a
 younger one (wound-wait). The losing agent may: retreat (rework), wait (until the other
