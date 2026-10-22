@@ -1,0 +1,38 @@
+diff --git a/docs/harness-coverage.md b/docs/harness-coverage.md
+index 69449f1..b819e78 100644
+--- a/docs/harness-coverage.md
++++ b/docs/harness-coverage.md
+@@ -30,7 +30,7 @@ for cloud agents, git push events). **d** is an ACP proxy, which is experimental
+ | Cursor CLI + Cursor IDE | CLI/IDE | L3 hooks (same `.cursor/hooks.json`) | a | L3 fixture-tested (`adapter-cursor`); live run blocked on login | live run |
+ | Gemini CLI | CLI | L3 hooks | a | L3 fixture-tested (`adapter-gemini`) | low priority: the free tier moved to Antigravity |
+ | **GitHub Copilot** (CLI, cloud coding agent, VS Code agent mode) | CLI/IDE/cloud | L3 hooks | a | watcher only | **card: Copilot adapter** |
+-| **Google Antigravity** (2.0, CLI, IDE) | CLI/IDE | L3 hooks | a | L3 conformance (`adapter-antigravity`, inject delayed via `PreInvocation`); live `agy` run pending login | live run (card t_7a3391a8) |
++| **Google Antigravity** (2.0, CLI, IDE) | CLI/IDE | L3 hooks | a | L3 live on `agy` 1.4.5 (`adapter-antigravity`: deny, `injectSteps` via `SessionStart`/`PreInvocation`, `Stop` continue; [evidence](../demo/evidence/antigravity/README.md)) | IDE / 2.0 not run live |
+ | **Windsurf / Devin Desktop** (Cascade) | IDE | L2 hooks | a | watcher only | **card: Windsurf adapter** |
+ | Cline (extension + CLI) | IDE/CLI | L2 hooks (+ next-turn context) | a | watcher only | queued (adapter #4) |
+ | Goose | CLI/desktop | L3 hooks | a | watcher only | queued (adapter #5; AAIF project) |
+@@ -396,6 +396,11 @@ drafted as [Agent Hooks Core v0.1](protocol/hooks-core-v0.md). This map is new e
+    denial or the MCP server.
+ 4. Antigravity: does `PreInvocation` `injectSteps` reach the model reliably? Is the file-tool
+    argument set (`TargetFile`, `ReplacementChunks`, ...) stable across the app, CLI and IDE?
++   *Answered for the CLI (agy 1.4.5, live):* yes, both `SessionStart` and `PreInvocation`
++   `systemMessage` steps reached the model. The argument set is not stable: the CLI's tools are
++   `edit_file {Path, Target, Replacement}` and `write_file {Path, Content}`, not the documented
++   `replace_file_content`/`write_to_file`; the adapter maps both. And `PreToolUse` must always
++   answer a `decision`: `{}` is a hard deny of the call.
+ 5. Cursor and Windsurf agents: do they read extension diagnostics (the VS Code extension's
+    squiggles as cooperative L1)?
+ 6. The MCP server: when is the inbox delivered if the model calls no Weft tool? (Claude Code
+diff --git a/docs/integrate.md b/docs/integrate.md
+index f99e3eb..cde98b4 100644
+--- a/docs/integrate.md
++++ b/docs/integrate.md
+@@ -54,7 +54,7 @@ at the bundle in your Weft clone (`pnpm --filter <package> build` first).
+ | Codex CLI | `@weft/adapter-codex` (`apply_patch` hooks) | L2 | L0 verified, rest documented |
+ | Cursor CLI | `@weft/adapter-cursor` | L3 (documented) | fixture-tested |
+ | Gemini CLI | `@weft/adapter-gemini` | L3 (documented) | fixture-tested only |
+-| Google Antigravity (2.0, CLI `agy`, IDE) | `@weft/adapter-antigravity` (`.agents/hooks.json`) | L3, delayed inject | conformance L3; live `agy` run pending login |
++| Google Antigravity (2.0, CLI `agy`, IDE) | `@weft/adapter-antigravity` (`.agents/hooks.json`) | L3, delayed inject | conformance L3; live L3 on `agy` 1.4.5 ([evidence](../demo/evidence/antigravity/README.md)) |
+ | Anything else, humans | `@weft/adapter-watcher` (file watcher + git pre-commit) | L0 | verified |
+ 
+ Each package's README has its install command and hook mapping. For a harness that is not
