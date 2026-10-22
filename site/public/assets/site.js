@@ -1,7 +1,7 @@
 // THE START COMMAND. This is the only place it lives: every copy block and step 1 of
 // "How it works" are filled from here. When `npx weft` is published (card t_bd602434),
 // set NPX_READY = true (and NPX_COMMAND to the published name if it isn't `npx weft`).
-const NPX_READY = false;
+const NPX_READY = true;
 const NPX_COMMAND = "npx @celador/weft";
 // Until then: the quickest path from docs/try-it.md (local gateway + the two-agent demo),
 // in one paste. Needs Node >= 22, pnpm and git.

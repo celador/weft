@@ -1,7 +1,7 @@
 # Launch funnel
 
 Weft has no signup. `npx weft` is the signup: its first run creates a free hosted space with no
-login (card t_bd602434). The site (https://weft-site.elier.ai) has one job: get a visitor from
+login (card t_bd602434). The site (https://weft.mx) has one job: get a visitor from
 a social post to that first run in as few steps as possible.
 
 ## Funnel definition
@@ -9,7 +9,7 @@ a social post to that first run in as few steps as possible.
 | Step | What counts | Where it's measured |
 | --- | --- | --- |
 | 1. Views | Impressions of the launch post | The social platform's post analytics |
-| 2. Site visits | Visits to weft-site.elier.ai | Cloudflare Web Analytics, site `weft-site.elier.ai` (dashboard: Analytics, Web analytics). Also `view` events in Analytics Engine, split by source |
+| 2. Site visits | Visits to weft.mx | Cloudflare Web Analytics, site `weft-site.elier.ai` (dashboard: Analytics, Web analytics). Also `view` events in Analytics Engine, split by source |
 | 3. Command copies | Clicks on a Copy button, or copying the command by hand | `copy` events in Workers Analytics Engine dataset `weft_site_events` |
 | 4. First runs | New hosted spaces per day | The hosted gateway (card t_bd602434) |
 
@@ -31,7 +31,7 @@ node site/funnel.mjs 7      # views and copies per day and source, last 7 days
 - **Outbound links**: every GitHub and docs link carries
   `utm_source=weft-site&utm_medium=web&utm_campaign=launch&utm_content=<placement>`.
 - **Links in posts**: tag them so step 2 can be split by post, for example
-  `https://weft-site.elier.ai/?utm_source=x&utm_campaign=launch`.
+  `https://weft.mx/?utm_source=x&utm_campaign=launch`.
 
 ## Switching the command to `npx weft`
 

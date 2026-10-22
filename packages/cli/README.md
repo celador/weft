@@ -11,7 +11,7 @@ Run it in any git repository. It needs no login and no account:
 1. It creates a **free hosted space** for you on Weft's Cloudflare gateway (Workers + Durable
    Objects). The space's key stays on your machine (`~/.config/weft`, and `.weft/` in the repo,
    which git ignores).
-2. It finds the coding agents you have installed (Claude Code, Codex, Cursor CLI, OpenCode,
+2. It finds the coding agents you have installed (Claude Code, Codex, Copilot CLI, Cursor CLI, OpenCode,
    Gemini CLI) and adds Weft's hooks to every checkout of the repo. If the repo has only one
    checkout, it offers to add a second `git worktree` so two agents can work side by side.
    With none installed, it sets up a file watcher instead.
@@ -23,6 +23,8 @@ second agent gets a diagnostic (a red squiggle, with the other agent's diff) bef
 conflicting edit, instead of a merge conflict later.
 
 The npm name is `@celador/weft` because `weft` is taken on npm.
+
+Website: <https://weft.mx> · Source: <https://github.com/celador/weft>
 
 ## Commands
 
