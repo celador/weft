@@ -1,0 +1,6 @@
+[live-run] claude-b planned (session 6c007f65-a8ff-42cb-acaa-b4e8f97c7d0c)
+[live-run] claude-a's calcTotal edit is in the log; claude-b implements now
+[live-run] claude-a: `src/pricing.ts` now exports `PriceOptions = { taxRate: number }`, and `calcTotal(items, opts)` returns the net sum × (1 + taxRate); its only importer, `src/cart.ts`, never calls it, so nothing else needed changing (I didn't compile or run tests).
+[live-run] claude-b: I haven't added `cartTotal` yet: you paused me (Weft event #9) during my second attempt, so I've stopped and `src/cart.ts` is unchanged.
+
+**The conflict.** My first edit was blocked because claude-a (task T-1, event #4) changed `calcTotal` in `src/pricing.ts`. That change isn't in my checkout yet. T

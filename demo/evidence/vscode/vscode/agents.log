@@ -1,0 +1,10 @@
+[live-run] claude-b planned (session 029acf3f-9845-4643-9adc-1636be6f8dce)
+[live-run] claude-a's calcTotal edit is in the log; claude-b implements now
+[live-run] claude-a: I added `PriceOptions` to `src/pricing.ts` and changed `calcTotal(items, opts)` so it returns the net sum × (1 + `opts.taxRate`). The only other reference is an unused import in `src/cart.ts`, so no callers broke. Nothing was compiled or run, no Weft errors appeared, and I couldn't check the Weft in
+[live-run] claude-b: The edit is in: `src/cart.ts` now has the function. You had resumed me (event #12), and Weft accepted the edit, so the open conflict error should be cleared.
+
+```ts
+export function cartTotal(items: Item[]): number { return calcTotal(items, { taxRate: 0 }); }
+```
+
+**Change from my plan:** claude-a ch
