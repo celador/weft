@@ -9,9 +9,9 @@
 // Request:  {"id"?: any, "files": [{"path": "src/a.ts", "before": "...", "after": "..."}]}
 // Response: {"id"?: any, "ok": true, "reads": [...], "writes": [{key, kind}], "analyzed": [...paths]}
 //        or {"id"?: any, "ok": false, "error": "..."}
-import { analyze, type Analysis, type Write } from "@weft/analyzer";
+import { analyze, contractReads, type Analysis, type Write } from "@weft/analyzer";
 import ts from "typescript";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { posix, join } from "node:path";
 
 export type FileInput = { path: string; before: string; after: string };
@@ -93,7 +93,12 @@ export function handle(request: Request): Response {
       const result: Analysis = analyze(String(file.before ?? ""), String(file.after ?? ""), file.path);
       analyzed.push(file.path);
       for (const key of result.reads) reads.add(key);
-      for (const key of importReads(String(file.after ?? ""), file.path, request.root, request.prefix)) reads.add(key);
+      const imported = importReads(String(file.after ?? ""), file.path, request.root, request.prefix);
+      for (const key of imported) reads.add(key);
+      // The contract types of what this file uses (`PriceOptions` of `calcTotal(opts: PriceOptions)`).
+      const root = request.root;
+      if (root)
+        for (const key of contractReads(imported, (rel) => { try { return readFileSync(join(root, rel), "utf8"); } catch { return undefined; } }, request.prefix ?? "")) reads.add(key);
       for (const write of result.writes) writes.set(write.key, write);
     }
     // A symbol this edit writes is not also an assumption it reads.
