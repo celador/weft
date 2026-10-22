@@ -200,6 +200,7 @@ step can add precise reads after the edit-time check has answered:
 - Type-aware breakage (an argument type change that keeps the arity) comes from the server's
   diagnostics on the agent's checkout after merging the peer's change, reported as a warning.
 
-Tracked as card t_082661b7. The Hermes adapter's own analyzer bundle still sends whole-file
-keys for Python until card t_8ac721b0; the Claude Code, Codex, Cursor, Gemini CLI, OpenCode and
-watcher adapters use the tree-sitter backend now.
+Tracked as card t_082661b7. The Claude Code, Codex, Cursor, Gemini CLI, OpenCode, watcher and
+Hermes adapters use the tree-sitter backend now (Hermes since card t_8ac721b0: its `analyze.mjs`
+bundle routes tree-sitter languages through `analyzeSource` and reports its extensions with
+`--languages`).
