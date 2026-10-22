@@ -157,3 +157,8 @@ Append-only. One dated entry per heartbeat that changed something.
 - KEPT despite the list: weft-workflows-preview (gateway-preview has 4 workflow bindings to it); weft-previews-preview + R2 weft-evidence-preview (399 D1 evidence rows link screenshots served from them; apps/web renders them).
 - apps/gateway/wrangler.toml: queue consumer blocks commented (queues gone) so a gateway redeploy doesn't fail. New candidates will get subscription_status=failed until a queue is re-created.
 - Verified after: weft.elier.ai 200, /api/repos 200, weft-media.elier.ai/weft-demo.mp4 200, weft-gateway-preview /v1/health 200, repo weft seq 1258 by hermes-default at 2026-10-22T05:01Z.
+
+## 2026-10-22 — harness coverage map (t_13086853)
+- docs/harness-coverage.md: about 35 harnesses (CLI, IDE, cloud), each with its hook/MCP/ACP surface, best level and source links; tiers a (hook adapter) / b (MCP server) / c (watcher + GitHub push) / d (ACP proxy, experimental). Coverage table, user×effort ranking, the shared-feed plan (`@weft/feed` + surfaces), and the AAIF tie-in. 20 harnesses now have deny-capable hooks or plugins; most use the Claude Code shape.
+- Phase 2 cards (worktree + branch each; done = real harness run): t_6244560b Copilot adapter (P100), t_70b3d8fe @weft/mcp (P90), t_c8c6816b @weft/feed (P85), t_ece1e848 VS Code extension (P80, after @weft/feed), t_7a3391a8 Antigravity adapter (P70), t_6b8460d9 Windsurf adapter (P60).
+- Hotspots for those cards: packages/conformance/src/dialects.ts (DIALECTS registry, one line per card; dialect bodies go in dialects/<name>.ts) and the docs/integrate.md adapters table. `npx weft` harness detection stays with t_bd602434.

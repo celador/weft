@@ -1,6 +1,6 @@
 # Weft marketing site
 
-Static page at https://weft-site.elier.ai (Worker `weft-site`, assets only). Edit `public/index.html` and `public/assets/site.css`; no build step.
+Static page at https://weft-site.elier.ai (Worker `weft-site`). Edit `public/index.html` and `public/assets/site.css`; no build step. `worker.js` only handles `POST /e` (copy-button and view events into Analytics Engine); everything else is static assets. The start command lives in one constant at the top of `public/assets/site.js`. Funnel and analytics: `docs/launch/README.md`.
 
 Deploy: `export PATH=/opt/homebrew/opt/node@24/bin:$PATH; unset CLOUDFLARE_API_TOKEN; npx --yes wrangler@latest deploy` from this folder.
 

@@ -1,11 +1,19 @@
-# Weft marketing site: static assets only, no Worker code.
+# Weft marketing site: static assets plus one tiny Worker route (POST /e, funnel events).
 # Deploy: unset CLOUDFLARE_API_TOKEN; npx wrangler@latest deploy  (Node >= 22, OAuth)
 name = "weft-site"
+main = "worker.js"
 compatibility_date = "2026-10-01"
 workers_dev = false   # never expose *.workers.dev (see AGENTS.md)
 routes = [{ pattern = "weft-site.elier.ai", custom_domain = true }]
 
 [assets]
 directory = "./public"
+binding = "ASSETS"
 not_found_handling = "404-page"
 html_handling = "auto-trailing-slash"
+run_worker_first = ["/e"]
+
+# Copy-button clicks and page views (no cookies, no IP). Query: docs/launch/README.md.
+[[analytics_engine_datasets]]
+binding = "EVENTS"
+dataset = "weft_site_events"
