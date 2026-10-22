@@ -1,0 +1,30 @@
+{
+  "id": "PY.deny-module-attribute",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a74.1",
+  "title": "Python: `pricing.calc_total(...)` through a module import is checked like a direct import",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "app/checkout.py",
+        "old_text": "    return 0.0",
+        "new_text": "    return pricing.calc_total(items)"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "calc_total"
+        ]
+      },
+      "expect_applied": false
+    }
+  ]
+}

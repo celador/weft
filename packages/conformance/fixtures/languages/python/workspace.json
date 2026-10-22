@@ -1,0 +1,59 @@
+{
+  "description": "Python conformance workspace (docs/languages.md). The peer changes are another agent's edits to app/pricing.py; their writes are exactly what @weft/analyzer's Python backend derives from `after` (checked by packages/conformance/test/languages.test.ts).",
+  "language": "python",
+  "files": {
+    "app/__init__.py": "",
+    "app/pricing.py": "from dataclasses import dataclass\n\n\n@dataclass\nclass Item:\n    price: float\n    qty: int\n\n\ndef calc_total(items: list[Item]) -> float:\n    return sum(i.price * i.qty for i in items)\n\n\ndef format_price(amount: float) -> str:\n    return f\"${amount:.2f}\"\n",
+    "app/cart.py": "from app.pricing import Item, calc_total\n\n\ndef cart_summary(items: list[Item]) -> str:\n    return f\"{len(items)} items\"\n",
+    "app/report.py": "from .pricing import format_price\n\n\ndef report_line(total: float) -> str:\n    return \"Total\"\n",
+    "app/checkout.py": "from app import pricing\n\n\ndef checkout_total(items) -> float:\n    return 0.0\n"
+  },
+  "peers": {
+    "change_signature": {
+      "agent": "peer-a",
+      "harness": "claude-code",
+      "task": "T-1",
+      "files": [
+        "app/pricing.py"
+      ],
+      "writes": [
+        {
+          "key": "app/pricing.py#calc_total",
+          "kind": "signature"
+        }
+      ],
+      "reads": [
+        "app/pricing.py#Item"
+      ],
+      "intent": "calc_total takes a tax_rate",
+      "after": {
+        "app/pricing.py": "from dataclasses import dataclass\n\n\n@dataclass\nclass Item:\n    price: float\n    qty: int\n\n\ndef calc_total(items: list[Item], tax_rate: float) -> float:\n    net = sum(i.price * i.qty for i in items)\n    return net * (1 + tax_rate)\n\n\ndef format_price(amount: float) -> str:\n    return f\"${amount:.2f}\"\n"
+      }
+    },
+    "rename_helper": {
+      "agent": "peer-b",
+      "harness": "codex",
+      "task": "T-3",
+      "files": [
+        "app/pricing.py"
+      ],
+      "writes": [
+        {
+          "key": "app/pricing.py#format_money",
+          "kind": "new"
+        },
+        {
+          "key": "app/pricing.py#format_price",
+          "kind": "deleted"
+        }
+      ],
+      "reads": [
+        "app/pricing.py#Item"
+      ],
+      "intent": "rename format_price to format_money",
+      "after": {
+        "app/pricing.py": "from dataclasses import dataclass\n\n\n@dataclass\nclass Item:\n    price: float\n    qty: int\n\n\ndef calc_total(items: list[Item]) -> float:\n    return sum(i.price * i.qty for i in items)\n\n\ndef format_money(amount: float) -> str:\n    return f\"${amount:.2f}\"\n"
+      }
+    }
+  }
+}

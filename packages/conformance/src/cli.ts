@@ -3,7 +3,7 @@
 //   wcp-hook-conformance run --dialect <d> [--setup '<shell>'] [--json F] [--md F] [--env K=V]…
 //                            [--timeout MS] [--only ID,ID] [--subject NAME] [--require-level N] -- <hook command…>
 //   wcp-hook-conformance bridge --dialect <d> -- <native hook command…>
-//   wcp-hook-conformance fixtures
+//   wcp-hook-conformance fixtures [core|python|<dir>]
 //
 // `run` drives the hook command (stdin JSON -> stdout JSON, one process per event, the
 // way every reviewed harness runs command hooks) through the core fixtures, spelled in
@@ -16,7 +16,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { HOOKS_CORE_VERSION, type CoreEvent } from "./core";
 import { DIALECTS, dialect } from "./dialects";
-import { absolutize, invoke, loadFixtures, renderMarkdown, run, RUNNER_VERSION } from "./runner";
+import { absolutize, fixtureSetDir, invoke, loadFixtures, renderMarkdown, run, RUNNER_VERSION } from "./runner";
 
 const USAGE = `wcp-hook-conformance ${RUNNER_VERSION} — Agent Hooks Core v${HOOKS_CORE_VERSION} conformance
 
@@ -31,10 +31,11 @@ usage:
       --env K=V           extra environment for setup and hook (repeatable)
       --timeout <ms>      per-invocation budget (default 30000, Cursor's default hook timeout)
       --only <ids>        comma-separated fixture ids
+      --fixtures <set>    fixture set: core (default), a language (python, ...), or a directory
       --subject <name>    name shown in the report
       --require-level N   exit 1 unless at least L<N> is verified
   wcp-hook-conformance bridge --dialect <d> -- <native hook command…>
-  wcp-hook-conformance fixtures
+  wcp-hook-conformance fixtures [core|python|<dir>]
 
 Exit status of run: 0 when the declaration is honest (declared level <= verified level)
 and --require-level (if given) is met; 1 otherwise.`;
@@ -77,6 +78,7 @@ async function cmdRun(argv: string[]): Promise<number> {
     env,
     only: opt(opts, "only")?.split(","),
     subject: opt(opts, "subject"),
+    ...(opt(opts, "fixtures") ? { fixturesDir: fixtureSetDir(opt(opts, "fixtures")!) } : {}),
     log: (l) => process.stderr.write(`${l}\n`),
   });
   const md = renderMarkdown(report);
@@ -126,7 +128,7 @@ async function main(argv: string[]): Promise<number> {
     case "bridge":
       return cmdBridge(argv.slice(1));
     case "fixtures": {
-      const { fixtures } = loadFixtures();
+      const { fixtures } = loadFixtures(argv[1] ? fixtureSetDir(argv[1]) : undefined);
       for (const f of fixtures) process.stdout.write(`${f.id.padEnd(28)} ${f.level === null ? "failure" : `L${f.level}${f.required ? "" : "?"}`}  ${f.title}\n`);
       return 0;
     }

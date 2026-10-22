@@ -2,7 +2,7 @@
 // The analyzer sees one file at a time; cross-file reads (what an edit imports from other
 // modules in the checkout) are added here by resolving relative imports against the
 // checkout, so `import { calcTotal } from "./pricing"` reads `src/pricing.ts#calcTotal`.
-import { analyze, type Write } from "@weft/analyzer";
+import { analyze, analyzeSource, treeSitterLanguageFor, type Write } from "@weft/analyzer";
 import ts from "typescript";
 import { existsSync } from "node:fs";
 import { join, posix } from "node:path";
@@ -87,6 +87,32 @@ export function analyzeChanges(changes: FileChange[], root?: string, prefix = ""
     writes.set(key, { key, kind: c.before === null ? "new" : c.after === null ? "deleted" : "body" });
   }
   // A symbol this edit writes is not also an assumption it reads.
+  for (const k of writes.keys()) reads.delete(k);
+  return { reads: [...reads].sort(), writes: [...writes.values()].sort((a, b) => a.key.localeCompare(b.key)) };
+}
+
+/**
+ * `analyzeChanges` plus the tree-sitter languages (Python, ...): what the hooks call. TypeScript
+ * and JavaScript go through exactly the same path as `analyzeChanges`; files of a tree-sitter
+ * language get declaration-level keys and import-resolved reads instead of a whole-file key.
+ */
+export async function analyzeChangesAsync(changes: FileChange[], root?: string, prefix = ""): Promise<Sets> {
+  const typescriptOrOther = changes.filter((c) => !treeSitterLanguageFor(c.rel));
+  const base = analyzeChanges(typescriptOrOther, root, prefix);
+  const reads = new Set(base.reads);
+  const writes = new Map(base.writes.map((w) => [w.key, w] as const));
+  const exists = root ? (rel: string) => existsSync(join(root, rel)) : undefined;
+  for (const c of changes) {
+    if (c.before === c.after || !treeSitterLanguageFor(c.rel)) continue;
+    try {
+      const result = await analyzeSource({ path: c.rel, before: c.before, after: c.after }, { prefix, exists });
+      for (const k of result.reads) reads.add(k);
+      for (const w of result.writes) writes.set(w.key, w);
+    } catch {
+      const key = fileKey(prefix + c.rel);
+      writes.set(key, { key, kind: c.before === null ? "new" : c.after === null ? "deleted" : "body" });
+    }
+  }
   for (const k of writes.keys()) reads.delete(k);
   return { reads: [...reads].sort(), writes: [...writes.values()].sort((a, b) => a.key.localeCompare(b.key)) };
 }

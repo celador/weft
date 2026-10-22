@@ -78,6 +78,25 @@ export function fixturesDir(): string {
   throw new Error("core fixtures not found");
 }
 
+/**
+ * A fixture set by name or path: `core` (the default), a language set under
+ * `fixtures/languages/<name>` (e.g. `python`, see docs/languages.md), or a directory.
+ */
+export function fixtureSetDir(name: string): string {
+  if (name === "core") return fixturesDir();
+  if (existsSync(join(name, "workspace.json"))) return resolve(name);
+  const core = fixturesDir();
+  const dir = join(core, "..", "languages", name);
+  if (existsSync(join(dir, "workspace.json"))) return dir;
+  throw new Error(`fixture set ${name} not found (core, a language under fixtures/languages, or a directory)`);
+}
+
+/** Language fixture sets shipped with the runner. */
+export function languageFixtureSets(): string[] {
+  const dir = join(fixturesDir(), "..", "languages");
+  return existsSync(dir) ? readdirSync(dir).filter((d) => existsSync(join(dir, d, "workspace.json"))).sort() : [];
+}
+
 const ORDER = (f: Fixture) => (f.level ?? 9) * 10 + (f.required ? 0 : 1) + (f.failure ? 5 : 0);
 
 export function loadFixtures(dir = fixturesDir()): { workspace: Workspace; fixtures: Fixture[] } {

@@ -112,7 +112,7 @@ export class Host {
     const self = this.spec.self;
     return new ClaudeAdapter(loaded, {
       transport,
-      analyze: async (changes, root, prefix) => (await import("./analysis")).analyzeChanges(changes, root, prefix),
+      analyze: async (changes, root, prefix) => (await import("./analysis")).analyzeChangesAsync(changes, root, prefix),
       diff: async (rel, before, after) => (await import("./analysis")).unifiedDiff(rel, before, after),
       cli: this.cliFor(loaded.root),
       identity: { harness: this.spec.harness, adapter: this.spec.adapter, capabilities: this.spec.capabilities },
