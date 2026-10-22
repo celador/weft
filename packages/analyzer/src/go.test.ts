@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { cpuMs, EDIT_BUDGET_MS } from "./budget.js";
 import { analyzeSource, languageFor } from "./index.js";
 
 const PRICING_V1 = `package pricing
@@ -183,13 +184,6 @@ func Summary(items []pricing.Item) string {
     };
     const edit = () => analyzeSource({ path: "big/main.go", before: big, after: big.replace("func Calc7(items []Item7)", "func Calc7(items []Item7, x int)") }, bigOpts);
     await edit();
-    const times: number[] = [];
-    for (let i = 0; i < 5; i++) {
-      const t = performance.now();
-      await edit();
-      times.push(performance.now() - t);
-    }
-    times.sort((a, b) => a - b);
-    expect(times[2]).toBeLessThan(300);
+    expect(await cpuMs(edit)).toBeLessThan(EDIT_BUDGET_MS);
   });
 });

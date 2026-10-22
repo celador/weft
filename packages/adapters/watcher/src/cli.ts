@@ -38,6 +38,7 @@ export const host = new Host({
   adapter: `@weft/adapter-watcher@${ADAPTER_VERSION}`,
   capabilities: CAPABILITIES,
   self: SELF,
+  sessionOwner: "self",
   installHarness: () => [`run: ${process.execPath} ${SELF} run   (from the checkout; Ctrl-C to stop)`],
 });
 

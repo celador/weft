@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { cpuMs, EDIT_BUDGET_MS } from "./budget.js";
 import { analyzeSource, languageFor } from "./index.js";
 
 const PRICING_V1 = `use std::fmt;
@@ -168,13 +169,6 @@ pub fn summary(items: &[LineItem]) -> String {
     ).join("\n");
     expect(big.split("\n").length).toBeGreaterThan(2000);
     await run(big, big);
-    const times: number[] = [];
-    for (let i = 0; i < 5; i++) {
-      const t = performance.now();
-      await run(big, big.replace("pub fn calc_7(items: &[Item7])", "pub fn calc_7(items: &[Item7], x: u8)"));
-      times.push(performance.now() - t);
-    }
-    times.sort((a, b) => a - b);
-    expect(times[2]).toBeLessThan(300);
+    expect(await cpuMs(() => run(big, big.replace("pub fn calc_7(items: &[Item7])", "pub fn calc_7(items: &[Item7], x: u8)")))).toBeLessThan(EDIT_BUDGET_MS);
   });
 });
