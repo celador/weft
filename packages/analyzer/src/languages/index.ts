@@ -3,10 +3,12 @@ import { posix } from "node:path";
 import type { Analysis, AnalyzeOptions, BackendId, SourceChange, TreeSitterLanguage } from "../language.js";
 import { analyzeTreeSitter } from "../treesitter.js";
 import { c, cpp } from "./c.js";
+import { php } from "./php.js";
 import { python } from "./python.js";
+import { ruby } from "./ruby.js";
 
 /** Languages on the tree-sitter backend. Add a spec + grammar + conformance fixture per language. */
-export const treeSitterLanguages: TreeSitterLanguage[] = [python, c, cpp];
+export const treeSitterLanguages: TreeSitterLanguage[] = [python, c, cpp, ruby, php];
 
 export type LanguageInfo = { id: string; name: string; backend: BackendId };
 
@@ -31,7 +33,7 @@ export function treeSitterLanguageFor(path: string, text?: string | null): TreeS
 }
 
 /**
- * Analyze one file of an edit with its tree-sitter language (Python, C, C++, ...). Keys are
+ * Analyze one file of an edit with its tree-sitter language (Python, C, C++, Ruby, PHP, ...). Keys are
  * `${prefix}${path}#Name`; reads include imports resolved inside the checkout.
  * Throws for paths no tree-sitter language claims; check `treeSitterLanguageFor` first.
  */

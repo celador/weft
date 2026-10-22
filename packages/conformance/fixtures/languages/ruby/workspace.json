@@ -1,0 +1,62 @@
+{
+  "description": "Ruby conformance workspace (docs/languages.md). The peer changes are another agent's edits; their reads/writes are exactly what @weft/analyzer's Ruby backend derives from `after` (checked by packages/conformance/test/languages.test.ts).",
+  "language": "ruby",
+  "files": {
+    "lib/pricing.rb": "module Pricing\n  def self.calc_total(items)\n    items.sum { |i| i.price * i.qty }\n  end\n\n  def self.format_price(amount)\n    format(\"$%.2f\", amount)\n  end\nend\n",
+    "lib/cart.rb": "require_relative \"pricing\"\n\nclass Cart\n  def summary(items)\n    \"#{items.size} items\"\n  end\nend\n",
+    "lib/report.rb": "require_relative \"pricing\"\n\nclass Report\n  def line(total)\n    \"Total\"\n  end\nend\n",
+    "app/services/checkout.rb": "class Checkout\n  def total(items)\n    0.0\n  end\nend\n"
+  },
+  "peers": {
+    "change_signature": {
+      "agent": "peer-a",
+      "harness": "claude-code",
+      "task": "T-1",
+      "files": [
+        "lib/pricing.rb"
+      ],
+      "writes": [
+        {
+          "key": "lib/pricing.rb#Pricing",
+          "kind": "body"
+        },
+        {
+          "key": "lib/pricing.rb#Pricing.calc_total",
+          "kind": "signature"
+        }
+      ],
+      "reads": [],
+      "intent": "calc_total takes a tax_rate",
+      "after": {
+        "lib/pricing.rb": "module Pricing\n  def self.calc_total(items, tax_rate:)\n    net = items.sum { |i| i.price * i.qty }\n    net * (1 + tax_rate)\n  end\n\n  def self.format_price(amount)\n    format(\"$%.2f\", amount)\n  end\nend\n"
+      }
+    },
+    "rename_helper": {
+      "agent": "peer-b",
+      "harness": "codex",
+      "task": "T-3",
+      "files": [
+        "lib/pricing.rb"
+      ],
+      "writes": [
+        {
+          "key": "lib/pricing.rb#Pricing",
+          "kind": "body"
+        },
+        {
+          "key": "lib/pricing.rb#Pricing.format_money",
+          "kind": "new"
+        },
+        {
+          "key": "lib/pricing.rb#Pricing.format_price",
+          "kind": "deleted"
+        }
+      ],
+      "reads": [],
+      "intent": "rename format_price to format_money",
+      "after": {
+        "lib/pricing.rb": "module Pricing\n  def self.calc_total(items)\n    items.sum { |i| i.price * i.qty }\n  end\n\n  def self.format_money(amount)\n    format(\"$%.2f\", amount)\n  end\nend\n"
+      }
+    }
+  }
+}

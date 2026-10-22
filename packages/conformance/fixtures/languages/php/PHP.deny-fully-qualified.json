@@ -1,0 +1,30 @@
+{
+  "id": "PHP.deny-fully-qualified",
+  "level": 2,
+  "required": true,
+  "spec": "§4.1",
+  "title": "PHP: a fully qualified `\\App\\Pricing\\Pricing::calcTotal()` with no `use` resolves by PSR-4 and is checked",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/Shop/Checkout.php",
+        "old_text": "        return 0.0;",
+        "new_text": "        return \\App\\Pricing\\Pricing::calcTotal($items);"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "calcTotal"
+        ]
+      },
+      "expect_applied": false
+    }
+  ]
+}

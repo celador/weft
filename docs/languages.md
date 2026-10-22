@@ -14,7 +14,8 @@ per language family.
 | Go, Rust | | `tree-sitter` | planned | | | | card t_41439699 |
 | Java, Kotlin | | `tree-sitter` | planned | | | | card t_5184c50b |
 | Swift, C# | | `tree-sitter` | planned | | | | card t_232556f9 |
-| Ruby, PHP | | `tree-sitter` | planned | | | | card t_da702770 |
+| Ruby | `.rb .rake .gemspec .ru` | `tree-sitter` (tree-sitter-ruby 0.23.1) | classes and modules qualified by nesting (`Shop.Cart`; a reopened class is one key), methods and singleton methods (`def self.build`, `class << self`) as `Class.method`, constants, `attr_reader`/`attr_writer`/`attr_accessor` attributes | receiver-less and `self.` calls, bare method names that are not locals, constants and constant paths (`Shop::Money.fmt`; `Foo.new` reads `Foo.initialize`), resolved by Zeitwerk/Rails convention among `require_relative`/`require`d files, `lib/`, `app/models`, `app/controllers`, `app/services` and the other autoload dirs, innermost lexical nesting first | yes (`private`/`module_function` prefixes and the superclass count as signature; a constant's value is its body) | deleted + new | 13 analyzer tests, 5 conformance fixtures (`fixtures/languages/ruby`) |
+| PHP | `.php .phtml .php8 .phpt` | `tree-sitter` (tree-sitter-php 0.24.2, `php` dialect) | functions, classes, interfaces, traits, enums, methods (`Cart.total`), properties incl. constructor-promoted (`Cart.items`), class and top-level constants, enum cases; keys leave the namespace out (the PSR-4 path names it) | function calls, `Foo::bar()` / `Foo::BAR` / `self::`/`static::`, `$this->m()` / `$this->p`, `new Foo` (reads `Foo.__construct`), types, `extends`/`implements`, trait `use`, attributes, bare constants; resolved through `use` (aliases, groups, `use function`/`use const`), fully qualified names and the file's namespace by PSR-4 convention (`App\Models\User` under `src/`, `app/`, `lib/`, root, `tests/`, with leading namespace segments dropped) | yes (attributes, modifiers, parameters, return type, `extends`/`implements`; a property's or constant's value is its body) | deleted + new | 12 analyzer tests, 5 conformance fixtures (`fixtures/languages/php`) |
 | C | `.c .h` | `tree-sitter` (tree-sitter-c 0.24.1) | functions (definitions and prototypes), structs / unions / enums and their fields (`Item.price`), enumerators, typedefs, global variables, macros (`#define`) | every identifier and type name outside a declarator (calls, arguments, types, macro and enumerator uses), identifiers in macro bodies, `item->price` when `item`'s declared type is named; included headers' declarations, through `#include "x.h"` (relative, then `include/`, `src/`) and `<x.h>` (`include/`, `src/`), transitively | yes (a prototype change in the header is a signature write; a macro's parameter list is its signature, its value its body; an initializer is a body) | deleted + new | analyzer tests (`c.test.ts`), 5 conformance fixtures (`fixtures/languages/c`) |
 | C++ | `.cpp .cc .cxx .c++ .hpp .hh .hxx .h++ .ipp .tpp .inl`, and `.h` files whose text is C++ | `tree-sitter` (tree-sitter-cpp 0.23.4) | everything C has, plus classes and their members (`shop.Cart.total`; out-of-line `Cart::total` keyed the same), namespaces as qualifiers, `using` aliases, templates, scoped enums (`Mode.Net`) | as C, plus qualified names (`shop::calc`, `Mode::Net`), `this->x` and implicit members (`tax()` in `Cart::total` reads `Cart.tax`), `cart.total()` when `cart` is a parameter or local of a named type (`auto` is not inferred), template arguments | yes (the `template <...>` list and member access `public:`/`private:` are signature; constructor initializer lists are body) | deleted + new | analyzer tests (`c.test.ts`), 4 conformance fixtures (`fixtures/languages/cpp`) |
 | Anything else | | none | whole file: `path#*` | none | no | no | the adapters' existing fallback |
@@ -64,6 +65,8 @@ Vendored grammars (`packages/analyzer/grammars/`, copied from each grammar's npm
 | `tree-sitter-python.wasm` | tree-sitter-python 0.25.0 | 15 | `16108b50df4ee9a30168794252ab55e7c93bfc5765d7fa0aa3e335752c515f47` |
 | `tree-sitter-c.wasm` | tree-sitter-c 0.24.1 | 15 | `c852c2a85ebf2beb636aa3b0ef7f7e70458684d74f6741b20dcb296885bed9f9` |
 | `tree-sitter-cpp.wasm` | tree-sitter-cpp 0.23.4 | 14 | `174eb0deb75b2ec7881bcacda9f995648d8e683956e5c2267e69ab6dc503fcbf` |
+| `tree-sitter-ruby.wasm` | tree-sitter-ruby 0.23.1 | 14 | `09a96427d7c72f0613ed470cd9812223fc4a91d6a9c025c0235cc6bd59ff96f4` |
+| `tree-sitter-php.wasm` | tree-sitter-php 0.24.2 (`php`, with inline HTML; `php_only` not vendored) | 15 | `d4df6a6ff08c87c3ec4f9cbb785fe09998a0cb570e03f57d7b19b3acfb146aa7` |
 
 ### C and C++: headers carry the contract
 
@@ -119,6 +122,24 @@ load average near 190, so these are upper bounds; 30 runs each, header read incl
 `packages/analyzer/src/c.test.ts` fails if the fastest of three warm runs on a 2,000-line C or
 C++ file takes 300 ms or more (fastest of three, so a busy machine's scheduler does not fail it).
 
+### Ruby and PHP: resolving names without per-name imports
+
+Neither language imports names the way Python does, so the specs synthesize the bindings:
+
+- Ruby: one binding per constant path the file uses and does not define, per lexical
+  qualification (`Money` inside `module Shop` is tried as `Shop::Money`, then `::Money`). A file
+  matches when its path names the constant the way Zeitwerk does (`shop/money.rb` under `lib/`,
+  `app/models`, `app/controllers`, `app/services`, ... or a `require_relative`d file); only the
+  constant as written may also live in a parent's file (`Shop::Money` in `shop.rb`). Methods
+  defined at the top level of a `require`d file are not tracked.
+- PHP: `use` statements bind as written; class names without a `use` bind to the file's
+  namespace (tried next to the file first) or, fully qualified, to themselves. Files come from
+  PSR-4 convention, not from `composer.json`'s autoload map: a spec only sees the checkout
+  through `exists`. A project whose map points a namespace at an unusual directory (for example
+  `"Acme\\": "modules/acme/"`) gets local and same-directory reads only. Functions and constants
+  imported with `use function`/`use const` resolve to `<namespace path>.php`,
+  `<namespace path>/functions.php` or `helpers.php`. Global functions (`strlen`) and classes
+  outside the checkout resolve nowhere and are ignored.
 
 ## Adding a language
 

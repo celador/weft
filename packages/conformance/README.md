@@ -63,7 +63,7 @@ its policy at the oracle in `--setup`, or by contributing fixtures with another 
 
 ## Language fixture sets
 
-`fixtures/languages/<language>/` holds per-language sets (Python, C, C++ today): a workspace in that
+`fixtures/languages/<language>/` holds per-language sets (Python, C, C++, Ruby, PHP today): a workspace in that
 language and fixtures where a peer renames a function or changes its signature and the agent's
 edit must be denied (or allowed after adapting, or allowed when unrelated). Run one with
 `--fixtures python`; list it with `fixtures python`. `test/languages.test.ts` checks every set
