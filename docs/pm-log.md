@@ -147,3 +147,7 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-10-21 13:20 — Weft lands for t_03b89786, t_26e387d8, t_b7f1aa93
 - WCP QR, site-driven deck changes and remote-key support already merged + pushed (0b61a4b, 9a51194, 241c6ae; banner 64fdd7b CI Gate green). Posted Weft lands (seq #1221–#1223); removed worktrees (t_26e387d8's uncommitted banner edit was already on main via 6173da8, discarded).
 - wt/local still HELD (Omer-code question, flagged 10-13). wt/t_be804fb4 intentionally unmerged.
+
+## 2026-10-21 22:45 — re-dispatched t_d14462ee
+- Memory-dream card gave up after 2 claim-expiry reclaims (worker sat in a 540 s sleep past its claim; worker dead, no real blocker). Commented continue-from-current-state + heartbeat between waits; unblocked + dispatched (running). Deck banner/pacing commits on main: CI Gate green.
+- wt/local still HELD (Omer-code question, flagged 10-13). wt/t_be804fb4 intentionally unmerged.
