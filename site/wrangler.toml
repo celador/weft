@@ -4,14 +4,18 @@ name = "weft-site"
 main = "worker.js"
 compatibility_date = "2026-10-01"
 workers_dev = false   # never expose *.workers.dev (see AGENTS.md)
-routes = [{ pattern = "weft-site.elier.ai", custom_domain = true }]
+routes = [
+  { pattern = "weft.mx", custom_domain = true },
+  { pattern = "www.weft.mx", custom_domain = true },
+  { pattern = "weft-site.elier.ai", custom_domain = true },  # old host: 301 -> weft.mx (worker.js)
+]
 
 [assets]
 directory = "./public"
 binding = "ASSETS"
 not_found_handling = "404-page"
 html_handling = "auto-trailing-slash"
-run_worker_first = ["/e"]
+run_worker_first = true   # worker redirects old hosts to weft.mx, then serves assets
 
 # Copy-button clicks and page views (no cookies, no IP). Query: docs/launch/README.md.
 [[analytics_engine_datasets]]
