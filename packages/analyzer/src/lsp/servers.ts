@@ -40,7 +40,7 @@ export const lspServers: LspServerSpec[] = [
   { language: "kotlin", languageId: "kotlin", extensions: [".kt", ".kts"], commands: [{ name: "kotlin-lsp", command: "kotlin-lsp", args: ["--stdio"] }] },
   { language: "swift", languageId: "swift", extensions: [".swift"], commands: [{ name: "sourcekit-lsp", command: "sourcekit-lsp", args: [] }] },
   { language: "c", languageId: "c", extensions: [".c", ".h"], commands: [{ name: "clangd", command: "clangd", args: [] }] },
-  { language: "cpp", languageId: "cpp", extensions: [".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"], commands: [{ name: "clangd", command: "clangd", args: [] }] },
+  { language: "cpp", languageId: "cpp", extensions: [".cpp", ".cc", ".cxx", ".c++", ".hpp", ".hh", ".hxx", ".h++", ".ipp", ".tpp", ".inl"], commands: [{ name: "clangd", command: "clangd", args: [] }] },
   { language: "ruby", languageId: "ruby", extensions: [".rb"], commands: [{ name: "ruby-lsp", command: "ruby-lsp", args: [] }] },
   { language: "csharp", languageId: "csharp", extensions: [".cs"], commands: [{ name: "csharp-ls", command: "csharp-ls", args: [] }] },
 ];

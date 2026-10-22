@@ -30,7 +30,8 @@ import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { maxClaimTtl, type AgentRef, type Capabilities, type ClaimCommand, type Diagnostic, type EventDraft, type EventRecord, type InboxItem, type NegotiateCommand, type NegotiationDue, type Verdict, type Welcome } from "@weft/protocol";
 import { WcpError, PROTOCOL, type Transport } from "./client";
-import { appendAdapterLog, readState, withLock, writeState, type Loaded, type SessionState } from "./config";
+import { appendAdapterLog, readState, stateDir, withLock, writeState, type Loaded, type SessionState } from "./config";
+import type { BeatResult } from "./heartbeat";
 import { EDIT_TOOLS, editPath, isGitCommit, proposedText } from "./edits";
 import { renderDues, renderForModel, type EditedFile, type RenderCtx } from "./render";
 import type { Sets, FileChange } from "./analysis";
@@ -950,17 +951,24 @@ export class ClaudeAdapter {
     });
   }
 
-  /** One heartbeat for a Claude session; false when the loop should end. */
-  async beat(claudeSession: string, idleLimitMs: number): Promise<boolean> {
+  /**
+   * One heartbeat for a session: "ended" when the loop should stop (no live WCP session,
+   * idle past `idleLimitMs`, or the coordinator says the session is gone), "unreachable"
+   * when the coordinator could not be reached.
+   */
+  async beat(claudeSession: string, idleLimitMs: number): Promise<BeatResult> {
+    // withLock would mkdir .weft/state and resurrect a deleted checkout.
+    if (!existsSync(stateDir(this.root))) return "ended";
     return withLock(this.root, claudeSession, async () => {
       const st = readState(this.root, claudeSession);
-      if (!st.wcpSession || this.now() - st.lastContact > idleLimitMs) return false;
+      if (!st.wcpSession || this.now() - st.lastContact > idleLimitMs) return "ended";
       try {
         await this.deps.transport.heartbeat(st.wcpSession);
-        return true;
+        return "alive";
       } catch (err) {
         this.log(`heartbeat failed: ${String(err)}`);
-        return !(err instanceof WcpError && (err.code === "session_expired" || err.status === 404));
+        if (err instanceof WcpError) return err.code === "session_expired" || err.status === 404 || err.status === 410 ? "ended" : "alive";
+        return "unreachable";
       }
     });
   }

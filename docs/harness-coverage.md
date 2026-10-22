@@ -29,7 +29,7 @@ for cloud agents, git push events). **d** is an ACP proxy, which is experimental
 | Hermes Agent | CLI | L3 plugin | a | **L3**, used on Weft's own build (`adapter-hermes`) | — |
 | Cursor CLI + Cursor IDE | CLI/IDE | L3 hooks (same `.cursor/hooks.json`) | a | L3 fixture-tested (`adapter-cursor`); live run blocked on login | live run |
 | Gemini CLI | CLI | L3 hooks | a | L3 fixture-tested (`adapter-gemini`) | low priority: the free tier moved to Antigravity |
-| **GitHub Copilot** (CLI, cloud coding agent, VS Code agent mode) | CLI/IDE/cloud | L3 hooks | a | watcher only | **card: Copilot adapter** |
+| **GitHub Copilot** (CLI, cloud coding agent, VS Code agent mode) | CLI/IDE/cloud | L3 hooks | a | **L3 verified** on Copilot CLI and VS Code agent mode (`adapter-copilot`, [evidence](../demo/evidence/copilot/README.md)); cloud agent unverified | cloud agent run (needs a paid Copilot plan; probe repo ready) |
 | **Google Antigravity** (2.0, CLI, IDE) | CLI/IDE | L3 hooks | a | watcher only | **card: Antigravity adapter** |
 | **Windsurf / Devin Desktop** (Cascade) | IDE | L2 hooks | a | watcher only | **card: Windsurf adapter** |
 | Cline (extension + CLI) | IDE/CLI | L2 hooks (+ next-turn context) | a | watcher only | queued (adapter #4) |
@@ -44,11 +44,11 @@ for cloud agents, git push events). **d** is an ACP proxy, which is experimental
 | Amp | CLI | L3 TS plugin API | a | watcher only | later (plugin, like OpenCode) |
 | Kilo Code (CLI + extension) | CLI/IDE | L2 plugin (OpenCode-style) | a | watcher only | later (reuse the OpenCode plugin) |
 | VS Code (any agent) | IDE | squiggles via the Problems panel | b + UI | — | **card: VS Code extension** |
-| Zed agent panel | IDE | MCP only (no hooks yet) | b, d | watcher only | **card: MCP server**; ACP proxy later |
-| JetBrains Junie / AI Assistant | IDE | MCP + ACP host; no tool hooks | b, d | watcher only | MCP server; plugin later |
-| Warp agent | terminal | MCP only | b | watcher only | MCP server |
-| Trae | IDE | MCP only (hooks undocumented) | b | watcher only | MCP server |
-| Xcode coding intelligence | IDE | MCP (hooks undocumented) | b | watcher only | MCP server |
+| Zed agent panel | IDE | MCP only (no hooks yet) | b, d | `@weft/mcp` (L0 + delayed L1); Zed config in its README, not yet run in Zed | live Zed run (needs a Zed sign-in or API key); ACP proxy later |
+| JetBrains Junie / AI Assistant | IDE | MCP + ACP host; no tool hooks | b, d | `@weft/mcp` (config in its README) | live run; plugin later |
+| Warp agent | terminal | MCP only | b | `@weft/mcp` (`.warp/.mcp.json` in its README) | live run (needs a Warp login) |
+| Trae | IDE | MCP only (hooks undocumented) | b | `@weft/mcp` | live run |
+| Xcode coding intelligence | IDE | MCP (hooks undocumented) | b | `@weft/mcp` | live run |
 | Aider | CLI | L1 via `--lint-cmd` | c (+ lint shim) | watcher only | `weft check` as the lint command |
 | Roo Code | IDE | discontinued (May 2026) | c | watcher only | none |
 | Claude Code on the web | cloud | L3 (repo `.claude/settings.json` runs) | a | adapter works if the sandbox can reach the gateway | document + probe |
@@ -117,6 +117,17 @@ useful even when the model ignores it:
   refuse_stop: false, commit_gate: "native"}`. The model *may* see diagnostics, but the
   coordinator must not rely on that, so the level stays 0. That keeps the honesty rule in Hooks
   Core §3.3.
+
+**Status (t_70b3d8fe):** shipped as `packages/mcp` (`@weft/mcp`, bin `weft-mcp`, stdio). The
+tools, the inbox on every result, the embedded watcher, `instructions` and the capabilities above
+are implemented as specified; Claude Code channels push is behind `--channels`. Token lookup:
+`WEFT_TOKEN`, the checkout's `.weft/token`, `~/.config/weft/<repo>.token`, `~/.config/weft/token`.
+Verified with a real hookless run: Claude Code with no Weft hooks and only the MCP server
+(`demo/mcp-hookless.mjs`, evidence in `demo/evidence/mcp/`) next to a hooked Claude Code agent on
+a local gateway. The model called `weft_check`, got `stale_assumption` with the other agent's diff,
+adapted its code (in earlier runs it negotiated or escalated first), and its own `Write` reached the
+log through the watcher. Zed and Warp were not run: their agents need a Zed sign-in or Warp login (or an
+Anthropic API key) that the build machine does not have.
 
 ### 2c. File watcher and git push events (L0)
 
@@ -388,9 +399,14 @@ drafted as [Agent Hooks Core v0.1](protocol/hooks-core-v0.md). This map is new e
 ## 7. Open questions (each phase 2 card probes the ones it owns)
 
 1. Copilot coding agent: do hook commands get past the firewall to the gateway, and how does the
-   token get in (an Actions secret, `copilot-setup-steps`)?
+   token get in (an Actions secret, `copilot-setup-steps`)? *Still open (2026-10-22): job creation
+   returns 403 on Copilot Free; the probe repo is ready ([evidence](../demo/evidence/copilot/README.md#copilot-cloud-agent-probe)).*
 2. VS Code Local hooks: which file locations does the Local harness read? Does a Copilot-format
-   file in `.github/hooks/` fire for both Copilot CLI and VS Code?
+   file in `.github/hooks/` fire for both Copilot CLI and VS Code? *Answered (2026-10-22): yes. One
+   camelCase `.github/hooks/weft.json` fired in Copilot CLI 1.0.102 and in VS Code 1.135's Local
+   harness (mapped to its PascalCase events, with `tool_use_id`). Copilot CLI loads it only in a
+   trusted folder and also runs `.claude/settings*.json` hooks; VS Code reads Claude files only
+   with `chat.useClaudeHooks`.*
 3. Windsurf: is any post-hook output model-visible (L1)? Is there a stop hook? If neither, the
    adapter declares L2 with `inject:"delayed"`, delivering the inbox through the next pre-hook
    denial or the MCP server.
@@ -399,7 +415,10 @@ drafted as [Agent Hooks Core v0.1](protocol/hooks-core-v0.md). This map is new e
 5. Cursor and Windsurf agents: do they read extension diagnostics (the VS Code extension's
    squiggles as cooperative L1)?
 6. The MCP server: when is the inbox delivered if the model calls no Weft tool? (Claude Code
-   channels can push; other hosts can't.)
+   channels can push; other hosts can't.) Answer from t_70b3d8fe: on hosts without push, not until
+   the next `weft_*` call. The watcher's verdicts wait for it, and open errors stay visible in the
+   feed and in the git pre-commit gate. In the real run the model called a Weft tool before every
+   edit and before finishing, as the server instructions ask.
 
 ## 8. Phase 2 cards
 

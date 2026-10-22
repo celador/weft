@@ -18,7 +18,7 @@
 //   negotiate …    the agent's shell command for WCP negotiation (propose/accept/reject/counter/escalate)
 //   inbox          print what is waiting for this agent (inbox, open errors, negotiations owed)
 //   claim          explicit claim on symbols: claim --keys path#sym[,…] [--firm] [--ttl MS]
-import { spawn, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -30,6 +30,7 @@ import { EDIT_TOOLS, editPath } from "./edits";
 import { ClaudeAdapter, type HookInput } from "./hooks";
 import { flushJobs, type LspJob } from "./lsp-queue";
 import { stableNodePath } from "./node-path";
+import { loopArgs, runHeartbeatLoop, spawnHeartbeat } from "./heartbeat";
 
 const SELF = fileURLToPath(import.meta.url);
 const HOOK_MARK = "weft-claude";
@@ -56,13 +57,7 @@ function adapterFor(loaded: Loaded, calls?: Call[], lspJobs?: LspJob[]): ClaudeA
     diff: async (rel, before, after) => (await import("./analysis")).unifiedDiff(rel, before, after),
     cli: cliFor(loaded.root),
     ...(lspJobs ? { lsp: (job: LspJob) => void lspJobs.push(job) } : {}),
-    startHeartbeat: (claudeSession) => {
-      try {
-        spawn(process.execPath, [SELF, "heartbeat-loop", claudeSession, "--root", loaded.root], { detached: true, stdio: "ignore" }).unref();
-      } catch {
-        /* heartbeat is best-effort; sessions re-hello on expiry */
-      }
-    },
+    startHeartbeat: (claudeSession) => spawnHeartbeat(SELF, claudeSession, loaded.root),
   });
 }
 
@@ -148,6 +143,9 @@ async function hook(byPath: boolean, args: string[] = []): Promise<void> {
         break;
       }
     }
+    // Copilot CLI also runs `.claude/settings*.json` hooks. In a checkout where the Copilot
+    // adapter is installed it owns the session; answering here too would double every event.
+    if (loaded && process.env.COPILOT_CLI === "1" && existsSync(join(loaded.root, ".weft/copilot.json"))) loaded = undefined;
     if (loaded && input) out = await adapterFor(loaded, calls, lspJobs).handle(input);
   } catch {
     out = undefined; // fail open: malformed input or a bug must not block the harness
@@ -428,16 +426,12 @@ async function lspDaemon(rootArg?: string): Promise<void> {
   await runDaemon(loaded.root, new LspWorker(loaded, { transport }));
 }
 
-async function heartbeatLoop(claudeSession: string, rootArg?: string): Promise<void> {
-  const loaded = loadConfig(rootArg ?? process.cwd());
+async function heartbeatLoop(args: string[]): Promise<void> {
+  const { session, root, parent } = loopArgs(args);
+  const loaded = loadConfig(root ?? process.cwd());
   if (!loaded) return;
   const adapter = adapterFor(loaded);
-  const intervalMs = 30_000;
-  const idleLimitMs = 30 * 60_000;
-  for (;;) {
-    await new Promise((r) => setTimeout(r, intervalMs));
-    if (!(await adapter.beat(claudeSession, idleLimitMs).catch(() => false))) return;
-  }
+  await runHeartbeatLoop({ root: loaded.root, session, parent, beat: (idle) => adapter.beat(session, idle) });
 }
 
 async function negotiateCmd(args: string[]): Promise<number> {
@@ -529,7 +523,7 @@ async function main(): Promise<void> {
       process.exitCode = await preCommit();
       return;
     case "heartbeat-loop":
-      return heartbeatLoop(args[0], arg(args, "root"));
+      return heartbeatLoop(args);
     case "lsp-daemon":
       return lspDaemon(arg(args, "root"));
     case "status":

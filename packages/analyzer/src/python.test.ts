@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { cpuMs, EDIT_BUDGET_MS } from "./budget.js";
 import { analyzeSource, languageFor } from "./index.js";
 
 const PRICING_V1 = `from dataclasses import dataclass
@@ -130,11 +131,9 @@ def summary(items: List[Item]) -> str:
     expect(r).toEqual({ reads: [], writes: [{ key: "app/pricing.py#f", kind: "deleted" }] });
   });
 
-  it("stays inside the edit-time budget (< 300 ms for a 2,000-line file, warm)", async () => {
+  it("stays inside the edit-time budget (< 300 ms CPU for a 2,000-line file, warm)", async () => {
     const big = Array.from({ length: 200 }, (_, i) => PRICING_V1.replaceAll("calc_total", `calc_${i}`).replaceAll("Cart", `Cart${i}`).replaceAll("Item", `Item${i}`)).join("\n");
     await run(big, big);
-    const t = performance.now();
-    await run(big, big.replace("calc_7(items", "calc_7(items, x"));
-    expect(performance.now() - t).toBeLessThan(300);
+    expect(await cpuMs(() => run(big, big.replace("calc_7(items", "calc_7(items, x")))).toBeLessThan(EDIT_BUDGET_MS);
   });
 });

@@ -25,6 +25,7 @@ const subjects = [
   { file: "opencode", subject: "OpenCode adapter (@weft/adapter-opencode, plugin bridge)", dialect: "opencode", b: bundle("opencode", "weft-opencode") },
   { file: "cursor", subject: "Cursor CLI translator (@weft/adapter-cursor)", dialect: "cursor", b: bundle("cursor", "weft-cursor") },
   { file: "gemini", subject: "Gemini CLI translator (@weft/adapter-gemini)", dialect: "gemini", b: bundle("gemini", "weft-gemini") },
+  { file: "copilot", subject: "GitHub Copilot adapter (@weft/adapter-copilot)", dialect: "copilot", b: bundle("copilot", "weft-copilot") },
   { file: "core-binding", subject: "Core stdio binding (bridge → Claude Code adapter)", dialect: "core", b: bundle("claude-code", "weft-claude"), bridge: "claude-code" },
   { file: "claude-code-advise", subject: "Claude Code adapter in advisory mode (WEFT_MODE=advise)", dialect: "claude-code", b: bundle("claude-code", "weft-claude"), env: ["WEFT_MODE=advise"] },
 ];
@@ -65,8 +66,9 @@ What these reports prove, and what they do not:
   That is live verification, tracked per harness in [docs/research/hooks.md](../../research/hooks.md)
   and the M2 runs ([demo/evidence/m2-report.md](../../../demo/evidence/m2-report.md)): Claude Code and
   OpenCode were verified live at L0–L3; Codex live at L0–L2 (M2: pre-edit denials reached the model's
-  transcript; its stop gate is not declared yet); Cursor and Gemini CLI are documented-only
-  (fixture-tested translators; no logged-in harness was available).
+  transcript; its stop gate is not declared yet); GitHub Copilot CLI live at L0–L3 (deny, injected
+  context and a refused stop in real \`copilot -p\` runs, [demo/evidence/copilot](../../../demo/evidence/copilot/README.md));
+  Cursor and Gemini CLI are documented-only (fixture-tested translators; no logged-in harness was available).
 - "Declared" is the \`capabilities.level\` the adapter sent in its session hello. A declaration above the
   verified level is non-conformant (spec §3.3); below it is allowed (Codex declares L2 until its stop
   gate is re-probed live).

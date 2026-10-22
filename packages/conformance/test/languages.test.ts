@@ -15,8 +15,8 @@ const repo = join(here, "..", "..", "..");
 const CLAUDE = join(repo, "packages/adapters/claude-code/dist/weft-claude.mjs");
 
 describe("language fixture sets", () => {
-  it("ship Python", () => {
-    expect(languageFixtureSets()).toContain("python");
+  it("ship Python, Java and Kotlin", () => {
+    expect(languageFixtureSets()).toEqual(expect.arrayContaining(["python", "java", "kotlin"]));
   });
 
   for (const set of languageFixtureSets()) {
@@ -33,16 +33,20 @@ describe("language fixture sets", () => {
       for (const [name, peer] of Object.entries(workspace.peers)) {
         it(`peer ${name}: declared reads/writes = analyzer output`, async () => {
           const exists = (rel: string) => rel in workspace.files;
+          // The same checkout access the adapters give the analyzer (exists / read). C/C++ read
+          // included headers; like the adapters, a change sees its own other changed files.
+          const read = (rel: string): string | undefined => peer.after?.[rel] ?? workspace.files[rel];
           const reads = new Set<string>();
-          const writes: Array<{ key: string; kind: string }> = [];
+          // One key per symbol, as the adapters merge them (a header and its .c share keys).
+          const writes = new Map<string, { key: string; kind: string }>();
           for (const [path, after] of Object.entries(peer.after ?? {})) {
-            expect(treeSitterLanguageFor(path)?.id).toBe(set);
-            const r = await analyzeSource({ path, before: workspace.files[path] ?? null, after }, { exists });
+            expect([set, ...(workspace.interop ?? [])]).toContain(treeSitterLanguageFor(path, after)?.id);
+            const r = await analyzeSource({ path, before: workspace.files[path] ?? null, after }, { exists, read });
             r.reads.forEach((k) => reads.add(k));
-            writes.push(...r.writes);
+            for (const w of r.writes) writes.set(w.key, w);
           }
-          for (const w of writes) reads.delete(w.key);
-          expect([...peer.writes].sort((a, b) => a.key.localeCompare(b.key))).toEqual(writes.sort((a, b) => a.key.localeCompare(b.key)));
+          for (const k of writes.keys()) reads.delete(k);
+          expect([...peer.writes].sort((a, b) => a.key.localeCompare(b.key))).toEqual([...writes.values()].sort((a, b) => a.key.localeCompare(b.key)));
           expect([...peer.reads].sort()).toEqual([...reads].sort());
         });
       }

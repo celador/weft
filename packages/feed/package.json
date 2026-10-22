@@ -1,0 +1,29 @@
+{
+  "name": "@weft/feed",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "One Weft feed model + DOM view for every UI: ObserverClient (paging, streams with resume, actions), reducers ported from Otto (feed rows, Editing now, squiggles with cause links, actions, repo summary), text rendering, and a CSP-safe DOM component.",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./view": "./src/view/index.ts",
+    "./view.css": "./src/view/feed.css"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "demo:build": "node demo/build.mjs",
+    "demo": "node demo/build.mjs && node demo/server.mjs"
+  },
+  "dependencies": {
+    "@weft/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.4"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ]
+}

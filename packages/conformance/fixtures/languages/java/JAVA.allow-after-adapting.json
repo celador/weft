@@ -1,0 +1,47 @@
+{
+  "id": "JAVA.allow-after-adapting",
+  "level": 2,
+  "required": true,
+  "spec": "§5.2",
+  "title": "Java: after the deny, the call adapted to the new signature is allowed",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/main/java/com/shop/cart/CartSummary.java",
+        "old_text": "        return items.size() + \" items\";",
+        "new_text": "        return items.size() + \" items, total \" + Pricing.calcTotal(items);"
+      },
+      "expect_pre": {
+        "decision": "deny"
+      }
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/main/java/com/shop/cart/CartSummary.java",
+        "old_text": "        return items.size() + \" items\";",
+        "new_text": "        return items.size() + \" items, total \" + Pricing.calcTotal(items, 0.0);"
+      },
+      "expect_pre": {
+        "decision": "not-deny"
+      },
+      "expect_applied": true
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "kind": "edit",
+        "status": "accepted",
+        "files_include": "src/main/java/com/shop/cart/CartSummary.java",
+        "min": 1
+      }
+    }
+  ]
+}

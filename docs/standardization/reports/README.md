@@ -13,6 +13,7 @@ harness's native hook dialect, against a local WCP reference coordinator as the 
 | [OpenCode adapter (@weft/adapter-opencode, plugin bridge)](opencode.md) | `opencode` | L3 | **L3** | yes | pass | fail-open | 80 / 191 |
 | [Cursor CLI translator (@weft/adapter-cursor)](cursor.md) | `cursor` | L3 | **L3** | yes | pass | fail-open | 80 / 198 |
 | [Gemini CLI translator (@weft/adapter-gemini)](gemini.md) | `gemini` | L3 | **L3** | yes | pass | fail-open | 84 / 206 |
+| [GitHub Copilot adapter (@weft/adapter-copilot)](copilot.md) | `copilot` | L3 | **L3** | yes | pass | fail-open | 334 / 1171 |
 | [Core stdio binding (bridge → Claude Code adapter)](core-binding.md) | `core` | L3 | **L3** | yes | pass | fail-open | 172 / 291 |
 | [Claude Code adapter in advisory mode (WEFT_MODE=advise)](claude-code-advise.md) | `claude-code` | L1 | **L1** | yes | fail | fail-open | 80 / 194 |
 
@@ -25,8 +26,9 @@ What these reports prove, and what they do not:
   That is live verification, tracked per harness in [docs/research/hooks.md](../../research/hooks.md)
   and the M2 runs ([demo/evidence/m2-report.md](../../../demo/evidence/m2-report.md)): Claude Code and
   OpenCode were verified live at L0–L3; Codex live at L0–L2 (M2: pre-edit denials reached the model's
-  transcript; its stop gate is not declared yet); Cursor and Gemini CLI are documented-only
-  (fixture-tested translators; no logged-in harness was available).
+  transcript; its stop gate is not declared yet); GitHub Copilot CLI live at L0–L3 (deny, injected
+  context and a refused stop in real `copilot -p` runs, [demo/evidence/copilot](../../../demo/evidence/copilot/README.md));
+  Cursor and Gemini CLI are documented-only (fixture-tested translators; no logged-in harness was available).
 - "Declared" is the `capabilities.level` the adapter sent in its session hello. A declaration above the
   verified level is non-conformant (spec §3.3); below it is allowed (Codex declares L2 until its stop
   gate is re-probed live).

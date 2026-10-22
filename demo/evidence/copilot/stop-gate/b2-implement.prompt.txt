@@ -1,0 +1,4 @@
+cwd: <work>/agent-b
+COPILOT_ALLOW_ALL=true copilot -p … --output-format json --allow-all-tools --no-ask-user --resume dd3f9003-63ee-4f68-9b25-8a07fb705b8b
+
+Implement the plan now, exactly as planned, without re-reading the files first. If a hook blocks or denies one of your edits, do not retry or adapt anything: reply with what the hook said and end your turn.

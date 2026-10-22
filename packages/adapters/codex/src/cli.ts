@@ -9,7 +9,7 @@
 //   status         print config (never the token) and session state
 //   negotiate …    the agent's shell command for WCP negotiation (propose/accept/reject/counter/escalate)
 //   inbox          print what is waiting for this agent (inbox, open errors, negotiations owed)
-import { spawn, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync, readdirSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
@@ -19,6 +19,7 @@ import { HttpTransport, type Transport } from "./client";
 import { CONFIG_REL, currentSession, loadConfig, readState, stateDir, type AdapterConfig, type Loaded } from "./config";
 import { CodexAdapter, type HookInput } from "./hooks";
 import { stableNodePath } from "../../claude-code/src/node-path";
+import { loopArgs, runHeartbeatLoop, spawnHeartbeat } from "../../claude-code/src/heartbeat";
 
 const SELF = fileURLToPath(import.meta.url);
 const HOOK_MARK = "weft-codex";
@@ -44,13 +45,7 @@ function adapterFor(loaded: Loaded, calls?: Call[]): CodexAdapter {
     analyze: async (changes, root, prefix) => (await import("./analysis")).analyzeChangesAsync(changes, root, prefix),
     diff: async (rel, before, after) => (await import("./analysis")).unifiedDiff(rel, before, after),
     cli: cliFor(loaded.root),
-    startHeartbeat: (codexSession) => {
-      try {
-        spawn(process.execPath, [SELF, "heartbeat-loop", codexSession, "--root", loaded.root], { detached: true, stdio: "ignore" }).unref();
-      } catch {
-        /* heartbeat is best-effort; sessions re-hello on expiry */
-      }
-    },
+    startHeartbeat: (codexSession) => spawnHeartbeat(SELF, codexSession, loaded.root),
   });
 }
 
@@ -311,16 +306,12 @@ async function preCommit(): Promise<number> {
   return 1;
 }
 
-async function heartbeatLoop(codexSession: string, rootArg?: string): Promise<void> {
-  const loaded = loadConfig(rootArg ?? process.cwd());
+async function heartbeatLoop(args: string[]): Promise<void> {
+  const { session, root, parent } = loopArgs(args);
+  const loaded = loadConfig(root ?? process.cwd());
   if (!loaded) return;
   const adapter = adapterFor(loaded);
-  const intervalMs = 30_000;
-  const idleLimitMs = 30 * 60_000;
-  for (;;) {
-    await new Promise((r) => setTimeout(r, intervalMs));
-    if (!(await adapter.beat(codexSession, idleLimitMs).catch(() => false))) return;
-  }
+  await runHeartbeatLoop({ root: loaded.root, session, parent, beat: (idle) => adapter.beat(session, idle) });
 }
 
 async function negotiateCmd(args: string[]): Promise<number> {
@@ -388,7 +379,7 @@ async function main(): Promise<void> {
       process.exitCode = await preCommit();
       return;
     case "heartbeat-loop":
-      return heartbeatLoop(args[0], arg(args, "root"));
+      return heartbeatLoop(args);
     case "status":
       return status();
     case "negotiate":

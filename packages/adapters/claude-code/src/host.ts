@@ -5,7 +5,7 @@
 // is not harness-specific lives here: install (config + token + git hooks + agent CLI),
 // commit-msg trailers, the pre-commit gate, heartbeats, `negotiate`/`inbox`, status, and
 // per-hook timing in `.weft/log/hooks.jsonl`.
-import { spawn, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
@@ -16,6 +16,7 @@ import { currentSession, loadConfig, readState, stateDir, withLock, writeState, 
 import { ClaudeAdapter, type HookInput, type HookOutput } from "./hooks";
 import { flushJobs, type LspJob } from "./lsp-queue";
 import { stableNodePath } from "./node-path";
+import { loopArgs, runHeartbeatLoop, spawnHeartbeat } from "./heartbeat";
 
 // Not imported from ./cli: that module runs Claude's main() when it is the entry bundle,
 // and esbuild would make every translator bundle that entry.
@@ -54,6 +55,12 @@ export type HostSpec = {
   installHarness: (root: string, hookCommand: string, args: string[]) => string[];
   /** Extra `.git/info/exclude` lines (machine-specific harness config). */
   excludes?: string[];
+  /**
+   * Whose exit ends the session's heartbeat loop: `harness` (default) for hook adapters,
+   * whose hook process exits right away; `self` for long-lived in-process hosts
+   * (the watcher, the MCP server).
+   */
+  sessionOwner?: "harness" | "self";
 };
 
 export type Call = { op: string; ms: number };
@@ -118,13 +125,7 @@ export class Host {
       cli: this.cliFor(loaded.root),
       identity: { harness: this.spec.harness, adapter: this.spec.adapter, capabilities: this.spec.capabilities },
       ...(lspJobs ? { lsp: (job: LspJob) => void lspJobs.push(job) } : {}),
-      startHeartbeat: (session) => {
-        try {
-          spawn(process.execPath, [self, "heartbeat-loop", session, "--root", loaded.root], { detached: true, stdio: "ignore" }).unref();
-        } catch {
-          /* best effort: sessions re-hello on expiry */
-        }
-      },
+      startHeartbeat: (session) => spawnHeartbeat(self, session, loaded.root, this.spec.sessionOwner ?? "harness"),
     });
   }
 
@@ -318,14 +319,12 @@ export class Host {
     await runDaemon(loaded.root, new LspWorker(loaded, { transport }));
   }
 
-  async heartbeatLoop(session: string, rootArg?: string): Promise<void> {
-    const loaded = this.load(rootArg ?? process.cwd());
+  async heartbeatLoop(args: string[]): Promise<void> {
+    const { session, root, parent } = loopArgs(args);
+    const loaded = this.load(root ?? process.cwd());
     if (!loaded) return;
     const adapter = this.adapter(loaded);
-    for (;;) {
-      await new Promise((r) => setTimeout(r, 30_000));
-      if (!(await adapter.beat(session, 30 * 60_000).catch(() => false))) return;
-    }
+    await runHeartbeatLoop({ root: loaded.root, session, parent, beat: (idle) => adapter.beat(session, idle) });
   }
 
   async negotiate(args: string[]): Promise<number> {
@@ -393,7 +392,7 @@ export class Host {
         process.exitCode = await this.preCommit();
         return;
       case "heartbeat-loop":
-        return this.heartbeatLoop(args[0]!, arg(args, "root"));
+        return this.heartbeatLoop(args);
       case "lsp-daemon":
         return this.lspDaemon(arg(args, "root"));
       case "status":

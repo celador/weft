@@ -1,0 +1,205 @@
+{
+  "url": "http://localhost:8797",
+  "repo": "demo-copilot-vscode-20261022-163147",
+  "events": [
+    {
+      "seq": 1,
+      "repo": "demo-copilot-vscode-20261022-163147",
+      "status": "accepted",
+      "kind": "join",
+      "ts": "2026-10-22T16:31:50.495Z",
+      "actor": {
+        "type": "agent",
+        "id": "copilot-a",
+        "harness": "copilot"
+      },
+      "agent": "copilot-a",
+      "task": "T-1",
+      "change": "Ifb0cadda89fa2f198031f5eaae0081a888579509",
+      "session": "s1",
+      "base_seq": 0,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "summary": "copilot-a joined (copilot, L3)",
+      "diagnostics": [],
+      "payload": {
+        "harness": "copilot",
+        "level": 3
+      }
+    },
+    {
+      "seq": 2,
+      "repo": "demo-copilot-vscode-20261022-163147",
+      "status": "accepted",
+      "kind": "join",
+      "ts": "2026-10-22T16:32:07.030Z",
+      "actor": {
+        "type": "agent",
+        "id": "vscode-b",
+        "harness": "copilot"
+      },
+      "agent": "vscode-b",
+      "task": "T-2",
+      "change": "I3a0e91050de81cdff2e6eb0955b84e5ef40f3aeb",
+      "session": "s2",
+      "base_seq": 1,
+      "files": [],
+      "reads": [],
+      "writes": [],
+      "summary": "vscode-b joined (copilot, L3)",
+      "diagnostics": [],
+      "payload": {
+        "harness": "copilot",
+        "level": 3
+      }
+    },
+    {
+      "seq": 3,
+      "repo": "demo-copilot-vscode-20261022-163147",
+      "status": "accepted",
+      "kind": "edit",
+      "ts": "2026-10-22T16:32:18.014Z",
+      "actor": {
+        "type": "agent",
+        "id": "copilot-a",
+        "harness": "copilot"
+      },
+      "agent": "copilot-a",
+      "task": "T-1",
+      "change": "Ifb0cadda89fa2f198031f5eaae0081a888579509",
+      "session": "s1",
+      "base_seq": 1,
+      "mode": "commit",
+      "files": [
+        "src/pricing.ts"
+      ],
+      "reads": [
+        "src/pricing.ts#Item"
+      ],
+      "writes": [
+        {
+          "key": "src/pricing.ts#calcTotal",
+          "kind": "signature"
+        },
+        {
+          "key": "src/pricing.ts#calcTotal.net",
+          "kind": "new"
+        },
+        {
+          "key": "src/pricing.ts#PriceOptions",
+          "kind": "new"
+        }
+      ],
+      "diff": "diff --git a/src/pricing.ts b/src/pricing.ts\n--- a/src/pricing.ts\n+++ b/src/pricing.ts\n@@ -1,6 +1,9 @@\n export type Item = { sku: string; price: number; qty: number };\n \n /** Sum of price \u00d7 quantity over the cart. */\n-export function calcTotal(items: Item[]): number {\n-  return items.reduce((sum, item) => sum + item.price * item.qty, 0);\n+export type PriceOptions = { taxRate: number };\n+\n+export function calcTotal(items: Item[], opts: PriceOptions): number {\n+  const net = items.reduce((sum, item) => sum + item.price * item.qty, 0);\n+  return net * (1 + opts.taxRate);\n }\n",
+      "intent": "T-1: Apply tax in calcTotal",
+      "summary": "copilot-a changed signature of calcTotal, added calcTotal.net, PriceOptions in src/pricing.ts \u2014 Apply tax in calcTotal",
+      "diagnostics": [],
+      "tool": {
+        "name": "Write",
+        "call_id": "cp-ae72adf0170c83dd",
+        "harness_event": "PostToolUse"
+      }
+    },
+    {
+      "seq": 4,
+      "repo": "demo-copilot-vscode-20261022-163147",
+      "status": "rejected",
+      "kind": "edit",
+      "ts": "2026-10-22T16:32:57.811Z",
+      "actor": {
+        "type": "agent",
+        "id": "vscode-b",
+        "harness": "copilot"
+      },
+      "agent": "vscode-b",
+      "task": "T-2",
+      "change": "I3a0e91050de81cdff2e6eb0955b84e5ef40f3aeb",
+      "session": "s2",
+      "base_seq": 2,
+      "mode": "commit",
+      "files": [
+        "src/cart.ts"
+      ],
+      "reads": [
+        "src/pricing.ts#Item",
+        "src/pricing.ts#calcTotal"
+      ],
+      "writes": [
+        {
+          "key": "src/cart.ts#Cart",
+          "kind": "body"
+        },
+        {
+          "key": "src/cart.ts#Cart.total",
+          "kind": "new"
+        }
+      ],
+      "diff": "diff --git a/src/cart.ts b/src/cart.ts\n--- a/src/cart.ts\n+++ b/src/cart.ts\n@@ -1,4 +1,4 @@\n-import type { Item } from \"./pricing\";\n+import { calcTotal, type Item } from \"./pricing\";\n \n export class Cart {\n   private items: Item[] = [];\n@@ -9,5 +9,9 @@\n \n   list(): Item[] {\n     return [...this.items];\n+  }\n+\n+  total(): number {\n+    return calcTotal(this.items);\n   }\n }\n",
+      "intent": "T-2: Show the cart total",
+      "summary": "Blocked: vscode-b edited Cart, added Cart.total in src/cart.ts \u2014 Show the cart total",
+      "diagnostics": [
+        {
+          "severity": "error",
+          "code": "stale_assumption",
+          "file": "src/pricing.ts",
+          "symbol": "src/pricing.ts#calcTotal",
+          "message": "You use src/pricing.ts#calcTotal, whose signature changed in #3 by copilot-a after your base #2.",
+          "suggestion": "Read the new src/pricing.ts#calcTotal (event #3) and update this call site, or negotiate with copilot-a.",
+          "caused_by_seq": 3,
+          "caused_by_agent": "copilot-a",
+          "caused_by_task": "T-1"
+        }
+      ],
+      "tool": {
+        "name": "Write",
+        "call_id": "call_eaSp21YI1nIKQH04HNAEhZ7M__vscode-1792686720011",
+        "harness_event": "PostToolUse"
+      }
+    },
+    {
+      "seq": 5,
+      "repo": "demo-copilot-vscode-20261022-163147",
+      "status": "accepted",
+      "kind": "edit",
+      "ts": "2026-10-22T16:33:15.114Z",
+      "actor": {
+        "type": "agent",
+        "id": "vscode-b",
+        "harness": "copilot"
+      },
+      "agent": "vscode-b",
+      "task": "T-2",
+      "change": "I3a0e91050de81cdff2e6eb0955b84e5ef40f3aeb",
+      "session": "s2",
+      "base_seq": 4,
+      "mode": "commit",
+      "files": [
+        "src/cart.ts"
+      ],
+      "reads": [
+        "src/pricing.ts#Item",
+        "src/pricing.ts#calcTotal"
+      ],
+      "writes": [
+        {
+          "key": "src/cart.ts#Cart",
+          "kind": "body"
+        },
+        {
+          "key": "src/cart.ts#Cart.total",
+          "kind": "body"
+        }
+      ],
+      "diff": "diff --git a/src/cart.ts b/src/cart.ts\n--- a/src/cart.ts\n+++ b/src/cart.ts\n@@ -12,6 +12,6 @@\n   }\n \n   total(): number {\n-    return calcTotal(this.items);\n+    return calcTotal(this.items, { taxRate: 0 });\n   }\n }\n",
+      "intent": "T-2: Show the cart total",
+      "summary": "vscode-b edited Cart, Cart.total in src/cart.ts \u2014 Show the cart total",
+      "diagnostics": [],
+      "tool": {
+        "name": "Write",
+        "call_id": "call_RDaT8xJ1SYmx8qTnyHaM6Lbh__vscode-1792686720014",
+        "harness_event": "PostToolUse"
+      }
+    }
+  ]
+}
