@@ -138,7 +138,7 @@ describe("sequencer behaviours (HTTP → DO)", () => {
   it("inbox drain: at-least-once delivery until acked; delivered_through advances; base_ahead enforced", async () => {
     const w = await world();
     await w.submit("b", { kind: "edit", base_seq: 2, reads: [K.refresh], writes: [{ key: K.fetch, kind: "body" }] }); // #3: B reads refreshToken
-    await w.submit("a", { kind: "edit", base_seq: 1, writes: [{ key: K.refresh, kind: "signature" }] }); // #4 → contract_changed to B
+    await w.submit("a", { kind: "edit", base_seq: 1, writes: [{ key: K.refresh, kind: "signature" }] }); // #4 → stale_assumption opened on B (B already uses it, spec §6.3 step 6)
     const msgTok = await humanToken([w.repo]);
     await wcp<ActionResult>("POST", `${w.base}/actions`, msgTok, { type: "action", action: "message", to: { agent: "codex-b" }, text: "keep the old signature", intent: "steer" }); // #5
     const first = await w.drain("b");
@@ -146,10 +146,10 @@ describe("sequencer behaviours (HTTP → DO)", () => {
       [1, 4, "diagnostic"],
       [2, 5, "message"],
     ]);
-    expect(first.items[0]!.diagnostic).toMatchObject({ code: "contract_changed", severity: "warning" });
+    expect(first.items[0]!.diagnostic).toMatchObject({ code: "stale_assumption", severity: "error" });
     expect(first.items[1]!.record).toMatchObject({ actor: { type: "human", id: "john" }, kind: "message" });
     expect(first.delivered_through).toBe(5);
-    expect(first.context).toContain("contract_changed");
+    expect(first.context).toContain("stale_assumption");
     // Not acked → redelivered.
     expect((await w.drain("b")).items.map((i) => i.id)).toEqual([1, 2]);
     // Ack 1 → only 2 remains; ack via submit.inbox_ack also works.

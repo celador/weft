@@ -379,7 +379,8 @@ Applied atomically with the append, in this order:
        of a change whose accepted edits already wrote k as `signature`/`deleted` (its
        users were told then) — a `stale_assumption` **error** caused by E is opened on
        that change (§6.5, origin `contract`; recorded even when the change has no live
-       session) and pushed as a `diagnostic` item. Under `conflicts: continue` E's owner
+       session, and since it is redelivered on every `hello` it raises `told(c, k)` to
+       E's seq, §6.1) and pushed as a `diagnostic` item. Under `conflicts: continue` E's owner
        also gets the owner notice (§8.4). Its suggestion asks for the call sites to be
        updated (`hold`) or for the conflict to be reported (`continue`); either way the
        change's gates stay closed until rule 1 of §6.5 (or 2–3) clears it;

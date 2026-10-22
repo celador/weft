@@ -1110,6 +1110,8 @@ export class ReferenceCoordinator {
           if (this.usesBeforeContract(c, rec, w.key)) {
             const d = contractError(rec, w, this.continueMode);
             this.openSet(c.id, d, "contract", rec.seq);
+            // The open error is redelivered on every hello (§6.5), so the change counts as told (§6.1).
+            this.tell(c, w.key, rec.seq);
             for (const ts of targets) this.push(ts, { seq: rec.seq, kind: "diagnostic", diagnostic: d });
             if (this.continueMode) this.notifyOwner(d, c.agent, "edit");
             continue;
