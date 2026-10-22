@@ -66,18 +66,13 @@ export function importReads(text: string, rel: string, root?: string, prefix = "
   return [...found];
 }
 
-function readText(path: string): string | undefined {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return undefined;
-  }
-}
-
 /** Reads/writes of a set of file changes. Unchanged files contribute nothing. */
 export function analyzeChanges(changes: FileChange[], root?: string, prefix = ""): Sets {
   const reads = new Set<string>();
   const writes = new Map<string, Write>();
+  // Contract types of imported declarations are read through the same checkout helper as
+  // everything else (no symlinks, nothing outside the checkout, 1 MiB cap, post-edit text).
+  const checkout = root ? checkoutAccess(root, new Map(changes.map((c) => [c.rel, c.after] as const))) : undefined;
   for (const c of changes) {
     if (c.before === c.after) continue;
     const repoPath = prefix + c.rel;
@@ -90,7 +85,7 @@ export function analyzeChanges(changes: FileChange[], root?: string, prefix = ""
           const imported = importReads(c.after, c.rel, root, prefix);
           for (const k of imported) reads.add(k);
           // The contract types of what this file uses (`PriceOptions` of `calcTotal(opts: PriceOptions)`).
-          if (root) for (const k of contractReads(imported, (rel) => readText(join(root, rel)), prefix)) reads.add(k);
+          if (checkout) for (const k of contractReads(imported, checkout.read, prefix)) reads.add(k);
         }
         continue;
       } catch {
