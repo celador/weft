@@ -81,6 +81,52 @@ class FakeClient:
         return [c for c in self.calls if c[0] == "submit" and (mode is None or c[2] == mode)]
 
 
+SCHEMA = json.loads((PKG.parent.parent / "protocol" / "schema" / "wcp-v0.schema.json").read_text())
+
+
+def _schema_errors(node, value, path="$"):
+    """Minimal JSON Schema check covering the keywords wcp-v0.schema.json uses (no jsonschema
+    dependency). The vitest suite re-validates the same events with @weft/protocol's validator."""
+    import re as _re
+    if "$ref" in node:
+        return _schema_errors(SCHEMA["$defs"][node["$ref"].split("/")[-1]], value, path)
+    errs = []
+    t = node.get("type")
+    types = {"object": dict, "array": list, "string": str, "integer": int, "boolean": bool}
+    if t in types and (not isinstance(value, types[t]) or (t == "integer" and isinstance(value, bool))):
+        return [f"{path}: expected {t}"]
+    if "const" in node and value != node["const"]:
+        errs.append(f"{path}: expected const {node['const']!r}")
+    if "enum" in node and value not in node["enum"]:
+        errs.append(f"{path}: {value!r} not in {node['enum']}")
+    if isinstance(value, str):
+        if "pattern" in node and not _re.search(node["pattern"], value):
+            errs.append(f"{path}: {value!r} !~ {node['pattern']}")
+        if len(value) > node.get("maxLength", 1 << 30) or len(value) < node.get("minLength", 0):
+            errs.append(f"{path}: bad length")
+    if isinstance(value, int) and "minimum" in node and value < node["minimum"]:
+        errs.append(f"{path}: < {node['minimum']}")
+    if isinstance(value, list) and "items" in node:
+        for i, v in enumerate(value):
+            errs += _schema_errors(node["items"], v, f"{path}[{i}]")
+    if isinstance(value, dict):
+        errs += [f"{path}: missing {k}" for k in node.get("required", []) if k not in value]
+        for k, sub in (node.get("properties") or {}).items():
+            if k in value:
+                errs += _schema_errors(sub, value[k], f"{path}.{k}")
+    for sub in node.get("allOf", []):
+        if "if" in sub and not _schema_errors(sub["if"], value, path):
+            errs += _schema_errors(sub["then"], value, path)
+        elif "if" not in sub:
+            errs += _schema_errors(sub, value, path)
+    return errs
+
+
+def assert_schema_valid(case, definition, value):
+    errs = _schema_errors(SCHEMA["$defs"][definition], value)
+    case.assertEqual(errs, [], f"{definition} invalid against wcp-v0.schema.json")
+
+
 def git(cwd, *args):
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
 
@@ -407,6 +453,66 @@ class TerminalAndGateTests(AdapterTestCase):
         release = self.client.submits("commit")[-1][3]
         self.assertEqual(release["kind"], "release")
         self.assertEqual(release["payload"]["keys"], ["src/a.ts#refreshToken"])
+        self.assertEqual(release["payload"]["reason"], "abandoned")
+        self.assertIn("retreat: kanban_complete after 2 gate refusals", release["intent"])
+        assert_schema_valid(self, "Submit", {"type": "submit", "mode": "commit", "event": release})
+
+    def test_commit_gate_retreat_release_is_schema_valid(self):
+        self.adapter.ensure_session()
+        refused = {"allow": False, "reason": "1 open Weft error(s)",
+                   "open_errors": [{"symbol": "pnpm-lock.yaml#*", "severity": "error"},
+                                   {"symbol": "not a key", "severity": "error"}]}
+        self.client.gate_results = [dict(refused), dict(refused), dict(refused)]
+        args = {"command": "git commit -m x", "workdir": str(self.repo)}
+        for _ in range(2):
+            self.assertEqual(self.adapter.pre_tool_call(tool_name="terminal", args=args, tool_call_id="g")["action"],
+                             "block")
+        self.assertIsNone(self.adapter.pre_tool_call(tool_name="terminal", args=args, tool_call_id="g"))
+        release = self.client.submits("commit")[-1][3]
+        self.assertEqual(release["payload"], {"keys": ["pnpm-lock.yaml#*"], "reason": "abandoned"})
+        assert_schema_valid(self, "Submit", {"type": "submit", "mode": "commit", "event": release})
+
+    def test_schema_check_rejects_free_text_release_reason(self):
+        bad = {"kind": "release", "base_seq": 1, "payload": {"keys": ["a.ts#x"], "reason": "retreat: git commit"}}
+        self.assertTrue(_schema_errors(SCHEMA["$defs"]["Submit"], {"type": "submit", "mode": "commit", "event": bad}))
+
+    def test_pre_verify_releases_on_insistence(self):
+        path = self.repo / "docs" / "notes.md"
+        self.run_edit("write_file", {"path": str(path), "content": "1\n"}, apply=lambda: path.write_text("1\n"))
+        refused = {"allow": False, "reason": "1 open Weft error(s)",
+                   "open_errors": [{"symbol": "pnpm-lock.yaml#*", "severity": "error"}]}
+        self.client.gate_results = [dict(refused), dict(refused), dict(refused)]
+        for _ in range(2):
+            out = self.adapter.pre_verify()
+            self.assertEqual(out["action"], "continue")
+            self.assertIn("Not done yet", out["message"])
+        self.assertIsNone(self.adapter.pre_verify())
+        release = self.client.submits("commit")[-1][3]
+        self.assertEqual(release["kind"], "release")
+        self.assertEqual(release["payload"], {"keys": ["pnpm-lock.yaml#*"], "reason": "abandoned"})
+        self.assertIn("retreat: finishing", release["intent"])
+        assert_schema_valid(self, "Submit", {"type": "submit", "mode": "commit", "event": release})
+
+    def test_rejected_release_is_logged(self):
+        logs = []
+        self.adapter.log = logs.append  # type: ignore[method-assign]
+        self.adapter.ensure_session()
+        real_submit = self.client.submit
+
+        def reject(session, mode, event, **kw):
+            if event.get("kind") == "release":
+                raise WcpError("invalid_message", "invalid submit", 400,
+                               {"issues": [{"path": "/event/payload/reason", "message": "enum"}]})
+            return real_submit(session, mode, event, **kw)
+
+        self.client.submit = reject  # type: ignore[method-assign]
+        self.assertFalse(self.adapter._release(["a.ts#x"], "retreat: test"))
+        self.assertTrue(any("release REJECTED" in m and "invalid_message" in m and "/event/payload/reason" in m
+                            for m in logs), logs)
+        self.client.submit = real_submit  # type: ignore[method-assign]
+        self.client.script["commit"] = [{"verdict": "reject", "diagnostics": [{"code": "x"}]}]
+        self.assertFalse(self.adapter._release(["a.ts#x"], "retreat: test"))
+        self.assertTrue(any("release REJECTED (verdict)" in m for m in logs), logs)
 
     def test_pre_verify_continues_while_errors_open(self):
         path = self.repo / "docs" / "notes.md"

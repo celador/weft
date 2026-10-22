@@ -73,6 +73,7 @@ MAX_FILE_BYTES = 512 * 1024
 MAX_SNAPSHOT_FILES = 300
 DRAIN_EVERY_S = 20.0
 RELEASE_AFTER_REFUSALS = 2
+SYMBOL_KEY = re.compile(r"^[^#\s]+#[^#\s]+$")  # WCP SymbolKey (schema $defs.SymbolKey)
 # Terminal commands that move other people's changes into the worktree: their file changes are
 # not this agent's edits (a conflicted merge would otherwise claim every merged symbol).
 GIT_INTEGRATION = re.compile(
@@ -987,21 +988,9 @@ class WeftAdapter:
         if self.cfg.mode != "enforce":
             return None
         result = self._call(lambda s: self.client.gate(s, gate))
-        if result.get("allow", True):
-            self.refusals.clear()
+        if result.get("allow", True) or self._retreat(gate, what, result):
             return None
         open_errors = result.get("open_errors") or []
-        keys = sorted({d.get("symbol") for d in open_errors if d.get("symbol")})
-        fingerprint = f"{gate}:{','.join(keys)}"
-        n = self.refusals.get(fingerprint, 0) + 1
-        self.refusals[fingerprint] = n
-        if n > RELEASE_AFTER_REFUSALS and keys:
-            # The agent insisted after being told twice: treat it as a deliberate retreat and
-            # release those keys (spec §6.3: release clears matching open errors). The release
-            # record is visible in the feed, so humans see what was walked away from.
-            self._release(keys, f"retreat: {what} after {n - 1} gate refusals")
-            self.refusals.pop(fingerprint, None)
-            return None
         self.log(f"gate {gate} refused ({len(open_errors)} open errors) for {what}")
         return {"action": "block", "message": (
             f"[weft] {what} refused by the Weft {gate} gate: {result.get('reason') or 'open errors'}\n"
@@ -1010,15 +999,49 @@ class WeftAdapter:
             f"these symbols, retry {what} {RELEASE_AFTER_REFUSALS} more time(s) and Weft will "
             "release them (recorded in the Weft feed).")}
 
-    def _release(self, keys: List[str], reason: str) -> None:
+    def _retreat(self, gate: str, what: str, result: dict) -> bool:
+        """Count a refusal; once the agent has insisted past ``RELEASE_AFTER_REFUSALS`` refusals
+        over the same open errors, treat it as a deliberate retreat and release those keys
+        (spec §6.3: release clears matching open errors). The release record is visible in the
+        feed, so humans see what was walked away from. Returns True when the caller should let
+        the action through."""
+        open_errors = result.get("open_errors") or []
+        keys = sorted({d.get("symbol") for d in open_errors
+                       if isinstance(d.get("symbol"), str) and SYMBOL_KEY.match(d["symbol"])})
+        fingerprint = f"{gate}:{','.join(keys)}"
+        n = self.refusals.get(fingerprint, 0) + 1
+        self.refusals[fingerprint] = n
+        if n <= RELEASE_AFTER_REFUSALS or not keys:
+            return False
+        self.refusals.pop(fingerprint, None)
+        self._release(keys, f"retreat: {what} after {n - 1} gate refusals")
+        return True
+
+    def _release(self, keys: List[str], note: str) -> bool:
+        """Submit a ``release`` for ``keys``. ReleasePayload.reason is a closed enum (§6.3), so a
+        retreat is ``abandoned``; the human-readable why rides in ``intent``. Returns True when
+        the gateway accepted the release."""
         event = {"kind": "release", "base_seq": self._effective_base(),
-                 "payload": {"keys": keys, "reason": reason[:200]}}
+                 "payload": {"keys": keys, "reason": "abandoned"}, "intent": note[:200]}
         try:
-            verdict = self._submit("commit", event, f"release-{hashlib.sha1(reason.encode()).hexdigest()[:10]}-{time.time_ns()}")
-            self._queue(verdict)
-            self.log(f"released {keys}: {reason}")
+            verdict = self._submit("commit", event,
+                                   f"release-{hashlib.sha1(note.encode()).hexdigest()[:10]}-{time.time_ns()}")
+        except WcpError as err:
+            issues = (err.details or {}).get("issues")
+            self.log(f"release REJECTED by gateway for {keys}: {err.code}: {err.message}"
+                     + (f" issues={json.dumps(issues)[:500]}" if issues else ""))
+            return False
         except Exception as err:
-            self.log(f"release failed: {err}")
+            self.log(f"release failed for {keys}: {err!r}")
+            return False
+        if verdict.get("verdict") == "reject":
+            self.log(f"release REJECTED (verdict) for {keys}: seq {verdict.get('seq')} "
+                     f"{json.dumps(verdict.get('diagnostics') or [])[:500]}")
+            self._queue(verdict)
+            return False
+        self._queue(verdict)
+        self.log(f"released {keys} (abandoned, seq {verdict.get('seq')}): {note}")
+        return True
 
     def pre_verify(self, **_: Any) -> Optional[dict]:
         if not self.session or self.cfg.mode != "enforce":
@@ -1029,10 +1052,16 @@ class WeftAdapter:
             self.log(f"pre_verify gate failed open: {err}")
             return None
         if result.get("allow", True):
+            self.refusals.clear()
             return None
+        if self._retreat("stop", "finishing", result):
+            return None
+        self.log(f"pre_verify refused ({len(result.get('open_errors') or [])} open errors)")
         return {"action": "continue", "message": (
             f"[weft] Not done yet: {result.get('reason') or 'open Weft errors'}\n"
-            "Fix these conflicts (re-edit the cited symbols against the current code) before finishing.")}
+            "Fix these conflicts (re-edit the cited symbols against the current code) before finishing. "
+            "If you deliberately retreated from these symbols, try to finish "
+            f"{RELEASE_AFTER_REFUSALS} more time(s) and Weft will release them (recorded in the Weft feed).")}
 
     # -- hook: post_tool_call --------------------------------------------------------------
 
