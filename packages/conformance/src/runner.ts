@@ -16,7 +16,7 @@ type DecisionExpect = { decision: "allow" | "advise" | "deny" | "not-deny" | "an
 export type Step =
   | { event: CoreEventName; prompt?: string; expect?: DecisionExpect }
   | { tool: Omit<CoreTool, "call_id">; expect_pre?: DecisionExpect; expect_post?: DecisionExpect; expect_any?: DecisionExpect; expect_applied?: boolean; apply?: boolean }
-  | { peer: string }
+  | { peer: string; leave?: boolean }
   | { oracle: "down" }
   | { expect_join: Record<string, never> }
   | { expect_log: { agent?: string; kind?: string; status?: string; mode?: string; files_include?: string; reads_include?: string; min?: number; max?: number } }
@@ -288,7 +288,7 @@ export async function runFixture(fx: Fixture, ws: Workspace, d: Dialect, opts: R
       } else if ("peer" in step) {
         const p = ws.peers[step.peer];
         if (!p) throw new Error(`unknown peer ${step.peer}`);
-        oracle.peer(p);
+        oracle.peer(p, { leave: step.leave === true });
       } else if ("oracle" in step) {
         await oracle.down();
       } else if ("expect_join" in step) {

@@ -106,6 +106,29 @@ function fresh(init: Partial<Parameters<typeof SqlCoordinator.init>[1]> = {}) {
 }
 
 describe("SqlCoordinator persistence and extras", () => {
+  it("unseen in-flight writes (spec §6.1 U): a late joiner is warned on a fresh database, not on one migrated from v3", () => {
+    const run = (migrated: boolean) => {
+      const { sql, clock, j } = fresh();
+      const a = j.call<{ session: string }>("hello", hello("a", "A"));
+      j.call("submit", a.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: 1, writes: [{ key: "src/x.ts#f", kind: "signature" }] } });
+      j.call("bye", a.session);
+      let k = j;
+      if (migrated) {
+        // A v3 database knows nothing about what its changes were told: its log is the floor.
+        sql.exec(`UPDATE meta SET v = '3' WHERE k = 'schema_version'`).toArray();
+        k = new JournaledCoordinator(sql, clock.now);
+      }
+      const b = k.call<{ session: string; delivered_through: number }>("hello", hello("b", "B"));
+      return k.call<{ verdict: string; diagnostics: Array<{ code: string; caused_by_seq?: number }> }>("submit", b.session, {
+        type: "submit",
+        mode: "check",
+        event: { kind: "edit", base_seq: b.delivered_through, reads: ["src/x.ts#f"], writes: [{ key: "src/y.ts#g", kind: "body" }] },
+      });
+    };
+    expect(run(false)).toMatchObject({ verdict: "reject", diagnostics: [{ code: "stale_assumption", caused_by_seq: 2 }] });
+    expect(run(true)).toMatchObject({ verdict: "accept", diagnostics: [] });
+  });
+
   it("state survives re-instantiation (Durable Object eviction)", () => {
     const { sql, clock, j } = fresh();
     const a = j.call<{ session: string }>("hello", hello("a", "A"));
@@ -241,7 +264,7 @@ describe("schema migration", () => {
     const cols = sql.exec<{ name: string }>(`PRAGMA table_info(changes)`).toArray().map((r) => r.name);
     expect(cols).toContain("merged_into");
     expect(sql.exec<{ id: string; merged_into: string | null }>(`SELECT id, merged_into FROM changes`).toArray()).toEqual([{ id: "I-old", merged_into: null }]);
-    expect(sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'schema_version'`).toArray()[0]!.v).toBe("3");
+    expect(sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'schema_version'`).toArray()[0]!.v).toBe("4");
     // A config written before B11 has no escalation field: it reads as auto.
     sql.exec(`UPDATE meta SET v = ? WHERE k = 'config'`, JSON.stringify({ repo: "demo", policy: "wound-wait", claim_ttl_ms: 1, session_ttl_ms: 1, heartbeat_interval_ms: 1, limits: { max_diff_bytes: 1, max_keys: 1, max_page: 1 } })).toArray();
     expect(new SqlCoordinator(sql).escalation).toBe("auto");
@@ -308,7 +331,7 @@ describe("claims policy (spec §7.5) and per-change open errors (§6.5): storage
     new SqlCoordinator(sql);
     expect(sql.exec(`SELECT change_id, key, origin, seq FROM change_errors`).toArray()).toEqual([{ change_id: "A", key: "src/x.ts#f", origin: "commit", seq: 7 }]);
     expect(sql.exec(`SELECT COUNT(*) AS n FROM open_errors`).toArray()).toEqual([{ n: 0 }]);
-    expect(sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'schema_version'`).toArray()[0]!.v).toBe("3");
+    expect(sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'schema_version'`).toArray()[0]!.v).toBe("4");
   });
 });
 

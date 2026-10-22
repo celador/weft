@@ -89,8 +89,11 @@ export class Oracle {
     await this.down();
   }
 
-  /** Apply a peer agent's change directly on the coordinator. Returns the edit's seq. */
-  peer(p: PeerChange): number {
+  /**
+   * Apply a peer agent's change directly on the coordinator. Returns the edit's seq.
+   * `leave`: the peer's session then ends (its change stays accepted and unlanded).
+   */
+  peer(p: PeerChange, opts: { leave?: boolean } = {}): number {
     const w = this.coord.hello({
       type: "hello",
       protocol: "wcp/0.1",
@@ -105,6 +108,7 @@ export class Oracle {
     });
     // The peer's change lives in the peer's own checkout, not in the agent's workspace.
     if (v.verdict !== "accept" || v.seq === null) throw new Error(`oracle: peer change rejected: ${JSON.stringify(v.diagnostics)}`);
+    if (opts.leave) this.coord.bye(w.session, "peer session ended");
     return v.seq;
   }
 
