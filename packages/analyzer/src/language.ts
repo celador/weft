@@ -45,7 +45,17 @@ export type Reference = string[] & {
  * `a.b`). `name` is set when the import binds a member of `module` (`from m import n`), and
  * absent when it binds the module itself (`import m as local`).
  */
-export type ImportBinding = { local: string; module: string; name?: string };
+export type ImportBinding = {
+  local: string;
+  module: string;
+  name?: string;
+  /**
+   * The import brings every declaration of `module` into scope, unqualified (C/C++ `#include`).
+   * `local` and `name` are ignored. The engine reads the included file (`AnalyzeOptions.read`)
+   * and follows its own includes.
+   */
+  all?: boolean;
+};
 
 export interface TreeSitterLanguage {
   /** Stable id, e.g. "python". */
@@ -69,6 +79,17 @@ export interface TreeSitterLanguage {
    * for member `name` of `module`. When it resolves to a file, the binding is a module binding.
    */
   memberModule?(module: string, name: string): string;
+  /**
+   * C/C++: true when a definition in `path` that an included file also declares is keyed to
+   * the included file (a `.c` definition shares its header prototype's key: callers read the
+   * header). False for headers themselves.
+   */
+  keyToIncludes?(path: string): boolean;
+  /**
+   * The id of the language that should analyze this text instead, when one extension is shared
+   * (a `.h` file written in C++). Undefined keeps this language.
+   */
+  refine?(path: string, text: string): string | undefined;
 }
 
 /**
@@ -95,4 +116,9 @@ export type AnalyzeOptions = {
   prefix?: string;
   /** Lets import resolution check the checkout. Without it, only relative imports resolve. */
   exists?: Exists;
+  /**
+   * Reads a checkout file (checkout-relative path), for languages whose imports bring a whole
+   * file into scope (C/C++ `#include`). Without it, included declarations are not seen.
+   */
+  read?: (rel: string) => string | undefined;
 };

@@ -1,0 +1,46 @@
+{
+  "id": "C.deny-stale-signature",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a74.1, \u00a75.2",
+  "title": "C: a call built on a prototype another agent just changed in the header is denied before it runs",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/cart.c",
+        "old_text": "  return n;",
+        "new_text": "  return calc_total(items, n);"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "stale_assumption",
+          "calc_total"
+        ]
+      },
+      "expect_applied": false
+    },
+    {
+      "expect_file": {
+        "path": "src/cart.c",
+        "unchanged": true
+      }
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "status": "rejected",
+        "mode": "check",
+        "reads_include": "include/pricing.h#calc_total",
+        "min": 1
+      }
+    }
+  ]
+}

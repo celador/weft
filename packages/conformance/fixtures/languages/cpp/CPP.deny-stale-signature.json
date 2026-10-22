@@ -1,0 +1,46 @@
+{
+  "id": "CPP.deny-stale-signature",
+  "level": 2,
+  "required": true,
+  "spec": "\u00a74.1, \u00a75.2",
+  "title": "C++: a member call built on a method signature another agent just changed is denied before it runs",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/checkout.cpp",
+        "old_text": "  return 0;",
+        "new_text": "  return cart.total();"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "stale_assumption",
+          "total"
+        ]
+      },
+      "expect_applied": false
+    },
+    {
+      "expect_file": {
+        "path": "src/checkout.cpp",
+        "unchanged": true
+      }
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "status": "rejected",
+        "mode": "check",
+        "reads_include": "include/shop/cart.hpp#shop.Cart.total",
+        "min": 1
+      }
+    }
+  ]
+}
