@@ -39,6 +39,16 @@ for (const [name, entry] of Object.entries(ADAPTERS)) {
   if (!existsSync(join(dir, "dist", entry))) throw new Error(`adapter ${name}: dist/${entry} missing after build`);
   cpSync(join(dir, "dist"), join(dist, "adapters", name), { recursive: true });
 }
+// The tree-sitter grammars (~21 MB) are identical in every adapter's dist. Keep ONE copy in
+// dist/adapters/grammars: @weft/analyzer's findGrammar() searches ../grammars from the bundle
+// and ../../grammars from dist/chunks, so every adapter finds it there.
+const shared = join(dist, "adapters", "grammars");
+for (const name of Object.keys(ADAPTERS)) {
+  const g = join(dist, "adapters", name, "grammars");
+  if (!existsSync(g)) continue;
+  if (!existsSync(shared)) cpSync(g, shared, { recursive: true });
+  rmSync(g, { recursive: true, force: true });
+}
 
 // 2. gateway Worker bundle, exactly what wrangler would upload
 const gw = join(root, "apps/gateway");
