@@ -1,3 +1,4 @@
+import { cpuMs, EDIT_BUDGET_MS } from "./budget.js";
 import { describe, expect, it } from "vitest";
 import { analyzeSource, languageFor } from "./index.js";
 
@@ -194,19 +195,12 @@ class Cart extends Base implements \\Countable
     expect(await run("<?php\nfunction f() {}\n", null)).toEqual({ reads: [], writes: [{ key: "src/Pricing/Calculator.php#f", kind: "deleted" }] });
   });
 
-  it("stays inside the edit-time budget (< 300 ms for a 2,000-line file, warm, fastest of 3)", async () => {
+  it("stays inside the edit-time budget (< 300 ms CPU for a 2,000-line file, warm)", async () => {
     const body = PRICING_V1.replace(/^<\?php[\s\S]*?namespace App\\Pricing;\n/, "");
     const big = "<?php\nnamespace App\\Pricing;\n" + Array.from({ length: 70 }, (_, i) => body.replaceAll("calc_total", `calc_${i}`).replaceAll("Calculator", `Calculator${i}`).replaceAll("TAX_RATE", `RATE_${i}`)).join("\n");
     expect(big.split("\n").length).toBeGreaterThanOrEqual(2000);
     await run(big, big);
     const after = big.replace("function calc_7(array $items)", "function calc_7(array $items, $x)");
-    // Fastest of three, so a busy machine's scheduler does not fail it (as c.test.ts does).
-    const times: number[] = [];
-    for (let i = 0; i < 3; i++) {
-      const t = performance.now();
-      await run(big, after);
-      times.push(performance.now() - t);
-    }
-    expect(Math.min(...times)).toBeLessThan(300);
+    expect(await cpuMs(() => run(big, after))).toBeLessThan(EDIT_BUDGET_MS);
   });
 });

@@ -17,10 +17,13 @@ const TRY_IT = "https://github.com/celador/weft/blob/main/docs/try-it.md?utm_sou
 const WEFT_START = NPX_READY
   ? { label: "Run in your repo", command: NPX_COMMAND, step1: `Run <code>${NPX_COMMAND}</code> in your repo.`, note: "" }
   : {
-      label: "Paste into a terminal",
-      command: QUICKSTART,
-      step1: "Paste the command above into a terminal. It starts Weft on your machine with two demo agents.",
-      note: `Needs Node 22+, pnpm and git. <code>npx weft</code> for your own repo is next. Step by step: <a href="${TRY_IT}">try-it guide</a>.`,
+      // John (Oct 22): the multi-line quickstart looked "intimidating and scary". Until npx is
+      // published, show only the one-liner as "coming soon"; no copy button (see below).
+      label: "Coming soon",
+      command: NPX_COMMAND,
+      step1: `Run <code>${NPX_COMMAND}</code> in your repo.`,
+      note: `Launching this week. Want it now? <a href="${TRY_IT}">Try it locally</a>.`,
+      soon: true,
     };
 
 (() => {
@@ -30,6 +33,7 @@ const WEFT_START = NPX_READY
   for (const el of document.querySelectorAll("[data-weft-note]")) {
     if (WEFT_START.note) el.innerHTML = WEFT_START.note; else el.remove();
   }
+  if (WEFT_START.soon) for (const el of document.querySelectorAll("[data-copy]")) el.remove();
 })();
 
 // Funnel events -> POST /e (Workers Analytics Engine, see site/worker.js). No cookies; the

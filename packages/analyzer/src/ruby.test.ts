@@ -1,3 +1,4 @@
+import { cpuMs, EDIT_BUDGET_MS } from "./budget.js";
 import { describe, expect, it } from "vitest";
 import { analyzeSource, languageFor } from "./index.js";
 import { underscore } from "./languages/ruby.js";
@@ -161,18 +162,11 @@ end
     expect(await run("def f\nend\n", null)).toEqual({ reads: [], writes: [{ key: "lib/pricing.rb#f", kind: "deleted" }] });
   });
 
-  it("stays inside the edit-time budget (< 300 ms for a 2,000-line file, warm, fastest of 3)", async () => {
+  it("stays inside the edit-time budget (< 300 ms CPU for a 2,000-line file, warm)", async () => {
     const big = Array.from({ length: 72 }, (_, i) => PRICING_V1.replaceAll("Pricing", `Pricing${i}`).replaceAll("Cart", `Cart${i}`)).join("\n");
     expect(big.split("\n").length).toBeGreaterThanOrEqual(2000);
     await run(big, big);
     const after = big.replace("def self.calc_total(items)", "def self.calc_total(items, x)");
-    // Fastest of three, so a busy machine's scheduler does not fail it (as c.test.ts does).
-    const times: number[] = [];
-    for (let i = 0; i < 3; i++) {
-      const t = performance.now();
-      await run(big, after);
-      times.push(performance.now() - t);
-    }
-    expect(Math.min(...times)).toBeLessThan(300);
+    expect(await cpuMs(() => run(big, after))).toBeLessThan(EDIT_BUDGET_MS);
   });
 });

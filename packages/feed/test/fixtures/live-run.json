@@ -1,0 +1,423 @@
+{
+ "repo": "shop-feed-162959",
+ "recorded": "2026-10-22T16:35:05.137Z",
+ "events": [
+  {
+   "seq": 1,
+   "repo": "shop-feed-162959",
+   "status": "accepted",
+   "kind": "join",
+   "ts": "2026-10-22T16:30:39.696Z",
+   "actor": {
+    "type": "agent",
+    "id": "claude-b",
+    "harness": "claude-code"
+   },
+   "agent": "claude-b",
+   "task": "T-2",
+   "change": "If47c992f3d5b9430e3a9a7f58ae402479efac308",
+   "session": "s1",
+   "base_seq": 0,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "summary": "claude-b joined (claude-code, L3)",
+   "diagnostics": [],
+   "payload": {
+    "harness": "claude-code",
+    "level": 3
+   }
+  },
+  {
+   "seq": 2,
+   "repo": "shop-feed-162959",
+   "status": "accepted",
+   "kind": "leave",
+   "ts": "2026-10-22T16:30:58.436Z",
+   "actor": {
+    "type": "agent",
+    "id": "claude-b",
+    "harness": "claude-code"
+   },
+   "agent": "claude-b",
+   "task": "T-2",
+   "change": "If47c992f3d5b9430e3a9a7f58ae402479efac308",
+   "session": "s1",
+   "base_seq": 1,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "intent": "claude-code session end: other",
+   "summary": "claude-b left — claude-code session end: other",
+   "diagnostics": [],
+   "payload": {
+    "harness": "claude-code",
+    "level": 3
+   }
+  },
+  {
+   "seq": 3,
+   "repo": "shop-feed-162959",
+   "status": "accepted",
+   "kind": "join",
+   "ts": "2026-10-22T16:31:02.668Z",
+   "actor": {
+    "type": "agent",
+    "id": "claude-a",
+    "harness": "claude-code"
+   },
+   "agent": "claude-a",
+   "task": "T-1",
+   "change": "I71e2e28649961e1c6605f3b80f5a2a6dc812d483",
+   "session": "s2",
+   "base_seq": 2,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "summary": "claude-a joined (claude-code, L3)",
+   "diagnostics": [],
+   "payload": {
+    "harness": "claude-code",
+    "level": 3
+   }
+  },
+  {
+   "seq": 4,
+   "repo": "shop-feed-162959",
+   "status": "accepted",
+   "kind": "edit",
+   "ts": "2026-10-22T16:31:09.672Z",
+   "actor": {
+    "type": "agent",
+    "id": "claude-a",
+    "harness": "claude-code"
+   },
+   "agent": "claude-a",
+   "task": "T-1",
+   "change": "I71e2e28649961e1c6605f3b80f5a2a6dc812d483",
+   "session": "s2",
+   "base_seq": 3,
+   "mode": "commit",
+   "files": [
+    "src/pricing.ts"
+   ],
+   "reads": [
+    "src/pricing.ts#Item"
+   ],
+   "writes": [
+    {
+     "key": "src/pricing.ts#calcTotal",
+     "kind": "signature"
+    },
+    {
+     "key": "src/pricing.ts#PriceOptions",
+     "kind": "new"
+    }
+   ],
+   "diff": "diff --git a/src/pricing.ts b/src/pricing.ts\n--- a/src/pricing.ts\n+++ b/src/pricing.ts\n@@ -1,5 +1,7 @@\n export type Item = { price: number; qty: number };\n \n-export function calcTotal(items: Item[]): number {\n-  return items.reduce((s, i) => s + i.price * i.qty, 0);\n+export type PriceOptions = { taxRate: number };\n+\n+export function calcTotal(items: Item[], opts: PriceOptions): number {\n+  return items.reduce((s, i) => s + i.price * i.qty, 0) * (1 + opts.taxRate);\n }\n",
+   "intent": "T-1: Prices include tax",
+   "summary": "claude-a changed signature of calcTotal, added PriceOptions in src/pricing.ts — Prices include tax",
+   "diagnostics": [],
+   "tool": {
+    "name": "Edit",
+    "call_id": "toolu_01NMu5Rc2LCCykhqN6YJ8Gba",
+    "harness_event": "PostToolUse"
+   }
+  },
+  {
+   "seq": 5,
+   "repo": "shop-feed-162959",
+   "status": "accepted",
+   "kind": "join",
+   "ts": "2026-10-22T16:31:11.466Z",
+   "actor": {
+    "type": "agent",
+    "id": "claude-b",
+    "harness": "claude-code"
+   },
+   "agent": "claude-b",
+   "task": "T-2",
+   "change": "If47c992f3d5b9430e3a9a7f58ae402479efac308",
+   "session": "s3",
+   "base_seq": 4,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "summary": "claude-b joined (claude-code, L3)",
+   "diagnostics": [],
+   "payload": {
+    "harness": "claude-code",
+    "level": 3
+   }
+  },
+  {
+   "seq": 6,
+   "repo": "shop-feed-162959",
+   "status": "rejected",
+   "kind": "edit",
+   "ts": "2026-10-22T16:31:15.407Z",
+   "actor": {
+    "type": "agent",
+    "id": "claude-b",
+    "harness": "claude-code"
+   },
+   "agent": "claude-b",
+   "task": "T-2",
+   "change": "If47c992f3d5b9430e3a9a7f58ae402479efac308",
+   "session": "s3",
+   "base_seq": 1,
+   "mode": "check",
+   "files": [
+    "src/cart.ts"
+   ],
+   "reads": [
+    "src/pricing.ts#Item",
+    "src/pricing.ts#calcTotal"
+   ],
+   "writes": [
+    {
+     "key": "src/cart.ts#cartTotal",
+     "kind": "new"
+    }
+   ],
+   "diff": "diff --git a/src/cart.ts b/src/cart.ts\n--- a/src/cart.ts\n+++ b/src/cart.ts\n@@ -3,3 +3,5 @@\n export function cartSummary(items: Item[]): string {\n   return `${items.length} items`;\n }\n+\n+export function cartTotal(items: Item[]): number { return calcTotal(items); }\n",
+   "intent": "T-2: Show the cart total",
+   "summary": "Blocked: claude-b added cartTotal in src/cart.ts — Show the cart total",
+   "diagnostics": [
+    {
+     "severity": "error",
+     "code": "stale_assumption",
+     "file": "src/pricing.ts",
+     "symbol": "src/pricing.ts#calcTotal",
+     "message": "You use src/pricing.ts#calcTotal, whose signature changed in #4 by claude-a after your base #1.",
+     "suggestion": "Read the new src/pricing.ts#calcTotal (event #4) and update this call site, or negotiate with claude-a.",
+     "caused_by_seq": 4,
+     "caused_by_agent": "claude-a",
+     "caused_by_task": "T-1"
+    }
+   ],
+   "tool": {
+    "name": "Edit",
+    "call_id": "toolu_012Qi6qVJ5DJppoSXubrqE93",
+    "harness_event": "PreToolUse"
+   }
+  },
+  {
+   "seq": 7,
+   "repo": "shop-feed-162959",
+   "status": "accepted",
+   "kind": "leave",
+   "ts": "2026-10-22T16:31:22.594Z",
+   "actor": {
+    "type": "agent",
+    "id": "claude-a",
+    "harness": "claude-code"
+   },
+   "agent": "claude-a",
+   "task": "T-1",
+   "change": "I71e2e28649961e1c6605f3b80f5a2a6dc812d483",
+   "session": "s2",
+   "base_seq": 6,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "intent": "claude-code session end: other",
+   "summary": "claude-a left — claude-code session end: other",
+   "diagnostics": [],
+   "payload": {
+    "harness": "claude-code",
+    "level": 3
+   }
+  },
+  {
+   "seq": 8,
+   "repo": "shop-feed-162959",
+   "status": "accepted",
+   "kind": "release",
+   "ts": "2026-10-22T16:31:22.594Z",
+   "actor": {
+    "type": "system",
+    "id": "coordinator"
+   },
+   "agent": "claude-a",
+   "task": "T-1",
+   "change": "I71e2e28649961e1c6605f3b80f5a2a6dc812d483",
+   "base_seq": 7,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "summary": "claude-a released calcTotal, PriceOptions (session ended)",
+   "diagnostics": [],
+   "payload": {
+    "keys": [
+     "src/pricing.ts#calcTotal",
+     "src/pricing.ts#PriceOptions"
+    ],
+    "reason": "session_ended"
+   }
+  },
+  {
+   "seq": 9,
+   "repo": "shop-feed-162959",
+   "status": "accepted",
+   "kind": "edit",
+   "ts": "2026-10-22T16:31:30.980Z",
+   "actor": {
+    "type": "agent",
+    "id": "claude-b",
+    "harness": "claude-code"
+   },
+   "agent": "claude-b",
+   "task": "T-2",
+   "change": "If47c992f3d5b9430e3a9a7f58ae402479efac308",
+   "session": "s3",
+   "base_seq": 6,
+   "mode": "commit",
+   "files": [
+    "src/cart.ts"
+   ],
+   "reads": [
+    "src/pricing.ts#Item",
+    "src/pricing.ts#calcTotal"
+   ],
+   "writes": [
+    {
+     "key": "src/cart.ts#cartTotal",
+     "kind": "new"
+    }
+   ],
+   "diff": "diff --git a/src/cart.ts b/src/cart.ts\n--- a/src/cart.ts\n+++ b/src/cart.ts\n@@ -3,3 +3,5 @@\n export function cartSummary(items: Item[]): string {\n   return `${items.length} items`;\n }\n+\n+export function cartTotal(items: Item[]): number { return calcTotal(items, { taxRate: 0 }); }\n",
+   "intent": "T-2: Show the cart total",
+   "summary": "claude-b added cartTotal in src/cart.ts — Show the cart total",
+   "diagnostics": [],
+   "tool": {
+    "name": "Edit",
+    "call_id": "toolu_01CURGPcB3S3RGK8tQUeT54A",
+    "harness_event": "PostToolUse"
+   }
+  },
+  {
+   "seq": 10,
+   "repo": "shop-feed-162959",
+   "status": "accepted",
+   "kind": "leave",
+   "ts": "2026-10-22T16:31:42.368Z",
+   "actor": {
+    "type": "agent",
+    "id": "claude-b",
+    "harness": "claude-code"
+   },
+   "agent": "claude-b",
+   "task": "T-2",
+   "change": "If47c992f3d5b9430e3a9a7f58ae402479efac308",
+   "session": "s3",
+   "base_seq": 9,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "intent": "claude-code session end: other",
+   "summary": "claude-b left — claude-code session end: other",
+   "diagnostics": [],
+   "payload": {
+    "harness": "claude-code",
+    "level": 3
+   }
+  },
+  {
+   "seq": 11,
+   "repo": "shop-feed-162959",
+   "status": "accepted",
+   "kind": "release",
+   "ts": "2026-10-22T16:31:42.368Z",
+   "actor": {
+    "type": "system",
+    "id": "coordinator"
+   },
+   "agent": "claude-b",
+   "task": "T-2",
+   "change": "If47c992f3d5b9430e3a9a7f58ae402479efac308",
+   "base_seq": 10,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "summary": "claude-b released cartTotal (session ended)",
+   "diagnostics": [],
+   "payload": {
+    "keys": [
+     "src/cart.ts#cartTotal"
+    ],
+    "reason": "session_ended"
+   }
+  },
+  {
+   "seq": 12,
+   "repo": "shop-feed-162959",
+   "status": "accepted",
+   "kind": "message",
+   "ts": "2026-10-22T16:34:15.460Z",
+   "actor": {
+    "type": "human",
+    "id": "john"
+   },
+   "base_seq": 11,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "summary": "john → claude-a: Heads up from the feed: claude-b needs calcTotal's old call to keep working. Keep a default for opts?",
+   "diagnostics": [],
+   "payload": {
+    "to": {
+     "agent": "claude-a"
+    },
+    "text": "Heads up from the feed: claude-b needs calcTotal's old call to keep working. Keep a default for opts?",
+    "intent": "steer"
+   }
+  },
+  {
+   "seq": 13,
+   "repo": "shop-feed-162959",
+   "status": "accepted",
+   "kind": "control",
+   "ts": "2026-10-22T16:34:16.125Z",
+   "actor": {
+    "type": "human",
+    "id": "john"
+   },
+   "base_seq": 12,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "summary": "john paused claude-b",
+   "diagnostics": [],
+   "payload": {
+    "action": "pause",
+    "target": {
+     "agent": "claude-b"
+    }
+   }
+  },
+  {
+   "seq": 14,
+   "repo": "shop-feed-162959",
+   "status": "accepted",
+   "kind": "control",
+   "ts": "2026-10-22T16:34:18.191Z",
+   "actor": {
+    "type": "human",
+    "id": "john"
+   },
+   "base_seq": 13,
+   "files": [],
+   "reads": [],
+   "writes": [],
+   "summary": "john resumed claude-b",
+   "diagnostics": [],
+   "payload": {
+    "action": "resume",
+    "target": {
+     "agent": "claude-b"
+    }
+   }
+  }
+ ]
+}

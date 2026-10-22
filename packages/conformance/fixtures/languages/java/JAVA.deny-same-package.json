@@ -1,0 +1,30 @@
+{
+  "id": "JAVA.deny-same-package",
+  "level": 2,
+  "required": true,
+  "spec": "§4.1",
+  "title": "Java: a class of the same package, used without an import, is checked like an imported one",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/main/java/com/shop/pricing/Checkout.java",
+        "old_text": "        return 0.0;",
+        "new_text": "        return Pricing.calcTotal(items);"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "calcTotal"
+        ]
+      },
+      "expect_applied": false
+    }
+  ]
+}
