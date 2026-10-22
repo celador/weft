@@ -29,6 +29,7 @@ export function makeHost(client?: string): Host {
     adapter: `@weft/mcp@${VERSION} (core ${ADAPTER_VERSION})`,
     capabilities: CAPABILITIES,
     self: SELF,
+    sessionOwner: "self",
     installHarness: (root) => [`MCP server: add {"command": "npx", "args": ["-y", "@weft/mcp", "--dir", "${root}"]} to your harness's MCP config (see the @weft/mcp README)`],
   });
 }

@@ -16,7 +16,7 @@
 //   negotiate …    the agent's shell command for WCP negotiation (propose/accept/reject/counter/escalate)
 //   inbox          print what is waiting for this agent (inbox, open errors, negotiations owed)
 //   claim          explicit claim on symbols: claim --keys path#sym[,…] [--firm] [--ttl MS]
-import { spawn, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -27,6 +27,7 @@ import { BASH_TARGET_FORMS, CONFIG_REL, appendAdapterLog, bashTargetDir, configS
 import { EDIT_TOOLS, editPath } from "./edits";
 import { ClaudeAdapter, type HookInput } from "./hooks";
 import { stableNodePath } from "./node-path";
+import { loopArgs, runHeartbeatLoop, spawnHeartbeat } from "./heartbeat";
 
 const SELF = fileURLToPath(import.meta.url);
 const HOOK_MARK = "weft-claude";
@@ -52,13 +53,7 @@ function adapterFor(loaded: Loaded, calls?: Call[]): ClaudeAdapter {
     analyze: async (changes, root, prefix) => (await import("./analysis")).analyzeChangesAsync(changes, root, prefix),
     diff: async (rel, before, after) => (await import("./analysis")).unifiedDiff(rel, before, after),
     cli: cliFor(loaded.root),
-    startHeartbeat: (claudeSession) => {
-      try {
-        spawn(process.execPath, [SELF, "heartbeat-loop", claudeSession, "--root", loaded.root], { detached: true, stdio: "ignore" }).unref();
-      } catch {
-        /* heartbeat is best-effort; sessions re-hello on expiry */
-      }
-    },
+    startHeartbeat: (claudeSession) => spawnHeartbeat(SELF, claudeSession, loaded.root),
   });
 }
 
@@ -413,16 +408,12 @@ async function preCommit(): Promise<number> {
   return 1;
 }
 
-async function heartbeatLoop(claudeSession: string, rootArg?: string): Promise<void> {
-  const loaded = loadConfig(rootArg ?? process.cwd());
+async function heartbeatLoop(args: string[]): Promise<void> {
+  const { session, root, parent } = loopArgs(args);
+  const loaded = loadConfig(root ?? process.cwd());
   if (!loaded) return;
   const adapter = adapterFor(loaded);
-  const intervalMs = 30_000;
-  const idleLimitMs = 30 * 60_000;
-  for (;;) {
-    await new Promise((r) => setTimeout(r, intervalMs));
-    if (!(await adapter.beat(claudeSession, idleLimitMs).catch(() => false))) return;
-  }
+  await runHeartbeatLoop({ root: loaded.root, session, parent, beat: (idle) => adapter.beat(session, idle) });
 }
 
 async function negotiateCmd(args: string[]): Promise<number> {
@@ -514,7 +505,7 @@ async function main(): Promise<void> {
       process.exitCode = await preCommit();
       return;
     case "heartbeat-loop":
-      return heartbeatLoop(args[0], arg(args, "root"));
+      return heartbeatLoop(args);
     case "status":
       return status();
     case "negotiate":
