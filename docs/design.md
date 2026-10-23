@@ -474,3 +474,70 @@ WCP v0.1 is specified in `docs/protocol/wcp-v0.md` (normative; implemented by `p
   run.json); everything from the queue on was the real pipeline. Selection covers TS/JS only;
   type-only imports count as edges (conservative); property names are over-approximated as
   references.
+
+
+## Update 2026-10-22 (t_5f9c01c1, CI load: batched landing with bisect)
+
+- Why: one presubmit per change serializes the land queue on the test suite. §6.4 / the B7 note
+  already said "batch only in the land queue"; now it does.
+- Policy (`RepoConfig.land.batch`, default on: `max` 4, `wait_s` 30; clamped to 16 / 600 s;
+  `false` or `max` < 2 = one change per presubmit). The queue head collects the `queued`
+  entries behind it in queue order. A lone change never waits and runs the old single
+  `land` job unchanged (N = 1 is byte-for-byte the previous path). With company it lingers
+  up to `wait_s` for the batch to fill.
+- Claim (repo DO, schema v5): `submit_queue.batch` = queue id of the leader. `claimBatch(leader,
+  ids)` (journal op `queue_claim`, gateway `POST /system/queue {claim, ids}`) atomically takes
+  entries still `queued` and unclaimed, behind the leader, and marks them `landing`. A claimed
+  entry's own LandChange workflow keeps polling and returns its leader's outcome (`landed` with
+  its own op id and range, or `failed` with the reason); it never runs a land job itself.
+  Setting an entry back to `queued` clears `batch`.
+- Job `land_batch` (weft-job.mjs, one sandbox run per round, read tokens minted per fork):
+  stack each change onto the previous one's result with the layered merge (a change that
+  conflicts is dropped from the stack and bounced with its hunks), run the full presubmit
+  once on the stacked tip, CAS-push it. On failure, bisect over prefixes of the stack (binary
+  search for the shortest failing prefix: ceil(log2 n) more runs), push the passing prefix
+  with one CAS push, report the first culprit with its failing run, and mark the changes
+  after it `pending`. The workflow bounces the culprit (WCP message with the failing output,
+  queue entry `failed`, `land`/`presubmit` evidence `fail`) and runs another round with the
+  pending ones, re-stacked without it. Stale trunk retries the round (3 attempts), as before.
+  Poll budget scales with 1 + ceil(log2 n).
+- Per change, unchanged guarantees: its own `land` event + op (`x_batch: {leader, position,
+  size, round}` in the payload), its own `landings` row with `before` = the previous change's
+  stacked sha and `after` = its own, its own evidence (`land` pass with `batch` info,
+  `presubmit` pass with the run that covered it). RevertOperation reverts `before..after` of
+  one op, so one change of a batch reverts alone.
+- Metrics: Workers Analytics Engine dataset `weft_land` (`weft_land_preview`), one point per
+  round: index repo; blobs `land.batch`, outcome, `#leader`; doubles round size, presubmit
+  runs, presubmit runs saved (tested changes − runs: what a one-at-a-time queue would have
+  run), bisect steps, landed, culprits, conflicts, round.
+- Bisect cost: no failure = 1 run for n changes; one culprit = 1 + ceil(log2 n) runs for the
+  round, plus later rounds for the changes after it. Saved can be 0 or negative when a culprit
+  sits mid-batch (4 changes, culprit 3rd: 3 + 1 runs = 4, same as one at a time). Trunk that
+  is already red blames the first change (same as a single landing).
+- Proof: `apps/workflows/test/batch.test.ts` (real git + weft-job.mjs + journaled coordinator):
+  4-change batch with one presubmit and chained ranges, followers report the leader's
+  outcome; planted failure isolated by bisect (tested prefixes 4 fail, 2 pass, 3 fail), A+B
+  pushed, C bounced with the failing output, D re-stacked in round 2; revert one change of a
+  batch; stacking conflict dropped and bounced; lone change and `batch: false` use the old
+  path; linger. Sequencer: claim atomicity, no stealing, release, journal replay. Gateway:
+  the claim route over HTTP → DO, agents refused.
+- Live (preview, repo `weft-batch`, `demo/evidence/batch-live/run.json`, AE rows in
+  `analytics-engine.json`; synthetic suite of 6 node:test files, ~1.5 s work each, ~12–14 s
+  per presubmit run in a standard-1 container):
+
+  | run | queue | presubmit runs | outcome |
+  |---|---|---|---|
+  | warm-up W (alone) | #1 | 1 (12.3 s) | landed by the old single path |
+  | A, C, B, D (queued behind W) | #2 leads #3–#5 | 1 (13.9 s) for 4 | 4 land ops #17–#20, one CAS push, chained ranges; saved 3 runs |
+  | warm-up Y (alone) | #6 | 1 (11.7 s) | landed |
+  | F, E, H, G (G = planted failure) | #7 leads #8–#10 | 3 (13.5 + 12.6 + 12.7 s) for 4 | tip 4 fail, prefix 2 pass, prefix 3 pass → G isolated; F, E, H landed in one push; G bounced with `round2: 1.2 !== 1.23`; saved 1 run |
+  | revert B (one change of the first batch) | | | revert op #47; trunk keeps W, A, C, D, Y, E, F, H; B's file gone |
+
+  Each phase's five landings finished about 100 s after the land requests (the warm-up's own
+  presubmit first, then the batch; queue poll interval 10 s).
+- Caveats: same preview restore as t_609507d0 (sandbox, its R2 bucket, push queue + gateway
+  consumer re-created for the run and wound down again; Artifacts `pushed` events did not
+  arrive, the script used the queue fallback). The leader's linger only happens when it
+  already has company; changes that arrive while the head is mid-presubmit join the next
+  batch. A dead leader workflow leaves its claimed entries `landing` until their own
+  workflows time out (1 h at the default poll); they are not re-queued automatically.

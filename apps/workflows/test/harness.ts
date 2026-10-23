@@ -116,6 +116,9 @@ export class LocalCoord implements CoordinatorClient {
   async queue(statuses?: string[]) {
     return this.j.coord.queue(statuses) as QueueEntry[];
   }
+  async claimBatch(leader: number, ids: number[], note?: string) {
+    return this.j.call<QueueEntry[]>("queue_claim", leader, ids, note);
+  }
   async ops() {
     return this.j.coord.ops() as unknown as OpRow[];
   }

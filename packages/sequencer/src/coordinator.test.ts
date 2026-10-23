@@ -207,6 +207,36 @@ describe("SqlCoordinator persistence and extras", () => {
     expect(j.coord.ops()).toEqual([expect.objectContaining({ op_id: "op-1", seq: 3, kind: "land", change_id: "A", sha: "abc1234" })]);
   });
 
+  it("submit queue batch claim (t_5f9c01c1): the leader claims queued entries atomically; lands clear each; release requeues; journal replays", () => {
+    const { j } = fresh();
+    for (const [a, c] of [["a", "A"], ["b", "B"], ["c", "C"], ["d", "D"]] as const) j.call("hello", hello(a, c));
+    const [qa, qb, qc, qd] = ["A", "B", "C", "D"].map((c) => j.call<{ id: number }>("enqueue", c, "human:john"));
+    // Only a `landing` head may lead.
+    expect(() => j.call("queue_claim", qa!.id, [qb!.id])).toThrow(/not landing/);
+    j.call("queue_status", qa!.id, "landing", "workflow wf-a");
+    j.call("queue_status", qd!.id, "cancelled", "gave up");
+    const claimed = j.call<Array<{ id: number; status: string; batch: number | null }>>("queue_claim", qa!.id, [qc!.id, qb!.id, qd!.id, 999], "batch #1");
+    // Leader first, then queue order; the cancelled and unknown ids are skipped.
+    expect(claimed.map((e) => [e.id, e.status, e.batch])).toEqual([
+      [qa!.id, "landing", qa!.id],
+      [qb!.id, "landing", qa!.id],
+      [qc!.id, "landing", qa!.id],
+    ]);
+    // A second leader cannot steal claimed entries.
+    j.call("queue_status", qd!.id, "queued");
+    j.call("queue_status", qd!.id, "landing");
+    expect(j.call<Array<{ id: number }>>("queue_claim", qd!.id, [qb!.id, qc!.id]).map((e) => e.id)).toEqual([qd!.id]);
+    // Landing B (a batch member) marks just its entry landed; the batch id stays for its workflow to read.
+    j.call("system", { kind: "land", base_seq: 1, change: "B", payload: { sha: "b".repeat(40), op_id: "op-b" } });
+    expect(j.coord.queue(["landed"])).toEqual([expect.objectContaining({ id: qb!.id, change: "B", status: "landed", batch: qa!.id })]);
+    // Released back to the queue: the entry is its own workflow's again.
+    expect(j.call<{ status: string; batch: number | null }>("queue_status", qc!.id, "queued")).toMatchObject({ status: "queued", batch: null });
+    // Replay determinism: the journal rebuilds the same queue.
+    const all = ["queued", "landing", "landed", "failed", "cancelled"];
+    const { coord } = replay(nodeSql(), { repo: "r" }, j.journal());
+    expect(coord.queue(all)).toEqual(j.coord.queue(all));
+  });
+
   it("system checkpoint (Artifacts push) matches the reference and is attributed to the change", () => {
     const { j } = fresh();
     const ref = new ReferenceCoordinator({ repo: "r", now: () => Date.parse("2026-10-05T12:00:00.000Z") });
@@ -264,7 +294,7 @@ describe("schema migration", () => {
     const cols = sql.exec<{ name: string }>(`PRAGMA table_info(changes)`).toArray().map((r) => r.name);
     expect(cols).toContain("merged_into");
     expect(sql.exec<{ id: string; merged_into: string | null }>(`SELECT id, merged_into FROM changes`).toArray()).toEqual([{ id: "I-old", merged_into: null }]);
-    expect(sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'schema_version'`).toArray()[0]!.v).toBe("4");
+    expect(sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'schema_version'`).toArray()[0]!.v).toBe("5");
     // A config written before B11 has no escalation field: it reads as auto.
     sql.exec(`UPDATE meta SET v = ? WHERE k = 'config'`, JSON.stringify({ repo: "demo", policy: "wound-wait", claim_ttl_ms: 1, session_ttl_ms: 1, heartbeat_interval_ms: 1, limits: { max_diff_bytes: 1, max_keys: 1, max_page: 1 } })).toArray();
     expect(new SqlCoordinator(sql).escalation).toBe("auto");
@@ -331,7 +361,7 @@ describe("claims policy (spec §7.5) and per-change open errors (§6.5): storage
     new SqlCoordinator(sql);
     expect(sql.exec(`SELECT change_id, key, origin, seq FROM change_errors`).toArray()).toEqual([{ change_id: "A", key: "src/x.ts#f", origin: "commit", seq: 7 }]);
     expect(sql.exec(`SELECT COUNT(*) AS n FROM open_errors`).toArray()).toEqual([{ n: 0 }]);
-    expect(sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'schema_version'`).toArray()[0]!.v).toBe("4");
+    expect(sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'schema_version'`).toArray()[0]!.v).toBe("5");
   });
 });
 

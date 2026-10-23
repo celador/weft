@@ -46,6 +46,8 @@ export interface Env extends Omit<EvidenceEnv, "ARTIFACTS"> {
   LAND_CHANGE: Workflow<LandChangeParams>;
   REVERT_OPERATION: Workflow<RevertOperationParams>;
   BEST_OF_N: Workflow<BestOfNParams>;
+  /** Land-queue metrics (batch size, presubmit runs saved, bisect steps). */
+  WEFT_LAND?: AnalyticsEngineDataset;
 }
 
 const TERMINAL = new Set(["succeeded", "failed", "lost", "killed"]);
@@ -85,6 +87,9 @@ class HttpCoordinator implements CoordinatorClient {
   async queue(statuses = ["queued", "landing"]) {
     return (await this.call<{ entries: QueueEntry[] }>("GET", `/system/queue?status=${statuses.join(",")}`)).entries;
   }
+  async claimBatch(leader: number, ids: number[], note?: string) {
+    return (await this.call<{ entries: QueueEntry[] }>("POST", "/system/queue", { claim: leader, ids, ...(note ? { note } : {}) })).entries;
+  }
   async ops() {
     return (await this.call<{ ops: OpRow[] }>("GET", "/system/ops")).ops;
   }
@@ -106,6 +111,7 @@ class SandboxJobs implements JobRunner {
     };
     await mint(req.trunk.name, req.trunk.remote, req.trunk.access);
     if (req.fork) await mint(req.fork.name, req.fork.remote, req.fork.access);
+    for (const f of req.forks ?? []) if (!remotes.some((r) => r.remote === f.remote)) await mint(f.name, f.remote, f.access);
     const res = await this.env.SANDBOX.start({
       run,
       repo: req.repo,
@@ -146,6 +152,7 @@ function deps(env: Env): Deps {
     jobs: new SandboxJobs(env),
     now: () => Date.now(),
     ...(evidence ? { evidence } : {}),
+    ...(env.WEFT_LAND ? { metrics: env.WEFT_LAND } : {}),
     launch: {
       async land(p) {
         const id = ids.land(p.change, Date.now());

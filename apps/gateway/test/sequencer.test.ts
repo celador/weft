@@ -72,6 +72,24 @@ describe("sequencer behaviours (HTTP → DO)", () => {
     expect(ev.summary.startsWith("Blocked: codex-b")).toBe(true);
   });
 
+  it("system queue: a landing head claims the queued entries behind it (batched landing, t_5f9c01c1)", async () => {
+    const w = await world();
+    const sys = await systemToken([w.repo], "weft-workflows");
+    type Q = { id: number; change: string; status: string; batch: number | null };
+    const qa = await wcp<Q>("POST", `${w.base}/system/queue`, sys, { change: "I-a" });
+    const qb = await wcp<Q>("POST", `${w.base}/system/queue`, sys, { change: "I-b" });
+    await wcp<Q>("POST", `${w.base}/system/queue`, sys, { id: qa.id, status: "landing" });
+    const claimed = await wcp<{ entries: Q[] }>("POST", `${w.base}/system/queue`, sys, { claim: qa.id, ids: [qb.id], note: "batch" });
+    expect(claimed.entries.map((e) => [e.change, e.status, e.batch])).toEqual([
+      ["I-a", "landing", qa.id],
+      ["I-b", "landing", qa.id],
+    ]);
+    const r = await call("POST", `${w.base}/system/queue`, sys, { claim: qa.id, ids: ["x"] });
+    expect(r.status).toBe(400);
+    // agents may not touch the queue
+    expect((await call("POST", `${w.base}/system/queue`, w.ta, { claim: qa.id, ids: [qb.id] })).status).toBe(403);
+  });
+
   it("signature-read error: reading a symbol whose signature changed after base rejects with stale_assumption", async () => {
     const w = await world();
     await w.submit("a", { kind: "edit", base_seq: 1, writes: [{ key: K.refresh, kind: "signature" }] }); // #3

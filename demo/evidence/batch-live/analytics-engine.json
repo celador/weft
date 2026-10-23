@@ -1,0 +1,36 @@
+{
+  "dataset": "weft_land_preview",
+  "query": "SELECT timestamp, index1 AS repo, blob1 AS metric, blob2 AS outcome, blob3 AS leader, double1 AS round_size, double2 AS presubmit_runs, double3 AS presubmit_runs_saved, double4 AS bisect_steps, double5 AS landed, double6 AS culprits, double7 AS conflicts, double8 AS round FROM weft_land_preview ORDER BY timestamp FORMAT JSON",
+  "rows": [
+    {
+      "timestamp": "2026-10-23 00:59:57",
+      "repo": "weft-batch",
+      "metric": "land.batch",
+      "outcome": "ok",
+      "leader": "#2",
+      "round_size": 4,
+      "presubmit_runs": 1,
+      "presubmit_runs_saved": 3,
+      "bisect_steps": 0,
+      "landed": 4,
+      "culprits": 0,
+      "conflicts": 0,
+      "round": 1
+    },
+    {
+      "timestamp": "2026-10-23 01:04:21",
+      "repo": "weft-batch",
+      "metric": "land.batch",
+      "outcome": "ok",
+      "leader": "#7",
+      "round_size": 4,
+      "presubmit_runs": 3,
+      "presubmit_runs_saved": 1,
+      "bisect_steps": 2,
+      "landed": 3,
+      "culprits": 1,
+      "conflicts": 0,
+      "round": 1
+    }
+  ]
+}

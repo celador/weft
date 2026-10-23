@@ -12,7 +12,7 @@
 import { bounceText, landOpId, needsApproval, rank, revertOpId, runJob, short, type Ranked } from "./common";
 import { collectEvidence, maxRisk, testsSummary, xEvidenceFromRows, type XEvidence } from "./evidence";
 import { revisionStatus, Store } from "./store";
-import type { BestOfNParams, ChangeRow, Deps, JobRequest, JobResult, LandChangeParams, ProcessRevisionParams, RepoConfig, RevertOperationParams, StepLike, TestsResult } from "./types";
+import type { BatchItemResult, BestOfNParams, ChangeRow, Deps, JobRequest, JobResult, LandChangeParams, ProcessRevisionParams, QueueEntry, RepoConfig, RevertOperationParams, StepLike, TestsResult } from "./types";
 
 type Ctx = {
   change: ChangeRow;
@@ -218,9 +218,32 @@ export async function processRevision(p: ProcessRevisionParams, step: StepLike, 
 
 // =============================================================================== LandChange
 
-export type LandChangeResult = { status: "landed" | "already_landed" | "failed" | "skipped"; reason?: string; op_id?: string; seq?: number | null; before?: string; after?: string; layer?: string; attempts?: number; queue_id?: number };
+export type BatchSummary = {
+  /** Queue id of the leader whose workflow landed the batch. */
+  leader: number;
+  /** Changes in the batch (leader's result only; a follower's result names just the leader). */
+  size?: number;
+  rounds?: number;
+  presubmit_runs?: number;
+  /** Presubmit runs a one-at-a-time queue would have done minus the runs this batch did. */
+  presubmit_runs_saved?: number;
+  bisect_steps?: number;
+  landed?: string[];
+  culprits?: string[];
+  conflicts?: string[];
+};
+export type LandChangeResult = { status: "landed" | "already_landed" | "failed" | "skipped"; reason?: string; op_id?: string; seq?: number | null; before?: string; after?: string; layer?: string; attempts?: number; queue_id?: number; batch?: BatchSummary };
 
 const MAX_LAND_ATTEMPTS = 3;
+
+/** Batch policy for the land queue (RepoConfig.land.batch). null = one change per presubmit. */
+export function batchConfig(cfg: RepoConfig): { max: number; wait_s: number } | null {
+  const b = cfg.land?.batch;
+  if (b === false) return null;
+  const max = Math.max(1, Math.min(16, Math.floor(Number(b?.max ?? 4)) || 4));
+  const wait_s = Math.max(0, Math.min(600, Number(b?.wait_s ?? 30) || 0));
+  return max >= 2 ? { max, wait_s } : null;
+}
 
 export async function landChange(p: LandChangeParams, step: StepLike, deps: Deps, instance: string): Promise<LandChangeResult> {
   const store = new Store(deps.db, deps.now);
@@ -237,25 +260,42 @@ export async function landChange(p: LandChangeParams, step: StepLike, deps: Deps
   const ctx = loaded;
   const coord = deps.coord(p.repo);
 
-  // 1. Submit queue (the repo DO serializes landings): wait for our turn.
+  // 1. Submit queue (the repo DO serializes landings): wait for our turn. A batch leader ahead
+  //    of us may claim our entry (`batch` = its id): then we wait for its outcome instead.
   const entry = await step.do("enqueue", () => coord.enqueue(p.change, p.requested_by, p.note ?? `workflow ${instance}`));
   const qp = deps.queuePoll ?? { interval: "10 seconds", max: 360 };
   for (let i = 0; ; i++) {
     const head = await step.do(`queue turn ${i}`, async () => {
       const q = await coord.queue(["queued", "landing"]);
       const mine = q.find((e) => e.id === entry.id);
-      if (!mine) return { gone: true, first: null as number | null };
-      return { gone: false, first: q[0]?.id ?? null };
+      if (!mine) {
+        const done = (await coord.queue(["landed", "failed", "cancelled"])).find((e) => e.id === entry.id) ?? null;
+        return { gone: true, first: null as number | null, claimed: null as number | null, done };
+      }
+      return { gone: false, first: q[0]?.id ?? null, claimed: mine.batch !== undefined && mine.batch !== null && mine.batch !== entry.id ? mine.batch : null, done: null };
     });
-    if (head.gone) return { status: "failed", reason: "queue entry was cancelled", queue_id: entry.id };
-    if (head.first === entry.id) break;
+    if (head.gone) {
+      const d = head.done as QueueEntry | null;
+      if (d && d.batch !== undefined && d.batch !== null && d.batch !== entry.id) return step.do("batch outcome", () => batchOutcome(store, coord, p, d));
+      return { status: "failed", reason: "queue entry was cancelled", queue_id: entry.id };
+    }
+    if (head.first === entry.id && head.claimed === null) break;
     if (i >= qp.max) {
+      // A claimed entry belongs to its leader's workflow: leave its status alone.
+      if (head.claimed !== null) return { status: "failed", reason: `timed out waiting for batch leader #${head.claimed}`, queue_id: entry.id, batch: { leader: head.claimed } };
       await step.do("queue timeout", () => coord.setQueueStatus(entry.id, "failed", "timed out waiting for the queue"));
       return { status: "failed", reason: "timed out waiting for the landing queue", queue_id: entry.id };
     }
     await step.sleep(`queue wait ${i}`, qp.interval);
   }
   await step.do("mark landing", () => coord.setQueueStatus(entry.id, "landing", `workflow ${instance}`));
+
+  // 1b. Batched landing: with 2+ changes queued, the head lands up to `max` of them together.
+  const bcfg = batchConfig(ctx.cfg);
+  if (bcfg) {
+    const members = await collectBatch(step, deps, store, p, entry.id, bcfg, instance);
+    if (members.length > 1) return landBatch(step, deps, store, p, entry.id, members, instance);
+  }
 
   // 2. Final rebase + presubmit + CAS push (retry when another landing won the race).
   let r: JobResult = { status: "error", error: "not run" };
@@ -318,6 +358,253 @@ export async function landChange(p: LandChangeParams, step: StepLike, deps: Deps
     return null;
   });
   return { status: "landed", op_id: logged.op_id, seq: logged.seq, before: r.before!, after: r.after!, ...(r.layer ? { layer: r.layer } : {}), attempts: attempt, queue_id: entry.id };
+}
+
+// ------------------------------------------------------------------------------- batched landing
+
+type LandCtx = Ctx & { rebased: { sha: string; onto: string; layer: string | null } | null };
+type Member = { id: number; ctx: LandCtx };
+
+async function loadLandCtx(store: Store, repo: string, changeId: string): Promise<LandCtx | null> {
+  const ctx = await loadCtx(store, repo, changeId);
+  if ("skip" in ctx || ctx.change.status !== "open" || !ctx.change.head_sha) return null;
+  const rev = await store.revision(ctx.change.id, ctx.change.head_sha);
+  return { ...ctx, rebased: rev?.rebased_sha && rev.onto_sha && rev.status === "processed" ? { sha: rev.rebased_sha, onto: rev.onto_sha, layer: rev.layer } : null };
+}
+
+/**
+ * The queue head collects the queued entries behind it (queue order, up to `max` in all).
+ * A lone change never waits; with company it lingers up to `wait_s` for the batch to fill.
+ * Then it claims them in the repo DO (atomic: only still-`queued`, unclaimed entries).
+ */
+async function collectBatch(step: StepLike, deps: Deps, store: Store, p: LandChangeParams, leader: number, cfg: { max: number; wait_s: number }, instance: string): Promise<Member[]> {
+  const coord = deps.coord(p.repo);
+  const t0 = await step.do("batch: start", async () => deps.now());
+  let cands: Array<{ id: number; change: string }> = [];
+  for (let k = 0; ; k++) {
+    cands = await step.do(`batch: collect ${k}`, async () =>
+      (await coord.queue(["queued"]))
+        .filter((e) => e.id > leader && (e.batch ?? null) === null && e.change !== p.change)
+        .slice(0, cfg.max - 1)
+        .map((e) => ({ id: e.id, change: e.change })),
+    );
+    if (!cands.length || cands.length >= cfg.max - 1) break;
+    const now = await step.do(`batch: clock ${k}`, async () => deps.now());
+    if (now - t0 >= cfg.wait_s * 1000) break;
+    await step.sleep(`batch: linger ${k}`, deps.batchPoll ?? "5 seconds");
+  }
+  if (!cands.length) return [];
+  return step.do("batch: claim", async () => {
+    const lead = await loadLandCtx(store, p.repo, p.change);
+    if (!lead) return [];
+    const ok: Member[] = [];
+    for (const c of cands) {
+      const ctx = await loadLandCtx(store, p.repo, c.change);
+      if (ctx) ok.push({ id: c.id, ctx });
+    }
+    if (!ok.length) return [];
+    const claimed = await coord.claimBatch(leader, ok.map((m) => m.id), `batch #${leader} (workflow ${instance})`);
+    const got = new Set(claimed.filter((e) => e.batch === leader && e.status === "landing").map((e) => e.id));
+    return [{ id: leader, ctx: lead }, ...ok.filter((m) => got.has(m.id))];
+  });
+}
+
+function batchJobFor(members: Member[]): JobRequest {
+  const lead = members[0]!.ctx;
+  return {
+    repo: lead.change.repo,
+    task: lead.change.task,
+    change: lead.change.id,
+    config: lead.cfg,
+    trunk: { ...lead.trunk, access: "write" },
+    forks: members.map((m) => ({ name: m.ctx.change.fork, remote: m.ctx.change.remote, branch: m.ctx.change.default_branch, access: "read" as const })),
+    spec: {
+      job: "land_batch",
+      trunk: { remote: lead.trunk.remote, branch: lead.trunk.branch },
+      changes: members.map((m) => ({
+        change: m.ctx.change.id,
+        remote: m.ctx.change.remote,
+        branch: m.ctx.change.default_branch,
+        sha: m.ctx.change.head_sha,
+        ...(m.ctx.title ? { intent: m.ctx.title } : {}),
+        ...(m.ctx.rebased ? { rebased: m.ctx.rebased } : {}),
+      })),
+      tests: lead.cfg.tests ?? null,
+      resolver: lead.cfg.resolver ?? null,
+      ...(lead.cfg.layers ? { layers: lead.cfg.layers } : {}),
+      identity: { name: "weft-landing-queue", email: "landing@agents.weft.dev" },
+    },
+  };
+}
+
+function itemEvidence(it: BatchItemResult) {
+  return {
+    status: it.status,
+    layer: it.layer ?? null,
+    head: it.head ?? null,
+    before: it.before ?? null,
+    after: it.after ?? null,
+    commits: it.commits ?? [],
+    ...(it.conflicts ? { conflicts: it.conflicts.map((c) => ({ file: c.file, commit: c.commit, hunks: c.hunks.length })) } : {}),
+    ...(it.resolver ? { resolver: it.resolver } : {}),
+    ...(it.diffstat ? { diffstat: it.diffstat } : {}),
+  };
+}
+
+/**
+ * Land a claimed batch (leader first, then queue order). Each round is one `land_batch` job:
+ * stack, one presubmit, bisect on failure, one CAS push of the passing prefix. Landed changes
+ * get their own `land` op (own before/after: revertable alone), a conflict or the culprit is
+ * bounced to its agent with the evidence, and the changes after the culprit go again in the
+ * next round (re-stacked without it). Stale trunk retries the round, as for a single landing.
+ */
+async function landBatch(step: StepLike, deps: Deps, store: Store, p: LandChangeParams, leader: number, members: Member[], instance: string): Promise<LandChangeResult> {
+  const coord = deps.coord(p.repo);
+  const sum: Required<BatchSummary> = { leader, size: members.length, rounds: 0, presubmit_runs: 0, presubmit_runs_saved: 0, bisect_steps: 0, landed: [], culprits: [], conflicts: [] };
+  const outcome = new Map<string, { status: "landed" | "failed"; reason?: string; op_id?: string; seq?: number | null; before?: string; after?: string; layer?: string }>();
+  let pending = members;
+  let attemptsTotal = 0;
+  while (pending.length) {
+    const round = ++sum.rounds;
+    let r: JobResult = { status: "error", error: "not run" };
+    let attempt = 0;
+    for (attempt = 1; attempt <= MAX_LAND_ATTEMPTS; attempt++) {
+      r = await runJob(step, deps, instance, `batch ${round} land ${attempt}`, batchJobFor(pending), { pollScale: 1 + Math.ceil(Math.log2(pending.length)) });
+      if (r.status !== "stale_trunk") break;
+    }
+    attemptsTotal += attempt;
+    const items = r.items ?? [];
+    const runs = r.batch?.presubmit_runs ?? 0;
+    sum.presubmit_runs += runs;
+    sum.bisect_steps += r.batch?.bisect_steps ?? 0;
+    const pushed = r.status === "landed" || r.status === "noop";
+    const tested = items.filter((i) => (i.status === "landed" && pushed) || i.status === "culprit").length;
+    sum.presubmit_runs_saved += tested - runs;
+
+    // The whole round failed outright (job error, trunk kept moving, push rejected): every
+    // pending change fails with the same reason, like a failed single landing.
+    if (!pushed && !items.some((i) => i.status === "culprit" || i.status === "conflict")) {
+      const reason = r.status === "stale_trunk" ? `trunk kept moving (${MAX_LAND_ATTEMPTS} attempts)` : (r.error ?? r.detail ?? r.status);
+      await step.do(`batch ${round}: record failure`, async () => {
+        for (const m of pending) {
+          await store.evidence(m.ctx.change.id, m.ctx.change.head_sha!, "land", "fail", { reason, attempts: attempt, batch: { leader, round, size: pending.length }, ...rebaseEvidence(r) });
+          await coord.setQueueStatus(m.id, "failed", `batch #${leader}: ${reason}`.slice(0, 300));
+        }
+        metric(deps, p.repo, "failed", leader, { round, size: pending.length, runs, bisect: r.batch?.bisect_steps ?? 0, landed: 0, culprits: 0, conflicts: 0 });
+        return null;
+      });
+      for (const m of pending) outcome.set(m.ctx.change.id, { status: "failed", reason });
+      break;
+    }
+
+    // Landed: one op per change, in stack order.
+    for (const it of items.filter((i) => i.status === "landed" && pushed)) {
+      const m = pending.find((x) => x.ctx.change.id === it.change)!;
+      const ctx = m.ctx;
+      const sha = ctx.change.head_sha!;
+      const position = members.findIndex((x) => x.id === m.id) + 1;
+      const info = { leader, round, position, size: members.length, round_size: pending.length, presubmit_runs: runs, bisect_steps: r.batch?.bisect_steps ?? 0, tested: r.batch?.tested ?? [] };
+      const logged = await step.do(`batch ${round}: append land ${short(it.change)}`, async () => {
+        const opId = await landOpId(p.repo, it.change, it.after!);
+        const existing = (await coord.ops()).find((o) => o.op_id === opId);
+        if (existing) return { op_id: opId, seq: existing.seq, status: "accepted" };
+        const xe = xEvidenceFromRows(await store.evidenceFor(it.change, sha));
+        const tests = testsSummary(r.passing_tests);
+        if (tests) xe.tests = tests;
+        const rec = await coord.system({
+          kind: "land",
+          base_seq: await coord.headSeq(),
+          change: it.change,
+          task: ctx.change.task,
+          payload: { sha: it.after!, op_id: opId, trunk_ref: `refs/heads/${ctx.trunk.branch}`, ...(ctx.title ? { x_task_title: ctx.title } : {}), x_evidence: xe, x_batch: { leader, position, size: members.length, round } },
+          summary_hint: `landed ${ctx.change.agent ?? short(it.change)}: ${ctx.title ?? ctx.change.task} (${short(it.after)}, batch of ${pending.length})`.slice(0, 140),
+        });
+        return { op_id: opId, seq: rec.seq, status: rec.status };
+      });
+      await step.do(`batch ${round}: close ${short(it.change)}`, async () => {
+        await store.recordLanding({ op_id: logged.op_id, repo: p.repo, kind: "land", change_id: it.change, task: ctx.change.task, before: it.before!, after: it.after!, seq: logged.seq, status: "landed", layer: it.layer ?? null, requested_by: p.requested_by, workflow_id: instance });
+        await store.evidence(it.change, sha, "land", "pass", { ...itemEvidence(it), op_id: logged.op_id, seq: logged.seq, attempts: attempt, batch: info });
+        if (r.passing_tests) {
+          const t = testEvidence({ ...r, tests: r.passing_tests, rebased: it.after! });
+          await store.evidence(it.change, sha, "presubmit", t.status, { ...t.data, batch: info });
+        }
+        await store.setChangeStatus(it.change, "landed");
+        await store.setTaskStatus(p.repo, ctx.change.task, "landed");
+        await store.closeSiblings(p.repo, ctx.change.task, it.change);
+        if (logged.status !== "accepted") await coord.setQueueStatus(m.id, "landed", `git landed ${short(it.after)} in batch #${leader}; land record ${logged.status}`);
+        return null;
+      });
+      sum.landed.push(it.change);
+      outcome.set(it.change, { status: "landed", op_id: logged.op_id, seq: logged.seq, before: it.before!, after: it.after!, ...(it.layer ? { layer: it.layer } : {}) });
+    }
+
+    // Bounced: conflicts (dropped from the stack) and the culprit bisect isolated.
+    for (const it of items.filter((i) => i.status === "conflict" || i.status === "culprit")) {
+      const m = pending.find((x) => x.ctx.change.id === it.change)!;
+      const ctx = m.ctx;
+      const sha = ctx.change.head_sha!;
+      const culprit = it.status === "culprit";
+      const reason = culprit ? `presubmit failed (isolated by bisect in a batch of ${pending.length})` : "rebase conflict (while stacking a batch)";
+      await step.do(`batch ${round}: record ${it.status} ${short(it.change)}`, async () => {
+        await store.evidence(it.change, sha, "land", "fail", { ...itemEvidence(it), reason, batch: { leader, round, size: pending.length, tested: r.batch?.tested ?? [], bisect_steps: r.batch?.bisect_steps ?? 0 } });
+        if (culprit && r.culprit_tests) {
+          const t = testEvidence({ ...r, tests: r.culprit_tests, rebased: it.after! });
+          await store.evidence(it.change, sha, "presubmit", t.status, { ...t.data, batch: { leader, round } });
+        }
+        await coord.setQueueStatus(m.id, "failed", reason.slice(0, 300));
+        return null;
+      });
+      const text = culprit
+        ? bounceText("tests", { tests: r.culprit_tests!, onto: it.before! })
+        : bounceText("conflict", { conflicts: it.conflicts ?? [], onto: it.before ?? r.onto!, ...(it.layer ? { layer: it.layer } : {}), ...(it.resolver ? { resolver: it.resolver } : {}) });
+      await step.do(`batch ${round}: bounce ${short(it.change)}`, () => bounce(deps, ctx, text, culprit ? "landing blocked: presubmit fails (bisect)" : "landing blocked: rebase conflict"));
+      (culprit ? sum.culprits : sum.conflicts).push(it.change);
+      outcome.set(it.change, { status: "failed", reason, ...(it.layer ? { layer: it.layer } : {}) });
+    }
+
+    const landedN = items.filter((i) => i.status === "landed" && pushed).length;
+    await step.do(`batch ${round}: metrics`, async () => {
+      metric(deps, p.repo, "ok", leader, { round, size: pending.length, runs, bisect: r.batch?.bisect_steps ?? 0, landed: landedN, culprits: items.filter((i) => i.status === "culprit").length, conflicts: items.filter((i) => i.status === "conflict").length });
+      return null;
+    });
+    const next = pending.filter((m) => items.find((i) => i.change === m.ctx.change.id)?.status === "pending" || (!pushed && items.find((i) => i.change === m.ctx.change.id)?.status === "landed"));
+    if (next.length === pending.length) {
+      // No progress (should not happen): fail the rest rather than loop.
+      await step.do(`batch ${round}: stuck`, async () => {
+        for (const m of next) await coord.setQueueStatus(m.id, "failed", `batch #${leader}: no progress in round ${round}`);
+        return null;
+      });
+      for (const m of next) outcome.set(m.ctx.change.id, { status: "failed", reason: "batch made no progress" });
+      break;
+    }
+    pending = next;
+  }
+
+  const mine = outcome.get(p.change) ?? { status: "failed" as const, reason: "not landed by its batch" };
+  return { ...mine, attempts: attemptsTotal, queue_id: leader, batch: sum };
+}
+
+/** Workers Analytics Engine point per batch round (no-op without the binding). */
+function metric(deps: Deps, repo: string, outcome: string, leader: number, m: { round: number; size: number; runs: number; bisect: number; landed: number; culprits: number; conflicts: number }) {
+  try {
+    deps.metrics?.writeDataPoint({
+      indexes: [repo],
+      blobs: ["land.batch", outcome, `#${leader}`],
+      // round size, presubmit runs, presubmit runs saved (vs one presubmit per tested change), bisect steps, landed, culprits, conflicts, round
+      doubles: [m.size, m.runs, m.landed + m.culprits - m.runs, m.bisect, m.landed, m.culprits, m.conflicts, m.round],
+    });
+  } catch {
+    /* metrics are best effort */
+  }
+}
+
+/** A follower's result once its batch leader has landed (or bounced) it. */
+async function batchOutcome(store: Store, coord: ReturnType<Deps["coord"]>, p: LandChangeParams, d: QueueEntry): Promise<LandChangeResult> {
+  const batch = { leader: d.batch! };
+  if (d.status !== "landed") return { status: "failed", reason: d.note ?? `${d.status} in batch #${d.batch}`, queue_id: d.id, batch };
+  const op = (await coord.ops()).filter((o) => o.kind === "land" && o.change_id === p.change).pop();
+  const landing = op ? await store.landing(op.op_id) : null;
+  return { status: "landed", queue_id: d.id, batch, ...(op ? { op_id: op.op_id, seq: op.seq } : {}), ...(landing ? { before: landing.before_sha ?? undefined, after: landing.after_sha ?? undefined } : op?.sha ? { after: op.sha } : {}) };
 }
 
 // =============================================================================== RevertOperation

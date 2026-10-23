@@ -34,7 +34,7 @@ export function run(sql: Sql, q: string, ...args: Array<string | number | boolea
  * Schema of one repo's coordinator. Every table is owned by exactly one Durable Object
  * (one repo), so no table carries a repo column.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const DDL: string[] = [
   `CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)`,
@@ -116,6 +116,8 @@ export const DDL: string[] = [
 const ADDED_COLUMNS: Array<{ table: string; column: string; ddl: string }> = [
   // v2 (B11): merged task groups, spec §7.6.
   { table: "changes", column: "merged_into", ddl: `ALTER TABLE changes ADD COLUMN merged_into TEXT` },
+  // v5: batched landing — the queue entry id of the batch leader that claimed this entry.
+  { table: "submit_queue", column: "batch", ddl: `ALTER TABLE submit_queue ADD COLUMN batch INTEGER` },
 ];
 
 export function migrate(sql: Sql): void {

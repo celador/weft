@@ -202,6 +202,8 @@ export type QueueEntry = {
   enqueued_seq: Seq | null;
   landed_seq: Seq | null;
   note: string | null;
+  /** Batched landing: queue id of the leader whose workflow lands this entry (null = its own). */
+  batch: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -1776,19 +1778,50 @@ export class SqlCoordinator {
 
   setQueueStatus(id: number, status: QueueEntry["status"], note?: string): QueueEntry {
     if (!this.queueEntry(id)) throw new WcpProtocolError("not_found", `no queue entry ${id}`);
-    run(this.sql, `UPDATE submit_queue SET status = ?, note = COALESCE(?, note), updated_at = ? WHERE id = ?`, status, note ?? null, new Date(this.now()).toISOString(), id);
+    // Back to `queued` = released by a batch leader: the entry is its own workflow's again.
+    run(
+      this.sql,
+      `UPDATE submit_queue SET status = ?, note = COALESCE(?, note), batch = CASE WHEN ? = 'queued' THEN NULL ELSE batch END, updated_at = ? WHERE id = ?`,
+      status,
+      note ?? null,
+      status,
+      new Date(this.now()).toISOString(),
+      id,
+    );
     return this.queueEntry(id)!;
   }
 
+  /**
+   * Batched landing: the leader (the queue head, already `landing`) claims queued entries
+   * behind it in one atomic step. Only entries still `queued` and not claimed are taken, in
+   * queue order; they become `landing` with `batch = leader`, so their own workflows wait
+   * for the leader's outcome instead of landing themselves. Returns the leader + claimed.
+   */
+  claimBatch(leader: number, ids: number[], note?: string): QueueEntry[] {
+    const lead = this.queueEntry(leader);
+    if (!lead) throw new WcpProtocolError("not_found", `no queue entry ${leader}`);
+    if (lead.status !== "landing") throw new WcpProtocolError("invalid_reference", `queue entry ${leader} is ${lead.status}, not landing`);
+    const ts = new Date(this.now()).toISOString();
+    run(this.sql, `UPDATE submit_queue SET batch = ?, updated_at = ? WHERE id = ?`, leader, ts, leader);
+    const out = [this.queueEntry(leader)!];
+    for (const id of [...new Set(ids)].filter((x) => x !== leader).sort((a, b) => a - b)) {
+      const e = this.queueEntry(id);
+      if (!e || e.status !== "queued" || e.batch !== null || id < leader) continue;
+      run(this.sql, `UPDATE submit_queue SET status = 'landing', batch = ?, note = COALESCE(?, note), updated_at = ? WHERE id = ?`, leader, note ?? null, ts, id);
+      out.push(this.queueEntry(id)!);
+    }
+    return out;
+  }
+
   private queueEntry(id: number): QueueEntry | undefined {
-    const r = one<{ id: number; change_id: string; status: QueueEntry["status"]; requested_by: string; enqueued_seq: number | null; landed_seq: number | null; note: string | null; created_at: string; updated_at: string }>(
+    const r = one<{ id: number; change_id: string; status: QueueEntry["status"]; requested_by: string; enqueued_seq: number | null; landed_seq: number | null; note: string | null; batch: number | null; created_at: string; updated_at: string }>(
       this.sql,
-      `SELECT * FROM submit_queue WHERE id = ?`,
+      `SELECT id, change_id, status, requested_by, enqueued_seq, landed_seq, note, batch, created_at, updated_at FROM submit_queue WHERE id = ?`,
       id,
     );
     if (!r) return undefined;
     const { change_id, ...rest } = r;
-    return { ...rest, change: change_id };
+    return { ...rest, batch: rest.batch ?? null, change: change_id };
   }
 
   queue(statuses: string[] = ["queued", "landing"]): QueueEntry[] {

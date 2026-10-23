@@ -20,6 +20,7 @@ export type JournalOp =
   | "tick"
   | "enqueue"
   | "queue_status"
+  | "queue_claim"
   | "policy";
 
 /** Dispatch one journaled operation (the only entry point for state changes). */
@@ -48,6 +49,8 @@ export function dispatch(c: SqlCoordinator, op: JournalOp, args: unknown[]): unk
       return c.enqueue(a[0] as string, a[1] as string, (a[2] ?? undefined) as string | undefined);
     case "queue_status":
       return c.setQueueStatus(a[0] as number, a[1] as QueueEntry["status"], (a[2] ?? undefined) as string | undefined);
+    case "queue_claim":
+      return c.claimBatch(a[0] as number, a[1] as number[], (a[2] ?? undefined) as string | undefined);
     case "policy":
       return c.setPolicy(a[0] as Parameters<SqlCoordinator["setPolicy"]>[0]);
   }

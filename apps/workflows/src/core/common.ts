@@ -27,10 +27,12 @@ export { instanceId } from "./ids";
  * Run one weft-job durably: a start step (mints tokens + starts the sandbox run; returns only
  * the run id), then sleep/poll steps until the run finishes.
  */
-export async function runJob(step: StepLike, deps: Deps, instance: string, name: string, req: JobRequest): Promise<JobResult> {
+export async function runJob(step: StepLike, deps: Deps, instance: string, name: string, req: JobRequest, opts: { pollScale?: number } = {}): Promise<JobResult> {
   const id = await jobRunId(instance, name);
   const { run } = await step.do(`${name}: start job`, { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } }, () => deps.jobs.start(id, req));
-  const poll = deps.jobPoll ?? { interval: "5 seconds", max: 240 };
+  const base = deps.jobPoll ?? { interval: "5 seconds", max: 240 };
+  // A batch job may run several presubmits (bisect): it gets proportionally more polls.
+  const poll = { interval: base.interval, max: Math.ceil(base.max * Math.max(1, opts.pollScale ?? 1)) };
   for (let i = 0; ; i++) {
     const p = await step.do(`${name}: poll ${i}`, { retries: { limit: 5, delay: "2 seconds", backoff: "exponential" } }, () => deps.jobs.poll(run));
     if (p.done) return p.result ?? { status: "error", error: `job ${run} finished (${p.state ?? "?"}) without a result` };
