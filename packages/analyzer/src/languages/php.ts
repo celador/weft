@@ -21,7 +21,7 @@
 // segments dropped (`app/Models/User.php` for Laravel, `src/Models/User.php` for `App\` =>
 // `src/`). Same-namespace classes are also tried next to the file.
 import { posix } from "node:path";
-import type { Definition, Exists, ImportBinding, Reference, SyntaxNode, TreeSitterLanguage } from "../language.js";
+import type { Checkout, Definition, Exists, ImportBinding, Reference, SyntaxNode, TreeSitterLanguage } from "../language.js";
 import { firstExisting } from "../treesitter.js";
 
 function named(node: SyntaxNode): SyntaxNode[] {
@@ -353,8 +353,9 @@ function psr4Candidates(composer: Composer, fqn: string): string[] {
  * convention. Functions/constants (`fn:<namespace>`): `<namespace path>.php`,
  * `<namespace path>/functions.php`, `helpers.php`, then a lone composer `files` entry.
  */
-function resolveModule(module: string, fromRel: string, exists?: Exists, read?: Read): string | undefined {
+function resolveModule(module: string, fromRel: string, exists?: Exists, checkout?: Checkout): string | undefined {
   if (!exists) return undefined; // PSR-4 resolution needs the checkout
+  const read = checkout?.read;
   const composer = read ? composerFor(fromRel, read) : undefined;
   const candidates: string[] = [];
   const at = (root: string, tail: string): string => (root ? `${root}/${tail}` : tail);

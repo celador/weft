@@ -4,7 +4,8 @@
 // checkout, so `import { calcTotal } from "./pricing"` reads `src/pricing.ts#calcTotal`.
 import { analyze, analyzeSource, contractReads, treeSitterLanguageFor, type Write } from "@weft/analyzer";
 import ts from "typescript";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
+import { readInsideCheckout } from "./safe-read";
 import { join, posix } from "node:path";
 
 export const ANALYZABLE = /\.(?:[cm]?ts|tsx|[cm]?js|jsx)$/;
@@ -65,18 +66,13 @@ export function importReads(text: string, rel: string, root?: string, prefix = "
   return [...found];
 }
 
-function readText(path: string): string | undefined {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return undefined;
-  }
-}
-
 /** Reads/writes of a set of file changes. Unchanged files contribute nothing. */
 export function analyzeChanges(changes: FileChange[], root?: string, prefix = ""): Sets {
   const reads = new Set<string>();
   const writes = new Map<string, Write>();
+  // Contract types of imported declarations are read through the same checkout helper as
+  // everything else (no symlinks, nothing outside the checkout, 1 MiB cap, post-edit text).
+  const checkout = root ? checkoutAccess(root, new Map(changes.map((c) => [c.rel, c.after] as const))) : undefined;
   for (const c of changes) {
     if (c.before === c.after) continue;
     const repoPath = prefix + c.rel;
@@ -89,7 +85,7 @@ export function analyzeChanges(changes: FileChange[], root?: string, prefix = ""
           const imported = importReads(c.after, c.rel, root, prefix);
           for (const k of imported) reads.add(k);
           // The contract types of what this file uses (`PriceOptions` of `calcTotal(opts: PriceOptions)`).
-          if (root) for (const k of contractReads(imported, (rel) => readText(join(root, rel)), prefix)) reads.add(k);
+          if (checkout) for (const k of contractReads(imported, checkout.read, prefix)) reads.add(k);
         }
         continue;
       } catch {
@@ -105,7 +101,7 @@ export function analyzeChanges(changes: FileChange[], root?: string, prefix = ""
 }
 
 /**
- * `analyzeChanges` plus the tree-sitter languages (Python, C/C++, Java, Kotlin, Swift, C#): what the hooks call. TypeScript
+ * `analyzeChanges` plus the tree-sitter languages (Python, C/C++, Java, Kotlin, Swift, C#, Ruby, PHP, Go, Rust): what the hooks call. TypeScript
  * and JavaScript go through exactly the same path as `analyzeChanges`; files of a tree-sitter
  * language get declaration-level keys and import-resolved reads instead of a whole-file key.
  */
@@ -114,19 +110,15 @@ export async function analyzeChangesAsync(changes: FileChange[], root?: string, 
   const base = analyzeChanges(typescriptOrOther, root, prefix);
   const reads = new Set(base.reads);
   const writes = new Map(base.writes.map((w) => [w.key, w] as const));
-  const exists = root ? (rel: string) => existsSync(join(root, rel)) : undefined;
-  // The analyzer reads other checkout files: C/C++ `#include`d headers, and the Swift/C# module
-  // index (`list` + `read`). Files this same tool call changes are read as they will be after it
-  // (a header + its .c).
-  const checkout = root ? checkoutFs(root) : undefined;
+  // The analyzer reads other checkout files: C/C++ `#include`d headers, Go's go.mod and package
+  // files, the Swift/C# module index. Files this same tool call changes are read as they will be
+  // after it (a C header + its .c, two files of one Go package).
   const pending = new Map(changes.map((c) => [c.rel, c.after] as const));
-  const read = checkout
-    ? (rel: string): string | undefined => (pending.has(rel) ? (pending.get(rel) ?? undefined) : checkout.read(rel))
-    : undefined;
+  const checkout = root ? checkoutAccess(root, pending) : {};
   for (const c of changes) {
     if (c.before === c.after || !treeSitterLanguageFor(c.rel)) continue;
     try {
-      const result = await analyzeSource({ path: c.rel, before: c.before, after: c.after }, { prefix, exists, list: checkout?.list, read });
+      const result = await analyzeSource({ path: c.rel, before: c.before, after: c.after }, { prefix, ...checkout });
       for (const k of result.reads) reads.add(k);
       for (const w of result.writes) writes.set(w.key, w);
     } catch {
@@ -138,35 +130,68 @@ export async function analyzeChangesAsync(changes: FileChange[], root?: string, 
   return { reads: [...reads].sort(), writes: [...writes.values()].sort((a, b) => a.key.localeCompare(b.key)) };
 }
 
-/** Files larger than this are not read for the declaration index (generated code, bundles). */
-const MAX_INDEXED_BYTES = 1_000_000;
+/** Files larger than this are not read (generated code, bundles). */
+const MAX_CHECKOUT_READ = 1 << 20;
+
+/** `rel` as a clean checkout-relative path, or undefined when it is absolute or leaves the checkout. */
+function insideRel(rel: string): string | undefined {
+  const clean = posix.normalize(rel || ".");
+  if (clean === ".." || clean.startsWith("../") || posix.isAbsolute(clean) || /^[A-Za-z]:/.test(clean)) return undefined;
+  return clean === "." ? "" : clean.replace(/\/$/, "");
+}
 
 /**
- * Directory listing + file reads of the checkout, for index-based languages (Swift, C#), whose
- * cross-file reads need the module's other files. Paths are checkout-relative; nothing outside
- * `root` is read.
+ * The one way the analyzer sees the checkout besides the edited file (C/C++ included headers,
+ * Go go.mod and package files, the Swift/C# module index): existence, directory listings and
+ * reads. Paths are checkout-relative; `..` and absolute paths are refused. Reads follow the
+ * adapters' read rule (`readInsideCheckout`: no symlinks anywhere on the path, regular files
+ * only, at most 1 MiB); listings refuse a directory reached through a symlink and omit symlinked
+ * entries. `pending` holds the post-edit text of files the same tool call changes (null =
+ * deleted): they exist, read and list as they will after the call.
  */
-export function checkoutFs(root: string): { list: (dir: string) => string[] | undefined; read: (rel: string) => string | undefined } {
-  const inside = (rel: string): string | undefined => {
-    const clean = posix.normalize(rel || ".");
-    return clean.startsWith("../") || clean === ".." || posix.isAbsolute(clean) ? undefined : join(root, clean);
-  };
+export function checkoutAccess(
+  root: string,
+  pending: Map<string, string | null> = new Map(),
+): { exists: (rel: string) => boolean; read: (rel: string) => string | undefined; list: (dir: string) => string[] | undefined } {
+  let realRoot: string | undefined;
+  const pendingRel = new Map<string, string | null>();
+  for (const [rel, text] of pending) {
+    const clean = insideRel(rel);
+    if (clean) pendingRel.set(clean, text);
+  }
   return {
-    list(dir) {
-      const abs = inside(dir);
-      if (!abs) return undefined;
-      try {
-        return readdirSync(abs, { withFileTypes: true }).map((e) => (e.isDirectory() ? `${e.name}/` : e.name));
-      } catch {
-        return undefined;
-      }
+    exists(rel) {
+      const clean = insideRel(rel);
+      if (clean === undefined) return false;
+      if (pendingRel.has(clean)) return pendingRel.get(clean) !== null;
+      return existsSync(join(root, clean));
     },
     read(rel) {
-      const abs = inside(rel);
-      if (!abs) return undefined;
+      const clean = insideRel(rel);
+      if (!clean) return undefined;
+      if (pendingRel.has(clean)) return pendingRel.get(clean) ?? undefined;
+      return readInsideCheckout(root, join(root, clean), MAX_CHECKOUT_READ) ?? undefined;
+    },
+    list(dir) {
+      const clean = insideRel(dir);
+      if (clean === undefined) return undefined;
       try {
-        if (statSync(abs).size > MAX_INDEXED_BYTES) return undefined;
-        return readFileSync(abs, "utf8");
+        realRoot ??= realpathSync(root);
+        const abs = join(root, clean);
+        if (realpathSync(abs) !== (clean ? join(realRoot, clean) : realRoot)) return undefined; // via a symlink
+        const entries = new Set(
+          readdirSync(abs, { withFileTypes: true })
+            .filter((e) => !e.isSymbolicLink())
+            .map((e) => (e.isDirectory() ? `${e.name}/` : e.name)),
+        );
+        // Files this tool call creates appear; files it deletes disappear.
+        for (const [rel, text] of pendingRel) {
+          if (posix.dirname(rel) !== (clean || ".")) continue;
+          const name = posix.basename(rel);
+          if (text === null) entries.delete(name);
+          else entries.add(name);
+        }
+        return [...entries];
       } catch {
         return undefined;
       }

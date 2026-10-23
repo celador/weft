@@ -1,0 +1,46 @@
+{
+  "id": "GO.deny-stale-signature",
+  "level": 2,
+  "required": true,
+  "spec": "§4.1, §5.2",
+  "title": "Go: a call built on a signature another agent just changed (imported package) is denied before it runs",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "cart/cart.go",
+        "old_text": "\treturn fmt.Sprintf(\"%d items\", len(items))",
+        "new_text": "\treturn fmt.Sprintf(\"%d items, total %.2f\", len(items), pricing.CalcTotal(items))"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "stale_assumption",
+          "CalcTotal"
+        ]
+      },
+      "expect_applied": false
+    },
+    {
+      "expect_file": {
+        "path": "cart/cart.go",
+        "unchanged": true
+      }
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "status": "rejected",
+        "mode": "check",
+        "reads_include": "pricing/pricing.go#CalcTotal",
+        "min": 1
+      }
+    }
+  ]
+}

@@ -5,6 +5,8 @@ import { treeSitterLanguages } from "./languages/index.js";
 import { markEdit, parserFor } from "./treesitter.js";
 
 const SAMPLES: Record<string, string> = {
+  go: `package pricing\n\nimport "fmt"\n\n// Señor’s cart 🛒.\ntype Cart struct {\n\tItems []Item\n}\n\nfunc (c *Cart) Total() int {\n\treturn CalcTotal(c.Items)\n}\n\nfunc CalcTotal(items []Item) int {\n\tfmt.Println("total")\n\treturn len(items)\n}\n`,
+  rust: `use crate::pricing::{self, Item};\n\n/// Señor’s cart 🛒.\n#[derive(Debug)]\npub struct Cart {\n    items: Vec<Item>,\n}\n\nimpl Cart {\n    pub fn total(&self) -> u32 {\n        pricing::calc_total(&self.items)\n    }\n}\n`,
   python: `import os\n\n\nclass Cart:\n    """Señor’s cart 🛒."""\n\n    def total(self, items):\n        return sum(i.price for i in items)\n\n\ndef calc_total(items):\n    return Cart().total(items)\n`,
   java: `package a;\n\n/** Señor’s cart 🛒. */\npublic class Cart {\n    static final String NAME = "carrito ñ";\n\n    double total(java.util.List<Item> items) {\n        return items.stream().mapToDouble(i -> i.price).sum();\n    }\n}\n`,
   kotlin: `package a\n\n// Señor’s cart 🛒.\nclass Cart(val items: List<Item>) {\n    val name = "carrito ñ"\n\n    fun total(): Double = items.sumOf { it.price * it.qty }\n}\n\nfun calcTotal(items: List<Item>) = Cart(items).total()\n`,

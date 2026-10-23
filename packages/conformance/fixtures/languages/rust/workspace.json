@@ -1,0 +1,60 @@
+{
+  "description": "Rust conformance workspace (docs/languages.md). Crate `shop` (Cargo.toml + src/lib.rs); cart, report and checkout use src/pricing.rs through `use crate::pricing...`. The peer changes are another agent's edits to src/pricing.rs; their writes are exactly what @weft/analyzer's Rust backend derives from `after` (checked by packages/conformance/test/languages.test.ts).",
+  "language": "rust",
+  "files": {
+    "Cargo.toml": "[package]\nname = \"shop\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub mod cart;\npub mod checkout;\npub mod pricing;\npub mod report;\n",
+    "src/pricing.rs": "#[derive(Debug, Clone)]\npub struct Item {\n    pub price: f64,\n    pub qty: u32,\n}\n\npub fn calc_total(items: &[Item]) -> f64 {\n    items.iter().map(|i| i.price * i.qty as f64).sum()\n}\n\npub fn format_price(amount: f64) -> String {\n    format!(\"${:.2}\", amount)\n}\n",
+    "src/cart.rs": "use crate::pricing::{calc_total, Item};\n\npub fn cart_summary(items: &[Item]) -> String {\n    format!(\"{} items\", items.len())\n}\n",
+    "src/report.rs": "use crate::pricing::format_price;\n\npub fn report_line(total: f64) -> String {\n    String::from(\"Total\")\n}\n",
+    "src/checkout.rs": "use crate::pricing;\n\npub fn checkout_total(items: &[pricing::Item]) -> f64 {\n    0.0\n}\n"
+  },
+  "peers": {
+    "change_signature": {
+      "agent": "peer-a",
+      "harness": "claude-code",
+      "task": "T-1",
+      "files": [
+        "src/pricing.rs"
+      ],
+      "writes": [
+        {
+          "key": "src/pricing.rs#calc_total",
+          "kind": "signature"
+        }
+      ],
+      "reads": [
+        "src/pricing.rs#Item"
+      ],
+      "intent": "calc_total takes a tax_rate",
+      "after": {
+        "src/pricing.rs": "#[derive(Debug, Clone)]\npub struct Item {\n    pub price: f64,\n    pub qty: u32,\n}\n\npub fn calc_total(items: &[Item], tax_rate: f64) -> f64 {\n    let net: f64 = items.iter().map(|i| i.price * i.qty as f64).sum();\n    net * (1.0 + tax_rate)\n}\n\npub fn format_price(amount: f64) -> String {\n    format!(\"${:.2}\", amount)\n}\n"
+      }
+    },
+    "rename_helper": {
+      "agent": "peer-b",
+      "harness": "codex",
+      "task": "T-3",
+      "files": [
+        "src/pricing.rs"
+      ],
+      "writes": [
+        {
+          "key": "src/pricing.rs#format_money",
+          "kind": "new"
+        },
+        {
+          "key": "src/pricing.rs#format_price",
+          "kind": "deleted"
+        }
+      ],
+      "reads": [
+        "src/pricing.rs#Item"
+      ],
+      "intent": "rename format_price to format_money",
+      "after": {
+        "src/pricing.rs": "#[derive(Debug, Clone)]\npub struct Item {\n    pub price: f64,\n    pub qty: u32,\n}\n\npub fn calc_total(items: &[Item]) -> f64 {\n    items.iter().map(|i| i.price * i.qty as f64).sum()\n}\n\npub fn format_money(amount: f64) -> String {\n    format!(\"${:.2}\", amount)\n}\n"
+      }
+    }
+  }
+}
