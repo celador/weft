@@ -1,0 +1,102 @@
+{
+  "started_at": "2026-10-23T00:09:07.807Z",
+  "gateway": "https://weft-gateway-preview.elier.ai",
+  "workflows": "https://weft-workflows-preview.elier.ai",
+  "repo": "weft-testselect",
+  "steps": [
+    {
+      "name": "bound trunk",
+      "at_s": 0.8,
+      "trunk": "weft-testselect",
+      "namespace": "weft-preview",
+      "config": {
+        "tests": {
+          "command": [
+            "node",
+            "--test"
+          ],
+          "timeout_s": 300,
+          "select": true
+        },
+        "layers": [
+          "git",
+          "mergiraf"
+        ],
+        "job_timeout_s": 900
+      }
+    },
+    {
+      "name": "trunk seeded",
+      "at_s": 3.3,
+      "before": "9e37e04e1af25589e05db3b04fad53a9b631d2d7",
+      "base": "9e37e04e1af25589e05db3b04fad53a9b631d2d7",
+      "tests": [
+        "test/money.test.ts",
+        "test/round.test.ts",
+        "test/pricing.test.ts",
+        "test/discount.test.ts",
+        "test/cart.test.ts",
+        "test/users.test.ts",
+        "test/initials.test.ts",
+        "test/catalog.test.ts"
+      ]
+    },
+    {
+      "name": "A checkpoint (ProcessRevision): subset",
+      "at_s": 110.5,
+      "sha": "81c9dfdd741d94cc2daa87478eec946c006368ee",
+      "revision": "processed",
+      "wall_s": 32.395,
+      "mode": "subset",
+      "reason": null,
+      "selected": 1,
+      "total": 8,
+      "files": [
+        "test/users.test.ts"
+      ],
+      "why": {
+        "test/users.test.ts": "reaches ../src/users.ts#displayName"
+      },
+      "writes": [
+        {
+          "key": "src/users.ts#displayName",
+          "kind": "body"
+        }
+      ],
+      "graph": {
+        "files": 15,
+        "parsed": 15,
+        "cached": 0,
+        "ms": 132
+      },
+      "select_ms": 505,
+      "tests_ms": 1443,
+      "baseline_ms": null,
+      "saved_ms": null,
+      "saved_fraction": null,
+      "test": {
+        "status": "pass",
+        "command": "node --test test/users.test.ts",
+        "summary": {
+          "pass": 1,
+          "fail": 0
+        },
+        "ms": 1443
+      }
+    },
+    {
+      "name": "A landed (LandChange): full presubmit",
+      "at_s": 429,
+      "workflow": "land-Id4dada081e36-1792714258521",
+      "after": null,
+      "baseline_ms": null,
+      "saved_ms": null,
+      "saved_fraction": null,
+      "test": null
+    }
+  ],
+  "delivery": {
+    "81c9dfdd741d94cc2daa87478eec946c006368ee": "queue-fallback"
+  },
+  "error": "A did not land: {\"message\":\"gateway POST /system/queue -> 422: {\\\"type\\\":\\\"error\\\",\\\"error\\\":{\\\"code\\\":\\\"invalid_reference\\\",\\\"message\\\":\\\"unknown change Id4dada081e3653f425475ca538bf318f36770b92\\\",\\\"retryable\\\":false}}\",\"name\":\"Error\"}"
+}

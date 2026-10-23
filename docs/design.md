@@ -413,3 +413,64 @@ WCP v0.1 is specified in `docs/protocol/wcp-v0.md` (normative; implemented by `p
 - Proof: protocol scenario `join-after-unmerged-change` (reference + SqlCoordinator) and
   hook fixture `L2.deny-after-late-join` (core set) fail on main and pass now.
 
+
+## Update 2026-10-22 (t_609507d0, CI load: affected-test selection)
+
+- Why: many agents pushing many checkpoints multiplies CI. Already in place: coalescing to the
+  newest head per change, fail-fast evidence stages, one ephemeral container per job,
+  mid-edit conflict detection, a serialized land queue. New: per-checkpoint tests run only
+  the test files that can reach what the candidate writes. Batched landing with bisect is the
+  next card (t_5f9c01c1).
+- Opt-in per repo: `config.tests.select` (`true` or options: `tests`/`infra`/`ignore` globs,
+  `full_at_risk` (default `high`), `max_fraction`, `command` with a `{files}` placeholder;
+  default appends the files to `tests.command`). Without it nothing changes (weft-demo untouched).
+- Where: `packages/analyzer/src/testselect.ts` (Node, TS parser, no type checker), bundled into
+  the sandbox image as `/opt/weft/testselect/weft-testselect.mjs` (stage.mjs) and loaded by
+  `weft-job.mjs` in the **rebase** job (ProcessRevision). The **land** job (presubmit before the
+  trunk CAS push) never selects: it always runs the full suite and records
+  `reason: "land presubmit always runs the full suite"`.
+- Selection: writes = the analyzer's write set (`analyze(before, after, path)`) of each changed
+  TS/JS file, keyed by top-level symbol (`path#Class.method` → `Class`); a change to imports,
+  exports or module-level statements taints the whole module. Graph = per file: top-level
+  declarations and the identifiers each references, import/export bindings (named, default,
+  namespace, re-export, `export *`, literal `import()`/`require()`), resolved through relative
+  paths (`.js`→`.ts`), workspace `package.json` exports (`dist/`→`src/` fallback). Fixed point:
+  a tainted symbol taints the declarations that reference it (callers, transitively) and every
+  importing binding. A test file is selected when it changed, holds a tainted binding, or
+  reaches an opaque import (non-literal dynamic import, `@/`/`~/`/`#` alias).
+- Full-suite fallbacks (reason recorded): risk tier ≥ `full_at_risk` (task risk), high-risk
+  paths (migrations, auth/security; same list as the evidence heuristic), config/deps/test
+  infra (`package.json`, lockfiles, `tsconfig*`, test runner configs, `.weft/**`, `.github/**`,
+  wrangler/Dockerfile, plus `infra` globs), a changed file the parser rejects, a changed
+  non-code file no module imports (tests may read it at runtime), a changed file in another
+  language (`no TS/JS graph`), selector missing or crashing, `max_fraction` exceeded. A
+  change no test reaches (docs) runs nothing and passes with `selected: 0`.
+- Evidence: `test_selection` row per checkpoint and per presubmit: `mode`, `reason`,
+  `selected`/`total`, `files` + `why` per file, `writes`, graph stats, `tests_ms`,
+  `select_ms`, `baseline` (latest passing full-suite run in the repo, recorded before this
+  one), `saved_ms`, `saved_fraction`. The `test` row also carries `selection`.
+- Cache: parse facts keyed by git blob sha (`$WEFT_CACHE_DIR`), so every candidate on one trunk
+  sha reuses the trunk's graph. Today each job is a fresh container, so the live run shows
+  `cached: 0`; it pays off once sandboxes are kept warm per repo. Parsing 15 files took
+  106–132 ms; the whole selection step (ls-tree, diff, parse, analyze) about 0.5 s.
+- Live (preview, repo `weft-testselect`, `demo/evidence/testselect-live/run.json`): a
+  synthetic suite of 8 node:test files (each ~1.2 s of work so the timing is visible; not a
+  real project's CI).
+
+  | step | mode | tests | tests time | note |
+  |---|---|---|---|---|
+  | A checkpoint, `users.displayName` body | subset | 1/8 | 1.43 s | `reaches ../src/users.ts#displayName` |
+  | A land presubmit | full | 8/8 | 11.39 s | always full; landed `101dbaa` |
+  | B checkpoint, `money.round2` body | subset | 4/8 | 5.42 s | round2 ← lineTotal ← discount, cartTotal; saved 5.48 s (48%) vs A's presubmit |
+  | C checkpoint, `package.json` | full | 8/8 | 11.28 s | `config/deps/test infra changed: package.json` |
+
+  `money.test.ts` (reads `CURRENCY` from the same file as `round2`) was correctly left out of
+  B: precision is per symbol, not per file.
+- Caveats: the 10-22 wind-down had deleted the preview sandbox, its R2 log bucket and the
+  push-event queue. For this run they were re-created (sandbox redeployed, queue + gateway
+  consumer restored) and wound down again afterwards. Artifacts did not deliver `pushed`
+  events to the re-created queue within 60 s, so the script sent the same
+  `cf.artifacts.repo.pushed` envelope to the queue itself (`delivery: queue-fallback` in
+  run.json); everything from the queue on was the real pipeline. Selection covers TS/JS only;
+  type-only imports count as edges (conservative); property names are over-approximated as
+  references.

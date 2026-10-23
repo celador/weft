@@ -21,9 +21,11 @@
 // Node >= 22, no dependencies (shared by the image and the workflows' Node tests).
 
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { mkdtemp, readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const ZERO_SHA = "0000000000000000000000000000000000000000";
 let mergirafAvailable;
@@ -357,15 +359,33 @@ class Job {
     return { patch: text.slice(0, max), files, truncated: text.length > max };
   }
 
-  async tests(sha) {
+  /**
+   * Run the repo's tests on `sha`. `select` (ProcessRevision checkpoints only): affected-test
+   * selection against `onto` when the repo config has `tests.select`; anything the selector
+   * cannot vouch for runs the full suite with the reason in `selection`. The land presubmit
+   * passes `select = { full: reason }` and always runs the full suite.
+   */
+  async tests(sha, select = null) {
     const t = this.spec.tests;
     if (!t || !t.command || (Array.isArray(t.command) && !t.command.length)) return { status: "skipped", reason: "no test command configured" };
     await this.gitOk(["checkout", "-q", "--detach", sha]);
-    const argv = Array.isArray(t.command) ? t.command : ["sh", "-c", t.command];
+    const fullArgv = Array.isArray(t.command) ? t.command : ["sh", "-c", t.command];
+    let argv = fullArgv;
+    let selection = null;
+    if (t.select && select) {
+      selection = await this.timed("select", () => this.selectTests(sha, select));
+      if (selection.mode === "subset") {
+        if (!selection.selected.length) {
+          const { selected, why, ...rest } = selection;
+          return { status: "pass", exit: 0, timed_out: false, ms: 0, command: "(no tests reach the change)", summary: { pass: 0, fail: 0 }, tail: "", selection: { ...rest, files: [], why: {} } };
+        }
+        argv = selectedCommand(t.select.command ?? t.command, selection.selected);
+      }
+    }
     const s = now();
     const r = await this.timed("tests", () => sh(argv, { cwd: this.dir, env: { ...this.env, CI: "1" }, timeoutMs: (t.timeout_s ?? 900) * 1000 }));
     const output = redact(r.stdout + (r.stderr ? `\n${r.stderr}` : ""), this.secrets);
-    return {
+    const out = {
       status: r.code === 0 && !r.timedOut ? "pass" : "fail",
       exit: r.code,
       timed_out: r.timedOut,
@@ -374,6 +394,64 @@ class Job {
       summary: summarizeTests(output),
       tail: output.slice(-4000),
     };
+    if (selection) {
+      const { selected, why, ...rest } = selection;
+      out.selection = { ...rest, files: selected.slice(0, 100), why: Object.fromEntries(Object.entries(why ?? {}).slice(0, 100)) };
+    }
+    return out;
+  }
+
+  /** Affected-test selection (packages/analyzer/src/testselect.ts, bundled into the image). */
+  async selectTests(sha, select) {
+    const t0 = now();
+    const cfg = this.spec.tests.select === true ? {} : this.spec.tests.select;
+    const base = { mode: "full", selected: [], total: null, why: {}, writes: [], graph: null };
+    let mod;
+    try {
+      mod = await loadSelector();
+    } catch (e) {
+      return { ...base, reason: `test selector unavailable: ${String(e?.message ?? e).slice(0, 200)}`, ms: now() - t0 };
+    }
+    try {
+      const ls = await this.gitOk(["ls-tree", "-r", "-z", "--full-tree", sha]);
+      const blobs = {};
+      for (const entry of ls.split("\0").filter(Boolean)) {
+        const tab = entry.indexOf("\t");
+        const [mode, type, blob] = entry.slice(0, tab).split(" ");
+        if (type === "blob" && mode !== "120000") blobs[entry.slice(tab + 1)] = blob;
+      }
+      const files = Object.keys(blobs);
+      if (select.full) {
+        const tests = mod.discoverTests(files, cfg);
+        return { ...base, reason: select.full, total: tests.length, selected: tests, ms: now() - t0 };
+      }
+      const onto = select.onto;
+      if (!onto || onto === ZERO_SHA) {
+        const tests = mod.discoverTests(files, cfg);
+        return { ...base, reason: "no trunk to diff against", total: tests.length, selected: tests, ms: now() - t0 };
+      }
+      const ns = await this.gitOk(["diff", "--name-status", "--no-renames", "-z", onto, sha]);
+      const parts = ns.split("\0").filter(Boolean);
+      const changed = [];
+      for (let i = 0; i + 1 < parts.length; i += 2) changed.push({ status: parts[i][0], path: parts[i + 1] });
+      const readBefore = (p) => {
+        const r = spawnSync("git", ["show", `${onto}:${p}`], { cwd: this.dir, env: this.env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+        return r.status === 0 ? r.stdout : undefined;
+      };
+      const read = (p) => {
+        try {
+          return readFileSync(join(this.dir, p), "utf8");
+        } catch {
+          return undefined;
+        }
+      };
+      const cache = await loadFactsCache();
+      const sel = mod.selectTests({ files, read, readBefore, changed, risk: select.risk ?? null, config: cfg, blobs, cache: cache.map });
+      await cache.save().catch(() => undefined);
+      return { ...sel, tests: undefined, onto, changed: changed.length, ms: now() - t0 };
+    } catch (e) {
+      return { ...base, reason: `test selection failed: ${redact(String(e?.message ?? e), this.secrets).slice(0, 300)}`, ms: now() - t0 };
+    }
   }
 
   /** CAS push: refs/heads/<branch> from `expected` to `sha` (fast-forward checked by the caller). */
@@ -422,6 +500,67 @@ export function summarizeTests(out) {
   return Object.fromEntries(Object.entries(s).filter(([, v]) => v !== undefined));
 }
 
+// ------------------------------------------------------------------------------- test selection
+
+let selectorModule;
+/**
+ * The affected-test selector (packages/analyzer/src/testselect.ts). In the image it is a bundle
+ * next to this file (testselect/weft-testselect.mjs, staged by scripts/stage.mjs); in the repo's
+ * Node tests WEFT_TESTSELECT points at the TypeScript source. Missing = full suite.
+ */
+export async function loadSelector() {
+  if (selectorModule) return selectorModule;
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [process.env.WEFT_TESTSELECT, join(here, "testselect", "weft-testselect.mjs"), join(here, "vendor", "testselect", "weft-testselect.mjs")].filter(Boolean);
+  let last;
+  for (const c of candidates) {
+    try {
+      selectorModule = await import(c.startsWith("file:") ? c : pathToFileURL(c).href);
+      return selectorModule;
+    } catch (e) {
+      last = e;
+    }
+  }
+  throw last ?? new Error("no selector module");
+}
+
+/**
+ * Parse facts keyed by git blob sha: every candidate on the same trunk sha shares the trunk's
+ * graph, and a warm container keeps it across jobs. Bounded; stale entries are harmless
+ * (a blob sha names exact contents).
+ */
+async function loadFactsCache() {
+  const dir = process.env.WEFT_CACHE_DIR ?? join(process.env.WEFT_WORK_ROOT ?? tmpdir(), "weft-cache");
+  const file = join(dir, "testselect-facts-v1.json");
+  let map = new Map();
+  try {
+    map = new Map(Object.entries(JSON.parse(await readFile(file, "utf8"))));
+  } catch {}
+  const size0 = map.size;
+  return {
+    map,
+    async save() {
+      if (map.size === size0) return;
+      const entries = [...map.entries()].slice(-50_000);
+      await mkdir(dir, { recursive: true });
+      const tmp = `${file}.${process.pid}.tmp`;
+      await writeFile(tmp, JSON.stringify(Object.fromEntries(entries)));
+      await rename(tmp, file);
+    },
+  };
+}
+
+/** Test command for the selected files: `{files}` placeholder in an argv/string, else appended. */
+export function selectedCommand(command, files) {
+  const q = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
+  if (Array.isArray(command)) {
+    const i = command.indexOf("{files}");
+    return i >= 0 ? [...command.slice(0, i), ...files, ...command.slice(i + 1)] : [...command, ...files];
+  }
+  const joined = files.map(q).join(" ");
+  return ["sh", "-c", command.includes("{files}") ? command.replace("{files}", joined) : `${command} ${joined}`];
+}
+
 // ------------------------------------------------------------------------------- jobs
 
 async function rebaseJob(job) {
@@ -442,8 +581,9 @@ async function rebaseJob(job) {
     out.files = pt.files;
     if (pt.truncated) out.patch_truncated = true;
   }
-  out.tests = await job.tests(rb.rebased);
-  job.note("tested", { status: out.tests.status });
+  // Checkpoint feedback: affected tests only (when the repo opts in with tests.select).
+  out.tests = await job.tests(rb.rebased, s.select === false ? null : { onto, risk: s.select?.risk ?? null });
+  job.note("tested", { status: out.tests.status, selection: out.tests.selection ? { mode: out.tests.selection.mode, selected: out.tests.selection.files?.length ?? 0, total: out.tests.selection.total, reason: out.tests.selection.reason } : null });
   if (s.push_rebased && rb.rebased !== head) {
     const ref = typeof s.push_rebased === "string" ? s.push_rebased : "refs/heads/weft/rebased";
     const p = await job.timed("push_rebased", () => job.git(["push", "--porcelain", "--force", s.fork.remote, `${rb.rebased}:${ref}`]));
@@ -470,7 +610,9 @@ async function landJob(job) {
   job.note("rebased", { status: rb.status, layer: rb.layer, rebased: rb.rebased ?? null });
   if (rb.status === "conflict") return { job: "land", ...rb };
   const out = { job: "land", ...rb, diffstat: await job.diffstat(onto, rb.rebased) };
-  out.tests = await job.tests(rb.rebased);
+  // The presubmit before the trunk CAS push ALWAYS runs the full suite (selection is only a
+  // checkpoint-feedback speedup); the selection record just says so and counts the tests.
+  out.tests = await job.tests(rb.rebased, { full: "land presubmit always runs the full suite" });
   if (out.tests.status === "fail") return { ...out, status: "tests_failed" };
   if (s.dry_run) return { ...out, status: "ready" };
   const expected = onto ?? ZERO_SHA;

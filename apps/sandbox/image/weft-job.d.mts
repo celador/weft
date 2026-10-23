@@ -7,3 +7,5 @@ export declare function validateJob(spec: unknown): string[];
 export declare function summarizeTests(out: string): { pass?: number; fail?: number };
 export declare function stripFences(s: string): string;
 export declare function redact(s: string, extra?: string[]): string;
+export declare function loadSelector(): Promise<unknown>;
+export declare function selectedCommand(command: string[] | string, files: string[]): string[];

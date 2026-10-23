@@ -36,6 +36,11 @@ RUN cd /opt/weft/adapters/claude-code && npm install --no-fund --no-audit --omit
 	&& npm cache clean --force \
 	&& ln -s /opt/weft/adapters/claude-code/dist/weft-claude.mjs /usr/local/bin/weft-adapter-claude
 
+# Affected-test selector for weft-job (bundle of packages/analyzer/src/testselect.ts; typescript
+# comes from the claude-code adapter's install above).
+COPY image/vendor/testselect /opt/weft/testselect
+RUN ln -s /opt/weft/adapters/claude-code/node_modules /opt/weft/testselect/node_modules
+
 COPY image/agent-run.mjs /opt/weft/agent-run.mjs
 COPY image/weft-job.mjs /opt/weft/weft-job.mjs
 COPY image/versions.sh /opt/weft/versions.sh

@@ -12,7 +12,7 @@
 import { bounceText, landOpId, needsApproval, rank, revertOpId, runJob, short, type Ranked } from "./common";
 import { collectEvidence, maxRisk, testsSummary, xEvidenceFromRows, type XEvidence } from "./evidence";
 import { revisionStatus, Store } from "./store";
-import type { BestOfNParams, ChangeRow, Deps, JobRequest, JobResult, LandChangeParams, ProcessRevisionParams, RepoConfig, RevertOperationParams, StepLike } from "./types";
+import type { BestOfNParams, ChangeRow, Deps, JobRequest, JobResult, LandChangeParams, ProcessRevisionParams, RepoConfig, RevertOperationParams, StepLike, TestsResult } from "./types";
 
 type Ctx = {
   change: ChangeRow;
@@ -79,6 +79,34 @@ function testEvidence(r: JobResult) {
   return { status: t.status === "pass" ? ("pass" as const) : t.status === "fail" ? ("fail" as const) : ("info" as const), data: { ...t, onto: r.onto ?? null, sha: r.rebased ?? null } };
 }
 
+/**
+ * `test_selection` evidence: selected vs total tests, the fallback reason, and time saved
+ * against the repo's latest passing full-suite run (land presubmit or a full checkpoint run).
+ */
+export function selectionEvidence(t: TestsResult, baseline: { ms: number; tests: number | null; sha: string; kind: string } | null) {
+  const s = t.selection!;
+  const selected = s.mode === "full" ? (s.total ?? null) : s.files.length;
+  const testsMs = t.ms ?? 0;
+  const ranMs = testsMs + (s.ms ?? 0);
+  const saved = s.mode === "subset" && baseline ? Math.max(0, baseline.ms - ranMs) : null;
+  return {
+    stage: "checkpoint" as "checkpoint" | "presubmit",
+    mode: s.mode,
+    reason: s.reason,
+    selected,
+    total: s.total,
+    files: s.files,
+    ...(s.why ? { why: s.why } : {}),
+    writes: (s.writes ?? []).slice(0, 50),
+    graph: s.graph ?? null,
+    tests_ms: testsMs,
+    select_ms: s.ms ?? null,
+    baseline: baseline ? { ms: baseline.ms, tests: baseline.tests, sha: baseline.sha, kind: baseline.kind } : null,
+    saved_ms: saved,
+    saved_fraction: saved !== null && baseline && baseline.ms > 0 ? Math.round((saved / baseline.ms) * 1000) / 1000 : null,
+  };
+}
+
 function evidenceHint(ctx: Ctx, x: XEvidence): string {
   const bits = [
     x.tests ? `tests ${x.tests.passed}/${x.tests.total}` : null,
@@ -124,16 +152,21 @@ export async function processRevision(p: ProcessRevisionParams, step: StepLike, 
   if ("skip" in loaded) return { status: "skipped", reason: loaded.skip };
   const ctx = loaded;
 
-  const r = await runJob(step, deps, instance, "rebase", jobFor(ctx, "rebase", p.sha, { push_rebased: true }, { trunk: "read", fork: "write" }));
+  // Checkpoint feedback runs only the affected tests when the repo opts in (tests.select);
+  // the task's risk tier goes along (high = full suite). LandChange never selects.
+  const r = await runJob(step, deps, instance, "rebase", jobFor(ctx, "rebase", p.sha, { push_rebased: true, select: { risk: ctx.risk } }, { trunk: "read", fork: "write" }));
   const status = revisionStatus(r);
 
   await step.do("record evidence", async () => {
+    // Time-saved baseline: the latest full-suite run BEFORE this one is recorded.
+    const baseline = r.tests?.selection ? await store.lastFullSuite(p.repo) : null;
     await store.setRevision(p.change, p.sha, { status, onto_sha: r.onto ?? null, rebased_sha: r.rebased ?? null, layer: r.layer ?? null, processed: true });
     const ok = r.status === "up_to_date" || r.status === "clean" || r.status === "resolved";
     await store.evidence(p.change, p.sha, "rebase", ok ? "pass" : "fail", rebaseEvidence(r));
     if (r.tests) {
       const t = testEvidence(r);
       await store.evidence(p.change, p.sha, "test", t.status, t.data);
+      if (r.tests.selection) await store.evidence(p.change, p.sha, "test_selection", "info", selectionEvidence(r.tests, baseline));
     }
     return null;
   });
@@ -240,6 +273,7 @@ export async function landChange(p: LandChangeParams, step: StepLike, deps: Deps
       if (r.tests) {
         const t = testEvidence(r);
         await store.evidence(p.change, sha, "presubmit", t.status, t.data);
+        if (r.tests.selection) await store.evidence(p.change, sha, "test_selection", "info", { ...selectionEvidence(r.tests, null), stage: "presubmit" });
       }
       await coord.setQueueStatus(entry.id, "failed", reason.slice(0, 300));
       return null;
@@ -275,6 +309,7 @@ export async function landChange(p: LandChangeParams, step: StepLike, deps: Deps
     if (r.tests) {
       const t = testEvidence(r);
       await store.evidence(p.change, sha, "presubmit", t.status, t.data);
+      if (r.tests.selection) await store.evidence(p.change, sha, "test_selection", "info", { ...selectionEvidence(r.tests, null), stage: "presubmit" });
     }
     await store.setChangeStatus(p.change, "landed");
     await store.setTaskStatus(p.repo, ctx.change.task, "landed");

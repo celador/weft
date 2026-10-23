@@ -50,7 +50,34 @@ export interface CoordinatorClient {
 
 export type Layer = "none" | "git" | "mergiraf" | "resolver" | "reused";
 export type Conflict = { file: string; commit: string; hunks: Array<{ line: number; text: string }>; note?: string };
-export type TestsResult = { status: "pass" | "fail" | "skipped"; exit?: number; timed_out?: boolean; ms?: number; command?: string; summary?: { pass?: number; fail?: number }; tail?: string; reason?: string };
+export type TestsResult = { status: "pass" | "fail" | "skipped"; exit?: number; timed_out?: boolean; ms?: number; command?: string; summary?: { pass?: number; fail?: number }; tail?: string; reason?: string; selection?: TestSelection };
+/** Affected-test selection record (weft-job.mjs + packages/analyzer/src/testselect.ts). */
+export type TestSelection = {
+  mode: "subset" | "full";
+  /** Why the full suite ran (null for a subset). */
+  reason: string | null;
+  /** Selected test files (capped at 100) and why each was picked. */
+  files: string[];
+  why?: Record<string, string>;
+  /** Test files found in the tree (null when the selector was unavailable). */
+  total: number | null;
+  writes?: Array<{ key: string; kind: string }>;
+  graph?: { files: number; parsed: number; cached: number; ms: number } | null;
+  onto?: string;
+  changed?: number;
+  /** Selection time (ms), included in the job's `select_ms` timing. */
+  ms?: number;
+};
+/** Opt-in per repo: `tests.select` (true or options). Without it every checkpoint runs the full suite. */
+export type TestSelectConfig = {
+  tests?: string[];
+  infra?: string[];
+  ignore?: string[];
+  full_at_risk?: Risk;
+  max_fraction?: number;
+  /** Command for a subset; `{files}` is replaced by the selected test files (default: tests.command + files). */
+  command?: string[] | string;
+};
 export interface JobResult {
   job?: "rebase" | "land" | "revert";
   status: "up_to_date" | "clean" | "resolved" | "conflict" | "error" | "tests_failed" | "ready" | "noop" | "landed" | "stale_trunk" | "rejected" | "reverted" | "not_fast_forward";
@@ -103,7 +130,7 @@ export interface JobRunner {
 // ------------------------------------------------------------------ config / params
 
 export interface RepoConfig {
-  tests?: { command: string[] | string; timeout_s?: number } | null;
+  tests?: { command: string[] | string; timeout_s?: number; select?: true | TestSelectConfig } | null;
   resolver?: { kind: "llm"; model?: string } | { kind: "command"; argv: string[]; timeout_s?: number } | null;
   layers?: Array<"git" | "mergiraf" | "resolver">;
   allow_hosts?: string[];
