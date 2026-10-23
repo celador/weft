@@ -1,0 +1,36 @@
+{
+  "id": "GO.allow-unrelated",
+  "level": 2,
+  "required": true,
+  "spec": "§4.1",
+  "title": "Go: an edit that does not use the changed function is not blocked",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "report/report.go",
+        "old_text": "\treturn \"Total\"",
+        "new_text": "\treturn \"Total: \" + pricing.FormatPrice(total)"
+      },
+      "expect_pre": {
+        "decision": "not-deny"
+      },
+      "expect_applied": true
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "kind": "edit",
+        "status": "accepted",
+        "files_include": "report/report.go",
+        "min": 1
+      }
+    }
+  ]
+}

@@ -188,3 +188,113 @@ fun render(items: List<Item>): String {
     expect(await cpuMs(() => run(big, big.replace("calc7(items: List<Item>)", "calc7(items: List<Item>, x: Int)")))).toBeLessThan(EDIT_BUDGET_MS);
   });
 });
+
+// A checkout with read/list, for the package index (same-package names) and JVM facades.
+const K = "src/main/kotlin/com/shop/pricing";
+const J = "src/main/java/com/shop/pricing";
+const pkgCheckout: Record<string, string> = {
+  [`${K}/Pricing.kt`]: `package com.shop.pricing\n\nfun calcTotal(items: List<Double>): Double = items.sum()\n\nconst val TAX_RATE = 0.2\n\nprivate fun secret(): Int = 1\n\nfun Cart.discount(pct: Int): Double = 0.0\n`,
+  [`${K}/Values.kt`]: `package com.shop.pricing\n\ndata class Money(val cents: Long)\n\nval <T> List<T>.second: T get() = this[1]\n`,
+  [`${K}/Cart.kt`]: `package com.shop.pricing\n\nclass Cart(val items: List<Double>)\n`,
+  [`${K}/Other.kt`]: `package com.shop.other\n\nfun stray(): Int = 0\n`,
+  [`${K}/Fmt.kt`]: `@file:JvmName("PriceFormat")\npackage com.shop.pricing\n\nfun formatPrice(d: Double): String = "$" + d\n`,
+  [`${J}/Invoice.java`]: `package com.shop.pricing;\n\npublic class Invoice {}\n`,
+  "src/main/java/com/shop/real/HelperKt.java": `package com.shop.real;\n\npublic class HelperKt { public static int calcTotal() { return 1; } }\n`,
+  "src/main/kotlin/com/shop/real/Helper.kt": `package com.shop.real\n\nfun calcTotal(): Int = 2\n`,
+};
+const pkgOpts = {
+  exists: (rel: string) => rel in pkgCheckout,
+  read: (rel: string) => pkgCheckout[rel],
+  list: (dir: string) => {
+    const prefix = dir ? `${dir}/` : "";
+    const out = new Set<string>();
+    for (const f of Object.keys(pkgCheckout)) if (f.startsWith(prefix)) out.add(f.slice(prefix.length).replace(/\/.*$/, "/"));
+    return out.size ? [...out] : undefined;
+  },
+};
+const readsOf = async (path: string, after: string, opts: object = pkgOpts) => (await analyzeSource({ path, before: null, after }, opts)).reads;
+
+describe("kotlin: same-package declarations in other files (package index)", () => {
+  it("reads a top-level function, property and extension of another file of the package, with no import", async () => {
+    const src = `package com.shop.pricing\n\nfun checkout(cart: Cart): Double {\n    return calcTotal(cart.items) * TAX_RATE + cart.discount(5)\n}\n`;
+    expect(await readsOf(`${K}/Checkout.kt`, src)).toEqual([
+      `${K}/Cart.kt#Cart`,
+      `${K}/Pricing.kt#TAX_RATE`,
+      `${K}/Pricing.kt#calcTotal`,
+      `${K}/Pricing.kt#discount`,
+    ]);
+  });
+
+  it("finds a class declared in a file not named after it", async () => {
+    const src = `package com.shop.pricing\n\nfun zero(): Money = Money(0)\n`;
+    expect(await readsOf(`${K}/Zero.kt`, src)).toEqual([`${K}/Values.kt#Money`]);
+  });
+
+  it("skips private declarations, files of another package, and names the file declares or imports itself", async () => {
+    const src = `package com.shop.pricing\n\nimport com.acme.lib.calcTotal\n\nfun formatPrice(d: Double) = d\n\nfun f() = secret() + stray() + calcTotal(listOf()) + formatPrice(1.0)\n`;
+    expect(await readsOf(`${K}/F.kt`, src)).toEqual([`${K}/F.kt#formatPrice`]);
+  });
+
+  it("a peer's signature change reaches the same-package caller's key", async () => {
+    const before = pkgCheckout[`${K}/Pricing.kt`]!;
+    const after = before.replace("fun calcTotal(items: List<Double>)", "fun calcTotal(items: List<Double>, rate: Double)");
+    const { writes } = await analyzeSource({ path: `${K}/Pricing.kt`, before, after }, pkgOpts);
+    expect(writes).toEqual([{ key: `${K}/Pricing.kt#calcTotal`, kind: "signature" }]);
+    expect(await readsOf(`${K}/Checkout.kt`, `package com.shop.pricing\n\nfun f() = calcTotal(listOf())\n`)).toContain(`${K}/Pricing.kt#calcTotal`);
+  });
+
+  it("without read/list only same-file and import reads are found", async () => {
+    const src = `package com.shop.pricing\n\nfun f() = calcTotal(listOf())\n`;
+    expect(await readsOf(`${K}/F.kt`, src, { exists: pkgOpts.exists })).toEqual([]);
+  });
+});
+
+describe("java -> kotlin facades (`FooKt`, @file:JvmName)", () => {
+  it("PricingKt.calcTotal() through an import reads the Kotlin file's top-level key", async () => {
+    const src = `package com.shop.billing;\n\nimport com.shop.pricing.PricingKt;\n\nclass Bill {\n    double total() { return PricingKt.calcTotal(java.util.List.of()) * PricingKt.TAX_RATE; }\n}\n`;
+    expect(await readsOf("src/main/java/com/shop/billing/Bill.java", src)).toEqual([`${K}/Pricing.kt#TAX_RATE`, `${K}/Pricing.kt#calcTotal`]);
+  });
+
+  it("a static import of a facade member reads the member", async () => {
+    const src = `package com.shop.billing;\n\nimport static com.shop.pricing.PricingKt.calcTotal;\n\nclass Bill {\n    double total() { return calcTotal(java.util.List.of()); }\n}\n`;
+    expect(await readsOf("src/main/java/com/shop/billing/Bill.java", src)).toEqual([`${K}/Pricing.kt#calcTotal`]);
+  });
+
+  it("same package, no import, Kotlin under src/main/kotlin and Java under src/main/java", async () => {
+    const src = `package com.shop.pricing;\n\nclass Bill {\n    double total() { return PricingKt.calcTotal(java.util.List.of()); }\n}\n`;
+    expect(await readsOf(`${J}/Bill.java`, src)).toEqual([`${K}/Pricing.kt#calcTotal`]);
+  });
+
+  it("@file:JvmName names the facade, and the default FooKt name no longer applies", async () => {
+    const renamed = `package com.shop.billing;\n\nimport com.shop.pricing.PriceFormat;\n\nclass Bill {\n    String s() { return PriceFormat.formatPrice(1.0); }\n}\n`;
+    expect(await readsOf("src/main/java/com/shop/billing/Bill.java", renamed)).toEqual([`${K}/Fmt.kt#formatPrice`]);
+    const stale = `package com.shop.billing;\n\nimport com.shop.pricing.FmtKt;\n\nclass Bill {\n    String s() { return FmtKt.formatPrice(1.0); }\n}\n`;
+    expect(await readsOf("src/main/java/com/shop/billing/Bill.java", stale)).not.toContain(`${K}/Fmt.kt#formatPrice`);
+  });
+
+  it("a real class named like a facade wins", async () => {
+    const src = `package com.shop.billing;\n\nimport com.shop.real.HelperKt;\n\nclass Bill {\n    int t() { return HelperKt.calcTotal(); }\n}\n`;
+    expect(await readsOf("src/main/java/com/shop/billing/Bill.java", src)).toEqual([
+      "src/main/java/com/shop/real/HelperKt.java#HelperKt",
+      "src/main/java/com/shop/real/HelperKt.java#HelperKt.calcTotal",
+    ]);
+  });
+
+  it("stays inside the edit-time budget with a 300-file package (< 300 ms CPU, warm)", async () => {
+    const big: Record<string, string> = { ...pkgCheckout };
+    for (let i = 0; i < 300; i++) big[`${K}/Gen${i}.kt`] = `package com.shop.pricing\n\n` + Array.from({ length: 20 }, (_, j) => `fun gen${i}_${j}(x: Int): Int = x + ${j}\n`).join("");
+    const opts = {
+      exists: (rel: string) => rel in big,
+      read: (rel: string) => big[rel],
+      list: (dir: string) => Object.keys(big).filter((f) => f.startsWith(`${dir}/`) && !f.slice(dir.length + 1).includes("/")).map((f) => f.slice(dir.length + 1)),
+    };
+    const src = `package com.shop.pricing\n\nfun f(cart: Cart) = calcTotal(cart.items) + gen7_3(1) + gen250_19(2)\n`;
+    await analyzeSource({ path: `${K}/F.kt`, before: null, after: src }, opts);
+    let reads: string[] = [];
+    const ms = await cpuMs(async () => {
+      reads = (await analyzeSource({ path: `${K}/F.kt`, before: src, after: src.replace("+ gen7_3(1)", "+ gen7_3(3)") }, opts)).reads;
+    });
+    expect(reads).toContain(`${K}/Gen250.kt#gen250_19`);
+    expect(ms).toBeLessThan(EDIT_BUDGET_MS);
+  });
+});

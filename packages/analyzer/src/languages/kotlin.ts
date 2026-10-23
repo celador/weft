@@ -29,7 +29,16 @@
 // importing a Java class resolves to the `.java` file). A top-level function or property is
 // looked for in the package's `<LastSegment>.kt` (`pricing/Pricing.kt`) or `<Name>.kt`.
 // Classes of the file's own directory and of wildcard-imported packages are visible without an
-// import. Same-package top-level functions in other files are not resolved (no index yet).
+// import.
+//
+// Same package, no import: a Kotlin package spans files, and any file may declare top-level
+// functions, properties and classes under any name. A name the file neither declares nor
+// imports resolves through the engine's package index of the file's own directory (the Go
+// one: `packageFiles`, `packageName`, `packageDeclaredNames`, with `importsFiles` so imports
+// keep naming files): `calcTotal(items)` in `pricing/Checkout.kt` reads
+// `pricing/Pricing.kt#calcTotal`. Files of another `package` in the directory and `private`
+// top-level declarations are skipped. Same package in another directory (a test source set) is
+// not indexed.
 import type { Definition, ImportBinding, Reference, SyntaxNode, TreeSitterLanguage } from "../language.js";
 import { children, exact, header, implicitBindings, importBinding, named, perRoot, resolveJvmModule, tail } from "./jvm.js";
 
@@ -248,6 +257,30 @@ const imports = perRoot((root: SyntaxNode): ImportBinding[] => {
   return [...explicit, ...implicitBindings(references(root), explicit, declared, wildcards)];
 });
 
+function packageName(text: string): string | undefined {
+  return /^\s*package\s+([\w.]+)/m.exec(text.replace(/\/\*[\s\S]*?\*\//g, ""))?.[1];
+}
+
+const IDENT = "[\\p{L}_][\\p{L}\\p{N}_]*";
+// `fun <T> List<T>.second(`, `fun Cart.discount(`, `fun calcTotal(`: the name right before `(`.
+const FUN = new RegExp(`\\bfun\\b[^(={\\n]*?(${IDENT})\\s*\\(`, "gu");
+// `val TAX_RATE`, `var Cart.note`, `val <T> List<T>.head`: the last identifier before `:`/`=`/`by`/EOL.
+const PROP = new RegExp(`\\b(?:val|var)\\b[^:=\\n]*?(${IDENT})\\s*(?=[:=\\n]|\\bby\\b|$)`, "gmu");
+const TYPE = new RegExp(`\\b(?:class|interface|object|typealias)\\s+(${IDENT})`, "gu");
+
+/** Names a Kotlin file may declare at top level, from its text (over-approximate; the index parses to confirm). */
+function packageDeclaredNames(text: string): string[] {
+  const out: string[] = [];
+  for (const re of [FUN, PROP, TYPE]) for (const m of text.matchAll(re)) out.push(m[1]!);
+  return out;
+}
+
+/** `private` top-level declarations are file-private; everything else is visible package-wide. */
+function packageVisible(d: Definition): boolean {
+  const kw = /\b(?:fun|val|var|class|interface|object|typealias)\b/.exec(d.signature);
+  return !/\bprivate\b/.test(kw ? d.signature.slice(0, kw.index) : d.signature);
+}
+
 export const kotlin: TreeSitterLanguage = {
   id: "kotlin",
   name: "Kotlin",
@@ -256,5 +289,10 @@ export const kotlin: TreeSitterLanguage = {
   definitions,
   references,
   imports,
-  resolveModule: (module, fromRel, exists) => resolveJvmModule(module, fromRel, exists, [".kt", ".java"]),
+  resolveModule: (module, fromRel, exists, checkout) => resolveJvmModule(module, fromRel, exists, [".kt", ".java"], checkout),
+  packageFiles: (_dir, entries) => entries.filter((e) => e.endsWith(".kt")),
+  importsFiles: true,
+  packageVisible,
+  packageName,
+  packageDeclaredNames,
 };

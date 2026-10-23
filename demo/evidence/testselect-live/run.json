@@ -1,0 +1,225 @@
+{
+  "started_at": "2026-10-23T00:16:30.766Z",
+  "gateway": "https://weft-gateway-preview.elier.ai",
+  "workflows": "https://weft-workflows-preview.elier.ai",
+  "repo": "weft-testselect",
+  "steps": [
+    {
+      "name": "bound trunk",
+      "at_s": 1.1,
+      "trunk": "weft-testselect",
+      "namespace": "weft-preview",
+      "config": {
+        "tests": {
+          "command": [
+            "node",
+            "--test"
+          ],
+          "timeout_s": 300,
+          "select": true
+        },
+        "layers": [
+          "git",
+          "mergiraf"
+        ],
+        "job_timeout_s": 900
+      }
+    },
+    {
+      "name": "trunk seeded",
+      "at_s": 3.8,
+      "before": "9e37e04e1af25589e05db3b04fad53a9b631d2d7",
+      "base": "9e37e04e1af25589e05db3b04fad53a9b631d2d7",
+      "tests": [
+        "test/money.test.ts",
+        "test/round.test.ts",
+        "test/pricing.test.ts",
+        "test/discount.test.ts",
+        "test/cart.test.ts",
+        "test/users.test.ts",
+        "test/initials.test.ts",
+        "test/catalog.test.ts"
+      ]
+    },
+    {
+      "name": "A checkpoint (ProcessRevision): subset",
+      "at_s": 105.1,
+      "sha": "101dbaae7ab6cb9b3425d6c53dab9fdb24667786",
+      "revision": "processed",
+      "wall_s": 26.129,
+      "mode": "subset",
+      "reason": null,
+      "selected": 1,
+      "total": 8,
+      "files": [
+        "test/users.test.ts"
+      ],
+      "why": {
+        "test/users.test.ts": "reaches ../src/users.ts#displayName"
+      },
+      "writes": [
+        {
+          "key": "src/users.ts#displayName",
+          "kind": "body"
+        }
+      ],
+      "graph": {
+        "files": 15,
+        "parsed": 15,
+        "cached": 0,
+        "ms": 115
+      },
+      "select_ms": 485,
+      "tests_ms": 1428,
+      "baseline_ms": null,
+      "saved_ms": null,
+      "saved_fraction": null,
+      "test": {
+        "status": "pass",
+        "command": "node --test test/users.test.ts",
+        "summary": {
+          "pass": 1,
+          "fail": 0
+        },
+        "ms": 1428
+      }
+    },
+    {
+      "name": "A landed (LandChange): full presubmit",
+      "at_s": 134.6,
+      "workflow": "land-Iffb666a2d032-1792714696077",
+      "status": "landed",
+      "after": "101dbaae7ab6cb9b3425d6c53dab9fdb24667786",
+      "mode": "full",
+      "reason": "land presubmit always runs the full suite",
+      "selected": 8,
+      "total": 8,
+      "files": [
+        "test/cart.test.ts",
+        "test/catalog.test.ts",
+        "test/discount.test.ts",
+        "test/initials.test.ts",
+        "test/money.test.ts",
+        "test/pricing.test.ts",
+        "test/round.test.ts",
+        "test/users.test.ts"
+      ],
+      "why": {},
+      "writes": [],
+      "graph": null,
+      "select_ms": 407,
+      "tests_ms": 11393,
+      "baseline_ms": null,
+      "saved_ms": null,
+      "saved_fraction": null,
+      "test": {
+        "status": "pass",
+        "command": "node --test",
+        "summary": {
+          "pass": 9,
+          "fail": 0
+        },
+        "ms": 11393
+      }
+    },
+    {
+      "name": "B checkpoint (ProcessRevision): subset",
+      "at_s": 232.7,
+      "sha": "f96a27bfd185bcc50f869b634e5140a348a8ce3d",
+      "revision": "processed",
+      "wall_s": 26.15,
+      "mode": "subset",
+      "reason": null,
+      "selected": 4,
+      "total": 8,
+      "files": [
+        "test/cart.test.ts",
+        "test/discount.test.ts",
+        "test/pricing.test.ts",
+        "test/round.test.ts"
+      ],
+      "why": {
+        "test/cart.test.ts": "reaches ../src/cart.ts#cartTotal",
+        "test/discount.test.ts": "reaches ../src/pricing.ts#discount",
+        "test/pricing.test.ts": "reaches ../src/pricing.ts#lineTotal",
+        "test/round.test.ts": "reaches ../src/money.ts#round2"
+      },
+      "writes": [
+        {
+          "key": "src/money.ts#round2",
+          "kind": "body"
+        }
+      ],
+      "graph": {
+        "files": 15,
+        "parsed": 15,
+        "cached": 0,
+        "ms": 106
+      },
+      "select_ms": 491,
+      "tests_ms": 5419,
+      "baseline_ms": 11393,
+      "saved_ms": 5483,
+      "saved_fraction": 0.481,
+      "test": {
+        "status": "pass",
+        "command": "node --test test/cart.test.ts test/discount.test.ts test/pricing.test.ts test/round.test.ts",
+        "summary": {
+          "pass": 4,
+          "fail": 0
+        },
+        "ms": 5419
+      }
+    },
+    {
+      "name": "C checkpoint (ProcessRevision): full fallback",
+      "at_s": 352,
+      "sha": "63555d352926b2460df0453f4eff6797982b4410",
+      "revision": "processed",
+      "wall_s": 45.722,
+      "mode": "full",
+      "reason": "config/deps/test infra changed: package.json",
+      "selected": 8,
+      "total": 8,
+      "files": [
+        "test/cart.test.ts",
+        "test/catalog.test.ts",
+        "test/discount.test.ts",
+        "test/initials.test.ts",
+        "test/money.test.ts",
+        "test/pricing.test.ts",
+        "test/round.test.ts",
+        "test/users.test.ts"
+      ],
+      "why": {},
+      "writes": [],
+      "graph": {
+        "files": 0,
+        "parsed": 0,
+        "cached": 0,
+        "ms": 1
+      },
+      "select_ms": 356,
+      "tests_ms": 11282,
+      "baseline_ms": 11282,
+      "saved_ms": null,
+      "saved_fraction": null,
+      "test": {
+        "status": "pass",
+        "command": "node --test",
+        "summary": {
+          "pass": 9,
+          "fail": 0
+        },
+        "ms": 11282
+      }
+    }
+  ],
+  "delivery": {
+    "101dbaae7ab6cb9b3425d6c53dab9fdb24667786": "queue-fallback",
+    "f96a27bfd185bcc50f869b634e5140a348a8ce3d": "queue-fallback",
+    "63555d352926b2460df0453f4eff6797982b4410": "queue-fallback"
+  },
+  "finished_at": "2026-10-23T00:22:29.739Z",
+  "total_s": 358.973
+}

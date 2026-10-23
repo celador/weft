@@ -177,10 +177,11 @@ describe("observer API (spec §9)", () => {
     await sock.until((f) => f.some((x) => x.type === "inbox"));
     const push = sock.frames.find((x) => x.type === "inbox") as { items: Array<{ diagnostic?: { code: string } }>; re?: unknown };
     expect(push.re).toBeUndefined();
-    expect(push.items.map((i) => i.diagnostic?.code)).toEqual(["contract_changed"]);
+    // B's accepted edit already uses KEY, so the change opens a gate-closing error (spec §6.3 step 6).
+    expect(push.items.map((i) => i.diagnostic?.code)).toEqual(["stale_assumption"]);
     sock.send({ type: "gate", gate: "stop", id: "g" });
     await sock.until((f) => f.some((x) => x.re === "g"));
-    expect(sock.frames.find((x) => x.re === "g")).toMatchObject({ type: "gate.result", allow: true });
+    expect(sock.frames.find((x) => x.re === "g")).toMatchObject({ type: "gate.result", allow: false });
     sock.ws.close(1000, "done");
   });
 

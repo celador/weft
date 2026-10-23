@@ -11,6 +11,8 @@
 import {
   addresseeOf,
   agreementOf,
+  contractError,
+  RELEASABLE,
   ownedElsewhere,
   ownerNotice,
   sameNotice,
@@ -118,8 +120,11 @@ export function configFrom(o: CoordinatorInit | CoordinatorConfig): CoordinatorC
   };
 }
 
-/** `check`/`commit`: a rejected record of that mode; `push`: a claim_wounded (spec §6.5). */
-type OpenOrigin = "check" | "commit" | "push";
+/**
+ * `check`/`commit`: a rejected record of that mode; `push`: a claim_wounded; `contract`: a
+ * signature change / deletion of a symbol the change's accepted edits already use (spec §6.3, §6.5).
+ */
+type OpenOrigin = "check" | "commit" | "push" | "contract";
 
 /** Server-side filters for GET /events (spec §9.3); comma-separated values are OR-ed. */
 export type EventFilters = { kind?: string[]; agent?: string[]; task?: string[]; change?: string[]; status?: string[] };
@@ -432,8 +437,13 @@ export class SqlCoordinator {
     return this.openRows(changeId).map((r) => r.diagnostic);
   }
 
-  /** Map.set semantics: an existing key keeps its position, its value is replaced. */
+  /**
+   * Map.set semantics: an existing key keeps its position, its value is replaced — except that an
+   * origin a release cannot clear (commit, contract) is never turned into one it can (§6.5).
+   */
   private openSet(changeId: string, d: Diagnostic, origin: OpenOrigin, seq: Seq): void {
+    const prev = one<{ origin: OpenOrigin }>(this.sql, `SELECT origin FROM change_errors WHERE change_id = ? AND key = ?`, changeId, d.symbol)?.origin;
+    if (prev && !RELEASABLE.includes(prev) && RELEASABLE.includes(origin)) origin = prev;
     run(
       this.sql,
       `INSERT INTO change_errors (change_id, key, ord, origin, seq, diagnostic) VALUES (?, ?, ?, ?, ?, ?)
@@ -1200,6 +1210,20 @@ export class SqlCoordinator {
     );
   }
 
+  /** Same rule as the reference's `usesBeforeContract` (spec §6.3 step 6). */
+  private usesBeforeContract(c: ChangeRow, rec: EventRecord, key: SymbolKey): boolean {
+    if (!one(this.sql, `SELECT 1 AS x FROM change_reads WHERE change_id = ? AND key = ?`, c.id, key)) return false;
+    if (one(this.sql, `SELECT 1 AS x FROM change_writes WHERE change_id = ? AND key = ?`, c.id, key)) return false;
+    if (this.sameGroup(c.id, rec.change ?? null)) return false;
+    if (rec.kind === "land") {
+      const announced = one<{ wkind: WriteKind }>(this.sql, `SELECT wkind FROM change_writes WHERE change_id = ? AND key = ?`, rec.change ?? null, key);
+      if (announced && STRONG.includes(announced.wkind)) return false;
+    }
+    return all<{ record: string }>(this.sql, `SELECT record FROM events WHERE change_id = ? AND kind = 'edit' AND status = 'accepted' ORDER BY seq`, c.id).some(
+      (r) => (JSON.parse(r.record) as EventRecord).reads.includes(key),
+    );
+  }
+
   private applyAccepted(rec: EventRecord, s?: Session): void {
     const now = this.now();
     const change = this.getChange(rec.change);
@@ -1295,9 +1319,10 @@ export class SqlCoordinator {
         if (keys) for (const k of keys) run(this.sql, `DELETE FROM claims WHERE change_id IS ? AND key = ?`, rec.change ?? null, k);
         else run(this.sql, `DELETE FROM claims WHERE change_id IS ?`, rec.change ?? null);
         // An agent's release is a retreat: it clears only errors whose edit never reached the
-        // workspace (check) or wounds (push) on the released keys — never commit-mode ones (§6.5).
+        // workspace (check) or wounds (push) on the released keys — never commit-mode or contract
+        // ones, whose code is in the workspace (§6.5).
         if (s && change)
-          for (const r of this.openRows(change.id)) if ((!keys || keys.includes(r.key)) && r.origin !== "commit") this.openDelete(change.id, r.key);
+          for (const r of this.openRows(change.id)) if ((!keys || keys.includes(r.key)) && RELEASABLE.includes(r.origin)) this.openDelete(change.id, r.key);
         break;
       }
       case "land": {
@@ -1364,13 +1389,14 @@ export class SqlCoordinator {
     }
 
     // Broadcast contract changes and trunk movement to intersecting changes (spec §6.3).
+    // A contract change to a symbol another change already uses also opens an error on that
+    // change, recorded even when it has no live session (like claim_wounded).
     if (rec.kind === "edit" || rec.kind === "land" || rec.kind === "revert") {
       for (const c of all<ChangeRow>(this.sql, `SELECT * FROM changes ORDER BY ord`)) {
         if (c.id === rec.change || c.landed) continue;
         if (rec.kind === "edit" && this.alternatives(c.id, rec.change)) continue;
         const targets = this.sessionsOf({ change: c.id });
-        if (!targets.length) continue;
-        if (rec.kind === "edit") for (const w of rec.writes) if (this.touchesChange(c, w.key)) this.tell(c.id, w.key, rec.seq);
+        if (targets.length && rec.kind === "edit") for (const w of rec.writes) if (this.touchesChange(c, w.key)) this.tell(c.id, w.key, rec.seq);
         if (rec.kind !== "edit") {
           const hit = rec.writes.filter((w) => this.touchesChange(c, w.key));
           if (hit.length) {
@@ -1394,6 +1420,15 @@ export class SqlCoordinator {
         }
         for (const w of rec.writes) {
           if (!STRONG.includes(w.kind) || !this.touchesChange(c, w.key)) continue;
+          if (this.usesBeforeContract(c, rec, w.key)) {
+            const d = contractError(rec, w, this.conflicts === "continue");
+            this.openSet(c.id, d, "contract", rec.seq);
+            // The open error is redelivered on every hello (§6.5), so the change counts as told (§6.1).
+            this.tell(c.id, w.key, rec.seq);
+            for (const ts of targets) this.push(ts, { seq: rec.seq, kind: "diagnostic", diagnostic: d });
+            if (this.conflicts === "continue") this.notifyOwner(d, c.agent, "edit");
+            continue;
+          }
           for (const ts of targets)
             this.push(ts, {
               seq: rec.seq,

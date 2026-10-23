@@ -27,6 +27,15 @@ export type BackendId = "typescript" | "tree-sitter" | "lsp";
 
 /** Does `rel` (checkout-relative, `/`-separated) exist in the checkout? */
 export type Exists = (rel: string) => boolean;
+/** Contents of checkout file `rel`, or undefined (missing, unreadable, too large, outside the checkout). */
+export type ReadCheckoutFile = (rel: string) => string | undefined;
+/**
+ * Entries directly inside checkout directory `rel` (`""` is the root): file names, and
+ * directory names ending in `/`. Undefined when the directory is missing.
+ */
+export type ListCheckoutDir = (rel: string) => string[] | undefined;
+/** What a spec may look at in the checkout besides the edited file. */
+export type Checkout = { exists?: Exists; read?: ReadCheckoutFile; list?: ListCheckoutDir };
 
 /**
  * One declaration in one file. `name` is qualified within the file (`Cart.total`). The optional
@@ -65,11 +74,31 @@ export type ImportBinding = {
   module: string;
   name?: string;
   /**
+   * `local` is the spec's guess at the name the import binds (Go: the last import path element
+   * when there is no alias); for package-scoped languages the engine replaces it with the
+   * target package's declared name once it has indexed the package.
+   */
+  guessed?: boolean;
+  /**
    * The import brings every declaration of `module` into scope, unqualified (C/C++ `#include`).
    * `local` and `name` are ignored. The engine reads the included file (`AnalyzeOptions.read`)
    * and follows its own includes.
    */
   all?: boolean;
+  /**
+   * The spec's guess at a name the file uses without importing it (a JVM class of the file's
+   * own package). When it does not resolve and the language has a package index with
+   * `importsFiles`, the name is looked up in the file's own package instead.
+   */
+  implicit?: boolean;
+  /**
+   * Module spec of a file whose top-level declarations the class named by the first segment
+   * of `name` (or by `local`, for a module binding) stands for: Java calling Kotlin through the
+   * generated facade class (`PricingKt.calcTotal()` -> `Pricing.kt#calcTotal`). Tried before
+   * `module`; when it resolves, that segment is dropped: `name: "PricingKt"` becomes a module
+   * binding of the file, `name: "PricingKt.calcTotal"` a member binding of `calcTotal`.
+   */
+  facade?: string;
 };
 
 export interface TreeSitterLanguage {
@@ -86,11 +115,11 @@ export interface TreeSitterLanguage {
   imports(root: SyntaxNode): ImportBinding[];
   /**
    * Checkout-relative file that `module` (as written in an import in `fromRel`) refers to, or
-   * undefined when it is not a file in the checkout (stdlib, third-party). `read` (when the
-   * adapter passes `AnalyzeOptions.read`) lets a spec consult project config, e.g. PHP's
-   * composer.json autoload map.
+   * undefined when it is not a file in the checkout (stdlib, third-party). `checkout` (what the
+   * adapter passed in `AnalyzeOptions`) lets a spec consult project config: PHP's composer.json
+   * autoload map, Go's go.mod; package-scoped languages return a directory (see `packageFiles`).
    */
-  resolveModule(module: string, fromRel: string, exists?: Exists, read?: (rel: string) => string | undefined): string | undefined;
+  resolveModule(module: string, fromRel: string, exists?: Exists, checkout?: Checkout): string | undefined;
   /**
    * For languages where `from pkg import sub` may import a submodule: the module spec to try
    * for member `name` of `module`. When it resolves to a file, the binding is a module binding.
@@ -98,6 +127,32 @@ export interface TreeSitterLanguage {
   memberModule?(module: string, name: string): string;
   /** Node types that are identifiers (what the `lsp` backend asks definitions for). Default `["identifier"]`. */
   identifierTypes?: string[];
+  /**
+   * Package-scoped languages (Go; Kotlin with `importsFiles`), where every file of a directory shares one namespace. When
+   * set, `resolveModule` returns the package's directory, and names resolve through a
+   * declaration index of that directory: the engine lists it, keeps the files this returns,
+   * parses them and maps each declaration to the file that declares it. Keys stay file-level
+   * (`shop/pricing/pricing.go#CalcTotal`) so writes and reads match. A name the edited file uses
+   * but does not declare resolves through the index of its own directory. Needs
+   * `AnalyzeOptions.read` and `.list`; without them only same-file reads are found.
+   */
+  packageFiles?(dir: string, entries: string[], fromRel: string): string[];
+  /**
+   * With `packageFiles`: imports name files, not package directories (Kotlin), so they resolve
+   * as in any other language, and the package index only serves names the edited file uses
+   * without declaring or importing them (same-package top-level functions in other files).
+   */
+  importsFiles?: boolean;
+  /** Whether a declaration of another file of the package is visible here (Kotlin: not `private`). Default: all are. */
+  packageVisible?(definition: Definition): boolean;
+  /** The package a file's text belongs to (Go `package x`); index files of other packages are skipped. */
+  packageName?(text: string): string | undefined;
+  /**
+   * Cheap textual over-approximation of the top-level names a package file declares (a regex
+   * pass; methods as `Type.Method` and `Type`). The index parses only the files whose names
+   * match a lookup. Without it every file of the package is parsed.
+   */
+  packageDeclaredNames?(text: string): Iterable<string>;
   /**
    * C/C++: true when a definition in `path` that an included file also declares is keyed to
    * the included file (a `.c` definition shares its header prototype's key: callers read the
@@ -119,13 +174,8 @@ export interface TreeSitterLanguage {
   index?: ModuleIndex;
 }
 
-/** Directory listing and file contents of the checkout, for index-based languages. */
-export type CheckoutFs = {
-  exists: Exists;
-  /** Entries of checkout-relative `dir` ("" = root): file names, and directory names ending in `/`. */
-  list: (dir: string) => string[] | undefined;
-  read: (rel: string) => string | undefined;
-};
+/** `Checkout` with every capability present: what the module index (Swift, C#) needs. */
+export type CheckoutFs = Required<Checkout>;
 
 export interface ModuleIndex {
   /**
@@ -178,13 +228,14 @@ export type AnalyzeOptions = {
   /** Lets import resolution check the checkout. Without it, only relative imports resolve. */
   exists?: Exists;
   /**
-   * Directory listing of the checkout (entries of a checkout-relative dir; directories end in
-   * `/`). Optional; with `read`, enables cross-file reads for index-based languages (Swift, C#).
-   */
-  list?: (dir: string) => string[] | undefined;
-  /**
    * Reads a checkout file (checkout-relative path, undefined if missing): C/C++ `#include`d
-   * declarations, and with `list` the cross-file index of Swift/C#. Without it, neither is seen.
+   * declarations, Go's go.mod, PHP's composer.json, and with `list` the package index (Go,
+   * Kotlin) and the module index (Swift, C#). Without it, none of those are seen.
    */
-  read?: (rel: string) => string | undefined;
+  read?: ReadCheckoutFile;
+  /**
+   * Lists a checkout directory (entries of a checkout-relative dir; directories end in `/`).
+   * With `read`, enables the package index (Go, Kotlin) and the module index (Swift, C#).
+   */
+  list?: ListCheckoutDir;
 };

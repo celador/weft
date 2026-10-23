@@ -33,11 +33,41 @@ describe("default (hold) wording", () => {
     ]);
   });
 
-  it("contract_changed suggestion to the session whose change uses the signature", () => {
+  it("use first, contract change second: a stale_assumption pushed to the user's change closes its gates", () => {
     const c = new ReferenceCoordinator({ repo: "demo" });
     const a = hello(c, "claude-a", "I-a");
     const b = hello(c, "claude-b", "I-b");
     c.submit(b.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: b.delivered_through, files: ["src/cart.ts"], reads: ["src/pricing.ts#calcTotal"], writes: [{ key: "src/cart.ts#cartSummary", kind: "body" }] } });
+    c.submit(a.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: a.delivered_through, files: ["src/pricing.ts"], reads: [], writes: [{ key: "src/pricing.ts#calcTotal", kind: "signature" }] } });
+    const items = c.drain(b.session, 0).items.filter((i) => i.kind === "diagnostic");
+    expect(items.map((i) => i.diagnostic?.code)).toEqual(["stale_assumption"]);
+    const error = {
+      severity: "error",
+      code: "stale_assumption",
+      file: "src/pricing.ts",
+      symbol: "src/pricing.ts#calcTotal",
+      message: "claude-a changed the signature of src/pricing.ts#calcTotal (#4) after your change started using it; your call sites may no longer match.",
+      suggestion:
+        "Read the new src/pricing.ts#calcTotal (event #4) and update your call sites; the commit gate stays closed until an edit of yours that uses src/pricing.ts#calcTotal is accepted. Or negotiate with claude-a (e.g. keep the old signature as an overload).",
+      caused_by_seq: 4,
+      caused_by_agent: "claude-a",
+      caused_by_task: "T-claude-a",
+    };
+    expect(items[0]!.diagnostic).toEqual(error);
+    expect(c.gate(b.session, { type: "gate", gate: "commit" })).toMatchObject({ allow: false, open_errors: [error] });
+    // Releasing does not clear it: the call site is in the workspace (origin contract, §6.5).
+    c.submit(b.session, { type: "submit", mode: "commit", event: { kind: "release", base_seq: 4, payload: {} } });
+    expect(c.gate(b.session, { type: "gate", gate: "commit" }).allow).toBe(false);
+    // Redoing the call site against the new signature does.
+    c.submit(b.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: 5, files: ["src/cart.ts"], reads: ["src/pricing.ts#calcTotal"], writes: [{ key: "src/cart.ts#cartSummary", kind: "body" }] } });
+    expect(c.gate(b.session, { type: "gate", gate: "commit" })).toMatchObject({ allow: true });
+  });
+
+  it("contract_changed stays a warning for a change that writes (not uses) the symbol", () => {
+    const c = new ReferenceCoordinator({ repo: "demo" });
+    const a = hello(c, "claude-a", "I-a");
+    const b = hello(c, "claude-b", "I-b");
+    c.submit(b.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: b.delivered_through, files: ["src/pricing.ts"], reads: [], writes: [{ key: "src/pricing.ts#calcTotal", kind: "body" }] } });
     c.submit(a.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: a.delivered_through, files: ["src/pricing.ts"], reads: [], writes: [{ key: "src/pricing.ts#calcTotal", kind: "signature" }] } });
     const told = c.drain(b.session, 0).items.filter((i) => i.kind === "diagnostic" && i.diagnostic?.code === "contract_changed");
     expect(told).toHaveLength(1);

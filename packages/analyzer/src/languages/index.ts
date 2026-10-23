@@ -4,15 +4,17 @@ import type { Analysis, AnalyzeOptions, BackendId, SourceChange, TreeSitterLangu
 import { analyzeTreeSitter } from "../treesitter.js";
 import { c, cpp } from "./c.js";
 import { csharp } from "./csharp.js";
+import { go } from "./go.js";
 import { java } from "./java.js";
 import { kotlin } from "./kotlin.js";
 import { php } from "./php.js";
 import { python } from "./python.js";
 import { ruby } from "./ruby.js";
+import { rust } from "./rust.js";
 import { swift } from "./swift.js";
 
 /** Languages on the tree-sitter backend. Add a spec + grammar + conformance fixture per language. */
-export const treeSitterLanguages: TreeSitterLanguage[] = [python, c, cpp, java, kotlin, swift, csharp, ruby, php];
+export const treeSitterLanguages: TreeSitterLanguage[] = [python, c, cpp, java, kotlin, swift, csharp, ruby, php, go, rust];
 
 export type LanguageInfo = { id: string; name: string; backend: BackendId };
 
@@ -38,7 +40,7 @@ export function treeSitterLanguageFor(path: string, text?: string | null): TreeS
 }
 
 /**
- * Analyze one file of an edit with its tree-sitter language (Python, C, C++, Ruby, PHP, ...). Keys are
+ * Analyze one file of an edit with its tree-sitter language (Python, C, C++, Ruby, PHP, Go, Rust, ...). Keys are
  * `${prefix}${path}#Name`; reads include imports resolved inside the checkout.
  * Throws for paths no tree-sitter language claims; check `treeSitterLanguageFor` first.
  */

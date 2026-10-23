@@ -11,11 +11,14 @@
 //                            next to the importing file;
 //   - `kt:com.shop.pricing.Pricing`  like a class, but only a `.kt` file: where a Kotlin
 //                            top-level function or property may be declared, and the fallback
-//                            for a Kotlin class declared in a file named after its package.
+//                            for a Kotlin class declared in a file named after its package;
+//   - `facade:com.shop.pricing.PricingKt`  the Kotlin file a JVM facade class stands for
+//                            (`Pricing.kt`, or the file with `@file:JvmName("PricingKt")`), when
+//                            no class file of that name exists. Java only (`ImportBinding.facade`).
 // Packages under java., javax., jdk., sun., kotlin., kotlinx., android. and androidx. are never in
 // the checkout and are skipped without touching the file system.
 import { posix } from "node:path";
-import type { Exists, ImportBinding, Reference, SyntaxNode } from "../language.js";
+import type { Checkout, Exists, ImportBinding, Reference, SyntaxNode } from "../language.js";
 
 export function named(node: SyntaxNode): SyntaxNode[] {
   return node.namedChildren.filter((c): c is SyntaxNode => c !== null);
@@ -120,16 +123,103 @@ const BUILTIN = new Set(
  * `references` are the file's references, `explicit` its explicit import bindings, `declared`
  * the type names it declares or binds itself (classes, type parameters).
  */
-export function implicitBindings(references: Reference[], explicit: ImportBinding[], declared: Set<string>, wildcards: string[]): ImportBinding[] {
+export function implicitBindings(
+  references: Reference[],
+  explicit: ImportBinding[],
+  declared: Set<string>,
+  wildcards: string[],
+  facades = false,
+): ImportBinding[] {
   const taken = new Set([...explicit.map((b) => b.local), ...declared]);
   const out: ImportBinding[] = [];
   for (const ref of references) {
     const head = ref[0]!;
     if (!capitalized(head) || head.length < 2 || taken.has(head) || BUILTIN.has(head)) continue;
     taken.add(head);
-    out.push({ local: head, module: [`./${head}`, ...wildcards.map((w) => `${w}.${head}`)].join("|"), name: head });
+    const candidates = [`./${head}`, ...wildcards.map((w) => `${w}.${head}`)];
+    const b: ImportBinding = { local: head, module: candidates.join("|"), name: head, implicit: true };
+    if (facades) b.facade = candidates.map((c) => `facade:${c}`).join("|");
+    out.push(b);
   }
   return out;
+}
+
+/**
+ * Java's view of a class import (`importBinding`'s result): the same class may be the facade of
+ * a Kotlin file (`PricingKt`, or any `@file:JvmName`), whose top-level declarations Java calls
+ * as its static members.
+ */
+export function withFacade(b: ImportBinding): ImportBinding {
+  const cls = b.module.split("|")[0]!;
+  return b.name === undefined || cls.startsWith("kt:") ? b : { ...b, facade: `facade:${cls}` };
+}
+
+/** `@file:JvmName("PriceUtils")`: the facade class name a Kotlin file declares for itself. */
+export function jvmName(text: string): string | undefined {
+  return /^\s*@file\s*:\s*(?:kotlin\.jvm\.)?JvmName\s*\(\s*"([^"]+)"\s*\)/m.exec(text)?.[1];
+}
+
+/** Per-analysis cache (the engine builds one Checkout per analysis): dir -> JvmName -> file. */
+const jvmNames = new WeakMap<Checkout, Map<string, Map<string, string>>>();
+
+function jvmNamesIn(dir: string, checkout: Checkout): Map<string, string> {
+  let byDir = jvmNames.get(checkout);
+  if (!byDir) jvmNames.set(checkout, (byDir = new Map()));
+  let names = byDir.get(dir);
+  if (names) return names;
+  names = new Map();
+  byDir.set(dir, names);
+  const { read, list } = checkout;
+  if (!read || !list) return names;
+  for (const e of (list(dir) ?? []).filter((e: string) => e.endsWith(".kt")).sort().slice(0, 400)) {
+    const rel = dir ? `${dir}/${e}` : e;
+    const text = read(rel);
+    const name = text === undefined ? undefined : jvmName(text);
+    if (name && !names.has(name)) names.set(name, rel);
+  }
+  return names;
+}
+
+/**
+ * The Kotlin file whose facade class `spec` names (`com.shop.pricing.PricingKt`, `./PricingKt`
+ * for the importing file's own package): `<Stem>.kt` for `<Stem>Kt` unless that file renames
+ * its facade, or the `.kt` file of the package that declares `@file:JvmName("<Name>")`.
+ * Undefined when a real class file of that name exists.
+ */
+function resolveFacade(spec: string, fromRel: string, exists: Exists, checkout?: Checkout): string | undefined {
+  let name: string;
+  let dirs: string[];
+  if (spec.startsWith("./")) {
+    name = spec.slice(2);
+    const dir = posix.dirname(fromRel);
+    const own = dir === "." ? "" : dir;
+    // Same package, other source root: Java in src/main/java/p, Kotlin in src/main/kotlin/p.
+    const other = own.replace(/(^|\/)src\/(main|test)\/(java|kotlin)(?=\/|$)/, (_m: string, a: string, set: string, lang: string) => `${a}src/${set}/${lang === "java" ? "kotlin" : "java"}`);
+    dirs = [...new Set([own, other])];
+  } else {
+    if (EXTERNAL.test(spec)) return undefined;
+    const parts = spec.split(".");
+    name = parts.pop()!;
+    const pkg = parts.join("/");
+    dirs = roots(fromRel).map((r) => (r && pkg ? `${r}/${pkg}` : r || pkg));
+  }
+  const at = (dir: string, file: string): string => (dir ? `${dir}/${file}` : file);
+  if (dirs.some((d) => exists(at(d, `${name}.java`)) || exists(at(d, `${name}.kt`)))) return undefined;
+  if (name.length > 2 && name.endsWith("Kt")) {
+    for (const d of dirs) {
+      const file = at(d, `${name.slice(0, -2)}.kt`);
+      if (!exists(file)) continue;
+      const text = checkout?.read?.(file);
+      const renamed = text === undefined ? undefined : jvmName(text);
+      if (!renamed || renamed === name) return file;
+    }
+  }
+  if (!checkout) return undefined;
+  for (const d of dirs) {
+    const file = jvmNamesIn(d, checkout).get(name);
+    if (file) return file;
+  }
+  return undefined;
 }
 
 /** Source roots to try for a fully qualified class, from the importing file's position. */
@@ -144,9 +234,14 @@ function roots(fromRel: string): string[] {
 }
 
 /** Resolve a module string (see the top of this file) to a checkout file. */
-export function resolveJvmModule(module: string, fromRel: string, exists: Exists | undefined, extensions: string[]): string | undefined {
+export function resolveJvmModule(module: string, fromRel: string, exists: Exists | undefined, extensions: string[], checkout?: Checkout): string | undefined {
   if (!exists) return undefined; // without the checkout, `Item` could be anything on the classpath
   for (let spec of module.split("|")) {
+    if (spec.startsWith("facade:")) {
+      const file = resolveFacade(spec.slice(7), fromRel, exists, checkout);
+      if (file) return file;
+      continue;
+    }
     let exts = extensions;
     if (spec.startsWith("kt:")) {
       spec = spec.slice(3);

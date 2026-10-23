@@ -165,7 +165,7 @@
             "id": 1,
             "seq": 4,
             "diagnostic": {
-              "code": "contract_changed"
+              "code": "stale_assumption"
             }
           }
         ]

@@ -1,0 +1,30 @@
+{
+  "id": "RS.deny-module-path",
+  "level": 2,
+  "required": true,
+  "spec": "§4.1",
+  "title": "Rust: `pricing::calc_total(...)` through a module import is checked like a direct import",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/checkout.rs",
+        "old_text": "    0.0",
+        "new_text": "    pricing::calc_total(items)"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "calc_total"
+        ]
+      },
+      "expect_applied": false
+    }
+  ]
+}

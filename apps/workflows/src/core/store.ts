@@ -70,6 +70,31 @@ export class Store {
     return (await q.all<EvidenceRow>()).results;
   }
 
+  /**
+   * Latest passing full-suite run in this repo (land presubmit, or a checkpoint that ran the
+   * full suite): the baseline for "time saved" by affected-test selection. Null when none yet.
+   */
+  async lastFullSuite(repo: string): Promise<{ ms: number; tests: number | null; sha: string; kind: string } | null> {
+    const rows = (
+      await this.db
+        .prepare(`SELECT e.kind, e.sha, e.data FROM evidence e JOIN changes c ON c.id = e.change_id WHERE c.repo = ? AND e.kind IN ('presubmit', 'test') AND e.status = 'pass' ORDER BY e.id DESC LIMIT 50`)
+        .bind(repo)
+        .all<{ kind: string; sha: string; data: string | null }>()
+    ).results;
+    for (const r of rows) {
+      let d: { ms?: unknown; selection?: { mode?: string; total?: number | null } };
+      try {
+        d = r.data ? (JSON.parse(r.data) as typeof d) : {};
+      } catch {
+        continue;
+      }
+      if (typeof d.ms !== "number" || d.ms <= 0) continue;
+      if (d.selection && d.selection.mode !== "full") continue;
+      return { ms: d.ms, tests: d.selection?.total ?? null, sha: r.sha, kind: r.kind };
+    }
+    return null;
+  }
+
   async setChangeStatus(id: string, status: string): Promise<void> {
     await this.db.prepare(`UPDATE changes SET status = ?, updated_at = ? WHERE id = ?`).bind(status, this.now(), id).run();
   }

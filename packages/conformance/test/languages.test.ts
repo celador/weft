@@ -15,8 +15,8 @@ const repo = join(here, "..", "..", "..");
 const CLAUDE = join(repo, "packages/adapters/claude-code/dist/weft-claude.mjs");
 
 describe("language fixture sets", () => {
-  it("ship Python, C, C++, Java, Kotlin, Swift, C#, Ruby and PHP", () => {
-    expect(languageFixtureSets()).toEqual(expect.arrayContaining(["c", "cpp", "csharp", "java", "kotlin", "php", "python", "ruby", "swift"]));
+  it("ship Python, C, C++, Java, Kotlin, Swift, C#, Ruby, PHP, Go and Rust", () => {
+    expect(languageFixtureSets()).toEqual(expect.arrayContaining(["c", "cpp", "csharp", "go", "java", "kotlin", "php", "python", "ruby", "rust", "swift"]));
   });
 
   for (const set of languageFixtureSets()) {
@@ -33,7 +33,7 @@ describe("language fixture sets", () => {
       for (const [name, peer] of Object.entries(workspace.peers)) {
         it(`peer ${name}: declared reads/writes = analyzer output`, async () => {
           const exists = (rel: string) => rel in workspace.files;
-          // Directory listing of the workspace, for index-based languages (Swift, C#).
+          // Directory listing of the workspace: Go/Kotlin package index, Swift/C# module index.
           const list = (dir: string): string[] | undefined => {
             const prefix = dir ? `${dir}/` : "";
             const entries = new Set<string>();
@@ -46,7 +46,7 @@ describe("language fixture sets", () => {
             return entries.size ? [...entries] : undefined;
           };
           // The same checkout access the adapters give the analyzer (exists / list / read). C/C++
-          // read included headers, Swift/C# index their module; like the adapters, a change sees
+          // read included headers, Go go.mod; Swift/C# index their module; like the adapters, a change sees
           // its own other changed files as they will be after it.
           const read = (rel: string): string | undefined => (peer.after && rel in peer.after ? (peer.after[rel] ?? undefined) : workspace.files[rel]);
           const reads = new Set<string>();

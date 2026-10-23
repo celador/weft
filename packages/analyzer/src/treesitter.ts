@@ -219,19 +219,37 @@ export async function analyzeTreeSitter(
 
   const reads = new Set<string>();
   if (afterRoot) {
+    const checkout = { exists: opts.exists, read: opts.read, list: opts.list };
     const resolved = new Map<string, string | undefined>();
     const resolve = (module: string): string | undefined => {
-      if (!resolved.has(module)) resolved.set(module, language.resolveModule(module, path, opts.exists, opts.read));
+      if (!resolved.has(module)) resolved.set(module, language.resolveModule(module, path, opts.exists, checkout));
       return resolved.get(module);
     };
-    const bindings = language
+    const packages = packageIndexer(language, parser, path, after, opts);
+    let bindings = language
       .imports(afterRoot)
       .filter((b) => !b.all)
       .map((b): ImportBinding => {
         if (b.name === undefined || !language.memberModule || !opts.exists) return b;
         const sub = language.memberModule(b.module, b.name);
         return resolve(sub) ? { local: b.local, module: sub } : b;
+      })
+      .map((b): ImportBinding => {
+        // Java's `PricingKt.calcTotal()`: the facade class stands for Pricing.kt's top level.
+        if (!b.facade || !resolve(b.facade)) return b;
+        const rest = b.name?.split(".").slice(1) ?? [];
+        return rest.length ? { local: b.local, module: b.facade, name: rest.join(".") } : { local: b.local, module: b.facade };
       });
+    const packageImports = packages !== undefined && !language.importsFiles;
+    if (packageImports) {
+      // `import "example.com/shop/pricing-v2"` binds whatever `package` the directory declares.
+      bindings = bindings.map((b) => {
+        if (!b.guessed) return b;
+        const dir = resolve(b.module);
+        const name = dir === undefined ? undefined : packages(dir).name;
+        return name ? { ...b, local: name } : b;
+      });
+    }
     // Every imported member that resolves into the checkout is an assumption of this file
     // (the TypeScript adapter does the same for named imports).
     for (const b of bindings) {
@@ -239,22 +257,56 @@ export async function analyzeTreeSitter(
       const file = resolve(b.module);
       if (file) reads.add(key(file, b.name));
     }
-    // 3. Imports: `name.rest` through a member binding, `module.member` through a module one.
-    const viaImport = (ref: Reference): boolean => {
+    /** `rest` looked up in package `dir`: the declaring file's keys for rest[0] and rest[0].rest[1]. */
+    const packageReads = (dir: string, rest: string[], exact = false): boolean => {
+      const index = packages!(dir);
+      let found = false;
+      for (let n = Math.min(rest.length, 2); n >= (exact ? rest.length : 1); n--) {
+        const name = rest.slice(0, n).join(".");
+        const file = index.lookup(name);
+        if (file) {
+          reads.add(key(file, name));
+          found = true;
+        }
+      }
+      return found;
+    };
+    /**
+     * 3. Imports: `name.rest` through a member binding, `module.member` through a module one.
+     * "read" when the reference resolved through an import into the checkout; "outside" when it
+     * names an import that resolves outside it (stdlib, third-party), which hides same-package
+     * names; undefined when no import binds it.
+     */
+    const viaImport = (ref: Reference): "read" | "outside" | undefined => {
       const hit = longestBinding(ref, bindings);
-      if (!hit) return false;
+      if (!hit) return undefined;
       const file = resolve(hit.binding.module);
-      if (!file) return false;
-      if (hit.binding.name !== undefined) {
+      // A guessed class name of the file's own package (Kotlin `implicit`) hides nothing.
+      if (!file) return hit.binding.implicit && language.importsFiles ? undefined : "outside";
+      if (packageImports) {
+        if (hit.binding.name === undefined && hit.rest.length) packageReads(file, hit.rest);
+      } else if (hit.binding.name !== undefined) {
         reads.add(key(file, hit.binding.name));
         if (hit.rest.length) reads.add(key(file, `${hit.binding.name}.${hit.rest[0]}`));
       } else if (hit.rest.length) {
-        reads.add(key(file, hit.rest[0]));
-        if (hit.rest.length > 1) reads.add(key(file, `${hit.rest[0]}.${hit.rest[1]}`));
+        // `util.money.round` through module `util`: descend into submodules that are files.
+        let module = hit.binding.module;
+        let target = file;
+        let rest = hit.rest;
+        while (rest.length > 1 && language.memberModule && opts.exists) {
+          const sub = language.memberModule(module, rest[0]);
+          const subFile = resolve(sub);
+          if (!subFile) break;
+          module = sub;
+          target = subFile;
+          rest = rest.slice(1);
+        }
+        reads.add(key(target, rest[0]));
+        if (rest.length > 1) reads.add(key(target, `${rest[0]}.${rest[1]}`));
       }
-      return true;
+      return "read";
     };
-    // 4. Index-based languages (Swift, C#): declarations of other files in the module/namespace.
+    // 4a. Module index (Swift, C#): declarations of other files in the module/namespace.
     const fs = language.index && opts.list && opts.read
       ? { exists: opts.exists ?? ((rel: string) => opts.read!(rel) !== undefined), list: opts.list, read: opts.read }
       : undefined;
@@ -266,6 +318,7 @@ export async function analyzeTreeSitter(
     };
 
     for (const first of language.references(afterRoot)) {
+      // `ref.or`: alternatives tried in order when a reference resolves nowhere (Swift/C# implicit `self`).
       for (let ref: Reference | undefined = first; ref; ref = ref.or) {
         // 1. This file's own declarations: the longest defined prefix (`Cart.tax`, else `Cart`).
         const local = longestDefined(ref, newDefs);
@@ -287,11 +340,115 @@ export async function analyzeTreeSitter(
             break;
           }
         }
-        if (viaImport(ref)) break;
+        const imported = viaImport(ref);
+        if (imported === "read") break;
+        // 4b. Package index (Go, Kotlin): the other files of this file's own package. An import
+        // that resolves outside the checkout hides same-package names.
+        if (imported === undefined && packages && ref.length && packageReads(dirOf(path), ref.exact ? ref : ref.slice(0, 2), ref.exact)) break;
       }
     }
   }
   return { reads: [...reads].sort(), writes: writes.sort((a, b) => a.key.localeCompare(b.key)) };
+}
+
+/** Checkout-relative directory of `rel` (`""` for the root). */
+export function dirOf(rel: string): string {
+  const dir = posix.dirname(rel);
+  return dir === "." ? "" : dir;
+}
+
+type PackageIndex = {
+  /** The package name importers bind (`package x` of most files, external tests ignored). */
+  name?: string;
+  /** The checkout file that declares `name` in this package, if any. */
+  lookup(name: string): string | undefined;
+};
+
+/** Most files a package index reads, and the largest file it reads (characters). */
+const MAX_PACKAGE_FILES = 400;
+const MAX_PACKAGE_FILE = 1 << 20;
+
+/**
+ * For package-scoped languages: a lazy, per-analysis declaration index of package
+ * directories (declaration name -> declaring file). Files are read once; a file is parsed only
+ * when its textual name list (`packageDeclaredNames`) matches a lookup. The edited file is never
+ * indexed from disk (the hook may run before the edit lands): its own declarations are already
+ * resolved locally. Undefined when the language is not package-scoped; lookups find nothing
+ * when the checkout cannot be listed and read.
+ */
+function packageIndexer(
+  language: TreeSitterLanguage,
+  parser: Parser,
+  path: string,
+  afterText: string,
+  opts: AnalyzeOptions,
+): ((dir: string) => PackageIndex) | undefined {
+  if (!language.packageFiles) return undefined;
+  const { read, list } = opts;
+  const own = dirOf(path);
+  const ownPackage = language.packageName?.(afterText);
+  const cache = new Map<string, PackageIndex>();
+  return (dir: string): PackageIndex => {
+    const hit = cache.get(dir);
+    if (hit) return hit;
+    const names = new Map<string, string>();
+    const pending = new Map<string, Set<string>>(); // top-level name -> files not yet parsed
+    const texts = new Map<string, string>();
+    const counts = new Map<string, number>();
+    const unparsed: string[] = [];
+    if (read && list) {
+      const files = language.packageFiles!(dir, list(dir) ?? [], path).slice(0, MAX_PACKAGE_FILES);
+      for (const f of files) {
+        const rel = dir ? `${dir}/${f}` : f;
+        if (rel === path) continue;
+        const text = read(rel);
+        if (text === undefined || text.length > MAX_PACKAGE_FILE) continue;
+        const pkg = language.packageName?.(text);
+        if (dir === own && ownPackage && pkg && pkg !== ownPackage) continue; // `package x_test` next to `package x`
+        if (pkg) counts.set(pkg, (counts.get(pkg) ?? 0) + 1);
+        texts.set(rel, text);
+        if (!language.packageDeclaredNames) {
+          unparsed.push(rel);
+          continue;
+        }
+        for (const n of language.packageDeclaredNames(text)) {
+          const top = n.split(".")[0];
+          let set = pending.get(top);
+          if (!set) pending.set(top, (set = new Set()));
+          set.add(rel);
+        }
+      }
+    }
+    const index = (rel: string): void => {
+      const text = texts.get(rel);
+      if (text === undefined) return;
+      texts.delete(rel);
+      try {
+        for (const d of language.definitions(parse(parser, text))) {
+          if (language.packageVisible && !language.packageVisible(d)) continue;
+          if (!names.has(d.name)) names.set(d.name, rel);
+        }
+      } catch {
+        /* unparsable file: no declarations */
+      }
+    };
+    const named = [...counts].filter(([n]) => !n.endsWith("_test")).sort((x, y) => y[1] - x[1]);
+    const result: PackageIndex = {
+      name: dir === own ? ownPackage : named[0]?.[0],
+      lookup(name: string): string | undefined {
+        if (unparsed.length) unparsed.splice(0).forEach(index);
+        const top = name.split(".")[0];
+        const files = pending.get(top);
+        if (files) {
+          pending.delete(top);
+          [...files].sort().forEach(index);
+        }
+        return names.get(name);
+      },
+    };
+    cache.set(dir, result);
+    return result;
+  };
 }
 
 /** First candidate that exists in the checkout (or, without `exists`, the first candidate). */

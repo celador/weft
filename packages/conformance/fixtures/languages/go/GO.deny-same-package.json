@@ -1,0 +1,40 @@
+{
+  "id": "GO.deny-same-package",
+  "level": 2,
+  "required": true,
+  "spec": "§4.1",
+  "title": "Go: a call to a function declared in another file of the same package (no import) is checked too",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "pricing/discount.go",
+        "old_text": "\treturn 0",
+        "new_text": "\treturn CalcTotal(items) * (1 - pct)"
+      },
+      "expect_pre": {
+        "decision": "deny",
+        "explanation": [
+          "stale_assumption",
+          "CalcTotal"
+        ]
+      },
+      "expect_applied": false
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "status": "rejected",
+        "mode": "check",
+        "reads_include": "pricing/pricing.go#CalcTotal",
+        "min": 1
+      }
+    }
+  ]
+}

@@ -80,7 +80,9 @@ function makeSql(claims?: null): Coord {
 function setup(c: Coord, mode: "check" | "commit" = "commit") {
   const a = c.hello(hello("claude-a", "I-a"));
   const b = c.hello(hello("codex-b", "I-b"));
-  c.submit(b.session, edit(2, [[Y, "body"]], [X])); // #3
+  // #3 does not use X yet: had it, #4 would open a contract-origin error by itself (§6.3 step 6),
+  // and these tests are about the origin of #5's rejection.
+  c.submit(b.session, edit(2, [[Y, "body"]])); // #3
   c.submit(a.session, edit(1, [[X, "signature"]])); // #4
   const v = c.submit(b.session, edit(3, [[Y, "body"]], [X], mode)); // #5 rejected
   expect(v).toMatchObject({ verdict: "reject", seq: 5, diagnostics: [{ code: "stale_assumption", symbol: X }] });
@@ -165,6 +167,20 @@ describe.each([
     const { b } = setup(c, "check");
     expect(c.submit(b, ev("release", 5, { payload: { keys: [X] } }))).toMatchObject({ verdict: "accept" });
     expect(closed(c.gate(b, "stop"))).toEqual({ allow: true, open: [] });
+  });
+
+  it("a contract change to a symbol B already uses is not cleared by release, nor downgraded by a later denied check", () => {
+    const c = make();
+    const a = c.hello(hello("claude-a", "I-a"));
+    const b = c.hello(hello("codex-b", "I-b"));
+    c.submit(b.session, edit(2, [[Y, "body"]], [X])); // #3: B uses X
+    c.submit(a.session, edit(1, [[X, "signature"]])); // #4: opens stale_assumption on I-b (origin contract)
+    expect(closed(c.gate(b.session, "commit"))).toEqual(STILL_OPEN);
+    expect(c.submit(b.session, edit(3, [[Y, "body"]], [X], "check"))).toMatchObject({ verdict: "reject", seq: 5 });
+    c.submit(b.session, ev("release", 5, { payload: { keys: [X] } }));
+    expect(closed(c.gate(b.session, "stop"))).toEqual(STILL_OPEN);
+    expect(c.submit(b.session, edit(6, [[Y, "body"]], [X]))).toMatchObject({ verdict: "accept" });
+    expect(closed(c.gate(b.session, "stop"))).toEqual({ allow: true, open: [] });
   });
 
   it("releasing a different key does not clear a check-mode error", () => {

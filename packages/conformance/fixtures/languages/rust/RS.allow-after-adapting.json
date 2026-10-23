@@ -1,0 +1,47 @@
+{
+  "id": "RS.allow-after-adapting",
+  "level": 2,
+  "required": true,
+  "spec": "§5.2",
+  "title": "Rust: after the deny, the call adapted to the new signature is allowed",
+  "steps": [
+    {
+      "event": "session.start"
+    },
+    {
+      "peer": "change_signature"
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/cart.rs",
+        "old_text": "    format!(\"{} items\", items.len())",
+        "new_text": "    format!(\"{} items, total {}\", items.len(), calc_total(items))"
+      },
+      "expect_pre": {
+        "decision": "deny"
+      }
+    },
+    {
+      "tool": {
+        "kind": "edit",
+        "path": "src/cart.rs",
+        "old_text": "    format!(\"{} items\", items.len())",
+        "new_text": "    format!(\"{} items, total {}\", items.len(), calc_total(items, 0.0))"
+      },
+      "expect_pre": {
+        "decision": "not-deny"
+      },
+      "expect_applied": true
+    },
+    {
+      "expect_log": {
+        "agent": "$SELF",
+        "kind": "edit",
+        "status": "accepted",
+        "files_include": "src/cart.rs",
+        "min": 1
+      }
+    }
+  ]
+}
