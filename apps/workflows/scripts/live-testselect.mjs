@@ -112,7 +112,14 @@ const CONFIG = { tests: { command: ["node", "--test"], timeout_s: 300, select: t
 async function main() {
   const stamp = Date.now().toString(36);
   await api("POST", "/v1/admin/repos", ADMIN, { repo: REPO }, [200, 201]);
-  const bound = await api("POST", "/v1/admin/artifacts/repos", ADMIN, { repo: REPO, trunk: REPO, create: true, config: CONFIG }, [200, 201]);
+  // Bind the existing trunk; create it on the first run.
+  let bound;
+  try {
+    bound = await api("POST", "/v1/admin/artifacts/repos", ADMIN, { repo: REPO, trunk: REPO, config: CONFIG }, [200, 201]);
+  } catch (e) {
+    if (!/-> 404/.test(e.message)) throw e;
+    bound = await api("POST", "/v1/admin/artifacts/repos", ADMIN, { repo: REPO, trunk: REPO, create: true, config: CONFIG }, [200, 201]);
+  }
   step("bound trunk", { trunk: bound.trunk, namespace: bound.namespace, config: bound.config });
   const human = (await api("POST", "/v1/admin/tokens", ADMIN, { principal: "john", scopes: ["human"], repos: [REPO] }, 201)).token;
   const tt = await api("POST", `/v1/repos/${REPO}/system/trunk-token`, SYS, { ttl: 900 }, 201);
@@ -148,16 +155,41 @@ async function main() {
       subs.push(sub.id);
     }
     agentTokens[agent] ??= (await api("POST", "/v1/admin/tokens", ADMIN, { principal: agent, scopes: ["agent"], repos: [REPO], agent }, 201)).token;
+    // An agent session on the change: the repo coordinator learns the change (the land queue needs it).
+    const hello = { type: "hello", protocol: "wcp/0.1", agent: { id: agent, harness: "claude-code" }, capabilities: { level: 3, observe: "sync", inject: "immediate", deny_edit: true, refuse_stop: true, commit_gate: "tool_interception" }, task: { id: task, priority: 0 }, change: c.change };
+    c.session = (await api("POST", `/v1/repos/${REPO}/sessions`, agentTokens[agent], hello, 201)).session;
     return c;
   }
+  const delivery = {};
   async function push(c, files, msg) {
     const d = mkdtempSync(join(tmpdir(), "weft-ts-agent-"));
     git(["clone", "-q", c.fork.remote, d], { token: c.token.plaintext });
+    const before = git(["rev-parse", "HEAD"], { cwd: d });
     write(d, files(d));
     git(["add", "-A"], { cwd: d });
     git(["commit", "-qm", `${msg}\n\n${Object.entries(c.trailers).map(([k, v]) => `${k}: ${v}`).join("\n")}`], { cwd: d });
     git(["push", "-q", "origin", "HEAD:refs/heads/main"], { cwd: d, token: c.token.plaintext });
-    return git(["rev-parse", "HEAD"], { cwd: d });
+    const after = git(["rev-parse", "HEAD"], { cwd: d });
+    // The push event normally arrives via the fork's Artifacts event subscription. After the
+    // 2026-10-22 wind-down re-created queue, Artifacts did not deliver within minutes, so after
+    // 60 s this sends the same `cf.artifacts.repo.pushed` envelope to the queue (same idempotency
+    // key: a late real delivery is a duplicate). Everything after the queue is the real pipeline.
+    delivery[after] = "artifacts";
+    const t0 = Date.now();
+    for (;;) {
+      const ch = await api("GET", `/v1/repos/${REPO}/changes/${c.change}`, SYS, undefined, 200);
+      if (ch.revisions.some((r) => r.sha === after)) break;
+      if (Date.now() - t0 > 60_000) {
+        const message = git(["log", "-1", "--format=%B", after], { cwd: d });
+        const envelope = { type: "cf.artifacts.repo.pushed", source: { type: "artifacts.repo", namespace: c.fork.namespace, repoName: c.fork.name }, payload: { ref: "refs/heads/main", before, after, commits: [{ id: after, message, timestamp: new Date().toISOString(), parents: [before] }], totalCommitsCount: 1 }, metadata: { accountId: ACCOUNT, eventSchemaVersion: 1, eventTimestamp: new Date().toISOString() } };
+        await cf("POST", `/queues/${queue.queue_id}/messages`, { body: envelope });
+        delivery[after] = "queue-fallback";
+        log("no Artifacts event after 60 s; sent the push envelope to the queue", { change: c.change, after });
+        break;
+      }
+      await sleep(3000);
+    }
+    return after;
   }
   const ev = (rows, kind, pred = () => true) => {
     const e = [...rows].reverse().find((x) => x.kind === kind && pred(JSON.parse(x.data ?? "{}")));
@@ -189,6 +221,7 @@ async function main() {
     saved_fraction: sel?.saved_fraction ?? null,
     test: test ? { status: test.status, command: test.command, summary: test.summary, ms: test.ms } : null,
   });
+  out.delivery = delivery;
 
   // 2. A: users change -> subset
   const a = await candidate(`ts-a-${stamp}`, "Users: show last name first", "claude-a");

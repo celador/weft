@@ -158,13 +158,15 @@ export async function processRevision(p: ProcessRevisionParams, step: StepLike, 
   const status = revisionStatus(r);
 
   await step.do("record evidence", async () => {
+    // Time-saved baseline: the latest full-suite run BEFORE this one is recorded.
+    const baseline = r.tests?.selection ? await store.lastFullSuite(p.repo) : null;
     await store.setRevision(p.change, p.sha, { status, onto_sha: r.onto ?? null, rebased_sha: r.rebased ?? null, layer: r.layer ?? null, processed: true });
     const ok = r.status === "up_to_date" || r.status === "clean" || r.status === "resolved";
     await store.evidence(p.change, p.sha, "rebase", ok ? "pass" : "fail", rebaseEvidence(r));
     if (r.tests) {
       const t = testEvidence(r);
       await store.evidence(p.change, p.sha, "test", t.status, t.data);
-      if (r.tests.selection) await store.evidence(p.change, p.sha, "test_selection", "info", selectionEvidence(r.tests, await store.lastFullSuite(p.repo)));
+      if (r.tests.selection) await store.evidence(p.change, p.sha, "test_selection", "info", selectionEvidence(r.tests, baseline));
     }
     return null;
   });
