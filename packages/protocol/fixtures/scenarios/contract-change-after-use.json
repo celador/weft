@@ -1,0 +1,314 @@
+{
+  "name": "contract-change-after-use",
+  "description": "§6.3 step 6 / §6.5: the use comes first, the contract change second. B's accepted edit calls X; A changes X's signature while B has no live session. The error is recorded on B's change anyway (origin contract), redelivered on B's next hello, and closes B's commit gate until B redoes the call site; a release does not clear it. A's later landing of the already-announced signature change does not reopen it (B only gets trunk_advanced and a contract_changed warning).",
+  "covers": [
+    "6.3",
+    "6.5",
+    "8.4"
+  ],
+  "repo": "demo",
+  "start": "2026-10-05T14:00:00.000Z",
+  "steps": [
+    {
+      "op": "hello",
+      "as": "A",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "claude-a",
+          "harness": "claude-code"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-1"
+        },
+        "change": "I-a"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s1",
+        "head_seq": 1,
+        "delivered_through": 1
+      }
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "agy-b",
+          "harness": "antigravity"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s2",
+        "head_seq": 2,
+        "delivered_through": 2
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 2,
+          "writes": [
+            {
+              "key": "src/cart.ts#cartSummary",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "src/pricing.ts#calcTotal"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 3
+      }
+    },
+    {
+      "op": "bye",
+      "as": "B"
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 1,
+          "writes": [
+            {
+              "key": "src/pricing.ts#calcTotal",
+              "kind": "signature"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 6,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "agy-b",
+          "harness": "antigravity"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s3",
+        "head_seq": 7,
+        "delivered_through": 7
+      }
+    },
+    {
+      "op": "drain",
+      "as": "B",
+      "ack": "last",
+      "expect": {
+        "items": [
+          {
+            "id": 1,
+            "seq": 6,
+            "kind": "diagnostic",
+            "diagnostic": {
+              "severity": "error",
+              "code": "stale_assumption",
+              "symbol": "src/pricing.ts#calcTotal",
+              "caused_by_seq": 6,
+              "caused_by_agent": "claude-a",
+              "caused_by_task": "T-1"
+            }
+          }
+        ],
+        "open_errors": [
+          {
+            "severity": "error",
+            "code": "stale_assumption",
+            "symbol": "src/pricing.ts#calcTotal"
+          }
+        ]
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "commit",
+      "expect": {
+        "allow": false,
+        "open_errors": [
+          {
+            "severity": "error",
+            "code": "stale_assumption",
+            "symbol": "src/pricing.ts#calcTotal",
+            "caused_by_seq": 6
+          }
+        ]
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "release",
+          "base_seq": 7,
+          "payload": {}
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 8
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "commit",
+      "expect": {
+        "allow": false,
+        "open_errors": {
+          "$len": 1
+        }
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 8,
+          "writes": [
+            {
+              "key": "src/cart.ts#cartSummary",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "src/pricing.ts#calcTotal"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 9,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "commit",
+      "expect": {
+        "allow": true,
+        "open_errors": []
+      }
+    },
+    {
+      "op": "system",
+      "draft": {
+        "kind": "land",
+        "base_seq": 9,
+        "change": "I-a",
+        "payload": {
+          "sha": "0badc0de",
+          "op_id": "op_1"
+        }
+      },
+      "expect": {
+        "seq": 10,
+        "status": "accepted"
+      }
+    },
+    {
+      "op": "drain",
+      "as": "B",
+      "ack": "last",
+      "expect": {
+        "items": [
+          {
+            "seq": 10,
+            "kind": "trunk",
+            "requires_rebase": true,
+            "diagnostic": {
+              "code": "trunk_advanced"
+            }
+          },
+          {
+            "seq": 10,
+            "kind": "diagnostic",
+            "diagnostic": {
+              "severity": "warning",
+              "code": "contract_changed",
+              "symbol": "src/pricing.ts#calcTotal"
+            }
+          }
+        ],
+        "open_errors": []
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "commit",
+      "expect": {
+        "allow": true
+      }
+    }
+  ]
+}

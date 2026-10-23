@@ -202,14 +202,14 @@ event) that produced the diagnostic — every squiggle is traceable.
 | code | severity | raised for | by rule |
 |---|---|---|---|
 | `stale_overwrite` | error | writing a symbol that landed/reverted on trunk after your base | R1 |
-| `stale_assumption` | error | reading a symbol whose signature changed / that was deleted after your base | R2 |
+| `stale_assumption` | error | reading a symbol whose signature changed / that was deleted after your base (R2); or, pushed, another change changed the signature of / deleted a symbol your accepted edits already use | R2 / §6.3 |
 | `stale_read` | warning | reading a symbol whose body changed after your base | R2 |
 | `claim_wait` | warning (error if the holder's claim is firm) | writing into an area a senior change holds; you wait | R3 / §7 |
 | `claim_die` | error | wait-die: a junior change writing into a senior change's area | R3 / §7 |
 | `claim_wounded` | error (pushed to holders) | wound-wait: a senior change took your area | §7 |
 | `claim_contended` | info | the other side of an arbitration (holder notified / wounder informed) | §7 |
 | `claim_predicted_overlap` | info | overlap with a planner-predicted claim, or a predicted claim overlapping real work | §7.5 |
-| `contract_changed` | warning (pushed) | someone changed the signature of / deleted a symbol your change reads, writes or claims | §6.3 |
+| `contract_changed` | warning (pushed) | someone changed the signature of / deleted a symbol your change writes or claims, or uses where §6.3 opens no error | §6.3 |
 | `trunk_advanced` | info (pushed) | a landing/revert touched symbols your change reads, writes or claims; `requires_rebase` | §6.3 |
 | `agent_paused` | error | a human paused this agent; edits/claims/checkpoints are refused | R0 |
 
@@ -326,7 +326,10 @@ keys appear in E (`writes` for R1/R3, `reads` for R2).
   Committed and in-flight writers are treated alike: an accepted signature change is a
   fact of the log, and the call site must be checked against it now. A diagnostic caused
   by a record in U says so in its message ("... and is not in your checkout: that change
-  has not landed and was never delivered to you") instead of "after your base".
+  has not landed and was never delivered to you") instead of "after your base". The reverse order
+  (the use was accepted first, the signature change second) gets the same error, opened
+  by the signature change on the user's change (§6.3 step 6), so the outcome does not
+  depend on which edit the coordinator sequenced first.
 - **R2a reads amendment** (`intent` with non-empty `reads`): an adapter that learns more
   precise reads after an edit (a language server answering asynchronously, §8.3 step 3a)
   submits them as an `intent` whose `reads` are the extra keys, with the edit's `base_seq`.
@@ -335,7 +338,9 @@ keys appear in E (`writes` for R1/R3, `reads` for R2).
   write `stale_read` (warning). An amendment is therefore never rejected and never opens an
   error: the edit it amends was already accepted, and the agent learns about the conflict
   instead of being blocked by facts it could not have had at edit time. Accepted, its reads
-  join the change (§6.3 step 1), so later contract changes to them are pushed (§6.3 step 6).
+  join the change (§6.3 step 1), so later contract changes to them are pushed (§6.3 step 6),
+  also as `contract_changed` warnings: a read known only from an amendment gets a warning in
+  either order.
 - **R3 claim overlap** (`edit`, `claim`): for each write key k with active claims, apply
   arbitration (§7). Predicted claims never arbitrate (§7.5).
 - `land` drafts (system) are checked with R1 only, against committed records in W: this
@@ -363,14 +368,25 @@ Applied atomically with the append, in this order:
    claims of the change and clears its open errors.
 5. Routing: `negotiate.*` and `message` go to the addressee's sessions (§7.4, §7.6);
    `control` to the target agent's sessions (`merge`: every session of the merged group).
-6. Broadcast, for `edit`, `land`, `revert`, to every other live, unlanded change whose
-   reads, writes or active claims include a written key:
+6. Broadcast, for `edit`, `land`, `revert`, to every other unlanded change whose
+   reads, writes or active claims include a written key (pushes go to its live sessions):
    - `land`/`revert`: one `trunk` item (`requires_rebase: true`) carrying a
      `trunk_advanced` info diagnostic;
-   - any of the three, per write of kind `signature`/`deleted`: a `contract_changed`
-     warning;
-   - for an `edit`, `told(c', k)` is raised to its seq for each such change `c'` and each
-     written key k in `c'`'s reads, writes or active claims (§6.1).
+   - any of the three, per write of kind `signature`/`deleted` of key k:
+     - if the change **uses** k — one of its accepted `edit`s reads k (reads known only
+       from an `intent`, including an R2a amendment, do not count), it does not write k
+       itself (claims arbitrate that, §7), it is not in the submitter's merged group (§7.6), and E is not a `land`
+       of a change whose accepted edits already wrote k as `signature`/`deleted` (its
+       users were told then) — a `stale_assumption` **error** caused by E is opened on
+       that change (§6.5, origin `contract`; recorded even when the change has no live
+       session, and since it is redelivered on every `hello` it raises `told(c, k)` to
+       E's seq, §6.1) and pushed as a `diagnostic` item. Under `conflicts: continue` E's owner
+       also gets the owner notice (§8.4). Its suggestion asks for the call sites to be
+       updated (`hold`) or for the conflict to be reported (`continue`); either way the
+       change's gates stay closed until rule 1 of §6.5 (or 2–3) clears it;
+     - otherwise a `contract_changed` warning.
+   - for an `edit`, `told(c', k)` is raised to its seq for each such change `c'` with a live
+     session and each written key k in `c'`'s reads, writes or active claims (§6.1).
 
 ### 6.4 Human summary
 
@@ -391,10 +407,16 @@ rejected records, and MUST NOT include secrets from the diff.
 ### 6.5 Open errors
 
 Each **change** keeps a set of **open errors** keyed by symbol key: errors from the
-rejected records of its sessions (except `agent_paused`) and `claim_wounded` pushes to
-it. Every entry remembers its **origin**: `check` (a rejected `mode:"check"` record — the
-edit was denied before it reached the workspace), `commit` (a rejected `mode:"commit"`
-record — the edit is in the workspace but not in the log) or `push` (`claim_wounded`).
+rejected records of its sessions (except `agent_paused`), `claim_wounded` pushes to
+it, and `stale_assumption` errors opened by a contract change to a symbol it uses
+(§6.3 step 6). Every entry remembers its **origin**: `check` (a rejected `mode:"check"`
+record — the edit was denied before it reached the workspace), `commit` (a rejected
+`mode:"commit"` record — the edit is in the workspace but not in the log), `push`
+(`claim_wounded`) or `contract` (§6.3 step 6 — the call site is in the workspace and in
+the log, but its callee changed under it). A later error on the same key replaces the
+entry, except that an origin a release cannot clear (`commit`, `contract`) is kept when
+the new one could be (`check`, `push`): a denied retry does not take the earlier code out
+of the workspace.
 
 Open errors belong to the change, not to a session. A `bye`, a session expiry, a new
 `hello` (with or without `resume_session`) and a session's own `release` never make them
@@ -410,8 +432,9 @@ recorded on the change even when it has no live session. An entry is cleared onl
 4. the change's agent `release`s the key (or releases everything) **and** the entry's
    origin is `check` or `push`: the agent retreats from an area it never wrote (a denied
    edit) or lost (wounded). A release never clears a `commit`-origin entry, because that
-   edit exists in the workspace and is unknown to the log; the agent must redo it so that
-   it is accepted (rule 1) or have it resolved by rules 2–3.
+   edit exists in the workspace and is unknown to the log, nor a `contract`-origin one,
+   because the call site is in the workspace; the agent must redo it so that it is
+   accepted (rule 1) or have it resolved by rules 2–3.
 
 System `release` records (expiry, session end; §7.5) never clear open errors.
 
@@ -683,7 +706,7 @@ still in that session's inbox is not added again; once acknowledged, a later ide
 notified again. The gates do
 not change: `gate:"stop"` and `gate:"commit"` refuse on every open error in both modes (see
 `ownership.ts`). Whether an adapter lets a stop through after repeated refusals is adapter policy,
-not part of this protocol. Under `continue`, the diagnostics say to keep editing other tasks instead of rebasing or adapting to the other agent's change; the errors (`stale_overwrite`, `stale_assumption`) also state that the commit gate stays closed while the error is open, and the `contract_changed` warning, which closes no gate, does not; under `hold` the suggestions are unchanged from today.
+not part of this protocol. Under `continue`, the diagnostics say to keep editing other tasks instead of rebasing or adapting to the other agent's change; the errors (`stale_overwrite`, `stale_assumption`, including the one §6.3 step 6 opens on a change that already used the symbol) also state that the commit gate stays closed while the error is open, and the `contract_changed` warning, which closes no gate, does not; under `hold` the suggestions are unchanged from today.
 
 `gate.result.allow` is false iff the session's change has open errors (§6.5), or — for
 `gate:"stop"` only — negotiations are **due**. `reason` renders both, and
@@ -920,17 +943,20 @@ reference coordinator passes all of them and its log replays deterministically.
    → `verdict {verdict:"accept", seq:3}`.
 2. claude-a changes the signature of `refreshToken`:
    `submit {mode:"commit", event:{kind:"edit", base_seq:1, writes:[{key:"src/auth/session.ts#refreshToken", kind:"signature"}]}}`
-   → `verdict {verdict:"accept", seq:4}`; codex-b's inbox gains
-   `{id:1, seq:4, kind:"diagnostic", diagnostic:{severity:"warning", code:"contract_changed", …}}`.
+   → `verdict {verdict:"accept", seq:4}`; codex-b already uses `refreshToken` (#3), so its
+   change gets an open `stale_assumption` (origin `contract`, §6.3 step 6) and its inbox gains
+   `{id:1, seq:4, kind:"diagnostic", diagnostic:{severity:"error", code:"stale_assumption", caused_by_seq:4, …}}`.
+   codex-b's commit and stop gates are now closed.
 3. codex-b's next pre-edit check, still on base 3:
    `submit {mode:"check", event:{kind:"edit", base_seq:3, reads:["…#refreshToken"], writes:[…]}}`
-   → `verdict {verdict:"reject", mode:"check", seq:5, diagnostics:[{severity:"error", code:"stale_assumption", symbol:"src/auth/session.ts#refreshToken", caused_by_seq:4, caused_by_agent:"claude-a"}], inbox:[…contract_changed…], context:"[weft error] stale_assumption …"}`.
+   → `verdict {verdict:"reject", mode:"check", seq:5, diagnostics:[{severity:"error", code:"stale_assumption", symbol:"src/auth/session.ts#refreshToken", caused_by_seq:4, caused_by_agent:"claude-a"}], inbox:[…stale_assumption #4…], context:"[weft error] stale_assumption …"}`.
    The Claude Code / Codex adapter denies the tool call with `context` as the reason;
    the model reads it and re-plans. The feed shows
    `#5 Blocked: codex-b edited fetchWithAuth in src/api/client.ts`.
 4. codex-b proposes an overload (`negotiate.propose`, seq 5→6…), claude-a accepts,
-   restores a compatible overload; codex-b drains (base advances past 4) and its edit is
-   accepted; its stop gate opens.
+   restores a compatible overload (another signature write, so codex-b is told again);
+   codex-b drains (base advances past the overload) and its edit, which uses
+   `refreshToken`, is accepted and clears the error; its stop gate opens.
 
 The full executable version is `fixtures/scenarios/signature-read-error.json` and
 `negotiation.json`.
@@ -1011,3 +1037,23 @@ Proposed for `docs/design.md` (rule 7 of agent-rules):
   enrichment). Before, such an intent was not validated (its reads already joined the change,
   so only contract changes after it were pushed). No adapter sent intents with reads before
   this change, so existing logs replay unchanged. Scenario `reads-amendment`.
+- 0.1 change (2026-10-22, t_513b15c6; behaviour change, listed per §10): a signature change
+  or deletion of a symbol another change already uses closes that change's gates (§6.3
+  step 6). Before, only the change-first order did (R2 `stale_assumption` on the user's
+  next edit); in the use-first order the user got a `contract_changed` warning that closed
+  no gate, so if it ignored the warning both commits passed their gates and trunk failed to
+  type-check (Antigravity rerun, `demo/evidence/antigravity/reroute-field-rename/`, where
+  agy-b's `calcTotal` call #8 preceded the `PriceOptions` rename #10). Now the user's change
+  gets a `stale_assumption` error with the new open-error origin `contract`, which `release`
+  does not clear; an accepted edit that uses the symbol again does. `contract_changed`
+  remains for changes that write or claim the key, for reads known only from an intent
+  (including R2a amendments, which are warnings in either order), for merged groups, and
+  for the landing of an already-announced change. Also: a later releasable-origin error on a key no longer
+  downgrades a `commit`/`contract` entry. Like the 2026-10-09 change this alters inbox
+  items and gates, not logged verdicts (except a `negotiate.escalate` whose only conflict
+  evidence is such an error). Options considered: keeping the warning (owner responsible,
+  CI catches it) leaves the gate depending on sequencing order; closing the gate only at
+  land time (`trunk_advanced` over a used key) misses the user landing first, since the
+  owner's own land passes R1. New scenario `contract-change-after-use`; updated
+  `signature-read-error`, `open-errors-persist`, `negotiation`, `negotiation-overload-dues`,
+  `escalation-human`.

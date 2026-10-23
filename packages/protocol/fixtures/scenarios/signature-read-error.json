@@ -1,6 +1,6 @@
 {
   "name": "signature-read-error",
-  "description": "R2: B calls X; A changes X's signature. B is told (contract_changed warning) and B's next edit based before the change is rejected at check time (L2 deny) with stale_assumption; after draining (higher base) the same edit is accepted.",
+  "description": "R2 + §6.3: B calls X; A then changes X's signature. Because B's accepted edit already uses X, A's edit opens a stale_assumption on B's change (pushed, origin contract) and B's commit gate closes before B does anything else; B's next edit based before the change is rejected at check time (L2 deny) with stale_assumption; after draining (higher base) the same edit is accepted and clears it.",
   "covers": [
     "6.2 R2",
     "6.3",
@@ -120,6 +120,21 @@
       }
     },
     {
+      "op": "gate",
+      "as": "B",
+      "gate": "commit",
+      "expect": {
+        "allow": false,
+        "open_errors": [
+          {
+            "code": "stale_assumption",
+            "symbol": "src/auth/session.ts#refreshToken",
+            "caused_by_seq": 4
+          }
+        ]
+      }
+    },
+    {
       "op": "submit",
       "as": "B",
       "submit": {
@@ -160,8 +175,8 @@
             "seq": 4,
             "kind": "diagnostic",
             "diagnostic": {
-              "severity": "warning",
-              "code": "contract_changed",
+              "severity": "error",
+              "code": "stale_assumption",
               "symbol": "src/auth/session.ts#refreshToken",
               "caused_by_seq": 4,
               "caused_by_agent": "claude-a"

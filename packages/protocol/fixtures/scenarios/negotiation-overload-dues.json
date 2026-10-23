@@ -363,7 +363,7 @@
           {
             "seq": 9,
             "diagnostic": {
-              "code": "contract_changed"
+              "code": "stale_assumption"
             }
           }
         ],
