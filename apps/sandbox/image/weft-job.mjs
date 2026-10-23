@@ -623,6 +623,110 @@ async function landJob(job) {
   return { ...out, status: p.reason, expected: p.expected, current: p.current, detail: p.detail };
 }
 
+/**
+ * Batched landing (design §6.4 update t_5f9c01c1). Stack the changes in queue order onto
+ * trunk (each rebased onto the previous one's result with the layered merge; a change that
+ * conflicts is dropped from the stack and reported), run the full presubmit ONCE on the
+ * stacked tip and CAS-push it. On failure, bisect over prefixes of the stack (binary search
+ * for the shortest failing prefix: ceil(log2 n) more runs) to isolate the first culprit; the
+ * passing prefix is pushed, the culprit is reported with its failing run, and the changes
+ * after it are `pending` (not landed this round; the workflow re-stacks them without it).
+ * Every change keeps its own before/after range on trunk, so one change of a batch can be
+ * reverted on its own.
+ */
+async function landBatchJob(job) {
+  const s = job.spec;
+  const branch = s.trunk.branch ?? "main";
+  const full = { full: "land presubmit always runs the full suite" };
+  const onto = await job.fetch("trunk", s.trunk.remote, branch);
+  const items = [];
+  const heads = [];
+  for (let i = 0; i < s.changes.length; i++) {
+    const c = s.changes[i];
+    const tip = await job.fetch(`fork-${i}`, c.remote, c.branch ?? "main");
+    if (c.rebased) await job.fetch(`rebased-${i}`, c.remote, "weft/rebased").catch(() => null);
+    const head = c.sha ?? tip;
+    if (!head || (await job.rev(head)) === null) return { job: "land_batch", status: "error", error: `change ${c.change} head ${c.sha ?? "(branch)"} not found in its fork` };
+    heads.push(head);
+  }
+  job.note("fetched", { onto, changes: s.changes.length });
+
+  // 1. Stack.
+  let cur = onto;
+  const stacked = [];
+  for (let i = 0; i < s.changes.length; i++) {
+    const c = s.changes[i];
+    const head = heads[i];
+    s.intent = c.intent ?? undefined; // the resolver prompt names the change being replayed
+    let rb;
+    if (c.rebased && cur !== null && c.rebased.onto === cur && (await job.rev(c.rebased.sha)) !== null && (await job.isAncestor(cur, c.rebased.sha)))
+      rb = { status: "clean", onto: cur, head, rebased: c.rebased.sha, layer: c.rebased.layer ?? "reused", commits: [], reused: true };
+    else rb = await job.timed("rebase", () => job.rebase(cur, head));
+    job.note("stacked", { change: c.change, status: rb.status, layer: rb.layer, rebased: rb.rebased ?? null });
+    if (rb.status === "conflict") {
+      items.push({ change: c.change, status: "conflict", head, layer: rb.layer, conflicts: rb.conflicts, ...(rb.resolver ? { resolver: rb.resolver } : {}), commits: rb.commits ?? [] });
+      continue;
+    }
+    const before = cur ?? ZERO_SHA;
+    const item = { change: c.change, status: "pending", head, before, after: rb.rebased, layer: rb.layer, commits: (rb.commits ?? []).map((x) => ({ orig: x.orig, new: x.new, layer: x.layer })), diffstat: await job.diffstat(before, rb.rebased) };
+    items.push(item);
+    stacked.push(item);
+    cur = rb.rebased;
+  }
+  const batch = { size: s.changes.length, presubmit_runs: 0, bisect_steps: 0, tested: [], culprit: null, passing_prefix: 0 };
+  const out = { job: "land_batch", onto: onto ?? ZERO_SHA, items, batch };
+  if (!stacked.length) return { ...out, status: "conflict" };
+
+  // 2. One presubmit on the stacked tip.
+  const tip = stacked[stacked.length - 1].after;
+  out.tests = await job.tests(tip, full);
+  batch.presubmit_runs++;
+  batch.tested.push({ prefix: stacked.length, status: out.tests.status === "fail" ? "fail" : "pass", ms: out.tests.ms });
+  let pass = stacked.length;
+  if (out.tests.status === "fail") {
+    // 3. Bisect: lo = longest prefix known to pass (0 = trunk), hi = shortest known to fail.
+    let lo = 0;
+    let hi = stacked.length;
+    let failing = out.tests;
+    let passing = null;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      const t = await job.tests(stacked[mid - 1].after, full);
+      batch.presubmit_runs++;
+      batch.bisect_steps++;
+      batch.tested.push({ prefix: mid, status: t.status === "fail" ? "fail" : "pass", ms: t.ms });
+      job.note("bisect", { prefix: mid, status: t.status });
+      if (t.status === "fail") {
+        hi = mid;
+        failing = t;
+      } else {
+        lo = mid;
+        passing = t;
+      }
+    }
+    const culprit = stacked[hi - 1];
+    culprit.status = "culprit";
+    batch.culprit = culprit.change;
+    out.culprit_tests = failing;
+    if (passing) out.passing_tests = passing;
+    pass = lo;
+  } else out.passing_tests = out.tests;
+  batch.passing_prefix = pass;
+  for (let k = 0; k < pass; k++) stacked[k].status = s.dry_run ? "ready" : "landed";
+  if (pass === 0) return { ...out, status: "tests_failed", before: onto ?? ZERO_SHA, after: onto ?? ZERO_SHA };
+  if (s.dry_run) return { ...out, status: "ready" };
+
+  // 4. One CAS push for the passing prefix (trunk: onto -> its last change).
+  const expected = onto ?? ZERO_SHA;
+  const target = stacked[pass - 1].after;
+  if (target === expected) return { ...out, status: "noop", before: expected, after: expected };
+  const p = await job.casPush(s.trunk.remote, branch, target, expected);
+  job.note("pushed", { ok: p.ok, reason: p.reason ?? null, landed: pass });
+  if (p.ok) return { ...out, status: "landed", before: p.before, after: p.after, ref: p.ref };
+  for (let k = 0; k < pass; k++) stacked[k].status = "pending";
+  return { ...out, status: p.reason, expected: p.expected, current: p.current, detail: p.detail };
+}
+
 async function revertJob(job) {
   const s = job.spec;
   const branch = s.trunk.branch ?? "main";
@@ -671,10 +775,14 @@ async function revertJob(job) {
 export function validateJob(spec) {
   const errs = [];
   if (!spec || typeof spec !== "object") return ["spec must be an object"];
-  if (!["rebase", "land", "revert"].includes(spec.job)) errs.push("job must be rebase|land|revert");
+  if (!["rebase", "land", "revert", "land_batch"].includes(spec.job)) errs.push("job must be rebase|land|revert|land_batch");
   if (!spec.trunk?.remote) errs.push("trunk.remote required");
   if ((spec.job === "rebase" || spec.job === "land") && !spec.fork?.remote) errs.push("fork.remote required");
   if (spec.job === "revert" && !spec.revert?.after) errs.push("revert.after required");
+  if (spec.job === "land_batch") {
+    if (!Array.isArray(spec.changes) || !spec.changes.length) errs.push("changes required (non-empty array)");
+    else if (spec.changes.some((c) => !c?.remote || !c?.change)) errs.push("every change needs change + remote");
+  }
   if (spec.resolver && !["llm", "command"].includes(spec.resolver.kind)) errs.push("resolver.kind must be llm|command");
   return errs;
 }
@@ -687,7 +795,7 @@ export async function runJob(spec, opts = {}) {
   let result;
   try {
     await job.init();
-    result = spec.job === "rebase" ? await rebaseJob(job) : spec.job === "land" ? await landJob(job) : await revertJob(job);
+    result = spec.job === "rebase" ? await rebaseJob(job) : spec.job === "land" ? await landJob(job) : spec.job === "land_batch" ? await landBatchJob(job) : await revertJob(job);
   } catch (e) {
     result = { job: spec.job, status: "error", error: redact(String(e?.message ?? e), job.secrets).slice(-2000) };
   }

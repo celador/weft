@@ -29,6 +29,11 @@ binding = "AI"
 binding = "EVIDENCE"
 bucket_name = "weft-evidence"
 
+# Land-queue metrics: batch size, presubmit runs saved, bisect steps (one point per batch round).
+[[analytics_engine_datasets]]
+binding = "WEFT_LAND"
+dataset = "weft_land"
+
 [[workflows]]
 name = "weft-process-revision"
 binding = "PROCESS_REVISION"
@@ -91,6 +96,10 @@ binding = "AI"
 [[env.preview.r2_buckets]]
 binding = "EVIDENCE"
 bucket_name = "weft-evidence-preview"
+
+[[env.preview.analytics_engine_datasets]]
+binding = "WEFT_LAND"
+dataset = "weft_land_preview"
 
 [[env.preview.workflows]]
 name = "weft-process-revision-preview"

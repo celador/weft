@@ -331,8 +331,14 @@ async function route(req: Request, env: Env): Promise<Response> {
   }
   if (rest === "/system/queue" && m === "POST") {
     authorize(g, "system", repo);
-    const body = (await readJson(req)) as { change?: unknown; note?: unknown; id?: unknown; status?: unknown };
+    const body = (await readJson(req)) as { change?: unknown; note?: unknown; id?: unknown; status?: unknown; claim?: unknown; ids?: unknown };
     const note = typeof body.note === "string" ? body.note : undefined;
+    // Batched landing: the leader claims queued entries behind it (one atomic DO step).
+    if (typeof body.claim === "number") {
+      if (!Array.isArray(body.ids) || body.ids.length > 64 || !body.ids.every((x) => typeof x === "number" && Number.isInteger(x)))
+        throw new HttpError("invalid_message", "ids must be an array of up to 64 integers", { issues: [{ path: "/ids", message: "integer[]" }] });
+      return json({ type: "queue", repo, entries: unwrap(await stub.op("queue_claim", [body.claim, body.ids, note])) });
+    }
     if (typeof body.id === "number" && typeof body.status === "string") {
       if (!["queued", "landing", "landed", "failed", "cancelled"].includes(body.status))
         throw new HttpError("invalid_message", "bad status", { issues: [{ path: "/status", message: "enum" }] });

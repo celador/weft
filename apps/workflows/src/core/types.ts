@@ -33,7 +33,7 @@ export interface D1Like {
 
 // ------------------------------------------------------------------ coordinator
 
-export type QueueEntry = { id: number; change: string; status: "queued" | "landing" | "landed" | "failed" | "cancelled"; requested_by: string; enqueued_seq: number | null; landed_seq: number | null; note: string | null; created_at: string; updated_at: string };
+export type QueueEntry = { id: number; change: string; status: "queued" | "landing" | "landed" | "failed" | "cancelled"; requested_by: string; enqueued_seq: number | null; landed_seq: number | null; note: string | null; batch?: number | null; created_at: string; updated_at: string };
 export type OpRow = { op_id: string; seq: number; kind: string; change_id: string | null; sha: string | null; trunk_ref: string | null; reverts_seq: number | null; reverts_op_id: string | null; at: string };
 
 /** One repo's coordinator (THE ordered log), as the workflows need it. */
@@ -43,6 +43,8 @@ export interface CoordinatorClient {
   enqueue(change: string, requestedBy: string, note?: string): Promise<QueueEntry>;
   setQueueStatus(id: number, status: QueueEntry["status"], note?: string): Promise<QueueEntry>;
   queue(statuses?: string[]): Promise<QueueEntry[]>;
+  /** Batched landing: the leader (queue head, `landing`) claims queued entries behind it. */
+  claimBatch(leader: number, ids: number[], note?: string): Promise<QueueEntry[]>;
   ops(): Promise<OpRow[]>;
 }
 
@@ -78,8 +80,34 @@ export type TestSelectConfig = {
   /** Command for a subset; `{files}` is replaced by the selected test files (default: tests.command + files). */
   command?: string[] | string;
 };
+/** One change of a `land_batch` job, in queue order (weft-job.mjs). */
+export type BatchItemResult = {
+  change: string;
+  /** landed | conflict (bounced before tests) | culprit (bisect isolated it) | pending (after the culprit, not landed this round) | ready (dry run) */
+  status: "landed" | "conflict" | "culprit" | "pending" | "ready";
+  head?: string;
+  /** Trunk before/after this change on the stack: its own revertable range. */
+  before?: string;
+  after?: string;
+  layer?: Layer;
+  commits?: Array<{ orig: string; new: string; layer: Layer }>;
+  conflicts?: Conflict[];
+  resolver?: { kind: string; error?: string; model?: string; files?: string[] };
+  diffstat?: { files: number; insertions: number; deletions: number };
+};
+export type BatchInfo = {
+  size: number;
+  /** Presubmit (full suite) runs this job did: 1 for the stacked tip + one per bisect step. */
+  presubmit_runs: number;
+  bisect_steps: number;
+  /** Prefix lengths tested by bisect and their outcome. */
+  tested: Array<{ prefix: number; status: "pass" | "fail"; ms?: number }>;
+  culprit?: string | null;
+  /** Number of changes (from the front) that passed together. */
+  passing_prefix: number;
+};
 export interface JobResult {
-  job?: "rebase" | "land" | "revert";
+  job?: "rebase" | "land" | "revert" | "land_batch";
   status: "up_to_date" | "clean" | "resolved" | "conflict" | "error" | "tests_failed" | "ready" | "noop" | "landed" | "stale_trunk" | "rejected" | "reverted" | "not_fast_forward";
   onto?: string;
   head?: string;
@@ -108,6 +136,12 @@ export interface JobResult {
   patch_truncated?: boolean;
   /** Added by the runner: where it ran (sandbox run id) + infra timings. */
   run?: { id: string; cold_start_ms?: number; state?: string };
+  /** land_batch: per-change outcome, batch counters, the culprit's failing run. */
+  items?: BatchItemResult[];
+  batch?: BatchInfo;
+  culprit_tests?: TestsResult;
+  /** land_batch: the run that passed for the landed prefix (the tip run when nothing failed). */
+  passing_tests?: TestsResult;
 }
 
 /** What a workflow asks the job runner for. Tokens are minted by the runner inside the start step (never step output). */
@@ -116,9 +150,11 @@ export interface JobRequest {
   task: string;
   change: string;
   /** weft-job spec without auth; trunk/fork remotes are filled from `trunk`/`fork`. */
-  spec: Record<string, unknown> & { job: "rebase" | "land" | "revert" };
+  spec: Record<string, unknown> & { job: "rebase" | "land" | "revert" | "land_batch" };
   trunk: { name: string; remote: string; branch: string; access: "read" | "write" };
   fork?: { name: string; remote: string; branch: string; access: "read" | "write" };
+  /** land_batch: one fork per change (read tokens minted for each). */
+  forks?: Array<{ name: string; remote: string; branch: string; access: "read" | "write" }>;
   config: RepoConfig;
 }
 
@@ -136,6 +172,12 @@ export interface RepoConfig {
   allow_hosts?: string[];
   instance?: string;
   job_timeout_s?: number;
+  /**
+   * Land queue. `batch` (default on: max 4, wait_s 30): when 2+ changes are queued, the head
+   * stacks up to `max` of them, runs presubmit once and bisects on failure. `false` = one
+   * change per presubmit (pre-batching behaviour). A lone change never waits.
+   */
+  land?: { batch?: false | { max?: number; wait_s?: number } } | null;
 }
 
 export type Risk = "low" | "medium" | "high";
@@ -195,6 +237,10 @@ export interface Deps {
   queuePoll?: { interval: Duration; max: number };
   /** B10: preview, Browser Rendering + R2, Workers AI risk and AI Gateway review capabilities. */
   evidence?: EvidenceCapabilities;
+  /** Workers Analytics Engine dataset for land-queue metrics (batch size, presubmits saved, bisect steps). */
+  metrics?: { writeDataPoint(p: { indexes?: string[]; blobs?: string[]; doubles?: number[] }): void };
+  /** Batch linger poll interval (default 5 s). */
+  batchPoll?: Duration;
 }
 
 export type ChangeRow = {

@@ -74,8 +74,11 @@ const sub = (s: string, from: string, to: string) => {
 
 describe("weft-job rebase (layered merge)", () => {
   it("validates specs", () => {
-    expect(validateJob({ job: "nope" })).toContain("job must be rebase|land|revert");
+    expect(validateJob({ job: "nope" })).toContain("job must be rebase|land|revert|land_batch");
     expect(validateJob({ job: "rebase", trunk: { remote: "x" } })).toContain("fork.remote required");
+    expect(validateJob({ job: "land_batch", trunk: { remote: "x" } })).toContain("changes required (non-empty array)");
+    expect(validateJob({ job: "land_batch", trunk: { remote: "x" }, changes: [{ change: "c" }] })).toContain("every change needs change + remote");
+    expect(validateJob({ job: "land_batch", trunk: { remote: "x" }, changes: [{ change: "c", remote: "y" }] })).toEqual([]);
   });
 
   it("up_to_date when the change already contains trunk; tests run on the head", async () => {
