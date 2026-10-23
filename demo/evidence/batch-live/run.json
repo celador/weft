@@ -1,0 +1,1321 @@
+{
+  "started_at": "2026-10-23T00:55:32.239Z",
+  "gateway": "https://weft-gateway-preview.elier.ai",
+  "workflows": "https://weft-workflows-preview.elier.ai",
+  "repo": "weft-batch",
+  "steps": [
+    {
+      "name": "bound trunk",
+      "at_s": 0.9,
+      "trunk": "weft-batch",
+      "namespace": "weft-preview",
+      "config": {
+        "tests": {
+          "command": [
+            "node",
+            "--test"
+          ],
+          "timeout_s": 300
+        },
+        "layers": [
+          "git",
+          "mergiraf"
+        ],
+        "job_timeout_s": 900,
+        "land": {
+          "batch": {
+            "max": 4,
+            "wait_s": 30
+          }
+        }
+      }
+    },
+    {
+      "name": "trunk seeded",
+      "at_s": 4,
+      "before": null,
+      "base": "139da89bd9139432553a9b8e226740944e6e6089",
+      "tests": [
+        "test/round.test.ts",
+        "test/pricing.test.ts",
+        "test/users.test.ts",
+        "test/a.test.ts",
+        "test/b.test.ts",
+        "test/c.test.ts"
+      ]
+    },
+    {
+      "name": "batch: 5 checkpoints processed",
+      "at_s": 162.2,
+      "changes": [
+        {
+          "k": "w",
+          "agent": "claude-w",
+          "change": "If04ee42901e36f91d207d1482182b4c653717124",
+          "sha": "90b26e2072ff0840b1ee810d57ec20bb2e0822bf",
+          "revision": "processed",
+          "layer": "none"
+        },
+        {
+          "k": "a",
+          "agent": "claude-a",
+          "change": "I38766e48b6244e79ce4bcfe0c1108913ea0beaab",
+          "sha": "9507eb3d3acb55238e921b616b3e689d70164f25",
+          "revision": "processed",
+          "layer": "none"
+        },
+        {
+          "k": "b",
+          "agent": "codex-b",
+          "change": "I881ff015d710cb63efbf35957392477391c2d211",
+          "sha": "1957d5a69c03bf312596f2e70b7a0118ad75e768",
+          "revision": "processed",
+          "layer": "none"
+        },
+        {
+          "k": "c",
+          "agent": "cursor-c",
+          "change": "Ie77313f4e9e7a736c4e1b0931022947c1f4cd99c",
+          "sha": "305739205cf3525b99b7bf11bcb124ac601a54d1",
+          "revision": "processed",
+          "layer": "none"
+        },
+        {
+          "k": "d",
+          "agent": "gemini-d",
+          "change": "I343970e672f8c105066466f36e8266e75ea1515e",
+          "sha": "364abfaecc948057347d18039f02a0c293058fdd",
+          "revision": "processed",
+          "layer": "none"
+        }
+      ]
+    },
+    {
+      "name": "batch: land requested",
+      "at_s": 170.5,
+      "warm": {
+        "change": "If04ee42901e36f91d207d1482182b4c653717124",
+        "workflow": "land-If04ee42901e3-1792717094598"
+      },
+      "rest": [
+        {
+          "change": "I38766e48b6244e79ce4bcfe0c1108913ea0beaab",
+          "workflow": "land-I38766e48b624-1792717100180"
+        },
+        {
+          "change": "I881ff015d710cb63efbf35957392477391c2d211",
+          "workflow": "land-I881ff015d710-1792717100864"
+        },
+        {
+          "change": "Ie77313f4e9e7a736c4e1b0931022947c1f4cd99c",
+          "workflow": "land-Ie77313f4e9e7-1792717101493"
+        },
+        {
+          "change": "I343970e672f8c105066466f36e8266e75ea1515e",
+          "workflow": "land-I343970e672f8-1792717102184"
+        }
+      ]
+    },
+    {
+      "name": "batch: done",
+      "at_s": 270.8,
+      "workflows": [
+        {
+          "change": "If04ee42901e36f91d207d1482182b4c653717124",
+          "k": "w",
+          "status": "complete",
+          "output": {
+            "status": "landed",
+            "op_id": "op-4e6cfa73cb4ba55cdeb600db",
+            "seq": 16,
+            "before": "139da89bd9139432553a9b8e226740944e6e6089",
+            "after": "90b26e2072ff0840b1ee810d57ec20bb2e0822bf",
+            "layer": "none",
+            "attempts": 1,
+            "queue_id": 1
+          },
+          "error": null
+        },
+        {
+          "change": "I38766e48b6244e79ce4bcfe0c1108913ea0beaab",
+          "k": "a",
+          "status": "complete",
+          "output": {
+            "status": "landed",
+            "op_id": "op-7310bbcbe7d3a645f8b9bf3c",
+            "seq": 17,
+            "before": "90b26e2072ff0840b1ee810d57ec20bb2e0822bf",
+            "after": "8584098a34e9bf971297d808379683a096738d82",
+            "layer": "git",
+            "attempts": 1,
+            "queue_id": 2,
+            "batch": {
+              "leader": 2,
+              "size": 4,
+              "rounds": 1,
+              "presubmit_runs": 1,
+              "presubmit_runs_saved": 3,
+              "bisect_steps": 0,
+              "landed": [
+                "I38766e48b6244e79ce4bcfe0c1108913ea0beaab",
+                "Ie77313f4e9e7a736c4e1b0931022947c1f4cd99c",
+                "I881ff015d710cb63efbf35957392477391c2d211",
+                "I343970e672f8c105066466f36e8266e75ea1515e"
+              ],
+              "culprits": [],
+              "conflicts": []
+            }
+          },
+          "error": null
+        },
+        {
+          "change": "I881ff015d710cb63efbf35957392477391c2d211",
+          "k": "b",
+          "status": "complete",
+          "output": {
+            "status": "landed",
+            "queue_id": 4,
+            "batch": {
+              "leader": 2,
+              "size": 0
+            },
+            "op_id": "op-ac70c0673655323037f44b5a",
+            "seq": 19,
+            "before": "0a5e5e78bb0956a8f1a437edc6d54b0a2d5e25c6",
+            "after": "8f8d554dd5fde4ed09c0722d283bb67dada2c578"
+          },
+          "error": null
+        },
+        {
+          "change": "Ie77313f4e9e7a736c4e1b0931022947c1f4cd99c",
+          "k": "c",
+          "status": "complete",
+          "output": {
+            "status": "landed",
+            "queue_id": 3,
+            "batch": {
+              "leader": 2,
+              "size": 0
+            },
+            "op_id": "op-8d1179492da5fc257a753e62",
+            "seq": 18,
+            "before": "8584098a34e9bf971297d808379683a096738d82",
+            "after": "0a5e5e78bb0956a8f1a437edc6d54b0a2d5e25c6"
+          },
+          "error": null
+        },
+        {
+          "change": "I343970e672f8c105066466f36e8266e75ea1515e",
+          "k": "d",
+          "status": "complete",
+          "output": {
+            "status": "landed",
+            "queue_id": 5,
+            "batch": {
+              "leader": 2,
+              "size": 0
+            },
+            "op_id": "op-4b15ec158fa667af9ad604f7",
+            "seq": 20,
+            "before": "8f8d554dd5fde4ed09c0722d283bb67dada2c578",
+            "after": "4e3118416ab9e0e1254e8dc50e7c9ddd9c1012ad"
+          },
+          "error": null
+        }
+      ],
+      "queue": [
+        {
+          "id": 1,
+          "status": "landed",
+          "requested_by": "weft-workflows",
+          "enqueued_seq": 15,
+          "landed_seq": 16,
+          "note": "workflow land-If04ee42901e3-1792717094598",
+          "batch": null,
+          "created_at": "2026-10-23T00:58:19.385Z",
+          "updated_at": "2026-10-23T00:58:58.860Z",
+          "change": "If04ee42901e36f91d207d1482182b4c653717124"
+        },
+        {
+          "id": 2,
+          "status": "landed",
+          "requested_by": "weft-workflows",
+          "enqueued_seq": 15,
+          "landed_seq": 17,
+          "note": "workflow land-I38766e48b624-1792717100180",
+          "batch": 2,
+          "created_at": "2026-10-23T00:58:24.775Z",
+          "updated_at": "2026-10-23T00:59:53.227Z",
+          "change": "I38766e48b6244e79ce4bcfe0c1108913ea0beaab"
+        },
+        {
+          "id": 3,
+          "status": "landed",
+          "requested_by": "weft-workflows",
+          "enqueued_seq": 15,
+          "landed_seq": 18,
+          "note": "batch #2 (workflow land-I38766e48b624-1792717100180)",
+          "batch": 2,
+          "created_at": "2026-10-23T00:58:24.919Z",
+          "updated_at": "2026-10-23T00:59:54.440Z",
+          "change": "Ie77313f4e9e7a736c4e1b0931022947c1f4cd99c"
+        },
+        {
+          "id": 4,
+          "status": "landed",
+          "requested_by": "weft-workflows",
+          "enqueued_seq": 15,
+          "landed_seq": 19,
+          "note": "batch #2 (workflow land-I38766e48b624-1792717100180)",
+          "batch": 2,
+          "created_at": "2026-10-23T00:58:25.055Z",
+          "updated_at": "2026-10-23T00:59:55.735Z",
+          "change": "I881ff015d710cb63efbf35957392477391c2d211"
+        },
+        {
+          "id": 5,
+          "status": "landed",
+          "requested_by": "weft-workflows",
+          "enqueued_seq": 15,
+          "landed_seq": 20,
+          "note": "batch #2 (workflow land-I38766e48b624-1792717100180)",
+          "batch": 2,
+          "created_at": "2026-10-23T00:58:26.013Z",
+          "updated_at": "2026-10-23T00:59:56.936Z",
+          "change": "I343970e672f8c105066466f36e8266e75ea1515e"
+        }
+      ],
+      "ops": [
+        {
+          "op_id": "op-4e6cfa73cb4ba55cdeb600db",
+          "seq": 16,
+          "kind": "land",
+          "change_id": "If04ee42901e36f91d207d1482182b4c653717124",
+          "sha": "90b26e2072ff0840b1ee810d57ec20bb2e0822bf",
+          "trunk_ref": "refs/heads/main",
+          "reverts_seq": null,
+          "reverts_op_id": null,
+          "at": "2026-10-23T00:58:58.860Z"
+        },
+        {
+          "op_id": "op-7310bbcbe7d3a645f8b9bf3c",
+          "seq": 17,
+          "kind": "land",
+          "change_id": "I38766e48b6244e79ce4bcfe0c1108913ea0beaab",
+          "sha": "8584098a34e9bf971297d808379683a096738d82",
+          "trunk_ref": "refs/heads/main",
+          "reverts_seq": null,
+          "reverts_op_id": null,
+          "at": "2026-10-23T00:59:53.227Z"
+        },
+        {
+          "op_id": "op-8d1179492da5fc257a753e62",
+          "seq": 18,
+          "kind": "land",
+          "change_id": "Ie77313f4e9e7a736c4e1b0931022947c1f4cd99c",
+          "sha": "0a5e5e78bb0956a8f1a437edc6d54b0a2d5e25c6",
+          "trunk_ref": "refs/heads/main",
+          "reverts_seq": null,
+          "reverts_op_id": null,
+          "at": "2026-10-23T00:59:54.440Z"
+        },
+        {
+          "op_id": "op-ac70c0673655323037f44b5a",
+          "seq": 19,
+          "kind": "land",
+          "change_id": "I881ff015d710cb63efbf35957392477391c2d211",
+          "sha": "8f8d554dd5fde4ed09c0722d283bb67dada2c578",
+          "trunk_ref": "refs/heads/main",
+          "reverts_seq": null,
+          "reverts_op_id": null,
+          "at": "2026-10-23T00:59:55.735Z"
+        },
+        {
+          "op_id": "op-4b15ec158fa667af9ad604f7",
+          "seq": 20,
+          "kind": "land",
+          "change_id": "I343970e672f8c105066466f36e8266e75ea1515e",
+          "sha": "4e3118416ab9e0e1254e8dc50e7c9ddd9c1012ad",
+          "trunk_ref": "refs/heads/main",
+          "reverts_seq": null,
+          "reverts_op_id": null,
+          "at": "2026-10-23T00:59:56.936Z"
+        }
+      ],
+      "evidence": {
+        "If04ee42901e36f91d207d1482182b4c653717124": {
+          "status": "landed",
+          "evidence": [
+            {
+              "kind": "land",
+              "status": "pass",
+              "batch": null,
+              "reason": null,
+              "before": "139da89bd9139432553a9b8e226740944e6e6089",
+              "after": "90b26e2072ff0840b1ee810d57ec20bb2e0822bf",
+              "summary": null,
+              "ms": null
+            },
+            {
+              "kind": "presubmit",
+              "status": "pass",
+              "batch": null,
+              "reason": null,
+              "before": null,
+              "after": null,
+              "summary": {
+                "pass": 7,
+                "fail": 0
+              },
+              "ms": 12269
+            }
+          ]
+        },
+        "I38766e48b6244e79ce4bcfe0c1108913ea0beaab": {
+          "status": "landed",
+          "evidence": [
+            {
+              "kind": "land",
+              "status": "pass",
+              "batch": {
+                "leader": 2,
+                "round": 1,
+                "position": 1,
+                "size": 4,
+                "round_size": 4,
+                "presubmit_runs": 1,
+                "bisect_steps": 0,
+                "tested": [
+                  {
+                    "prefix": 4,
+                    "status": "pass",
+                    "ms": 13913
+                  }
+                ]
+              },
+              "reason": null,
+              "before": "90b26e2072ff0840b1ee810d57ec20bb2e0822bf",
+              "after": "8584098a34e9bf971297d808379683a096738d82",
+              "summary": null,
+              "ms": null
+            },
+            {
+              "kind": "presubmit",
+              "status": "pass",
+              "batch": {
+                "leader": 2,
+                "round": 1,
+                "position": 1,
+                "size": 4,
+                "round_size": 4,
+                "presubmit_runs": 1,
+                "bisect_steps": 0,
+                "tested": [
+                  {
+                    "prefix": 4,
+                    "status": "pass",
+                    "ms": 13913
+                  }
+                ]
+              },
+              "reason": null,
+              "before": null,
+              "after": null,
+              "summary": {
+                "pass": 7,
+                "fail": 0
+              },
+              "ms": 13913
+            }
+          ]
+        },
+        "I881ff015d710cb63efbf35957392477391c2d211": {
+          "status": "landed",
+          "evidence": [
+            {
+              "kind": "land",
+              "status": "pass",
+              "batch": {
+                "leader": 2,
+                "round": 1,
+                "position": 3,
+                "size": 4,
+                "round_size": 4,
+                "presubmit_runs": 1,
+                "bisect_steps": 0,
+                "tested": [
+                  {
+                    "prefix": 4,
+                    "status": "pass",
+                    "ms": 13913
+                  }
+                ]
+              },
+              "reason": null,
+              "before": "0a5e5e78bb0956a8f1a437edc6d54b0a2d5e25c6",
+              "after": "8f8d554dd5fde4ed09c0722d283bb67dada2c578",
+              "summary": null,
+              "ms": null
+            },
+            {
+              "kind": "presubmit",
+              "status": "pass",
+              "batch": {
+                "leader": 2,
+                "round": 1,
+                "position": 3,
+                "size": 4,
+                "round_size": 4,
+                "presubmit_runs": 1,
+                "bisect_steps": 0,
+                "tested": [
+                  {
+                    "prefix": 4,
+                    "status": "pass",
+                    "ms": 13913
+                  }
+                ]
+              },
+              "reason": null,
+              "before": null,
+              "after": null,
+              "summary": {
+                "pass": 7,
+                "fail": 0
+              },
+              "ms": 13913
+            }
+          ]
+        },
+        "Ie77313f4e9e7a736c4e1b0931022947c1f4cd99c": {
+          "status": "landed",
+          "evidence": [
+            {
+              "kind": "land",
+              "status": "pass",
+              "batch": {
+                "leader": 2,
+                "round": 1,
+                "position": 2,
+                "size": 4,
+                "round_size": 4,
+                "presubmit_runs": 1,
+                "bisect_steps": 0,
+                "tested": [
+                  {
+                    "prefix": 4,
+                    "status": "pass",
+                    "ms": 13913
+                  }
+                ]
+              },
+              "reason": null,
+              "before": "8584098a34e9bf971297d808379683a096738d82",
+              "after": "0a5e5e78bb0956a8f1a437edc6d54b0a2d5e25c6",
+              "summary": null,
+              "ms": null
+            },
+            {
+              "kind": "presubmit",
+              "status": "pass",
+              "batch": {
+                "leader": 2,
+                "round": 1,
+                "position": 2,
+                "size": 4,
+                "round_size": 4,
+                "presubmit_runs": 1,
+                "bisect_steps": 0,
+                "tested": [
+                  {
+                    "prefix": 4,
+                    "status": "pass",
+                    "ms": 13913
+                  }
+                ]
+              },
+              "reason": null,
+              "before": null,
+              "after": null,
+              "summary": {
+                "pass": 7,
+                "fail": 0
+              },
+              "ms": 13913
+            }
+          ]
+        },
+        "I343970e672f8c105066466f36e8266e75ea1515e": {
+          "status": "landed",
+          "evidence": [
+            {
+              "kind": "land",
+              "status": "pass",
+              "batch": {
+                "leader": 2,
+                "round": 1,
+                "position": 4,
+                "size": 4,
+                "round_size": 4,
+                "presubmit_runs": 1,
+                "bisect_steps": 0,
+                "tested": [
+                  {
+                    "prefix": 4,
+                    "status": "pass",
+                    "ms": 13913
+                  }
+                ]
+              },
+              "reason": null,
+              "before": "8f8d554dd5fde4ed09c0722d283bb67dada2c578",
+              "after": "4e3118416ab9e0e1254e8dc50e7c9ddd9c1012ad",
+              "summary": null,
+              "ms": null
+            },
+            {
+              "kind": "presubmit",
+              "status": "pass",
+              "batch": {
+                "leader": 2,
+                "round": 1,
+                "position": 4,
+                "size": 4,
+                "round_size": 4,
+                "presubmit_runs": 1,
+                "bisect_steps": 0,
+                "tested": [
+                  {
+                    "prefix": 4,
+                    "status": "pass",
+                    "ms": 13913
+                  }
+                ]
+              },
+              "reason": null,
+              "before": null,
+              "after": null,
+              "summary": {
+                "pass": 7,
+                "fail": 0
+              },
+              "ms": 13913
+            }
+          ]
+        }
+      },
+      "changes": [
+        {
+          "k": "w",
+          "change": "If04ee42901e36f91d207d1482182b4c653717124",
+          "agent": "claude-w"
+        },
+        {
+          "k": "a",
+          "change": "I38766e48b6244e79ce4bcfe0c1108913ea0beaab",
+          "agent": "claude-a"
+        },
+        {
+          "k": "b",
+          "change": "I881ff015d710cb63efbf35957392477391c2d211",
+          "agent": "codex-b"
+        },
+        {
+          "k": "c",
+          "change": "Ie77313f4e9e7a736c4e1b0931022947c1f4cd99c",
+          "agent": "cursor-c"
+        },
+        {
+          "k": "d",
+          "change": "I343970e672f8c105066466f36e8266e75ea1515e",
+          "agent": "gemini-d"
+        }
+      ]
+    },
+    {
+      "name": "bisect: 5 checkpoints processed",
+      "at_s": 432.9,
+      "changes": [
+        {
+          "k": "y",
+          "agent": "claude-y",
+          "change": "Ib0c798f820282dbaccf1b11bf8b23d501b3e4e6e",
+          "sha": "9748bd7373720c54b9cd423a18a6d762c5ece270",
+          "revision": "processed",
+          "layer": "none"
+        },
+        {
+          "k": "e",
+          "agent": "claude-e",
+          "change": "I4393ff22a7a0383783a22a8c1fa6755de2257fc9",
+          "sha": "e5d84a32d0332c1d8b7d30d5e6c4743fdb2f1bec",
+          "revision": "processed",
+          "layer": "none"
+        },
+        {
+          "k": "f",
+          "agent": "codex-f",
+          "change": "I984d6ddfbb3d150a93179a36041d4aaeea9887cf",
+          "sha": "3c23b09cc1333a1754b87998eb104c8cd3904136",
+          "revision": "processed",
+          "layer": "none"
+        },
+        {
+          "k": "g",
+          "agent": "cursor-g",
+          "change": "I030329f7629fbadececda6bf43bba144e8dcef1a",
+          "sha": "e9d50db38cd8bfaeb0f516fc8180dc8e44c5ab10",
+          "revision": "processed",
+          "layer": "none"
+        },
+        {
+          "k": "h",
+          "agent": "gemini-h",
+          "change": "Ic7d884c8543324c8ceced1dfa74601ab8ac519f6",
+          "sha": "13786cb17012d16215f9ad00c86108e4b84885ad",
+          "revision": "processed",
+          "layer": "none"
+        }
+      ]
+    },
+    {
+      "name": "bisect: land requested",
+      "at_s": 438.7,
+      "warm": {
+        "change": "Ib0c798f820282dbaccf1b11bf8b23d501b3e4e6e",
+        "workflow": "land-Ib0c798f82028-1792717365353"
+      },
+      "rest": [
+        {
+          "change": "I4393ff22a7a0383783a22a8c1fa6755de2257fc9",
+          "workflow": "land-I4393ff22a7a0-1792717368873"
+        },
+        {
+          "change": "I984d6ddfbb3d150a93179a36041d4aaeea9887cf",
+          "workflow": "land-I984d6ddfbb3d-1792717369560"
+        },
+        {
+          "change": "I030329f7629fbadececda6bf43bba144e8dcef1a",
+          "workflow": "land-I030329f7629f-1792717370112"
+        },
+        {
+          "change": "Ic7d884c8543324c8ceced1dfa74601ab8ac519f6",
+          "workflow": "land-Ic7d884c85433-1792717370596"
+        }
+      ]
+    },
+    {
+      "name": "bisect: done",
+      "at_s": 534.7,
+      "workflows": [
+        {
+          "change": "Ib0c798f820282dbaccf1b11bf8b23d501b3e4e6e",
+          "k": "y",
+          "status": "complete",
+          "output": {
+            "status": "landed",
+            "op_id": "op-a547143f9d2dab9a92c5749f",
+            "seq": 42,
+            "before": "4e3118416ab9e0e1254e8dc50e7c9ddd9c1012ad",
+            "after": "9748bd7373720c54b9cd423a18a6d762c5ece270",
+            "layer": "none",
+            "attempts": 1,
+            "queue_id": 6
+          },
+          "error": null
+        },
+        {
+          "change": "I4393ff22a7a0383783a22a8c1fa6755de2257fc9",
+          "k": "e",
+          "status": "complete",
+          "output": {
+            "status": "landed",
+            "queue_id": 8,
+            "batch": {
+              "leader": 7,
+              "size": 0
+            },
+            "op_id": "op-37608eec05490f084aec81a6",
+            "seq": 44,
+            "before": "8329298aa2a7636268aa8f3c2b77802a7d5ce3cb",
+            "after": "68b1c6fcb0b97938b9dcf03afdfb7c408fb46e4a"
+          },
+          "error": null
+        },
+        {
+          "change": "I984d6ddfbb3d150a93179a36041d4aaeea9887cf",
+          "k": "f",
+          "status": "complete",
+          "output": {
+            "status": "landed",
+            "op_id": "op-4b44e94f41f86833e0457aea",
+            "seq": 43,
+            "before": "9748bd7373720c54b9cd423a18a6d762c5ece270",
+            "after": "8329298aa2a7636268aa8f3c2b77802a7d5ce3cb",
+            "layer": "git",
+            "attempts": 1,
+            "queue_id": 7,
+            "batch": {
+              "leader": 7,
+              "size": 4,
+              "rounds": 1,
+              "presubmit_runs": 3,
+              "presubmit_runs_saved": 1,
+              "bisect_steps": 2,
+              "landed": [
+                "I984d6ddfbb3d150a93179a36041d4aaeea9887cf",
+                "I4393ff22a7a0383783a22a8c1fa6755de2257fc9",
+                "Ic7d884c8543324c8ceced1dfa74601ab8ac519f6"
+              ],
+              "culprits": [
+                "I030329f7629fbadececda6bf43bba144e8dcef1a"
+              ],
+              "conflicts": []
+            }
+          },
+          "error": null
+        },
+        {
+          "change": "I030329f7629fbadececda6bf43bba144e8dcef1a",
+          "k": "g",
+          "status": "complete",
+          "output": {
+            "status": "failed",
+            "reason": "presubmit failed (isolated by bisect in a batch of 4)",
+            "queue_id": 10,
+            "batch": {
+              "leader": 7,
+              "size": 0
+            }
+          },
+          "error": null
+        },
+        {
+          "change": "Ic7d884c8543324c8ceced1dfa74601ab8ac519f6",
+          "k": "h",
+          "status": "complete",
+          "output": {
+            "status": "landed",
+            "queue_id": 9,
+            "batch": {
+              "leader": 7,
+              "size": 0
+            },
+            "op_id": "op-d81c23c5ae8f2512f2b96493",
+            "seq": 45,
+            "before": "68b1c6fcb0b97938b9dcf03afdfb7c408fb46e4a",
+            "after": "fda068e29ee89c237e25f09e55f1e359f4be58bd"
+          },
+          "error": null
+        }
+      ],
+      "queue": [
+        {
+          "id": 6,
+          "status": "landed",
+          "requested_by": "weft-workflows",
+          "enqueued_seq": 41,
+          "landed_seq": 42,
+          "note": "workflow land-Ib0c798f82028-1792717365353",
+          "batch": null,
+          "created_at": "2026-10-23T01:02:47.279Z",
+          "updated_at": "2026-10-23T01:03:10.191Z",
+          "change": "Ib0c798f820282dbaccf1b11bf8b23d501b3e4e6e"
+        },
+        {
+          "id": 7,
+          "status": "landed",
+          "requested_by": "weft-workflows",
+          "enqueued_seq": 41,
+          "landed_seq": 43,
+          "note": "workflow land-I984d6ddfbb3d-1792717369560",
+          "batch": 7,
+          "created_at": "2026-10-23T01:02:50.980Z",
+          "updated_at": "2026-10-23T01:04:17.546Z",
+          "change": "I984d6ddfbb3d150a93179a36041d4aaeea9887cf"
+        },
+        {
+          "id": 8,
+          "status": "landed",
+          "requested_by": "weft-workflows",
+          "enqueued_seq": 41,
+          "landed_seq": 44,
+          "note": "batch #7 (workflow land-I984d6ddfbb3d-1792717369560)",
+          "batch": 7,
+          "created_at": "2026-10-23T01:02:51.196Z",
+          "updated_at": "2026-10-23T01:04:18.787Z",
+          "change": "I4393ff22a7a0383783a22a8c1fa6755de2257fc9"
+        },
+        {
+          "id": 9,
+          "status": "landed",
+          "requested_by": "weft-workflows",
+          "enqueued_seq": 41,
+          "landed_seq": 45,
+          "note": "batch #7 (workflow land-I984d6ddfbb3d-1792717369560)",
+          "batch": 7,
+          "created_at": "2026-10-23T01:02:52.014Z",
+          "updated_at": "2026-10-23T01:04:20.024Z",
+          "change": "Ic7d884c8543324c8ceced1dfa74601ab8ac519f6"
+        },
+        {
+          "id": 10,
+          "status": "failed",
+          "requested_by": "weft-workflows",
+          "enqueued_seq": 41,
+          "landed_seq": null,
+          "note": "presubmit failed (isolated by bisect in a batch of 4)",
+          "batch": 7,
+          "created_at": "2026-10-23T01:02:52.142Z",
+          "updated_at": "2026-10-23T01:04:21.361Z",
+          "change": "I030329f7629fbadececda6bf43bba144e8dcef1a"
+        }
+      ],
+      "ops": [
+        {
+          "op_id": "op-a547143f9d2dab9a92c5749f",
+          "seq": 42,
+          "kind": "land",
+          "change_id": "Ib0c798f820282dbaccf1b11bf8b23d501b3e4e6e",
+          "sha": "9748bd7373720c54b9cd423a18a6d762c5ece270",
+          "trunk_ref": "refs/heads/main",
+          "reverts_seq": null,
+          "reverts_op_id": null,
+          "at": "2026-10-23T01:03:10.191Z"
+        },
+        {
+          "op_id": "op-4b44e94f41f86833e0457aea",
+          "seq": 43,
+          "kind": "land",
+          "change_id": "I984d6ddfbb3d150a93179a36041d4aaeea9887cf",
+          "sha": "8329298aa2a7636268aa8f3c2b77802a7d5ce3cb",
+          "trunk_ref": "refs/heads/main",
+          "reverts_seq": null,
+          "reverts_op_id": null,
+          "at": "2026-10-23T01:04:17.546Z"
+        },
+        {
+          "op_id": "op-37608eec05490f084aec81a6",
+          "seq": 44,
+          "kind": "land",
+          "change_id": "I4393ff22a7a0383783a22a8c1fa6755de2257fc9",
+          "sha": "68b1c6fcb0b97938b9dcf03afdfb7c408fb46e4a",
+          "trunk_ref": "refs/heads/main",
+          "reverts_seq": null,
+          "reverts_op_id": null,
+          "at": "2026-10-23T01:04:18.787Z"
+        },
+        {
+          "op_id": "op-d81c23c5ae8f2512f2b96493",
+          "seq": 45,
+          "kind": "land",
+          "change_id": "Ic7d884c8543324c8ceced1dfa74601ab8ac519f6",
+          "sha": "fda068e29ee89c237e25f09e55f1e359f4be58bd",
+          "trunk_ref": "refs/heads/main",
+          "reverts_seq": null,
+          "reverts_op_id": null,
+          "at": "2026-10-23T01:04:20.024Z"
+        }
+      ],
+      "evidence": {
+        "Ib0c798f820282dbaccf1b11bf8b23d501b3e4e6e": {
+          "status": "landed",
+          "evidence": [
+            {
+              "kind": "land",
+              "status": "pass",
+              "batch": null,
+              "reason": null,
+              "before": "4e3118416ab9e0e1254e8dc50e7c9ddd9c1012ad",
+              "after": "9748bd7373720c54b9cd423a18a6d762c5ece270",
+              "summary": null,
+              "ms": null
+            },
+            {
+              "kind": "presubmit",
+              "status": "pass",
+              "batch": null,
+              "reason": null,
+              "before": null,
+              "after": null,
+              "summary": {
+                "pass": 7,
+                "fail": 0
+              },
+              "ms": 11657
+            }
+          ]
+        },
+        "I4393ff22a7a0383783a22a8c1fa6755de2257fc9": {
+          "status": "landed",
+          "evidence": [
+            {
+              "kind": "land",
+              "status": "pass",
+              "batch": {
+                "leader": 7,
+                "round": 1,
+                "position": 2,
+                "size": 4,
+                "round_size": 4,
+                "presubmit_runs": 3,
+                "bisect_steps": 2,
+                "tested": [
+                  {
+                    "prefix": 4,
+                    "status": "fail",
+                    "ms": 13484
+                  },
+                  {
+                    "prefix": 2,
+                    "status": "pass",
+                    "ms": 12608
+                  },
+                  {
+                    "prefix": 3,
+                    "status": "pass",
+                    "ms": 12711
+                  }
+                ]
+              },
+              "reason": null,
+              "before": "8329298aa2a7636268aa8f3c2b77802a7d5ce3cb",
+              "after": "68b1c6fcb0b97938b9dcf03afdfb7c408fb46e4a",
+              "summary": null,
+              "ms": null
+            },
+            {
+              "kind": "presubmit",
+              "status": "pass",
+              "batch": {
+                "leader": 7,
+                "round": 1,
+                "position": 2,
+                "size": 4,
+                "round_size": 4,
+                "presubmit_runs": 3,
+                "bisect_steps": 2,
+                "tested": [
+                  {
+                    "prefix": 4,
+                    "status": "fail",
+                    "ms": 13484
+                  },
+                  {
+                    "prefix": 2,
+                    "status": "pass",
+                    "ms": 12608
+                  },
+                  {
+                    "prefix": 3,
+                    "status": "pass",
+                    "ms": 12711
+                  }
+                ]
+              },
+              "reason": null,
+              "before": null,
+              "after": null,
+              "summary": {
+                "pass": 7,
+                "fail": 0
+              },
+              "ms": 12711
+            }
+          ]
+        },
+        "I984d6ddfbb3d150a93179a36041d4aaeea9887cf": {
+          "status": "landed",
+          "evidence": [
+            {
+              "kind": "land",
+              "status": "pass",
+              "batch": {
+                "leader": 7,
+                "round": 1,
+                "position": 1,
+                "size": 4,
+                "round_size": 4,
+                "presubmit_runs": 3,
+                "bisect_steps": 2,
+                "tested": [
+                  {
+                    "prefix": 4,
+                    "status": "fail",
+                    "ms": 13484
+                  },
+                  {
+                    "prefix": 2,
+                    "status": "pass",
+                    "ms": 12608
+                  },
+                  {
+                    "prefix": 3,
+                    "status": "pass",
+                    "ms": 12711
+                  }
+                ]
+              },
+              "reason": null,
+              "before": "9748bd7373720c54b9cd423a18a6d762c5ece270",
+              "after": "8329298aa2a7636268aa8f3c2b77802a7d5ce3cb",
+              "summary": null,
+              "ms": null
+            },
+            {
+              "kind": "presubmit",
+              "status": "pass",
+              "batch": {
+                "leader": 7,
+                "round": 1,
+                "position": 1,
+                "size": 4,
+                "round_size": 4,
+                "presubmit_runs": 3,
+                "bisect_steps": 2,
+                "tested": [
+                  {
+                    "prefix": 4,
+                    "status": "fail",
+                    "ms": 13484
+                  },
+                  {
+                    "prefix": 2,
+                    "status": "pass",
+                    "ms": 12608
+                  },
+                  {
+                    "prefix": 3,
+                    "status": "pass",
+                    "ms": 12711
+                  }
+                ]
+              },
+              "reason": null,
+              "before": null,
+              "after": null,
+              "summary": {
+                "pass": 7,
+                "fail": 0
+              },
+              "ms": 12711
+            }
+          ]
+        },
+        "I030329f7629fbadececda6bf43bba144e8dcef1a": {
+          "status": "open",
+          "evidence": [
+            {
+              "kind": "land",
+              "status": "fail",
+              "batch": {
+                "leader": 7,
+                "round": 1,
+                "size": 4,
+                "tested": [
+                  {
+                    "prefix": 4,
+                    "status": "fail",
+                    "ms": 13484
+                  },
+                  {
+                    "prefix": 2,
+                    "status": "pass",
+                    "ms": 12608
+                  },
+                  {
+                    "prefix": 3,
+                    "status": "pass",
+                    "ms": 12711
+                  }
+                ],
+                "bisect_steps": 2
+              },
+              "reason": "presubmit failed (isolated by bisect in a batch of 4)",
+              "before": "fda068e29ee89c237e25f09e55f1e359f4be58bd",
+              "after": "43caf2fea36167ba0c835d4ce88bd447eb2f2dcd",
+              "summary": null,
+              "ms": null
+            },
+            {
+              "kind": "presubmit",
+              "status": "fail",
+              "batch": {
+                "leader": 7,
+                "round": 1
+              },
+              "reason": null,
+              "before": null,
+              "after": null,
+              "summary": {
+                "pass": 6,
+                "fail": 1
+              },
+              "ms": 13484,
+              "tail": "d2 (1503.946859ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  1.2 !== 1.23\n  \n      at TestContext.<anonymous> (file:///tmp/weft-job-clyLXw/test/round.test.ts:8:10)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 1.2,\n    expected: 1.23,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+            }
+          ]
+        },
+        "Ic7d884c8543324c8ceced1dfa74601ab8ac519f6": {
+          "status": "landed",
+          "evidence": [
+            {
+              "kind": "land",
+              "status": "pass",
+              "batch": {
+                "leader": 7,
+                "round": 1,
+                "position": 3,
+                "size": 4,
+                "round_size": 4,
+                "presubmit_runs": 3,
+                "bisect_steps": 2,
+                "tested": [
+                  {
+                    "prefix": 4,
+                    "status": "fail",
+                    "ms": 13484
+                  },
+                  {
+                    "prefix": 2,
+                    "status": "pass",
+                    "ms": 12608
+                  },
+                  {
+                    "prefix": 3,
+                    "status": "pass",
+                    "ms": 12711
+                  }
+                ]
+              },
+              "reason": null,
+              "before": "68b1c6fcb0b97938b9dcf03afdfb7c408fb46e4a",
+              "after": "fda068e29ee89c237e25f09e55f1e359f4be58bd",
+              "summary": null,
+              "ms": null
+            },
+            {
+              "kind": "presubmit",
+              "status": "pass",
+              "batch": {
+                "leader": 7,
+                "round": 1,
+                "position": 3,
+                "size": 4,
+                "round_size": 4,
+                "presubmit_runs": 3,
+                "bisect_steps": 2,
+                "tested": [
+                  {
+                    "prefix": 4,
+                    "status": "fail",
+                    "ms": 13484
+                  },
+                  {
+                    "prefix": 2,
+                    "status": "pass",
+                    "ms": 12608
+                  },
+                  {
+                    "prefix": 3,
+                    "status": "pass",
+                    "ms": 12711
+                  }
+                ]
+              },
+              "reason": null,
+              "before": null,
+              "after": null,
+              "summary": {
+                "pass": 7,
+                "fail": 0
+              },
+              "ms": 12711
+            }
+          ]
+        }
+      },
+      "changes": [
+        {
+          "k": "y",
+          "change": "Ib0c798f820282dbaccf1b11bf8b23d501b3e4e6e",
+          "agent": "claude-y"
+        },
+        {
+          "k": "e",
+          "change": "I4393ff22a7a0383783a22a8c1fa6755de2257fc9",
+          "agent": "claude-e"
+        },
+        {
+          "k": "f",
+          "change": "I984d6ddfbb3d150a93179a36041d4aaeea9887cf",
+          "agent": "codex-f"
+        },
+        {
+          "k": "g",
+          "change": "I030329f7629fbadececda6bf43bba144e8dcef1a",
+          "agent": "cursor-g"
+        },
+        {
+          "k": "h",
+          "change": "Ic7d884c8543324c8ceced1dfa74601ab8ac519f6",
+          "agent": "gemini-h"
+        }
+      ]
+    },
+    {
+      "name": "bisect: G's inbox (bounce)",
+      "at_s": 534.9,
+      "items": [
+        {
+          "seq": 38,
+          "text": "Tests fail on your change rebased onto trunk 4e3118416ab9 (1 failed, 6 passed): `node --test` exited 1.\n\n✔ a (1502.09674ms)\n✔ b (1502.79704ms)\n✔ c (1501.66278ms)\n✔ lineTotal (1501.67359ms)\n✖ round2 (1548.19852ms)\n✔ displayName (1502.3356ms)\n✔ test/work.ts (378.19815ms)\nℹ tests 7\nℹ suites 0\nℹ pass 6\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 11110.03175\n\n✖ failing tests:\n\ntest at test/round.test.ts:6:1\n✖ round2 (1548.19852ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  1.2 !== 1.23\n  \n      at TestContext.<anonymous> (file:///tmp/weft-job-e9fctW/test/round.test.ts:8:10)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 1.2,\n    expected: 1.23,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+        },
+        {
+          "seq": 46,
+          "text": "Tests fail on your change rebased onto trunk fda068e29ee8 (1 failed, 6 passed): `node --test` exited 1.\n\n✔ a (1502.863177ms)\n✔ b (1501.396824ms)\n✔ c (1504.110558ms)\n✔ lineTotal (1502.973597ms)\n✖ round2 (1503.946859ms)\n✔ displayName (1502.565256ms)\n✔ test/work.ts (331.757142ms)\nℹ tests 7\nℹ suites 0\nℹ pass 6\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 13192.007712\n\n✖ failing tests:\n\ntest at test/round.test.ts:6:1\n✖ round2 (1503.946859ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  1.2 !== 1.23\n  \n      at TestContext.<anonymous> (file:///tmp/weft-job-clyLXw/test/round.test.ts:8:10)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 1.2,\n    expected: 1.23,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+        }
+      ]
+    },
+    {
+      "name": "revert B (one change of the batch)",
+      "at_s": 566.8,
+      "op_id": "op-ac70c0673655323037f44b5a",
+      "workflow": "revert-weft-batch-op-ac70c0673655323037f44b5a-1792717467345",
+      "status": "complete",
+      "output": {
+        "status": "reverted",
+        "op_id": "op-c98f4e1b77a230196eab9898",
+        "reverts_op_id": "op-ac70c0673655323037f44b5a",
+        "seq": 47,
+        "sha": "84d3ab7596dd4b1c9a5fc3fd2e529dbb1ee00787"
+      },
+      "trunk_files": {
+        "src/feature-w.ts": true,
+        "src/feature-a.ts": true,
+        "src/feature-b.ts": false,
+        "src/feature-c.ts": true,
+        "src/feature-d.ts": true,
+        "src/feature-y.ts": true,
+        "src/feature-e.ts": true,
+        "src/feature-f.ts": true,
+        "src/feature-g.ts": false,
+        "src/feature-h.ts": true
+      }
+    }
+  ],
+  "delivery": {
+    "90b26e2072ff0840b1ee810d57ec20bb2e0822bf": "queue-fallback",
+    "9507eb3d3acb55238e921b616b3e689d70164f25": "queue-fallback",
+    "1957d5a69c03bf312596f2e70b7a0118ad75e768": "queue-fallback",
+    "305739205cf3525b99b7bf11bcb124ac601a54d1": "queue-fallback",
+    "364abfaecc948057347d18039f02a0c293058fdd": "queue-fallback",
+    "9748bd7373720c54b9cd423a18a6d762c5ece270": "queue-fallback",
+    "e5d84a32d0332c1d8b7d30d5e6c4743fdb2f1bec": "queue-fallback",
+    "3c23b09cc1333a1754b87998eb104c8cd3904136": "queue-fallback",
+    "e9d50db38cd8bfaeb0f516fc8180dc8e44c5ab10": "queue-fallback",
+    "13786cb17012d16215f9ad00c86108e4b84885ad": "queue-fallback"
+  },
+  "finished_at": "2026-10-23T01:05:29.598Z",
+  "total_s": 597.359
+}

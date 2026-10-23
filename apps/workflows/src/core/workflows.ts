@@ -221,7 +221,8 @@ export async function processRevision(p: ProcessRevisionParams, step: StepLike, 
 export type BatchSummary = {
   /** Queue id of the leader whose workflow landed the batch. */
   leader: number;
-  size: number;
+  /** Changes in the batch (leader's result only; a follower's result names just the leader). */
+  size?: number;
   rounds?: number;
   presubmit_runs?: number;
   /** Presubmit runs a one-at-a-time queue would have done minus the runs this batch did. */
@@ -281,7 +282,7 @@ export async function landChange(p: LandChangeParams, step: StepLike, deps: Deps
     if (head.first === entry.id && head.claimed === null) break;
     if (i >= qp.max) {
       // A claimed entry belongs to its leader's workflow: leave its status alone.
-      if (head.claimed !== null) return { status: "failed", reason: `timed out waiting for batch leader #${head.claimed}`, queue_id: entry.id, batch: { leader: head.claimed, size: 0 } };
+      if (head.claimed !== null) return { status: "failed", reason: `timed out waiting for batch leader #${head.claimed}`, queue_id: entry.id, batch: { leader: head.claimed } };
       await step.do("queue timeout", () => coord.setQueueStatus(entry.id, "failed", "timed out waiting for the queue"));
       return { status: "failed", reason: "timed out waiting for the landing queue", queue_id: entry.id };
     }
@@ -599,7 +600,7 @@ function metric(deps: Deps, repo: string, outcome: string, leader: number, m: { 
 
 /** A follower's result once its batch leader has landed (or bounced) it. */
 async function batchOutcome(store: Store, coord: ReturnType<Deps["coord"]>, p: LandChangeParams, d: QueueEntry): Promise<LandChangeResult> {
-  const batch = { leader: d.batch!, size: 0 };
+  const batch = { leader: d.batch! };
   if (d.status !== "landed") return { status: "failed", reason: d.note ?? `${d.status} in batch #${d.batch}`, queue_id: d.id, batch };
   const op = (await coord.ops()).filter((o) => o.kind === "land" && o.change_id === p.change).pop();
   const landing = op ? await store.landing(op.op_id) : null;
