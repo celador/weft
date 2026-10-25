@@ -63,7 +63,7 @@ at the bundle in your Weft clone (`pnpm --filter <package> build` first).
 Each package's README has its install command and hook mapping. For a harness that is not
 listed: if it has pre/post tool hooks with a deny + reason, copy the Claude Code adapter's
 `host.ts` translator pattern (the Cursor, OpenCode, Gemini and Antigravity adapters are 200-300 lines of
-translation onto the same core); if it has none but speaks MCP, configure `@weft/mcp` (its README has
+translation onto the same core); if it has none but speaks MCP, configure `npx -y @celador/weft mcp` (`@weft/mcp`; its README has
 copy-paste configs for Zed, Claude Code, Codex, Cursor, VS Code, JetBrains and Warp); otherwise run
 the watcher in its checkout.
 Every known harness, its hook surface and Weft's plan for it: [harness-coverage.md](harness-coverage.md).

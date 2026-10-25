@@ -11,14 +11,16 @@ Run it in any git repository. It needs no login and no account:
 1. It creates a **free hosted space** for you on Weft's Cloudflare gateway (Workers + Durable
    Objects). The space's key stays on your machine (`~/.config/weft`, and `.weft/` in the repo,
    which git ignores).
-2. It finds the coding agents you have installed (Claude Code, Codex, Copilot CLI, Cursor CLI, OpenCode,
-   Gemini CLI) and adds Weft's hooks to every checkout of the repo. If the repo has only one
+2. It finds the coding agents you have installed (Claude Code, Codex, Copilot CLI, Cursor CLI,
+   OpenCode, Gemini CLI, Antigravity) and adds Weft's hooks to every checkout of the repo. If the repo has only one
    checkout, it offers to add a second `git worktree` so two agents can work side by side.
    With none installed, it sets up a file watcher instead.
 3. It prints your **live feed** link and opens it. The feed is private: the link carries a
    read-only key after the `#`.
 
-Then start one agent per checkout. When one agent changes code another agent depends on, the
+Then start one agent per checkout. Codex, Cursor, Copilot and Gemini ask once whether to trust
+the folder or its hooks: say yes, or the hooks do not run (the setup prints this for the agents
+it found). When one agent changes code another agent depends on, the
 second agent gets a diagnostic (a red squiggle, with the other agent's diff) before it writes a
 conflicting edit, instead of a merge conflict later.
 
@@ -36,6 +38,7 @@ Website: <https://weft.mx> · Source: <https://github.com/celador/weft>
 | `npx @celador/weft feed` | the live feed in your terminal |
 | `npx @celador/weft open` | open the live feed in your browser |
 | `npx @celador/weft watch` | report edits from tools without hooks (file watcher) |
+| `npx @celador/weft mcp` | MCP server for this checkout, for agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode): `{"command":"npx","args":["-y","@celador/weft","mcp","--dir","/path/to/checkout"]}` |
 | `npx @celador/weft uninstall [--space]` | remove Weft from this repo; `--space` also deletes the space |
 | `npx @celador/weft --local` | run the gateway on this machine (offline; nothing hosted) |
 | `npx @celador/weft deploy [--domain HOST]` | run your own gateway in your Cloudflare account |

@@ -31,7 +31,7 @@ export const HARNESSES: Array<{ id: HarnessId; name: string; bins: string[]; ent
   { id: "antigravity", name: "Antigravity", bins: ["agy"], entry: "weft-antigravity.mjs", config: ".weft/antigravity.json", mark: "weft-antigravity", run: "agy" },
   { id: "copilot", name: "GitHub Copilot CLI", bins: ["copilot"], entry: "weft-copilot.mjs", config: ".weft/copilot.json", mark: "weft-copilot", run: "copilot", note: "asks once to trust the folder: say yes (hooks only run in trusted folders)" },
   { id: "cursor", name: "Cursor CLI", bins: ["cursor-agent"], entry: "weft-cursor.mjs", config: ".weft/cursor.json", mark: "weft-cursor", run: "cursor-agent", note: "asks once to trust the workspace: say yes (project hooks only run in trusted workspaces)" },
-  { id: "gemini", name: "Gemini CLI", bins: ["gemini"], entry: "weft-gemini.mjs", config: ".weft/gemini.json", mark: "weft-gemini", run: "gemini" },
+  { id: "gemini", name: "Gemini CLI", bins: ["gemini"], entry: "weft-gemini.mjs", config: ".weft/gemini.json", mark: "weft-gemini", run: "gemini", note: "asks once to trust the folder: say yes (project settings and hooks are ignored in untrusted folders; headless: gemini --skip-trust)" },
   { id: "opencode", name: "OpenCode", bins: ["opencode"], entry: "weft-opencode.mjs", config: ".weft/opencode.json", mark: "weft-opencode", run: "opencode" },
   // Claude Code last: it owns .weft/bin/weft and the git hooks when several are installed.
   { id: "claude-code", name: "Claude Code", bins: ["claude"], entry: "weft-claude.mjs", config: ".weft/claude.json", mark: "weft-claude", run: "claude" },

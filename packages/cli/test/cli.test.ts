@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { detectHarnesses, HARNESSES, pruneHooks, startOrder } from "../src/adapters";
-import { main, nextNotes, parseArgs } from "../src/main";
+import { main, mcpArgs, nextNotes, parseArgs } from "../src/main";
 import { slug } from "../src/util";
 
 describe("parseArgs", () => {
@@ -20,7 +20,6 @@ describe("parseArgs", () => {
     expect(parseArgs(["status"]).cmd).toBe("status");
     expect(parseArgs(["add", "reviewer"]).o.positional).toEqual(["reviewer"]);
     expect(parseArgs(["deploy", "--domain", "weft.example.com"]).o.domain).toBe("weft.example.com");
-    expect(parseArgs(["mcp", "--dir", "/x"])).toMatchObject({ cmd: "mcp", o: { dir: "/x" } });
     expect(parseArgs(["--harness", "antigravity"]).o.harness).toEqual(["antigravity"]);
   });
   it("rejects unknown options and harnesses", () => {
@@ -283,6 +282,18 @@ describe("every harness in one checkout, and weft mcp", () => {
     const other = mkdtempSync(join(tmpdir(), "weft-cli-none-"));
     execFileSync("git", ["init", "-q", other]);
     await expect(main(["mcp", "--dir", other])).rejects.toThrow(/not set up/);
+  });
+
+  it("weft mcp fills the server flags from the setup and keeps the ones given (packages/mcp/README.md forms)", () => {
+    const m = JSON.parse(readFileSync(join(repo, ".weft/space.json"), "utf8"));
+    const a = mcpArgs([], repo);
+    expect(a.slice(0, 3)).toEqual(["serve", "--dir", realpathSync(repo)]);
+    expect(a).toEqual(expect.arrayContaining(["--url", url, "--repo", m.repo, "--agent", "app", "--task", m.task]));
+    const b = mcpArgs(["--dir", repo, "--agent", "zed-a", "--channels"], "/");
+    expect(b.filter((x) => x === "--dir")).toHaveLength(1);
+    expect(b[b.indexOf("--agent") + 1]).toBe("zed-a");
+    expect(b).toContain("--channels");
+    expect(b.filter((x) => x === "--agent")).toHaveLength(1);
   });
 
   it("uninstall removes Antigravity's hooks file", async () => {

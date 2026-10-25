@@ -38,7 +38,7 @@ type Opts = {
 export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
   const o: Opts = { local: false, yes: false, open: true, space: false, positional: [] };
   let cmd = "init";
-  const known = new Set(["init", "add", "status", "feed", "open", "watch", "mcp", "uninstall", "deploy", "local", "use", "help", "version"]);
+  const known = new Set(["init", "add", "status", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "help", "version"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     const val = () => {
@@ -384,14 +384,31 @@ function watch(o: Opts): void {
   process.exitCode = r.status ?? 0;
 }
 
-/** `weft mcp`: the stdio MCP server for this checkout, configured from what `weft` set up here. stdout belongs to MCP. */
-function mcp(o: Opts): void {
-  const root = gitRoot(resolve(o.dir ?? process.cwd()));
-  const m = readJson<{ url?: string; repo?: string; agent?: string; task?: string; name?: string }>(join(root, ".weft", "space.json"), {});
-  if (!m.url || !m.repo || !m.agent) throw new WeftError(`Weft is not set up in ${tilde(root)}`, "Run npx @celador/weft in the repo first (it sets up every checkout), then start the MCP server.");
+/**
+ * `weft mcp [--dir D] [server flags]`: the stdio MCP server (packages/mcp) for a checkout. Flags
+ * not given are filled from what `weft` set up there (.weft/space.json); the server reads the
+ * agent key from .weft/token. All arguments go to the server as they are, so the flag forms in
+ * packages/mcp/README.md work. stdout belongs to MCP: print nothing.
+ */
+export function mcpArgs(args: string[], cwd: string): string[] {
+  const at = args.indexOf("--dir");
+  const dir = resolve(at >= 0 && args[at + 1] ? args[at + 1]! : (process.env.WEFT_ROOT ?? cwd));
+  const root = tryGit(dir, ["rev-parse", "--show-toplevel"]);
+  const m = root ? readJson<{ url?: string; repo?: string; agent?: string; task?: string }>(join(root, ".weft", "space.json"), {}) : {};
+  const has = (f: string) => args.includes(`--${f}`);
+  if (!m.agent && !has("agent") && !(root && existsSync(join(root, MCP.config))))
+    throw new WeftError(`Weft is not set up in ${tilde(root ?? dir)}`, "Run npx @celador/weft in the repo first (it sets up every checkout), then start the MCP server with npx -y @celador/weft mcp --dir <checkout>.");
+  const out = ["serve", ...args];
+  if (root && at < 0) out.push("--dir", root);
+  const fill: Array<[string, string | undefined]> = [["url", m.url], ["repo", m.repo], ["agent", m.agent], ["task", m.task], ["title", m.agent && `${m.agent} (MCP)`]];
+  for (const [f, v] of fill) if (v && !has(f)) out.push(`--${f}`, v);
+  return out;
+}
+
+function mcp(args: string[]): void {
+  const argv = mcpArgs(args, process.cwd());
   const rt = ensureRuntime();
-  const args = [adapterBin(rt, "mcp"), "serve", "--dir", root, "--url", m.url, "--repo", m.repo, "--agent", m.agent, ...(m.task ? ["--task", m.task] : []), "--title", `${m.agent} (MCP)`];
-  const r = spawnSync(process.execPath, args, { cwd: root, stdio: "inherit" });
+  const r = spawnSync(process.execPath, [adapterBin(rt, "mcp"), ...argv], { stdio: "inherit" });
   process.exitCode = r.status ?? 0;
 }
 
@@ -410,6 +427,11 @@ function use(o: Opts): void {
 // ------------------------------------------------------------------ entry
 
 export async function main(argv: string[]): Promise<number> {
+  // `mcp` passes its flags to the MCP server untouched (see mcpArgs)
+  if (argv[0] === "mcp") {
+    mcp(argv.slice(1));
+    return 0;
+  }
   const { cmd, o } = parseArgs(argv);
   switch (cmd) {
     case "help":
@@ -440,9 +462,6 @@ export async function main(argv: string[]): Promise<number> {
     }
     case "watch":
       watch(o);
-      return 0;
-    case "mcp":
-      mcp(o);
       return 0;
     case "uninstall":
       await uninstall(o);

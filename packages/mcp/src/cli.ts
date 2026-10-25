@@ -30,7 +30,7 @@ export function makeHost(client?: string): Host {
     capabilities: CAPABILITIES,
     self: SELF,
     sessionOwner: "self",
-    installHarness: (root) => [`MCP server: add {"command": "npx", "args": ["-y", "@weft/mcp", "--dir", "${root}"]} to your harness's MCP config (see the @weft/mcp README)`],
+    installHarness: (root) => [`MCP server: add {"command": "npx", "args": ["-y", "@celador/weft", "mcp", "--dir", "${root}"]} to your harness's MCP config (see packages/mcp/README.md)`],
   });
 }
 
