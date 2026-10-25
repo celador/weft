@@ -6,7 +6,8 @@
 //
 //   node apps/vscode/test/install/run.mjs --app vscode|cursor [--from vsix|marketplace] [--checkout DIR]
 //
-// --from vsix (default): installs out/weft-<version>.vsix (run `pnpm --filter @weft/vscode package`).
+// --from vsix (default): installs out/weft-<version>.vsix (run `pnpm --filter @weft/vscode package`),
+//   or the file given with --vsix PATH (e.g. the GitHub release asset).
 // --from marketplace: `<editor> --install-extension celador.weft` (VS Code: Visual Studio
 //   Marketplace; Cursor/VSCodium/Windsurf: Open VSX). Use after publishing.
 // --checkout DIR: an existing checkout set up by `npx @celador/weft`; default: a new repo in
@@ -56,7 +57,10 @@ const extDir = join(run, "ext");
 mkdirSync(join(userData, "User"), { recursive: true });
 writeFileSync(join(userData, "User", "settings.json"), JSON.stringify({ "security.workspace.trust.enabled": false, "telemetry.telemetryLevel": "off", "update.mode": "none", "workbench.startupEditor": "none" }));
 let source;
-if (from === "vsix") {
+if (from === "vsix" && opt("vsix")) {
+  source = resolve(opt("vsix"));
+  if (!existsSync(source)) throw new Error(`no such .vsix: ${source}`);
+} else if (from === "vsix") {
   const version = JSON.parse(readFileSync(join(ext, "package.json"), "utf8")).version;
   source = join(ext, "out", `weft-${version}.vsix`);
   if (!existsSync(source)) throw new Error(`build the .vsix first: ${source}`);
