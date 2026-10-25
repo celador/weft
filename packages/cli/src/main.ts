@@ -6,6 +6,7 @@
 //   weft feed               live feed in the terminal
 //   weft open               open the live feed in the browser
 //   weft watch              report edits from this checkout (for tools without hooks)
+//   weft mcp                stdio MCP server for this checkout (harnesses with MCP but no hooks)
 //   weft uninstall [--space] remove Weft from this repo's checkouts (and delete the space)
 //   weft deploy [--name N] [--domain HOST]   your own gateway on your Cloudflare account
 //   weft local stop          stop the gateway started by --local
@@ -15,7 +16,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { Api, statusOf, type FeedEvent } from "./api";
-import { WATCHER, adapterBin, detectHarnesses, ensureRuntime, harnessName, HARNESSES, installAdapter, installedIn, removeAdapters, type HarnessId } from "./adapters";
+import { MCP, WATCHER, adapterBin, detectHarnesses, ensureRuntime, harnessName, HARNESSES, installAdapter, installedIn, removeAdapters, startOrder, type HarnessId } from "./adapters";
 import { deploy, ensureSpace, feedLink, HOSTED_URL, kindOf, loadState, readPointer, saveState, startLocal, stopLocal, writePointer, LOCAL_PORT } from "./gateways";
 import { ask, c, configDir, git, info, mainCheckout, ok, openUrl, readJson, readSecret, slug, tilde, tryGit, VERSION, warn, WeftError, worktrees, writeJson } from "./util";
 
@@ -37,7 +38,7 @@ type Opts = {
 export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
   const o: Opts = { local: false, yes: false, open: true, space: false, positional: [] };
   let cmd = "init";
-  const known = new Set(["init", "add", "status", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "help", "version"]);
+  const known = new Set(["init", "add", "status", "feed", "open", "watch", "mcp", "uninstall", "deploy", "local", "use", "help", "version"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     const val = () => {
@@ -82,6 +83,8 @@ ${c.bold("npx @celador/weft")}            in a git repo: free hosted space, hook
   feed                        live feed in this terminal
   open                        open the live feed in your browser
   watch                       report edits made here by tools without hooks (file watcher)
+  mcp                         MCP server for this checkout, for agents with MCP but no hooks
+                              (Zed, Warp, JetBrains, Xcode, ...): {"command":"npx","args":["-y","@celador/weft","mcp","--dir","<checkout>"]}
   uninstall [--space]         remove Weft from this repo (--space also deletes your space)
   deploy [--name N] [--domain HOST]
                               your own gateway on your Cloudflare account (wrangler login)
@@ -157,6 +160,26 @@ async function setupCheckout(api: Api, url: string, owner: string, space: string
   writeJson(join(co.root, ".weft", "space.json"), { url, space, repo, name, agent: co.agent, tokenId, change, task, harnesses, weft: VERSION });
 }
 
+/** Under "Next": the other harnesses that work here, first-run prompts, MCP, the squiggle. Exported for tests. */
+export function nextNotes(order: Array<{ id: string; name: string; run: string; note?: string }>, roots: string[]): string {
+  const lines: string[] = [];
+  if (order.length > 1) lines.push(`  ${c.dim("(or, in the same checkouts:")} ${order.slice(1).map((h) => h.run).join(c.dim(", "))}${c.dim(")")}`);
+  const notes = order.filter((h) => h.note);
+  if (notes.length) {
+    lines.push("", c.bold("First run:"));
+    for (const h of notes) lines.push(`  ${h.name} ${h.note}`);
+  }
+  lines.push(
+    "",
+    `When one agent changes code another agent depends on, the second one gets a red ${c.squiggle("squiggle")}`,
+    `(a diagnostic with the other agent's diff) before it writes a conflicting edit.`,
+    c.dim(`Agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode, ...): add the MCP server ${MCP.run} --dir ${roots.length > 1 ? "<checkout>" : tilde(roots[0] ?? ".")}`),
+    c.dim(`Agents already running must be restarted to load the hooks. More: npx @celador/weft status · feed · add · uninstall`),
+    "",
+  );
+  return lines.join("\n");
+}
+
 async function init(o: Opts, addName?: string | true): Promise<void> {
   const cwd = resolve(o.dir ?? process.cwd());
   const top = gitRoot(cwd);
@@ -216,14 +239,11 @@ async function init(o: Opts, addName?: string | true): Promise<void> {
   // 5. feed + next steps
   const link = feedLink(url!, gw.viewer!);
   console.log(`\n${c.bold("Live feed")} ${c.dim("(private to you; anyone with the link can read it)")}\n  ${c.cyan(link)}\n`);
-  const run = harnesses.includes("claude-code") ? "claude" : harnesses.includes("codex") ? "codex" : harnesses.includes("cursor") ? "cursor-agent" : harnesses.includes("opencode") ? "opencode" : harnesses.includes("gemini") ? "gemini" : "npx @celador/weft watch";
+  const order = startOrder(harnesses);
+  const first = order[0]!;
   console.log(c.bold("Next:") + (checkouts.length > 1 ? " start one agent per checkout, each in its own terminal:" : " start your agent here:"));
-  for (const co of checkouts) console.log(`  ${c.dim("$")} cd ${tilde(co.root)} && ${run}`);
-  console.log(
-    `\nWhen one agent changes code another agent depends on, the second one gets a red ${c.squiggle("squiggle")}\n` +
-      `(a diagnostic with the other agent's diff) before it writes a conflicting edit.\n` +
-      c.dim(`Agents already running must be restarted to load the hooks. More: npx @celador/weft status · feed · add · uninstall\n`),
-  );
+  for (const co of checkouts) console.log(`  ${c.dim("$")} cd ${tilde(co.root)} && ${first.run}`);
+  console.log(nextNotes(order, checkouts.map((co) => co.root)));
   if (o.open) openUrl(link);
 }
 
@@ -364,6 +384,17 @@ function watch(o: Opts): void {
   process.exitCode = r.status ?? 0;
 }
 
+/** `weft mcp`: the stdio MCP server for this checkout, configured from what `weft` set up here. stdout belongs to MCP. */
+function mcp(o: Opts): void {
+  const root = gitRoot(resolve(o.dir ?? process.cwd()));
+  const m = readJson<{ url?: string; repo?: string; agent?: string; task?: string; name?: string }>(join(root, ".weft", "space.json"), {});
+  if (!m.url || !m.repo || !m.agent) throw new WeftError(`Weft is not set up in ${tilde(root)}`, "Run npx @celador/weft in the repo first (it sets up every checkout), then start the MCP server.");
+  const rt = ensureRuntime();
+  const args = [adapterBin(rt, "mcp"), "serve", "--dir", root, "--url", m.url, "--repo", m.repo, "--agent", m.agent, ...(m.task ? ["--task", m.task] : []), "--title", `${m.agent} (MCP)`];
+  const r = spawnSync(process.execPath, args, { cwd: root, stdio: "inherit" });
+  process.exitCode = r.status ?? 0;
+}
+
 function use(o: Opts): void {
   const target = o.positional[0];
   if (!target) throw new WeftError("use needs hosted, local or a gateway URL");
@@ -409,6 +440,9 @@ export async function main(argv: string[]): Promise<number> {
     }
     case "watch":
       watch(o);
+      return 0;
+    case "mcp":
+      mcp(o);
       return 0;
     case "uninstall":
       await uninstall(o);

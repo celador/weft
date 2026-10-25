@@ -15,6 +15,7 @@ const dist = join(here, "dist");
 const pkg = JSON.parse(readFileSync(join(here, "package.json"), "utf8"));
 
 export const ADAPTERS = {
+  antigravity: "weft-antigravity.mjs",
   "claude-code": "weft-claude.mjs",
   codex: "weft-codex.mjs",
   copilot: "weft-copilot.mjs",
@@ -22,7 +23,10 @@ export const ADAPTERS = {
   gemini: "weft-gemini.mjs",
   opencode: "weft-opencode.mjs",
   watcher: "weft-watch.mjs",
+  // not a hook adapter: the MCP server for harnesses without hooks (`weft mcp`); lives in packages/mcp
+  mcp: "weft-mcp.mjs",
 };
+const adapterDir = (name) => (name === "mcp" ? join(root, "packages/mcp") : join(root, "packages/adapters", name));
 
 function run(cmd, args, cwd) {
   const r = spawnSync(cmd, args, { cwd, stdio: ["ignore", "inherit", "inherit"], env: { ...process.env, CLOUDFLARE_API_TOKEN: "" } });
@@ -34,7 +38,7 @@ mkdirSync(dist, { recursive: true });
 
 // 1. adapters
 for (const [name, entry] of Object.entries(ADAPTERS)) {
-  const dir = join(root, "packages/adapters", name);
+  const dir = adapterDir(name);
   run(process.execPath, [join(dir, "scripts/build.mjs")], dir);
   if (!existsSync(join(dir, "dist", entry))) throw new Error(`adapter ${name}: dist/${entry} missing after build`);
   cpSync(join(dir, "dist"), join(dist, "adapters", name), { recursive: true });

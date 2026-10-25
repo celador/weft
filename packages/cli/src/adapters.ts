@@ -10,22 +10,45 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { configDir, readJson, tryGit, VERSION, WeftError, which } from "./util";
 
-export type HarnessId = "claude-code" | "codex" | "copilot" | "cursor" | "gemini" | "opencode" | "watcher";
+export type HarnessId = "antigravity" | "claude-code" | "codex" | "copilot" | "cursor" | "gemini" | "opencode" | "watcher";
 
-export const HARNESSES: Array<{ id: HarnessId; name: string; bins: string[]; entry: string; config: string; mark: string }> = [
-  { id: "codex", name: "Codex", bins: ["codex"], entry: "weft-codex.mjs", config: ".weft/codex.json", mark: "weft-codex" },
-  { id: "copilot", name: "GitHub Copilot CLI", bins: ["copilot"], entry: "weft-copilot.mjs", config: ".weft/copilot.json", mark: "weft-copilot" },
-  { id: "cursor", name: "Cursor CLI", bins: ["cursor-agent"], entry: "weft-cursor.mjs", config: ".weft/cursor.json", mark: "weft-cursor" },
-  { id: "gemini", name: "Gemini CLI", bins: ["gemini"], entry: "weft-gemini.mjs", config: ".weft/gemini.json", mark: "weft-gemini" },
-  { id: "opencode", name: "OpenCode", bins: ["opencode"], entry: "weft-opencode.mjs", config: ".weft/opencode.json", mark: "weft-opencode" },
+/**
+ * `run`: the command a person types to start that harness in a checkout. `note`: what it asks
+ * the first time before Weft's hooks run (printed under "Next"), when it asks anything.
+ */
+export const HARNESSES: Array<{ id: HarnessId; name: string; bins: string[]; entry: string; config: string; mark: string; run: string; note?: string }> = [
+  {
+    id: "codex",
+    name: "Codex",
+    bins: ["codex"],
+    entry: "weft-codex.mjs",
+    config: ".weft/codex.json",
+    mark: "weft-codex",
+    run: "codex",
+    // codex-cli 0.154: project hooks need persisted trust; `codex exec` skips untrusted hooks silently.
+    note: "asks once to review the new hooks: choose \"Trust all and continue\" (headless: codex exec --dangerously-bypass-hook-trust)",
+  },
+  { id: "antigravity", name: "Antigravity", bins: ["agy"], entry: "weft-antigravity.mjs", config: ".weft/antigravity.json", mark: "weft-antigravity", run: "agy" },
+  { id: "copilot", name: "GitHub Copilot CLI", bins: ["copilot"], entry: "weft-copilot.mjs", config: ".weft/copilot.json", mark: "weft-copilot", run: "copilot", note: "asks once to trust the folder: say yes (hooks only run in trusted folders)" },
+  { id: "cursor", name: "Cursor CLI", bins: ["cursor-agent"], entry: "weft-cursor.mjs", config: ".weft/cursor.json", mark: "weft-cursor", run: "cursor-agent", note: "asks once to trust the workspace: say yes (project hooks only run in trusted workspaces)" },
+  { id: "gemini", name: "Gemini CLI", bins: ["gemini"], entry: "weft-gemini.mjs", config: ".weft/gemini.json", mark: "weft-gemini", run: "gemini" },
+  { id: "opencode", name: "OpenCode", bins: ["opencode"], entry: "weft-opencode.mjs", config: ".weft/opencode.json", mark: "weft-opencode", run: "opencode" },
   // Claude Code last: it owns .weft/bin/weft and the git hooks when several are installed.
-  { id: "claude-code", name: "Claude Code", bins: ["claude"], entry: "weft-claude.mjs", config: ".weft/claude.json", mark: "weft-claude" },
+  { id: "claude-code", name: "Claude Code", bins: ["claude"], entry: "weft-claude.mjs", config: ".weft/claude.json", mark: "weft-claude", run: "claude" },
 ];
-export const WATCHER = { id: "watcher" as const, name: "file watcher", bins: [], entry: "weft-watch.mjs", config: ".weft/watcher.json", mark: "weft-watch" };
-const MARKS = [...HARNESSES.map((h) => h.mark), WATCHER.mark];
+export const WATCHER = { id: "watcher" as const, name: "file watcher", bins: [], entry: "weft-watch.mjs", config: ".weft/watcher.json", mark: "weft-watch", run: "npx @celador/weft watch" };
+/** The MCP server for harnesses without hooks (`npx @celador/weft mcp`); configured by the harness, not installed by init. */
+export const MCP = { id: "mcp" as const, name: "MCP server", bins: [], entry: "weft-mcp.mjs", config: ".weft/mcp.json", mark: "weft-mcp", run: "npx -y @celador/weft mcp" };
+const MARKS = [...HARNESSES.map((h) => h.mark), WATCHER.mark, MCP.mark];
 
 export function harnessName(id: string): string {
-  return [...HARNESSES, WATCHER].find((h) => h.id === id)?.name ?? id;
+  return [...HARNESSES, WATCHER, MCP].find((h) => h.id === id)?.name ?? id;
+}
+
+/** The order people should try them in "Next": Claude Code first, then the rest as listed. */
+export function startOrder(ids: HarnessId[]): Array<(typeof HARNESSES)[number] | typeof WATCHER> {
+  const all = [...HARNESSES, WATCHER].filter((h) => ids.includes(h.id));
+  return all.sort((a, b) => (a.id === "claude-code" ? -1 : b.id === "claude-code" ? 1 : 0));
 }
 
 /** Harnesses found on PATH (`--harness a,b` overrides). Hermes is reported separately: its adapter is a profile plugin. */
@@ -71,8 +94,8 @@ export function ensureRuntime(env = process.env): string {
 }
 
 /** Real path: the adapters only run their CLI when argv[1] equals their own (resolved) file. */
-export function adapterBin(rt: string, id: HarnessId): string {
-  const h = [...HARNESSES, WATCHER].find((x) => x.id === id)!;
+export function adapterBin(rt: string, id: HarnessId | "mcp"): string {
+  const h = [...HARNESSES, WATCHER, MCP].find((x) => x.id === id)!;
   const p = join(rt, "adapters", id, h.entry);
   return existsSync(p) ? realpathSync(p) : p;
 }
@@ -88,8 +111,8 @@ export function installAdapter(rt: string, id: HarnessId, s: InstallSpec): void 
 }
 
 /** Which adapters are installed in a checkout (by their .weft/<harness>.json). */
-export function installedIn(root: string): HarnessId[] {
-  return [...HARNESSES, WATCHER].filter((h) => existsSync(join(root, h.config))).map((h) => h.id);
+export function installedIn(root: string): Array<HarnessId | "mcp"> {
+  return [...HARNESSES, WATCHER, MCP].filter((h) => existsSync(join(root, h.config))).map((h) => h.id);
 }
 
 // ------------------------------------------------------------------ removal
@@ -124,7 +147,7 @@ export function pruneHooks(v: unknown): unknown {
   return v;
 }
 
-const HOOK_FILES = [".claude/settings.local.json", ".claude/settings.json", ".codex/hooks.json", ".cursor/hooks.json", ".gemini/settings.json"];
+const HOOK_FILES = [".claude/settings.local.json", ".claude/settings.json", ".codex/hooks.json", ".cursor/hooks.json", ".gemini/settings.json", ".agents/hooks.json"];
 
 /** Remove every Weft adapter from a checkout: harness hook entries, plugin, git hooks, .weft/. Returns what it touched. */
 export function removeAdapters(root: string): string[] {
