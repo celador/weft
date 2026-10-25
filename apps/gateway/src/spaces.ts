@@ -10,7 +10,7 @@
 //   GET    /v1/admin/stats             new spaces per day (= first runs of `npx weft`)
 //   GET    /feed                       the private live feed page (viewer token in the #fragment)
 //
-// Abuse limits, all configurable with vars: signups per IP per day, signups per day, total
+// Abuse limits, all configurable with vars: signups per network per day, signups per day, total
 // spaces, repos and active tokens per space, and requests per minute per space (the
 // Workers Rate Limiting binding WEFT_RATE when bound, else a per-isolate window). Kill
 // switch: WEFT_HOSTED_OFF=1 (deploy-time, refuses every space request without a DO call) or
@@ -27,6 +27,8 @@ export interface SpacesEnv {
   /** "1" = hosted spaces are switched off (deploy-time kill switch). */
   WEFT_HOSTED_OFF?: string;
   WEFT_SIGNUPS_PER_IP_DAY?: string;
+  /** Secret behind the daily-rotating network key for signup counters (falls back to WEFT_ADMIN_TOKEN). */
+  WEFT_SIGNUP_SECRET?: string;
   WEFT_SIGNUPS_PER_DAY?: string;
   WEFT_MAX_SPACES?: string;
   WEFT_SPACE_MAX_REPOS?: string;
@@ -90,10 +92,26 @@ export async function throttleSpace(env: SpacesEnv, k: Pick<SpacesKit, "fail">, 
   if (!ok) k.fail("rate_limited", "this space is sending too many requests; slow down");
 }
 
-async function ipHash(req: Request): Promise<string> {
-  const ip = req.headers.get("cf-connecting-ip") ?? "local";
-  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`weft-signup:${ip}`));
-  return [...new Uint8Array(d)].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
+const enc = new TextEncoder();
+async function hmac(key: Uint8Array, msg: string): Promise<Uint8Array> {
+  const k = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return new Uint8Array(await crypto.subtle.sign("HMAC", k, enc.encode(msg)));
+}
+
+/**
+ * The key a network's signup counter is stored under: HMAC-SHA-256(ip, daily secret), where the
+ * daily secret is HMAC-SHA-256(Worker secret, "weft-signup-day:" + UTC date). Without the Worker
+ * secret it can't be reversed or recomputed, and a new day gives the same network an unrelated key,
+ * so yesterday's counters can't be linked to today's. Nothing IP-derived is stored on the space.
+ */
+export async function networkKey(ip: string, secret: string, day: string): Promise<string> {
+  const daily = await hmac(enc.encode(secret), `weft-signup-day:${day}`);
+  const mac = await hmac(daily, ip);
+  return [...mac.slice(0, 16)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function signupSecret(env: SpacesEnv): string {
+  return env.WEFT_SIGNUP_SECRET || env.WEFT_ADMIN_TOKEN || "weft-local-signup";
 }
 
 /** Routes under /v1/spaces, /v1/space and /feed; null when the path is not one of them. */
@@ -113,15 +131,16 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
   if (path === "/v1/spaces" && m === "POST") {
     const L = limits(env);
     const admin = k.isAdmin(k.bearer(req));
+    const day = new Date().toISOString().slice(0, 10);
+    const net = await networkKey(req.headers.get("cf-connecting-ip") ?? "local", signupSecret(env), day);
     if (!admin) {
       if (env.WEFT_HOSTED_OFF === "1") k.fail("unavailable", "hosted spaces are switched off on this gateway");
       if (env.WEFT_SIGNUPS !== "open") k.fail("forbidden", "this gateway does not offer free spaces; ask its operator, or run your own with `npx @celador/weft deploy`");
-      const h = await ipHash(req);
-      const ok = env.WEFT_SIGNUP_RATE ? (await env.WEFT_SIGNUP_RATE.limit({ key: h })).success : localLimit(`signup:${h}`, 10);
+      const ok = env.WEFT_SIGNUP_RATE ? (await env.WEFT_SIGNUP_RATE.limit({ key: net })).success : localLimit(`signup:${net}`, 10);
       if (!ok) k.fail("rate_limited", "too many new spaces from your network; wait a minute");
     }
     const body = ((await k.readJson(req, true)) ?? {}) as { label?: unknown };
-    const r = await registry(env).createSpace({ ipHash: await ipHash(req), ...(typeof body.label === "string" ? { label: body.label } : {}), limits: L, bypassQuota: admin });
+    const r = await registry(env).createSpace({ networkKey: net, day, ...(typeof body.label === "string" ? { label: body.label } : {}), limits: L, bypassQuota: admin });
     if ("error" in r) k.fail(r.code === "closed" ? "unavailable" : "rate_limited", r.error);
     const ok = r as { space: { id: string }; token: string };
     return k.json({ type: "space", space: ok.space, token: ok.token, limits: { repos: L.maxRepos, tokens: L.maxTokens, requests_per_minute: L.rpm } }, 201);

@@ -48,12 +48,13 @@
     <h2>The hosted gateway (default)</h2>
     <p>Unless you choose another gateway, the CLI uses the free hosted gateway at <code>weft-hosted.elier.ai</code>. It runs on Cloudflare Workers and stores data in Cloudflare Durable Objects (SQLite storage) in Weft&#39;s Cloudflare account. Cloudflare is our only hosting provider. It stores:</p>
     <ul>
-      <li><strong>your space:</strong> a random id, the repo names in it, the time it was created, and a shortened SHA-256 hash of the network (IP) address that created it, used only to limit how many spaces one network can create. We never store the IP address itself;</li>
+      <li><strong>your space:</strong> a random id, the repo names in it and the time it was created. The space stores no IP address and no value derived from one;</li>
+      <li><strong>signup counters:</strong> to limit how many spaces one network can create per day, the gateway counts new spaces under a keyed hash of the network (IP) address that rotates daily, so one day&#39;s counters can&#39;t be linked to another&#39;s. The counters are deleted after 48 hours;</li>
       <li><strong>keys:</strong> only SHA-256 hashes of the space&#39;s keys. The keys themselves stay on your machine (<code>~/.config/weft/</code> and each checkout&#39;s git-ignored <code>.weft/</code>);</li>
       <li><strong>each repo&#39;s event log:</strong> the edits, diffs, symbol names and messages listed above, in order.</li>
     </ul>
     <p>There is no account, login or email address. Only someone holding one of your space&#39;s keys, or its feed link, can read the space. The feed link carries its key in the URL fragment, which browsers never send to a server.</p>
-    <p><strong>How long:</strong> the event log and the space are kept for as long as the space exists. They don&#39;t expire on their own, so expect them to be kept for more than 30 days. Per-day signup counters (with the network hash) are deleted after 7 days. Cloudflare keeps the gateway&#39;s operational request logs for a few days for debugging.</p>
+    <p><strong>How long:</strong> the event log and the space are kept for as long as the space exists. They don&#39;t expire on their own, so expect them to be kept for more than 30 days. Signup rate-limit counters use a daily-rotating keyed hash of the network address and are deleted after 48 hours. Cloudflare keeps the gateway&#39;s operational request logs for a few days for debugging.</p>
     <p><strong>Deleting your space:</strong> run <code>npx @celador/weft uninstall --space</code> in the repo. Every key of the space, the owner key included, stops working at once, so nobody can read the space again. To have its stored data erased from our storage as well, email <a href="mailto:john@elier.ai">john@elier.ai</a> with the space id (shown by <code>npx @celador/weft status</code>) and we delete it within 30 days. If you have lost your keys, email us anyway and tell us what you can about the space.</p>
 
     <h2>Your own gateway</h2>

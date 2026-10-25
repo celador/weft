@@ -80,10 +80,13 @@ describe("plugin manifests", () => {
       const pins = [...md.matchAll(/@celador\/weft@([^\s:`)]+)/g)].map((m) => m[1]);
       expect(pins.length, f).toBeGreaterThan(0);
       for (const v of pins) expect(v, `${f}: bump the pinned @celador/weft@${v} to ${cli.version}`).toBe(cli.version);
-      expect(md, f).toContain(`allowed-tools: Bash(npx -y @celador/weft@${cli.version}:*)`);
-      // Pre-approve only exact commands: never a bare interpreter like Bash(node:*).
+      // Pre-approve only exact commands: no wildcard rule at all (the directory flags `:*` as broad
+      // shell access). /weft:setup with arguments runs unapproved, so Claude Code asks first.
+      const exact = f === "setup.md" ? `npx -y @celador/weft@${cli.version} --harness claude-code --yes --no-open` : `npx -y @celador/weft@${cli.version} status`;
       const allowed = /^allowed-tools: (.*)$/m.exec(md)![1]!;
-      expect(allowed, f).not.toMatch(/Bash\((node|npx|sh|bash):\*\)/);
+      expect(allowed.split(/,\s*(?=Bash\()/)[0], f).toBe(`Bash(${exact})`);
+      expect(allowed, f).not.toContain("*");
+      expect(md, f).toContain("`" + exact);
       for (const rule of allowed.match(/Bash\([^)]*\)/g)!)
         expect(rule.startsWith("Bash(npx -y @celador/weft@") || rule.startsWith('Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/weft-hook.mjs" '), `${f}: ${rule}`).toBe(true);
     }

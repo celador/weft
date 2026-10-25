@@ -64,7 +64,7 @@ Set as vars in `[env.hosted.vars]`; the per-minute ones also use Workers Rate Li
 
 | Limit | Default |
 |---|---|
-| new spaces per network (IP, hashed) per day | 20 |
+| new spaces per network per day (counted under a daily-rotating HMAC of the IP, deleted after 48 h; nothing IP-derived is stored on the space) | 20 |
 | new spaces per minute per network | 5 (`WEFT_SIGNUP_RATE`) |
 | new spaces per day, whole gateway | 2,000 |
 | active spaces, whole gateway | 20,000 |

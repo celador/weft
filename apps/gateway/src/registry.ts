@@ -139,10 +139,21 @@ export class Registry extends DurableObject<RegistryEnv> {
   private ensureSpaces(): void {
     if (this.spacesReady) return;
     this.sql.exec(
-      `CREATE TABLE IF NOT EXISTS spaces (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'active', label TEXT, ip_hash TEXT, created_at TEXT NOT NULL, deleted_at TEXT)`,
+      `CREATE TABLE IF NOT EXISTS spaces (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'active', label TEXT, created_at TEXT NOT NULL, deleted_at TEXT)`,
     );
+    // Migration: spaces used to carry ip_hash (a plain SHA-256 of the creator's IP) and the signup
+    // counters were keyed by it. Blank and drop the column, and drop the old counter table, the
+    // first time this Registry touches spaces after the deploy.
+    if (this.sql.exec<{ name: string }>(`PRAGMA table_info(spaces)`).toArray().some((c) => c.name === "ip_hash")) {
+      this.sql.exec(`UPDATE spaces SET ip_hash = NULL`);
+      this.sql.exec(`ALTER TABLE spaces DROP COLUMN ip_hash`);
+    }
+    this.sql.exec(`DROP TABLE IF EXISTS signup_counts`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
-    this.sql.exec(`CREATE TABLE IF NOT EXISTS signup_counts (day TEXT NOT NULL, ip_hash TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, ip_hash))`);
+    // Per-day signup counters keyed by a daily-rotating HMAC of the network address (spaces.ts
+    // networkKey); deleted within 48 hours (pruneSignupCounters, also on the alarm).
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS signup_counters (day TEXT NOT NULL, net_key TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, net_key))`);
+    this.pruneSignupCounters();
     for (const [table, col] of [
       ["repos", "space"],
       ["tokens", "space"],
@@ -153,6 +164,29 @@ export class Registry extends DurableObject<RegistryEnv> {
     this.sql.exec(`CREATE INDEX IF NOT EXISTS repos_space ON repos(space)`);
     this.sql.exec(`CREATE INDEX IF NOT EXISTS tokens_space ON tokens(space)`);
     this.spacesReady = true;
+  }
+
+  /**
+   * Delete signup counters older than 48 hours. A row for UTC day D holds signups made during D, so
+   * it goes once `now` reaches D+2 00:00 UTC (48 h after D began). Returns the oldest day left.
+   */
+  pruneSignupCounters(now = Date.now()): string | undefined {
+    const keepFrom = new Date(now - 86_400_000).toISOString().slice(0, 10);
+    this.sql.exec(`DELETE FROM signup_counters WHERE day < ?`, keepFrom);
+    return this.sql.exec<{ day: string | null }>(`SELECT MIN(day) AS day FROM signup_counters`).one().day ?? undefined;
+  }
+
+  /** Make sure an alarm fires when the oldest counter left turns 48 hours old, even with no traffic. */
+  private async scheduleCounterPrune(oldest: string | undefined): Promise<void> {
+    if (!oldest) return;
+    const due = Date.parse(`${oldest}T00:00:00Z`) + 2 * 86_400_000;
+    const cur = await this.ctx.storage.getAlarm();
+    if (cur === null || cur > due) await this.ctx.storage.setAlarm(due);
+  }
+
+  override async alarm(): Promise<void> {
+    this.ensureSpaces();
+    await this.scheduleCounterPrune(this.pruneSignupCounters());
   }
 
   /** Operator kill switch: `open` (default), `no-signups` (existing spaces keep working), `off` (every space token refused). */
@@ -168,26 +202,25 @@ export class Registry extends DurableObject<RegistryEnv> {
     return mode;
   }
 
-  async createSpace(req: { ipHash: string; label?: string; limits: SignupLimits; bypassQuota?: boolean }): Promise<{ space: SpaceInfo; token: string } | { error: string; code: "quota" | "closed" }> {
+  async createSpace(req: { networkKey: string; day?: string; label?: string; limits: SignupLimits; bypassQuota?: boolean }): Promise<{ space: SpaceInfo; token: string } | { error: string; code: "quota" | "closed" }> {
     this.ensureSpaces();
     const mode = await this.hostedMode();
     if (mode !== "open" && !req.bypassQuota) return { error: "new spaces are paused on this gateway; try again later", code: "closed" };
-    const day = new Date().toISOString().slice(0, 10);
+    const day = req.day ?? new Date().toISOString().slice(0, 10);
     if (!req.bypassQuota) {
       const total = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM spaces WHERE status = 'active'`).one().n;
       if (total >= req.limits.maxSpaces) return { error: "this gateway is full; try again later or run your own (`npx @celador/weft deploy`)", code: "quota" };
-      const today = this.sql.exec<{ n: number }>(`SELECT COALESCE(SUM(n), 0) AS n FROM signup_counts WHERE day = ?`, day).one().n;
+      const today = this.sql.exec<{ n: number }>(`SELECT COALESCE(SUM(n), 0) AS n FROM signup_counters WHERE day = ?`, day).one().n;
       if (today >= req.limits.perDay) return { error: "too many new spaces today; try again tomorrow", code: "quota" };
-      const mine = this.sql.exec<{ n: number }>(`SELECT n FROM signup_counts WHERE day = ? AND ip_hash = ?`, day, req.ipHash).toArray()[0]?.n ?? 0;
+      const mine = this.sql.exec<{ n: number }>(`SELECT n FROM signup_counters WHERE day = ? AND net_key = ?`, day, req.networkKey).toArray()[0]?.n ?? 0;
       if (mine >= req.limits.perIpDay) return { error: "too many new spaces from your network today; reuse the one you have (it is in ~/.config/weft)", code: "quota" };
     }
-    this.sql.exec(`INSERT INTO signup_counts (day, ip_hash, n) VALUES (?, ?, 1) ON CONFLICT(day, ip_hash) DO UPDATE SET n = n + 1`, day, req.ipHash);
-    // Prune counters older than a week (cheap: tiny table).
-    this.sql.exec(`DELETE FROM signup_counts WHERE day < ?`, new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10));
+    this.sql.exec(`INSERT INTO signup_counters (day, net_key, n) VALUES (?, ?, 1) ON CONFLICT(day, net_key) DO UPDATE SET n = n + 1`, day, req.networkKey);
+    await this.scheduleCounterPrune(this.pruneSignupCounters());
     const id = spaceId();
     const created_at = new Date().toISOString();
     const label = typeof req.label === "string" ? req.label.slice(0, 80) : null;
-    this.sql.exec(`INSERT INTO spaces (id, status, label, ip_hash, created_at) VALUES (?, 'active', ?, ?, ?)`, id, label, req.ipHash, created_at);
+    this.sql.exec(`INSERT INTO spaces (id, status, label, created_at) VALUES (?, 'active', ?, ?)`, id, label, created_at);
     const token = randomToken();
     const grant: SpaceGrant = { id: `tok_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`, principal: `space:${id}`, scopes: [], repos: [], space: id, role: "owner" };
     this.sql.exec(

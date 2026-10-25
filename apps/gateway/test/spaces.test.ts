@@ -1,12 +1,15 @@
 // Hosted spaces (`npx weft`): anonymous signup, the space API, tenant isolation (the space
 // token is the boundary), quotas, rate limits and the kill switch. vitest.config.ts runs the
-// gateway with WEFT_SIGNUPS=open and small limits (3 signups/IP/day, 3 repos, 6 tokens, 20 rpm).
+// gateway with WEFT_SIGNUPS=open and small limits (3 signups/network/day, 3 repos, 6 tokens, 20 rpm).
 
+import { env, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 
 // Several tests wait out the 5 s grant cache; give each room under a loaded full-gate run.
 vi.setConfig({ testTimeout: 90_000 });
 import type { FeedPage, RepoList, Welcome } from "@weft/protocol";
+import type { Registry } from "../src/registry";
+import { networkKey } from "../src/spaces";
 import { ADMIN, agentToken, call, createRepo, hello, observerToken, uniqueRepo, wcp } from "./helpers";
 
 let ipN = 0;
@@ -240,5 +243,83 @@ describe("feed page", () => {
     const html = await r.text();
     expect(html).toContain("location.hash");
     expect(html).not.toMatch(/weft_[A-Za-z0-9_-]{20,}/);
+  });
+});
+
+describe("hosted spaces: no IP-derived data on the space", () => {
+  const registryStub = () => env.WEFT_REGISTRY.get(env.WEFT_REGISTRY.idFromName("registry"));
+
+  it("a created space record has no IP-derived field, and counters use a daily-rotating keyed hash", async () => {
+    const ip = freshIp();
+    const s = await signup(ip);
+    const { cols, row, keys } = await runInDurableObject(registryStub(), (_i: Registry, state: DurableObjectState) => {
+      const sql = state.storage.sql;
+      return {
+        cols: sql.exec<{ name: string }>(`PRAGMA table_info(spaces)`).toArray().map((c) => c.name),
+        row: sql.exec(`SELECT * FROM spaces WHERE id = ?`, s.id).toArray()[0] as Record<string, unknown>,
+        keys: sql.exec<{ net_key: string }>(`SELECT net_key FROM signup_counters`).toArray().map((r) => r.net_key),
+      };
+    });
+    expect(cols.sort()).toEqual(["created_at", "deleted_at", "id", "label", "status"]);
+    expect(Object.keys(row).sort()).toEqual(["created_at", "deleted_at", "id", "label", "status"]);
+    expect(JSON.stringify(row)).not.toContain(ip);
+    const today = new Date().toISOString().slice(0, 10);
+    const k = await networkKey(ip, "test-admin-token", today);
+    expect(keys).toContain(k);
+    // Not a plain hash of the address, and a different day gives an unrelated key.
+    const plain = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`weft-signup:${ip}`)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    expect(plain.startsWith(k.slice(0, 24))).toBe(false);
+    expect(await networkKey(ip, "test-admin-token", "2026-01-01")).not.toBe(await networkKey(ip, "test-admin-token", "2026-01-02"));
+    expect(await networkKey(ip, "another-secret", today)).not.toBe(k);
+  });
+
+  it("signup counters older than 48 hours are deleted (on signup and on the alarm)", async () => {
+    const day = (msAgo: number) => new Date(Date.now() - msAgo).toISOString().slice(0, 10);
+    const H = 3_600_000;
+    const seed = () =>
+      runInDurableObject(registryStub(), (_i: Registry, state: DurableObjectState) => {
+        for (const [d, k] of [[day(72 * H), "old3"], [day(49 * H), "old"], [day(24 * H), "yesterday"]] as const)
+          state.storage.sql.exec(`INSERT OR REPLACE INTO signup_counters (day, net_key, n) VALUES (?, ?, 1)`, d, k);
+      });
+    const left = () =>
+      runInDurableObject(registryStub(), (_i: Registry, state: DurableObjectState) =>
+        state.storage.sql.exec<{ net_key: string }>(`SELECT net_key FROM signup_counters WHERE net_key IN ('old3','old','yesterday')`).toArray().map((r) => r.net_key).sort(),
+      );
+    await signup(); // makes sure the tables exist
+    await seed();
+    await signup();
+    expect(await left()).toEqual(["yesterday"]);
+    await seed();
+    await runInDurableObject(registryStub(), (inst: Registry) => inst.alarm());
+    expect(await left()).toEqual(["yesterday"]);
+    // Once that day is 48 h old it goes too, and an alarm is pending for the oldest row left.
+    const twoDaysOn = Date.parse(`${day(24 * H)}T00:00:00Z`) + 2 * 86_400_000;
+    await runInDurableObject(registryStub(), (inst: Registry) => inst.pruneSignupCounters(twoDaysOn));
+    expect(await left()).toEqual([]);
+    const alarm = await runInDurableObject(registryStub(), (_i: Registry, state: DurableObjectState) => state.storage.getAlarm());
+    expect(alarm).not.toBeNull();
+  });
+
+  it("migrates a legacy Registry: blanks and drops spaces.ip_hash and the old counter table", async () => {
+    const stub = env.WEFT_REGISTRY.get(env.WEFT_REGISTRY.idFromName(`legacy-${crypto.randomUUID()}`));
+    await runInDurableObject(stub, (_i: Registry, state: DurableObjectState) => {
+      const sql = state.storage.sql;
+      sql.exec(`CREATE TABLE spaces (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'active', label TEXT, ip_hash TEXT, created_at TEXT NOT NULL, deleted_at TEXT)`);
+      sql.exec(`CREATE TABLE signup_counts (day TEXT NOT NULL, ip_hash TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, ip_hash))`);
+      sql.exec(`INSERT INTO spaces (id, ip_hash, created_at) VALUES ('spold0000000', 'abcdef0123456789abcdef01', '2026-10-01T00:00:00Z')`);
+      sql.exec(`INSERT INTO signup_counts VALUES ('2026-10-24', 'abcdef0123456789abcdef01', 1)`);
+    });
+    const spaces = await stub.listSpaces();
+    expect(spaces.map((x) => x.id)).toEqual(["spold0000000"]);
+    const after = await runInDurableObject(stub, (_i: Registry, state: DurableObjectState) => {
+      const sql = state.storage.sql;
+      return {
+        cols: sql.exec<{ name: string }>(`PRAGMA table_info(spaces)`).toArray().map((c) => c.name),
+        tables: sql.exec<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'table'`).toArray().map((t) => t.name),
+      };
+    });
+    expect(after.cols).not.toContain("ip_hash");
+    expect(after.tables).not.toContain("signup_counts");
+    expect(after.tables).toContain("signup_counters");
   });
 });
