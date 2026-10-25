@@ -89,7 +89,8 @@ No harness was installed for this card.
 ## Still open (none block the launch)
 
 1. Negotiating with an agent whose session has ended waits the full `--wait` (240 s) per try.
-   Card t_27fa4374.
+   Card t_27fa4374: fixed on wt/t_27fa4374. The verdict now carries a `counterpart_away`
+   warning ("… is not in a session (left at #N) …") and `--wait` / `weft_negotiate` return at once.
 2. Cursor, Gemini and Antigravity collisions were not run end to end today (logins/quota on
    this Mac). Their adapters are installed by npx and covered by fixture tests; Antigravity has
    an earlier live L3 run.

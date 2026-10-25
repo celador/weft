@@ -194,6 +194,31 @@ describe("Codex negotiation from the shell (spec §7.4, §8.4)", () => {
     expect((await A.negotiate("sa", parseNegotiate(["accept", String(p.seq)]))).code).toBe(0);
     expect(coord.log.at(-1)).toMatchObject({ kind: "negotiate.accept", agent: "codex-a", payload: { reply_to: p.seq } });
   });
+
+  it("propose --wait returns at once when the owner's session has ended (counterpart_away)", async () => {
+    const coord = new ReferenceCoordinator({ repo: "demo" });
+    const t = refTransport(coord);
+    const rootA = checkout("na2");
+    const rootB = checkout("nb2");
+    const A = adapter(rootA, "codex-a", "T-1", t, "/w/a/.weft/bin/weft");
+    const B = adapter(rootB, "codex-b", "T-2", t, "/w/b/.weft/bin/weft");
+    await B.handle(hook("sb", rootB, { hook_event_name: "SessionStart", source: "startup" }));
+    await A.handle(hook("sa", rootA, { hook_event_name: "SessionStart", source: "startup" }));
+    const sig = ["*** Begin Patch", "*** Update File: src/pricing.ts", "@@", " export type Item = { price: number; qty: number };", "+export type PriceOptions = { taxRate: number };", " ",
+      "-export function calcTotal(items: Item[]): number {", "-  return items.reduce((sum, i) => sum + i.price * i.qty, 0);",
+      "+export function calcTotal(items: Item[], opts: PriceOptions): number {", "+  const net = items.reduce((sum, i) => sum + i.price * i.qty, 0);", "+  return net * (1 + opts.taxRate);", " }", "*** End Patch"].join("\n");
+    expect((await applyPatch(A, "sa", rootA, "a1", sig)).applied).toBe(true);
+    // codex-a's session ends (Codex has no SessionEnd hook: the coordinator expires it or it says bye).
+    coord.bye(coord.log.find((r) => r.kind === "join" && r.agent === "codex-a")!.session!);
+    const left = coord.log.filter((r) => r.kind === "leave").at(-1)!;
+    const t0 = Date.now();
+    const sent = await B.negotiate("sb", parseNegotiate(["propose", "overload", "keep calcTotal(items)", "--to", "codex-a", "--keys", "src/pricing.ts#calcTotal", "--wait", "240"]));
+    expect(Date.now() - t0).toBeLessThan(5_000);
+    expect(sent.code).toBe(0);
+    expect(sent.text).toContain(`codex-a is not in a session (left at #${left.seq}); nobody will answer until it starts again: retreat, wait, or escalate`);
+    expect(sent.text).toContain("[weft] not waiting 240s for a reply");
+    expect(sent.text).not.toContain("no reply after");
+  });
 });
 
 describe("capability declaration", () => {

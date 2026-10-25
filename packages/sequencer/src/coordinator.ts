@@ -11,6 +11,8 @@
 import {
   addresseeOf,
   agreementOf,
+  answererOf,
+  counterpartAway,
   contractError,
   RELEASABLE,
   ownedElsewhere,
@@ -901,6 +903,13 @@ export class SqlCoordinator {
       });
       return out;
     }
+    // A propose/counter whose addressee has no live session is recorded, with a warning (§7.4).
+    const ask = answererOf(e, (n) => this.record(n));
+    if (ask) {
+      const away = this.counterpartAway(ask.to, ask.keys);
+      if (away) out.push(away);
+      return out;
+    }
     // An `intent` that carries reads is a reads amendment (§6.2 R2a): checked like R2, never rejected.
     const amendment = e.kind === "intent" && (e.reads?.length ?? 0) > 0;
     if (e.kind !== "edit" && e.kind !== "claim" && !amendment) return out;
@@ -1154,6 +1163,19 @@ export class SqlCoordinator {
       if (seen.some((r) => (JSON.parse(r.item) as InboxItem).diagnostic !== undefined && sameNotice((JSON.parse(r.item) as InboxItem).diagnostic!, notice))) continue;
       this.push(os, { seq: d.caused_by_seq, kind: "diagnostic", diagnostic: notice });
     }
+  }
+
+  /** `counterpart_away` when nobody live can answer a negotiation addressed to `to` (§7.4). */
+  private counterpartAway(to: { agent?: string; change?: string }, keys: SymbolKey[]): Diagnostic | undefined {
+    if (to.change === undefined && to.agent === undefined) return undefined;
+    if (this.sessionsOf(to).length) return undefined;
+    const col = to.change !== undefined ? "change_id" : "agent";
+    const id = to.change ?? to.agent!;
+    const leave = one<{ seq: number }>(this.sql, `SELECT seq FROM events WHERE ${col} = ? AND kind = 'leave' AND status = 'accepted' ORDER BY seq DESC LIMIT 1`, id);
+    const last = one<{ seq: number }>(this.sql, `SELECT seq FROM events WHERE ${col} = ? ORDER BY seq DESC LIMIT 1`, id);
+    const left = leave ? this.record(leave.seq) : undefined;
+    const who = to.agent ?? this.getChange(to.change)?.agent ?? to.change ?? "the other agent";
+    return counterpartAway({ who, keys, ...(left ? { left } : {}), seen: last?.seq ?? this.head });
   }
 
   private sessionsOf(t: { agent?: string; change?: string }): Session[] {

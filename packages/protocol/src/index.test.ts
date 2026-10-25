@@ -265,6 +265,7 @@ describe("conformance scenarios (reference coordinator)", () => {
       "agent_paused",
       "trunk_advanced",
       "claim_predicted_overlap",
+      "counterpart_away",
     ])
       expect(seen, code).toContain(code);
   });

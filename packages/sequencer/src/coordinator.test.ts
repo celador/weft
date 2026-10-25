@@ -425,6 +425,38 @@ describe("enforcement mode (per-repo config, SQLite coordinator)", () => {
   });
 });
 
+describe("counterpart_away (spec §7.4): negotiating with an agent that has no live session", () => {
+  const caps = { level: 3, observe: "sync", inject: "immediate", deny_edit: true, refuse_stop: true, commit_gate: "tool_interception" } as const;
+  const key = "src/auth/session.ts#refreshToken";
+  it("names the session expiry when the addressee timed out, identically in both coordinators", () => {
+    const run = (target: { hello: (h: Hello) => unknown; submit: (s: string, m: unknown) => unknown; tick: () => unknown }, clock: ReturnType<typeof scenarioClock>) => {
+      const hello = (id: string, change: string) => target.hello({ type: "hello", protocol: "wcp/0.1", agent: { id, harness: "codex" }, capabilities: caps, task: { id: `T-${change}` }, change }) as { session: string };
+      hello("claude-a", "I-a");
+      clock.advance(50_000);
+      const b = hello("codex-b", "I-b");
+      clock.advance(20_000); // a has been silent for 70s > 60s session TTL; b for 20s
+      const expired = target.tick() as Array<{ seq: number; kind: string }>;
+      const propose = { type: "submit", mode: "commit", event: { kind: "negotiate.propose", base_seq: 2, payload: { to: { agent: "claude-a" }, keys: [key], terms: { kind: "overload", text: "Keep the old signature." } } } };
+      return { expired, verdict: target.submit(b.session, propose) as { verdict: string; diagnostics: Array<{ code: string; message: string; caused_by_seq: number }> } };
+    };
+    const c1 = scenarioClock("2026-10-05T14:00:00.000Z");
+    const sql = nodeSql();
+    SqlCoordinator.init(sql, { repo: "demo", session_ttl_ms: 60_000 });
+    const j = new JournaledCoordinator(sql, c1.now);
+    const got = run({ hello: (h) => j.call("hello", h), submit: (s, m) => j.call("submit", s, m), tick: () => j.call("tick") }, c1);
+    const leave = got.expired.find((r) => r.kind === "leave")!;
+    expect(leave).toBeDefined();
+    expect(got.verdict.verdict).toBe("accept");
+    expect(got.verdict.diagnostics).toMatchObject([{ code: "counterpart_away", caused_by_seq: leave.seq }]);
+    expect(got.verdict.diagnostics[0]!.message).toBe(
+      `claude-a is not in a session (its session expired at #${leave.seq}); nobody will answer until it starts again: retreat, wait, or escalate`,
+    );
+    const c2 = scenarioClock("2026-10-05T14:00:00.000Z");
+    const ref = new ReferenceCoordinator({ repo: "demo", session_ttl_ms: 60_000, now: c2.now });
+    expect(run({ hello: (h) => ref.hello(h), submit: (s, m) => ref.submit(s, m as never), tick: () => ref.tick() }, c2).verdict).toEqual(got.verdict);
+  });
+});
+
 describe("claim lease: a claim expires and stops blocking", () => {
   const caps = { level: 3, observe: "sync", inject: "immediate", deny_edit: true, refuse_stop: true, commit_gate: "tool_interception" } as const;
   const key = "src/auth/session.ts#refreshToken";

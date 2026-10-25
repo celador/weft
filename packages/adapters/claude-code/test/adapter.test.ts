@@ -490,6 +490,33 @@ export function calcTotal(items: Item[], opts: PriceOptions = { taxRate: 0 }): n
     expect(again.text).toContain("invalid_reference");
   });
 
+  it("propose --wait returns at once when the owner has no live session (counterpart_away)", async () => {
+    const { coord, rootA, A, B } = await setup();
+    await A.handle(hook("sa", rootA, { hook_event_name: "SessionEnd" }));
+    const left = coord.log.filter((r) => r.kind === "leave").at(-1)!;
+    expect(left.agent).toBe("claude-a");
+    // No sleep stub: if the adapter polled, this would take the full 240 s.
+    const t0 = Date.now();
+    const sent = await B.negotiate("sb", parseNegotiate(["propose", "overload", "Keep calcTotal(items)", "--wait", "240"]));
+    expect(Date.now() - t0).toBeLessThan(5_000);
+    expect(sent.code).toBe(0);
+    const propose = coord.log.find((r) => r.kind === "negotiate.propose")!;
+    expect(propose.status).toBe("accepted");
+    expect(sent.text).toContain(`[weft] sent #${propose.seq}`);
+    expect(sent.text).toContain(`[weft warning] counterpart_away`);
+    expect(sent.text).toContain(`claude-a is not in a session (left at #${left.seq}); nobody will answer until it starts again: retreat, wait, or escalate`);
+    expect(sent.text).toContain("[weft] not waiting 240s for a reply");
+    expect(sent.text).toContain('/w/b/.weft/bin/weft negotiate escalate "<why>"');
+    expect(sent.text).not.toContain("no reply after");
+
+    // When claude-a starts again it owes the answer, and a new proposal no longer warns.
+    await A.handle(hook("sa2", rootA, { hook_event_name: "SessionStart" }));
+    const stop = (await A.handle(hook("sa2", rootA, { hook_event_name: "Stop" }))) as { decision: string; reason: string };
+    expect(stop.reason).toContain(`[weft negotiation due] #${propose.seq} from claude-b`);
+    const again = await B.negotiate("sb", parseNegotiate(["propose", "share", "Let us both edit calcTotal"]));
+    expect(again.text).not.toContain("counterpart_away");
+  });
+
   it("parses the CLI grammar and refuses bad input", () => {
     expect(parseNegotiate(["counter", "#12", "share", "both", "of", "us"])).toEqual({ cmd: "counter", reply_to: 12, terms: { kind: "share", text: "both of us" } });
     expect(parseNegotiate(["propose", "transfer", "give it", "--to", "codex-b", "--keys", "a.ts#x,b.ts#y"])).toEqual({
