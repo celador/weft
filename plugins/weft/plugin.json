@@ -1,6 +1,6 @@
 {
   "name": "weft",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Red squiggles for teams of coding agents. Weft checks every edit against what the other agents just changed and tells the agent before the conflict exists. /weft:setup turns it on in a repo (free hosted space, no account).",
   "author": {
     "name": "John Nelson",
