@@ -111,6 +111,23 @@ post-merge job can read it from `git log`. If you never post lands, edit-time ch
 in-flight changes (`stale_assumption`, contract changes) still work; only `stale_overwrite`
 against merged code does not.
 
+## Install from a marketplace
+
+The same adapters, packaged where each harness looks for extensions. Each one needs
+`npx @celador/weft` (or `/weft:setup`) once per repo for the space and the checkouts.
+
+| Harness | Install | Notes |
+|---|---|---|
+| Claude Code | `/plugin install weft --marketplace celador/weft` (or `/plugin marketplace add celador/weft`, `/plugin install weft@weft`) | `/weft:setup` runs the CLI and hands the hooks to the plugin, so the running session gets Weft with no restart. `/weft:status` shows where hooks come from. |
+| GitHub Copilot CLI | `copilot plugin marketplace add celador/weft`, `copilot plugin install weft@weft` | then `npx @celador/weft --harness copilot`. Also submitted to awesome-copilot (github/awesome-copilot#5489). |
+| VS Code and forks (Cursor, Windsurf, Kiro, Antigravity, VSCodium, Trae) | `code --install-extension weft-0.1.1.vsix` from the [release](https://github.com/celador/weft/releases/tag/vscode-v0.1.1); `celador.weft` on the Visual Studio Marketplace and Open VSX once published | no settings: it reads `.weft/` |
+| Any MCP client | `{"command": "npx", "args": ["-y", "@celador/weft", "mcp"]}`; `io.github.celador/weft` in the official MCP registry once published | started in the checkout, or set `WEFT_ROOT` |
+
+The plugin lives in `plugins/weft/` (one folder for both Claude Code and Copilot CLI; the
+marketplace file is `.claude-plugin/marketplace.json`). Bump `version` in its three manifests on
+every change: installed plugins only update on a version change. Listing status and install
+tests: [research/distribution-2026-10.md](research/distribution-2026-10.md).
+
 ## Watching it
 
 - `GET /v1/repos/{repo}/events` (an `observe` token): the ordered log, one record per edit,

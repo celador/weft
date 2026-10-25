@@ -1,0 +1,40 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.celador/weft",
+  "title": "Weft",
+  "description": "Red squiggles for teams of coding agents: checks each edit against the other agents' changes.",
+  "websiteUrl": "https://weft.mx",
+  "repository": {
+    "url": "https://github.com/celador/weft",
+    "source": "github",
+    "subfolder": "packages/cli"
+  },
+  "version": "0.2.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@celador/weft",
+      "version": "0.2.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp",
+          "description": "Run the Weft MCP server (stdio)"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "WEFT_ROOT",
+          "description": "The git checkout to coordinate, when the client does not start the server in it. Run `npx @celador/weft` in the repo first: the server reads its settings from the checkout's .weft/space.json and .weft/token.",
+          "isRequired": false,
+          "format": "filepath"
+        }
+      ]
+    }
+  ]
+}

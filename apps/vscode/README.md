@@ -15,8 +15,23 @@ Copilot, Codex, Cursor, Gemini/Antigravity, Hermes, …) work on one repo throug
 - **Actions**: Approve, Undo (asks for a reason), Pause, Resume and Message, from the feed's
   detail pane, the panel toolbar or the command palette.
 
-It runs in VS Code and in every fork that installs `.vsix` files: Cursor, Windsurf, Kiro,
-Antigravity, VSCodium (Open VSX) and Trae.
+![A Weft squiggle on calcTotal: claude-a changed its signature under claude-b, with the Weft feed below](https://raw.githubusercontent.com/celador/weft/main/apps/vscode/docs/squiggle.png)
+
+![Open causing event: claude-a's edit in the native diff editor](https://raw.githubusercontent.com/celador/weft/main/apps/vscode/docs/cause-diff.png)
+
+It runs in VS Code and in every fork: Cursor, Windsurf, Kiro, Antigravity and VSCodium install
+it from Open VSX, Trae from the `.vsix`.
+
+## Install
+
+```sh
+npx @celador/weft                          # in your repo: free hosted space + agent hooks
+code --install-extension celador.weft      # VS Code (Visual Studio Marketplace)
+cursor --install-extension celador.weft    # Cursor, Windsurf, VSCodium, Kiro, Antigravity (Open VSX)
+```
+
+Or search **Weft** in the Extensions view. Open the repo's folder: the extension finds the space
+`npx @celador/weft` set up in `.weft/` and connects. Nothing to configure.
 
 ## Squiggles reach the agents too
 
@@ -70,8 +85,10 @@ pnpm --filter @weft/vscode build       # dist/ + media/dist/
 pnpm --filter @weft/vscode test        # unit tests (vitest)
 pnpm --filter @weft/vscode test:smoke  # the packaged extension in a real VS Code, against a gateway double
 pnpm --filter @weft/vscode package     # out/weft-<version>.vsix
-code --install-extension apps/vscode/out/weft-0.1.0.vsix     # or: cursor / windsurf / kiro / antigravity --install-extension …
+code --install-extension apps/vscode/out/weft-0.1.1.vsix     # or: cursor / windsurf / kiro / antigravity --install-extension …
+pnpm --filter @weft/vscode test:install -- --app vscode|cursor [--from vsix|marketplace]  # fresh profile + a new `npx @celador/weft` space
+pnpm --filter @weft/vscode release     # build, package, publish to the Marketplace + Open VSX, check both listings
 ```
 
-Publishing to the VS Code Marketplace (`vsce publish`) and Open VSX (`ovsx publish`) is not
-automated and needs an explicit go-ahead.
+`release` reads the tokens from `VSCE_PAT` / `OVSX_PAT` or the macOS keychain items
+`weft-vsce-pat` / `weft-ovsx-pat` (see `scripts/publish.mjs`).

@@ -1,6 +1,6 @@
 {
   "name": "@weft/vscode",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Weft for VS Code and every VS Code fork (Cursor, Windsurf, Kiro, Antigravity, VSCodium, Trae): the live Changes feed, Editing now, per-event diffs, squiggles linked to their cause, and Approve/Undo/Pause/Resume/Message.",
   "license": "MIT",
@@ -10,8 +10,8 @@
     "test": "vitest run",
     "test:smoke": "node scripts/build.mjs && node test/smoke/run.mjs",
     "package": "node scripts/build.mjs && node scripts/package.mjs",
-    "publish:vsce": "echo 'Not without John’s OK: npx @vscode/vsce publish --packagePath out/weft-$npm_package_version.vsix' && exit 1",
-    "publish:ovsx": "echo 'Not without John’s OK: npx ovsx publish out/weft-$npm_package_version.vsix' && exit 1"
+    "test:install": "node test/install/run.mjs",
+    "release": "node scripts/build.mjs && node scripts/package.mjs && node scripts/publish.mjs"
   },
   "dependencies": {
     "@weft/feed": "workspace:*"
@@ -30,12 +30,12 @@
     "description": "Red squiggles for teams of coding agents: the live Weft feed, Editing now, diffs per event, squiggles linked to the edit that caused them, and Approve/Undo/Pause/Resume/Message.",
     "icon": "media/icon.png",
     "galleryBanner": { "color": "#0b0d12", "theme": "dark" },
-    "homepage": "https://weft-site.elier.ai",
+    "homepage": "https://weft.mx",
     "repository": { "type": "git", "url": "https://github.com/celador/weft" },
     "bugs": { "url": "https://github.com/celador/weft/issues" },
     "license": "MIT",
     "categories": ["AI", "Linters", "SCM Providers", "Other"],
-    "keywords": ["agents", "coding agents", "claude code", "copilot", "cursor", "conflicts", "coordination", "weft", "wcp"],
+    "keywords": ["agents", "coding agents", "ai agents", "claude code", "copilot", "codex", "cursor", "merge conflicts", "multi-agent", "weft"],
     "engines": { "vscode": "^1.88.0" },
     "main": "./dist/extension.cjs",
     "activationEvents": ["onStartupFinished", "workspaceContains:.weft"],

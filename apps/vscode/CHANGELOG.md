@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- First Marketplace and Open VSX release (`celador.weft`).
+- Install section and screenshots in the README; homepage is weft.mx.
+- Verified: a fresh install in a clean VS Code 1.143 and Cursor 3.27 profile connects to a space
+  made by `npx @celador/weft` with no settings (`test/install/run.mjs`).
+
 ## 0.1.0
 
 - Feed webview in the panel (`@weft/feed/view`): Changes feed across repos, Editing now,
