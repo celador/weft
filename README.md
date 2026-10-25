@@ -58,6 +58,17 @@ own Cloudflare account. The npm package is [`@celador/weft`](https://www.npmjs.c
 (the name `weft` is taken on npm). Details: [docs/try-it.md](docs/try-it.md) and
 [docs/hosted.md](docs/hosted.md).
 
+Install it where you already work:
+
+| Where | Install |
+|---|---|
+| Claude Code (plugin) | `/plugin install weft --marketplace celador/weft`, then `/weft:setup` in your repo |
+| GitHub Copilot CLI (plugin) | `copilot plugin marketplace add celador/weft` and `copilot plugin install weft@weft` |
+| VS Code, Cursor, Windsurf, Kiro, Antigravity, VSCodium | the `.vsix` from the [VS Code release](https://github.com/celador/weft/releases/tag/vscode-v0.1.1): `code --install-extension weft-0.1.1.vsix` (Marketplace and Open VSX listings to follow) |
+| Any MCP client without hooks (Zed, Warp, JetBrains, Xcode, ...) | `{"command": "npx", "args": ["-y", "@celador/weft", "mcp"]}`, started in the checkout |
+
+Status of each listing: [docs/research/distribution-2026-10.md](docs/research/distribution-2026-10.md).
+
 From a clone, without any network service ([docs/try-it.md, Advanced](docs/try-it.md#advanced-from-a-clone)):
 
 ```sh
