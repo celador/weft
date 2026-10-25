@@ -1,6 +1,6 @@
 ---
 description: Turn Weft on in this repo (free hosted space, no account) so this session's edits are checked against the other agents'
-allowed-tools: Bash(npx -y @celador/weft:*), Bash(node:*)
+allowed-tools: Bash(npx -y @celador/weft@latest:*), Bash(node:*)
 ---
 
 Set up Weft in the current git repository, then hand its hooks to this plugin so they work in
