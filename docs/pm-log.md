@@ -206,3 +206,7 @@ Append-only. One dated entry per heartbeat that changed something.
 - Integration fix: distribution pinned @celador/weft@0.1.0 in plugin commands; CLI is now 0.2.0, so pinned 0.2.0 and bumped plugin manifests to 0.1.3 (plugin-hook test 8/8). Gate GATE_EXIT=0 (25 suites). Pushed 6593a4d; Weft lands #2183–#2185. Worktrees removed except distribution (card still open).
 - t_1c428bb7 stays blocked on John's publisher accounts (VS Code Marketplace publisher + PAT, Open VSX token) and the claude.ai directory submission. Windsurf t_6b8460d9 stays parked per John.
 - CI Gate failed once on 6593a4d (Kotlin edit-budget test 374 ms on the runner); analyzer budget tests now take the fastest of 3 warm runs; CI green on the fix.
+
+## 2026-10-25 19:55 — Weft lands for worker-merged cards
+- t_e1f17e67 (deck → celador/weft-talks), t_f8c28a0d (weft.mx privacy/terms/support, plugin 0.1.4), t_340b7fa7 (plugin 0.1.5, no IP-derived storage) were fast-forwarded to main by their workers; CI Gate green on all three. Posted Weft lands #2216–#2218; weft.mx/privacy|terms|support return 200. Worktrees removed.
+- Main checkout has uncommitted apps/vscode edits from another session (VS Code release, t_be030d1a in triage); left untouched.
