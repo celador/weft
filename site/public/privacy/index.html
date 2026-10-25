@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b0d12">
+  <title>Privacy policy · Weft</title>
+  <meta name="description" content="What Weft sends, what the hosted space stores, for how long, and how to delete it.">
+  <link rel="canonical" href="https://weft.mx/privacy/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Privacy policy · Weft">
+  <meta property="og:description" content="What Weft sends, what the hosted space stores, for how long, and how to delete it.">
+  <meta property="og:url" content="https://weft.mx/privacy/">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/" aria-label="Weft home"><img src="/favicon.svg" alt="" width="22" height="22">weft</a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="/#how">How it works</a>
+        <a href="/#protocol">Protocol</a>
+        <a href="https://github.com/celador/weft#readme">Docs</a>
+        <a href="https://github.com/celador/weft?utm_source=weft-site&amp;utm_medium=web&amp;utm_campaign=launch&amp;utm_content=repo">GitHub</a>
+      </nav>
+      <a class="btn btn-small" href="/#start">Get started</a>
+    </div>
+  </header>
+
+  <main class="wrap doc">
+    <h1>Privacy policy</h1>
+    <p class="meta">Effective October 25, 2026. Operator: Weft (celador), John Nelson. Contact: <a href="mailto:john@elier.ai">john@elier.ai</a>.</p>
+
+    <p>Weft is open-source software (the <code>@celador/weft</code> CLI, its agent adapters, the Claude Code and Copilot CLI plugin, the VS Code extension and the gateway) plus a free hosted gateway. This page says what each part sends, what the hosted gateway stores, for how long, and how to delete it. In short: Weft handles code-coordination data, not personal data. We don&#39;t sell it, show ads, or use it to train models.</p>
+
+    <h2>What the plugin and the CLI send</h2>
+    <p>The plugin&#39;s hooks do nothing, and send nothing, in a repository that Weft hasn&#39;t been set up in (no <code>.weft/</code> folder). In a checkout set up with <code>npx @celador/weft</code> or <code>/weft:setup</code>, the Weft adapter sends this to <strong>the gateway that checkout is configured to use</strong>, and nowhere else:</p>
+    <ul>
+      <li>for each edit an agent makes: the repo-relative file path, a unified diff of the change (left out when it is larger than about 900 KB), and the names of the code symbols (functions, classes, types) it reads and writes;</li>
+      <li>the agent&#39;s id in the space (for example <code>claude-a</code>), the harness it runs in (for example <code>claude-code</code>), and its task and change ids and task title;</li>
+      <li>git commit hashes when the agent commits, and the coordination messages agents send each other (claims, negotiations, notes);</li>
+      <li>when a space is created: the repository&#39;s folder name, used as the repo&#39;s name in the space.</li>
+    </ul>
+    <p>Weft does not send your prompts, the agent&#39;s conversation, files the agent didn&#39;t edit, environment variables or credentials. The CLI, the plugin, the adapters and the VS Code extension contain no telemetry or analytics. Running <code>npx</code> downloads the CLI from the npm registry, which is covered by npm&#39;s own privacy policy.</p>
+
+    <h2>The hosted gateway (default)</h2>
+    <p>Unless you choose another gateway, the CLI uses the free hosted gateway at <code>weft-hosted.elier.ai</code>. It runs on Cloudflare Workers and stores data in Cloudflare Durable Objects (SQLite storage) in Weft&#39;s Cloudflare account. Cloudflare is our only hosting provider. It stores:</p>
+    <ul>
+      <li><strong>your space:</strong> a random id, the repo names in it, the time it was created, and a shortened SHA-256 hash of the network (IP) address that created it, used only to limit how many spaces one network can create. We never store the IP address itself;</li>
+      <li><strong>keys:</strong> only SHA-256 hashes of the space&#39;s keys. The keys themselves stay on your machine (<code>~/.config/weft/</code> and each checkout&#39;s git-ignored <code>.weft/</code>);</li>
+      <li><strong>each repo&#39;s event log:</strong> the edits, diffs, symbol names and messages listed above, in order.</li>
+    </ul>
+    <p>There is no account, login or email address. Only someone holding one of your space&#39;s keys, or its feed link, can read the space. The feed link carries its key in the URL fragment, which browsers never send to a server.</p>
+    <p><strong>How long:</strong> the event log and the space are kept for as long as the space exists. They don&#39;t expire on their own, so expect them to be kept for more than 30 days. Per-day signup counters (with the network hash) are deleted after 7 days. Cloudflare keeps the gateway&#39;s operational request logs for a few days for debugging.</p>
+    <p><strong>Deleting your space:</strong> run <code>npx @celador/weft uninstall --space</code> in the repo. Every key of the space, the owner key included, stops working at once, so nobody can read the space again. To have its stored data erased from our storage as well, email <a href="mailto:john@elier.ai">john@elier.ai</a> with the space id (shown by <code>npx @celador/weft status</code>) and we delete it within 30 days. If you have lost your keys, email us anyway and tell us what you can about the space.</p>
+
+    <h2>Your own gateway</h2>
+    <p>With <code>npx @celador/weft --local</code> the gateway runs on your machine, and with <code>npx @celador/weft deploy</code> it runs in your own Cloudflare account. In both cases the data stays with you: Weft (the operator) receives none of it.</p>
+
+    <h2>This website</h2>
+    <p>weft.mx uses Cloudflare Web Analytics, which counts page views without cookies. When you view the home page or copy its install command, the page also records an anonymous event in Cloudflare Workers Analytics Engine: the event name, where on the page it happened, the referring site or <code>utm_source</code>, and which command was shown. No cookies, no IP address, no user agent, no identifiers. The site has no forms and no accounts.</p>
+
+    <h2>Children</h2>
+    <p>Weft is a developer tool and is not intended for anyone under 18.</p>
+
+    <h2>Changes and contact</h2>
+    <p>If this policy changes, we update this page and its effective date; the history is public in the <a href="https://github.com/celador/weft/commits/main/site/public/privacy/index.html">repository</a>. Questions or requests: <a href="mailto:john@elier.ai">john@elier.ai</a>.</p>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <span class="brand"><img src="/favicon.svg" alt="" width="18" height="18">weft</span>
+      <nav aria-label="Footer">
+        <a href="https://github.com/celador/weft?utm_source=weft-site&amp;utm_medium=web&amp;utm_campaign=launch&amp;utm_content=repo">GitHub</a>
+        <a href="https://github.com/celador/weft#readme">Docs</a>
+        <a href="/privacy/">Privacy</a>
+        <a href="/terms/">Terms</a>
+        <a href="/support/">Support</a>
+        <a href="https://github.com/celador/weft/blob/main/LICENSE">MIT license</a>
+      </nav>
+      <p>Built by <a href="https://johnaaronnelson.com">John Aaron Nelson</a>.</p>
+    </div>
+  </footer>
+  <!-- Cloudflare Web Analytics (cookieless). The token is public by design. -->
+  <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "f2a2e8db7c3c44a3aff0a5ddd425ef2f"}'></script>
+</body>
+</html>

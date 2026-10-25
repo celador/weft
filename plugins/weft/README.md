@@ -46,7 +46,10 @@ npx @celador/weft --harness copilot      # in your repo
   from `.claude/settings.local.json` (or `.github/hooks/weft.json`) so each hook runs once. It
   leaves every other setting alone.
 
-Uninstall: `npx @celador/weft uninstall` in the repo removes `.weft/` and the hooks it wrote;
-`/plugin uninstall weft` removes the plugin.
+Uninstall: `npx @celador/weft uninstall` in the repo removes `.weft/` and the hooks it wrote
+(`--space` also deletes your hosted space); `/plugin uninstall weft` removes the plugin.
+
+Privacy: <https://weft.mx/privacy> (what the hosted space stores and for how long) · Terms:
+<https://weft.mx/terms> · Support: <https://weft.mx/support>
 
 Source, protocol and docs: <https://github.com/celador/weft> · <https://weft.mx>. License: MIT.

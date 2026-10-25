@@ -1,12 +1,16 @@
 {
   "name": "weft",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Red squiggles for teams of coding agents. Weft checks every edit against what the other agents just changed and tells the agent before the conflict exists. /weft:setup turns it on in a repo (free hosted space, no account).",
   "author": {
     "name": "John Nelson",
     "url": "https://github.com/celador"
   },
   "homepage": "https://weft.mx",
+  "documentationUrl": "https://github.com/celador/weft#readme",
+  "supportUrl": "https://weft.mx/support",
+  "privacyPolicyUrl": "https://weft.mx/privacy",
+  "termsOfServiceUrl": "https://weft.mx/terms",
   "repository": "https://github.com/celador/weft",
   "license": "MIT",
   "keywords": [

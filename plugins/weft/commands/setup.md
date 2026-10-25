@@ -1,6 +1,6 @@
 ---
 description: Turn Weft on in this repo (free hosted space, no account) so this session's edits are checked against the other agents'
-allowed-tools: Bash(npx -y @celador/weft@0.2.0:*), Bash(node:*)
+allowed-tools: Bash(npx -y @celador/weft@0.2.0:*), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/weft-hook.mjs" adopt claude-code)
 ---
 
 Set up Weft in the current git repository, then hand its hooks to this plugin so they work in

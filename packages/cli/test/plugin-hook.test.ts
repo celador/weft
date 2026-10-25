@@ -62,6 +62,17 @@ describe("plugin manifests", () => {
     expect(market.metadata.version).toBe(entry.version);
   });
 
+  it("link the directory listing's docs, support, privacy and terms pages", () => {
+    for (const m of [claude, copilot]) {
+      expect(m.homepage).toBe("https://weft.mx");
+      expect(m.documentationUrl).toBe("https://github.com/celador/weft#readme");
+      expect(m.supportUrl).toBe("https://weft.mx/support");
+      expect(m.privacyPolicyUrl).toBe("https://weft.mx/privacy");
+      expect(m.termsOfServiceUrl).toBe("https://weft.mx/terms");
+    }
+    for (const page of ["privacy", "terms", "support"]) expect(existsSync(join(repo, "site/public", page, "index.html")), page).toBe(true);
+  });
+
   it("pin the CLI the commands run to this repo's @celador/weft version (the directory blocks unpinned npx)", () => {
     const cli = json(join(repo, "packages/cli/package.json"));
     for (const f of ["setup.md", "status.md"]) {
@@ -70,6 +81,11 @@ describe("plugin manifests", () => {
       expect(pins.length, f).toBeGreaterThan(0);
       for (const v of pins) expect(v, `${f}: bump the pinned @celador/weft@${v} to ${cli.version}`).toBe(cli.version);
       expect(md, f).toContain(`allowed-tools: Bash(npx -y @celador/weft@${cli.version}:*)`);
+      // Pre-approve only exact commands: never a bare interpreter like Bash(node:*).
+      const allowed = /^allowed-tools: (.*)$/m.exec(md)![1]!;
+      expect(allowed, f).not.toMatch(/Bash\((node|npx|sh|bash):\*\)/);
+      for (const rule of allowed.match(/Bash\([^)]*\)/g)!)
+        expect(rule.startsWith("Bash(npx -y @celador/weft@") || rule.startsWith('Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/weft-hook.mjs" '), `${f}: ${rule}`).toBe(true);
     }
     expect(readFileSync(join(plugin, "README.md"), "utf8")).toContain(`@celador/weft@${cli.version}`);
   });
