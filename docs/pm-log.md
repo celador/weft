@@ -196,3 +196,7 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-10-23 09:45 — landed batched landing with bisect (t_5f9c01c1)
 - Merged wt/t_5f9c01c1 via pm/integrate-1023 (only pm-log conflicted; kept both entries). Gate GATE_EXIT=0 (25 suites; workflows 42, sequencer 141, gateway 107). Fast-forwarded main 4c12aec, pushed; Weft land #2077. Worktree removed.
 - Board: 103 done, Windsurf t_6b8460d9 stays parked per John. wt/local held, wt/t_be804fb4 intentionally unmerged. No ready cards.
+
+## 2026-10-24 23:10 — landed funnel measurement; restarted reboot-crashed cards
+- Merged wt/funnel-auth (t_d17c7132, site/ + docs only, outside the pnpm gate): site/funnel.test.mjs passes; `node site/funnel.mjs 7` reports visits/copies/npm/first runs. Weft land #2129. Worktree removed.
+- t_76bd463a (cold-run onboarding) and t_1c428bb7 (distribution) crashed x2 when the Mac rebooted (Gateway disconnected); unblocked to resume in their worktrees. Windsurf t_6b8460d9 stays parked per John.
