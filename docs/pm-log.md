@@ -200,3 +200,8 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-10-24 23:10 — landed funnel measurement; restarted reboot-crashed cards
 - Merged wt/funnel-auth (t_d17c7132, site/ + docs only, outside the pnpm gate): site/funnel.test.mjs passes; `node site/funnel.mjs 7` reports visits/copies/npm/first runs. Weft land #2129. Worktree removed.
 - t_76bd463a (cold-run onboarding) and t_1c428bb7 (distribution) crashed x2 when the Mac rebooted (Gateway disconnected); unblocked to resume in their worktrees. Windsurf t_6b8460d9 stays parked per John.
+
+## 2026-10-25 00:25 — landed cold-run onboarding, negotiate presence, distribution
+- Merged via pm/integrate-1025: wt/onboard-cold-run (t_76bd463a: weft demo, agy detection, weft mcp for hookless harnesses, CLI 0.2.0 — already `latest` on npm), wt/t_27fa4374 (counterpart_away warning on propose/counter to an agent with no session), wt/distribution (t_1c428bb7: Claude Code/Copilot plugin marketplace, MCP registry server.json, vsce release script).
+- Integration fix: distribution pinned @celador/weft@0.1.0 in plugin commands; CLI is now 0.2.0, so pinned 0.2.0 and bumped plugin manifests to 0.1.3 (plugin-hook test 8/8). Gate GATE_EXIT=0 (25 suites). Pushed 6593a4d; Weft lands #2183–#2185. Worktrees removed except distribution (card still open).
+- t_1c428bb7 stays blocked on John's publisher accounts (VS Code Marketplace publisher + PAT, Open VSX token) and the claude.ai directory submission. Windsurf t_6b8460d9 stays parked per John.
