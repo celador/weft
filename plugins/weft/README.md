@@ -31,7 +31,7 @@ npx @celador/weft --harness copilot      # in your repo
 
 ## What it runs, sends and fetches
 
-- `/weft:setup` runs `npx -y @celador/weft@0.1.0` (the Weft CLI from npm, pinned) in your repo.
+- `/weft:setup` runs `npx -y @celador/weft@0.2.0` (the Weft CLI from npm, pinned) in your repo.
   The CLI creates a hosted space on `weft-hosted.elier.ai` (or uses the gateway you choose with
   `--url`, including one you deploy to your own Cloudflare account with `npx @celador/weft
   deploy`), writes `.weft/` in each checkout (git-excluded), installs the Weft adapter runtime in
