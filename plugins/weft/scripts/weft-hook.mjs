@@ -16,7 +16,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 const HARNESS = {
   "claude-code": { config: ".weft/claude.json", entry: "weft-claude.mjs", mark: "weft-claude", files: [".claude/settings.local.json", ".claude/settings.json"] },
@@ -68,15 +68,33 @@ function adapter() {
   return best?.p;
 }
 
-/** Hook files in the checkout that already run the adapter. */
+const hasMark = (p) => {
+  try {
+    return readFileSync(p, "utf8").includes(h.mark);
+  } catch {
+    return false;
+  }
+};
+
+/** The main checkout of a linked git worktree (undefined for the main checkout itself). */
+function mainCheckout(root) {
+  const r = spawnSync("git", ["-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel"], { encoding: "utf8" });
+  if (r.status !== 0) return undefined;
+  const [common, top] = r.stdout.trim().split("\n");
+  const main = dirname(common);
+  return common.endsWith("/.git") && resolve(main) !== resolve(top) ? main : undefined;
+}
+
+/** Hook files that already run the adapter in this checkout. In a linked git worktree Claude Code
+ * also reads the main checkout's .claude/settings.local.json (verified on 2.1.310), and the
+ * adapter those hooks start serves whichever checkout the session is in. */
 function ownHookFiles(root) {
-  return h.files.filter((rel) => {
-    try {
-      return readFileSync(join(root, rel), "utf8").includes(h.mark);
-    } catch {
-      return false;
-    }
-  });
+  const own = h.files.filter((rel) => hasMark(join(root, rel)));
+  if (harnessId === "claude-code") {
+    const main = mainCheckout(root);
+    if (main && hasMark(join(main, ".claude/settings.local.json"))) own.push(join(main, ".claude/settings.local.json"));
+  }
+  return own;
 }
 
 function readStdin() {
@@ -120,7 +138,14 @@ if (!adapter()) {
   process.exit(1);
 }
 const isOurs = (e) => e && typeof e === "object" && [e.command, e.bash].some((c) => typeof c === "string" && c.includes(h.mark));
+let inherited = false;
 for (const rel of ownHookFiles(root)) {
+  if (isAbsolute(rel)) {
+    // The main checkout's hooks: they belong to that checkout's agent, and they already run Weft here.
+    inherited = true;
+    console.log(`left ${rel} alone: its Weft hooks already run in this worktree`);
+    continue;
+  }
   const p = join(root, rel);
   if (harnessId === "copilot") {
     unlinkSync(p); // .github/hooks/weft.json holds only the adapter's entries
@@ -144,4 +169,4 @@ for (const rel of ownHookFiles(root)) {
   }
   console.log(`moved Weft's hooks out of ${rel}: the plugin runs them now`);
 }
-console.log(`Weft is on in ${root} (hooks from the plugin).`);
+console.log(`Weft is on in ${root} (hooks from ${inherited ? "the main checkout's settings; the plugin stays out of the way" : "the plugin"}).`);
