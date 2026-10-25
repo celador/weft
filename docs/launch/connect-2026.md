@@ -1,0 +1,1 @@
+The Connect 2026 deck (slides, versions, runbook, Q&A, assets) moved to the private repo [celador/weft-talks](https://github.com/celador/weft-talks/tree/main/connect-2026); scripts find a local clone via `CONNECT_DECK_DIR` (default `../weft-talks/connect-2026`).

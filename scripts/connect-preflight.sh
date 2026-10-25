@@ -16,6 +16,8 @@ GATEWAY="https://weft-gateway-preview.elier.ai"
 MEDIA="https://weft-media.elier.ai"
 UA="weft-connect-preflight/1"
 CREDS="$HOME/.config/weft/connect-preflight.json"
+# The deck, runbook and Q&A live in the private repo celador/weft-talks (clone it next to weft).
+CONNECT_DECK_DIR="${CONNECT_DECK_DIR:-$(cd "$(dirname "$0")/.." && pwd)/../weft-talks/connect-2026}"
 FAILS=0; WARNS=0
 if [ -t 1 ]; then G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; N=$'\e[0m'; else G=; R=; Y=; N=; fi
 ok()   { printf '%s  ok  %s %s\n' "$G" "$N" "$*"; }
@@ -88,7 +90,7 @@ echo
 if [ "$QUICK" = 0 ]; then
   echo "Two agents, one symbol (the demo's core moment), on private repo connect-preflight"
   if [ ! -r "$CREDS" ]; then
-    bad "no $CREDS (preflight tokens); see docs/launch/connect-2026/runbook.md"
+    bad "no $CREDS (preflight tokens); see $CONNECT_DECK_DIR/runbook.md (github.com/celador/weft-talks)"
   else
     CREDS="$CREDS" node --input-type=module -e '
       import { readFileSync } from "node:fs";

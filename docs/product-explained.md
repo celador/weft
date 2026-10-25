@@ -48,7 +48,7 @@ The gateway's observer API (spec §9) lists repos, pages events, serves a combin
 
 ## Not decided yet: the commercial product
 
-There is no business model, price, or paying customer today. The one stated direction, marked "unverified / not decided" in the Connect Q&A ([qa.md](launch/connect-2026/qa.md) #14): the protocol stays open, and the natural product is a **hosted coordinator and evidence platform for teams running many agents**, like GitHub hosting around open Git, priced only after learning from the first outside teams (#20: offer it to them free at first). [ROADMAP.md](../ROADMAP.md) targets the first outside organization in production in Q1 2027.
+There is no business model, price, or paying customer today. The one stated direction, marked "unverified / not decided" in the Connect Q&A ([qa.md](https://github.com/celador/weft-talks/blob/main/connect-2026/qa.md) #14, private repo): the protocol stays open, and the natural product is a **hosted coordinator and evidence platform for teams running many agents**, like GitHub hosting around open Git, priced only after learning from the first outside teams (#20: offer it to them free at first). [ROADMAP.md](../ROADMAP.md) targets the first outside organization in production in Q1 2027.
 
 Open questions:
 
