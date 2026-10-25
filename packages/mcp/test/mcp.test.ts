@@ -235,6 +235,38 @@ describe("MCP server against a coordinator (in-process MCP transport, real HTTP 
     expect(logs.join("\n")).toContain("[weft-mcp] serving");
   }, 60_000);
 
+  it("weft_negotiate propose with wait returns at once when the other agent has left (counterpart_away)", async () => {
+    const { coord, url, server: http, changeSignature } = await coordinator();
+    closers.push(() => http.close());
+    changeSignature();
+    coord.bye(coord.log.find((r) => r.kind === "join" && r.agent === "claude-a")!.session!);
+    const left = coord.log.filter((r) => r.kind === "leave").at(-1)!;
+    const root = checkout("mcp-away");
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    const s = await serve({
+      args: ["--dir", root, "--url", url, "--repo", "demo", "--agent", "zed-a", "--task", "T-2", "--title", "cart total", "--debounce", "100", "--tick", "600000"],
+      env: { WEFT_TOKEN: "local-test-token" },
+      transport: serverT,
+      log: () => undefined,
+    });
+    closers.push(() => s.close());
+    const client = new Client({ name: "zed", version: "0.209.0" });
+    await client.connect(clientT);
+    closers.push(() => client.close());
+    await s.ready;
+    const t0 = Date.now();
+    const r = text(
+      await client.callTool({ name: "weft_negotiate", arguments: { action: "propose", kind: "overload", terms: "keep calcTotal(items)", to: "claude-a", keys: ["src/pricing.ts#calcTotal"], wait: 120 } }),
+    );
+    expect(Date.now() - t0).toBeLessThan(5_000);
+    expect(r).toContain("[weft] sent #");
+    expect(r).toContain(`claude-a is not in a session (left at #${left.seq}); nobody will answer until it starts again: retreat, wait, or escalate`);
+    expect(r).toContain("[weft] not waiting 120s for a reply");
+    expect(r).toContain('`weft_negotiate escalate "<why>"`');
+    expect(r).not.toContain(".weft/bin/weft");
+    expect(coord.log.some((x) => x.kind === "negotiate.propose" && x.agent === "zed-a" && x.status === "accepted")).toBe(true);
+  }, 60_000);
+
   it("the bundled stdio server starts, lists the tools and answers weft_status", async () => {
     const { url, server: http } = await coordinator();
     closers.push(() => http.close());

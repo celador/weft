@@ -28,7 +28,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { maxClaimTtl, type AgentRef, type Capabilities, type ClaimCommand, type Diagnostic, type EventDraft, type EventRecord, type InboxItem, type NegotiateCommand, type NegotiationDue, type Verdict, type Welcome } from "@weft/protocol";
+import { maxClaimTtl, notWaiting, type AgentRef, type Capabilities, type ClaimCommand, type Diagnostic, type EventDraft, type EventRecord, type InboxItem, type NegotiateCommand, type NegotiationDue, type Verdict, type Welcome } from "@weft/protocol";
 import { WcpError, PROTOCOL, type Transport } from "./client";
 import { appendAdapterLog, readState, stateDir, withLock, writeState, type Loaded, type SessionState } from "./config";
 import type { BeatResult } from "./heartbeat";
@@ -755,6 +755,7 @@ export class ClaudeAdapter {
   /** `weft negotiate …` run by the model through its shell. Never throws. */
   async negotiate(claudeSession: string, cmd: NegotiateCommand): Promise<CliResult> {
     let sent: number | null = null;
+    let away: Diagnostic | undefined;
     let out: CliResult;
     try {
       out = await withLock(this.root, claudeSession, async () => {
@@ -797,6 +798,7 @@ export class ClaudeAdapter {
           const event: EventDraft = { kind, base_seq: this.effectiveBase(st), payload, tool: { name: "weft-cli", harness_event: "Bash" } };
           const verdict = await this.submit(st, "commit", event, `${kind}-${this.now()}`);
           sent = verdict.seq;
+          away = verdict.diagnostics.find((d) => d.code === "counterpart_away");
           this.log(`${kind} -> #${verdict.seq} ${verdict.verdict}`);
           const after = this.delivered(st, await renderForModel(verdict.diagnostics, verdict.inbox, this.ctx()), verdict.delivered_through, verdict.inbox);
           const head = `[weft] sent #${verdict.seq}: ${verdict.summary ?? kind}`;
@@ -814,6 +816,8 @@ export class ClaudeAdapter {
     }
     const wait = cmd.cmd === "propose" || cmd.cmd === "counter" ? cmd.wait ?? 0 : 0;
     if (out.code !== 0 || !wait || sent === null) return out;
+    // Nobody is in a session to answer (§7.4 counterpart_away): return now instead of polling.
+    if (away) return { text: `${out.text}\n${notWaiting(away, wait, this.deps.cli ?? "weft")}`, code: 0 };
     const reply = await this.waitFor(claudeSession, wait, (i) => i.kind === "negotiation" && Number(i.record?.payload?.reply_to) === sent);
     return { text: `${out.text}\n${reply.text}`, code: reply.code };
   }

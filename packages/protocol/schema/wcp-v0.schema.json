@@ -231,7 +231,8 @@
             "claim_predicted_overlap",
             "contract_changed",
             "trunk_advanced",
-            "agent_paused"
+            "agent_paused",
+            "counterpart_away"
           ]
         },
         "file": {

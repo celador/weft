@@ -1,0 +1,384 @@
+{
+  "name": "negotiation-counterpart-away",
+  "description": "§7.4: a propose or counter whose addressee has no live session is still recorded and accepted, with a counterpart_away warning that names the addressee's leave (or session expiry), so the proposer does not wait for a reply nobody can send; once the addressee is back, the same negotiation gets no warning.",
+  "covers": [
+    "7.4",
+    "8.2",
+    "8.4"
+  ],
+  "repo": "demo",
+  "start": "2026-10-05T14:00:00.000Z",
+  "steps": [
+    {
+      "op": "hello",
+      "as": "A",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "claude-a",
+          "harness": "claude-code"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-1"
+        },
+        "change": "I-a"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s1",
+        "head_seq": 1,
+        "delivered_through": 1
+      }
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "codex-b",
+          "harness": "codex"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s2",
+        "head_seq": 2,
+        "delivered_through": 2
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 2,
+          "writes": [
+            {
+              "key": "src/api/client.ts#fetchWithAuth",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "src/auth/session.ts#refreshToken"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 3
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 1,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "signature"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 4
+      }
+    },
+    {
+      "op": "bye",
+      "as": "A"
+    },
+    {
+      "op": "events",
+      "after": 4,
+      "expect": {
+        "events": [
+          {
+            "seq": 5,
+            "kind": "leave",
+            "agent": "claude-a",
+            "change": "I-a"
+          },
+          {
+            "seq": 6,
+            "kind": "release",
+            "change": "I-a",
+            "payload": {
+              "reason": "session_ended"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "negotiate.propose",
+          "base_seq": 3,
+          "payload": {
+            "to": {
+              "agent": "claude-a"
+            },
+            "keys": [
+              "src/auth/session.ts#refreshToken"
+            ],
+            "terms": {
+              "kind": "overload",
+              "text": "Keep refreshToken(token) as an overload."
+            }
+          }
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 7,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "counterpart_away",
+            "file": "src/auth/session.ts",
+            "symbol": "src/auth/session.ts#refreshToken",
+            "caused_by_seq": 5,
+            "caused_by_agent": "claude-a",
+            "message": "claude-a is not in a session (left at #5); nobody will answer until it starts again: retreat, wait, or escalate",
+            "suggestion": "$any"
+          }
+        ]
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "negotiate.propose",
+          "base_seq": 7,
+          "payload": {
+            "to": {
+              "change": "I-a"
+            },
+            "keys": [
+              "src/auth/session.ts#refreshToken"
+            ],
+            "terms": {
+              "kind": "transfer",
+              "text": "Hand refreshToken to me."
+            }
+          }
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 8,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "counterpart_away",
+            "file": "src/auth/session.ts",
+            "symbol": "src/auth/session.ts#refreshToken",
+            "caused_by_seq": 5,
+            "caused_by_agent": "claude-a",
+            "message": "claude-a is not in a session (left at #5); nobody will answer until it starts again: retreat, wait, or escalate",
+            "suggestion": "$any"
+          }
+        ]
+      }
+    },
+    {
+      "op": "hello",
+      "as": "A2",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "claude-a",
+          "harness": "claude-code"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-1"
+        },
+        "change": "I-a"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s3",
+        "head_seq": 9,
+        "delivered_through": 9
+      }
+    },
+    {
+      "op": "gate",
+      "as": "A2",
+      "gate": "stop",
+      "expect": {
+        "allow": false,
+        "negotiations": [
+          {
+            "seq": 7,
+            "due": "reply"
+          },
+          {
+            "seq": 8,
+            "due": "reply"
+          }
+        ]
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "negotiate.propose",
+          "base_seq": 8,
+          "payload": {
+            "to": {
+              "agent": "claude-a"
+            },
+            "keys": [
+              "src/auth/session.ts#refreshToken"
+            ],
+            "terms": {
+              "kind": "share",
+              "text": "Let us both edit refreshToken."
+            }
+          }
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 10,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A2",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "negotiate.counter",
+          "base_seq": 9,
+          "payload": {
+            "reply_to": 7,
+            "terms": {
+              "kind": "overload",
+              "text": "Overload after my checkpoint."
+            }
+          }
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 11,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "bye",
+      "as": "B"
+    },
+    {
+      "op": "events",
+      "after": 11,
+      "expect": {
+        "events": [
+          {
+            "seq": 12,
+            "kind": "leave",
+            "agent": "codex-b"
+          },
+          {
+            "seq": 13,
+            "kind": "release",
+            "change": "I-b"
+          }
+        ]
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A2",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "negotiate.counter",
+          "base_seq": 11,
+          "payload": {
+            "reply_to": 8,
+            "terms": {
+              "kind": "share",
+              "text": "Share instead of transfer."
+            }
+          }
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 14,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "counterpart_away",
+            "file": "src/auth/session.ts",
+            "symbol": "src/auth/session.ts#refreshToken",
+            "caused_by_seq": 12,
+            "caused_by_agent": "codex-b",
+            "message": "codex-b is not in a session (left at #12); nobody will answer until it starts again: retreat, wait, or escalate",
+            "suggestion": "$any"
+          }
+        ]
+      }
+    }
+  ]
+}

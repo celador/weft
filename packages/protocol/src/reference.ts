@@ -6,7 +6,7 @@
 
 import { ownedElsewhere, ownerNotice, sameNotice, type ConflictMode } from "./ownership";
 import { renderContext, renderDue } from "./context";
-import { addresseeOf, agreementOf, negotiationDues } from "./negotiation";
+import { addresseeOf, agreementOf, answererOf, counterpartAway, negotiationDues } from "./negotiation";
 import { WcpProtocolError } from "./errors";
 import { fileOf } from "./summary";
 import { contractError, RELEASABLE } from "./contract";
@@ -638,6 +638,13 @@ export class ReferenceCoordinator {
       });
       return out;
     }
+    // A propose/counter whose addressee has no live session is recorded, with a warning (§7.4).
+    const ask = answererOf(e, (n) => this.record(n));
+    if (ask) {
+      const away = this.counterpartAway(ask.to, ask.keys);
+      if (away) out.push(away);
+      return out;
+    }
     // An `intent` that carries reads is a reads amendment (§6.2 R2a): checked like R2, never rejected.
     const amendment = e.kind === "intent" && (e.reads?.length ?? 0) > 0;
     if (e.kind !== "edit" && e.kind !== "claim" && !amendment) return out;
@@ -887,6 +894,22 @@ export class ReferenceCoordinator {
       if (os.inbox.some((i) => i.diagnostic !== undefined && sameNotice(i.diagnostic, notice))) continue;
       this.push(os, { seq: d.caused_by_seq, kind: "diagnostic", diagnostic: notice });
     }
+  }
+
+  /** `counterpart_away` when nobody live can answer a negotiation addressed to `to` (§7.4). */
+  private counterpartAway(to: { agent?: string; change?: string }, keys: SymbolKey[]): Diagnostic | undefined {
+    if (this.sessionsOf(to).length) return undefined;
+    const theirs = (r: EventRecord) => (to.change ? r.change === to.change : r.agent === to.agent);
+    let left: EventRecord | undefined;
+    let seen: Seq | undefined;
+    for (let i = this.log.length - 1; i >= 0 && !left; i--) {
+      const r = this.log[i]!;
+      if (!theirs(r)) continue;
+      seen ??= r.seq;
+      if (r.kind === "leave" && r.status === "accepted") left = r;
+    }
+    const who = to.agent ?? (to.change ? this.changes.get(to.change)?.agent : undefined) ?? to.change ?? "the other agent";
+    return counterpartAway({ who, keys, ...(left ? { left } : {}), seen: seen ?? this.head });
   }
 
   private sessionsOf(t: { agent?: string; change?: string }): Session[] {

@@ -2,7 +2,7 @@
 // adapters (spec §7.4 negotiation, §7.6 escalation, §8.4 negotiation dues). Pure functions
 // over log records, so every coordinator derives threads, agreements and dues identically.
 
-import type { AgentRef, EventRecord, NegotiationDue, NegotiationTerms, Seq, SymbolKey } from "./types";
+import type { AgentRef, Diagnostic, EventRecord, NegotiationDue, NegotiationTerms, Seq, SymbolKey } from "./types";
 
 export const NEGOTIATION_KINDS = ["negotiate.propose", "negotiate.counter", "negotiate.accept", "negotiate.reject", "negotiate.escalate"] as const;
 export const TERMS_KINDS: NegotiationTerms["kind"][] = ["overload", "transfer", "share", "sequence", "merge_tasks", "other"];
@@ -89,6 +89,57 @@ export function negotiationDues(o: {
     }
   }
   return out;
+}
+
+/**
+ * Who a draft `negotiate.propose`/`negotiate.counter` asks for an answer, and the keys of its
+ * thread. Undefined for every other kind (or a counter whose parent is unknown).
+ */
+export function answererOf(e: { kind: string; payload?: Record<string, unknown> }, record: Lookup): { to: AgentRef; keys: SymbolKey[] } | undefined {
+  const p = e.payload ?? {};
+  if (e.kind === "negotiate.propose") return { to: (p.to as AgentRef) ?? {}, keys: (p.keys as SymbolKey[] | undefined) ?? [] };
+  if (e.kind !== "negotiate.counter") return undefined;
+  const parent = record(Number(p.reply_to));
+  if (!parent) return undefined;
+  const to: AgentRef = { ...(parent.agent ? { agent: parent.agent } : {}), ...(parent.change ? { change: parent.change } : {}) };
+  return { to, keys: (threadRoot(parent, record).payload?.keys as SymbolKey[] | undefined) ?? [] };
+}
+
+/**
+ * `counterpart_away` warning (spec §7.4): the propose/counter was recorded, but its addressee
+ * has no live session, so nobody will answer until that agent starts again. `left` is the
+ * addressee's latest `leave` record; without one, `seen` is its latest record of any kind.
+ * Adapters stop waiting for the reply when the verdict carries this code.
+ */
+export function counterpartAway(o: { who: string; keys: SymbolKey[]; left?: EventRecord; seen: Seq }): Diagnostic {
+  const symbol = o.keys[0] ?? "";
+  const expired = o.left?.intent === "session expired";
+  const when = o.left ? ` (${expired ? "its session expired" : "left"} at #${o.left.seq})` : "";
+  return {
+    severity: "warning",
+    code: "counterpart_away",
+    file: symbol.includes("#") ? symbol.slice(0, symbol.indexOf("#")) : "",
+    symbol,
+    message: `${o.who} is not in a session${when}; nobody will answer until it starts again: retreat, wait, or escalate`,
+    caused_by_seq: o.left?.seq ?? o.seen,
+    caused_by_agent: o.who,
+    suggestion:
+      `Do not wait for a reply now. Retreat (rework without ${o.keys.length ? o.keys.join(", ") : "that code"}), ` +
+      `wait (your proposal stays in the log and ${o.who} owes the answer when it starts again; do other work meanwhile), ` +
+      `or escalate (the coordinator merges your two tasks).`,
+  };
+}
+
+/**
+ * What a waiting CLI prints instead of polling `wait` seconds when the verdict carries
+ * `counterpart_away`: nobody can answer, so it returns at once with the options.
+ */
+export function notWaiting(away: Diagnostic, wait: number, cli: string): string {
+  return (
+    `[weft] not waiting ${wait}s for a reply: ${away.caused_by_agent} is not in a session, so nobody is there to answer. ` +
+    `Options: retreat (rework without that code) | wait (do other work; \`${cli} inbox\` shows the reply once ${away.caused_by_agent} is back and answers) | ` +
+    `escalate: \`${cli} negotiate escalate "<why>"\` (the coordinator merges your two tasks).`
+  );
 }
 
 // ------------------------------------------------------------------ adapter CLI drafts

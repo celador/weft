@@ -29,6 +29,7 @@ export const DIAGNOSTIC_CODES = [
   "contract_changed",
   "trunk_advanced",
   "agent_paused",
+  "counterpart_away",
 ] as const;
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number];
 

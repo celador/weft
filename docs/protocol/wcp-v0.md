@@ -212,6 +212,7 @@ event) that produced the diagnostic — every squiggle is traceable.
 | `contract_changed` | warning (pushed) | someone changed the signature of / deleted a symbol your change writes or claims, or uses where §6.3 opens no error | §6.3 |
 | `trunk_advanced` | info (pushed) | a landing/revert touched symbols your change reads, writes or claims; `requires_rebase` | §6.3 |
 | `agent_paused` | error | a human paused this agent; edits/claims/checkpoints are refused | R0 |
+| `counterpart_away` | warning | your `negotiate.propose`/`negotiate.counter` was recorded, but its addressee has no live session, so nobody can answer until it starts again; `caused_by_seq` is its latest `leave` (or latest record) | §7.4 |
 
 Receivers MUST treat an unknown code by its `severity` (§10).
 
@@ -515,6 +516,13 @@ two tasks — §7.6).
     naturally on its next accepted edit.)
   - On `transfer`/`share`, both parties' open errors on the keys are cleared.
 - Every negotiation record is delivered to its addressee's inbox (`kind:"negotiation"`).
+- Presence: when a `propose` or `counter` is submitted and its addressee (a propose's `to`,
+  a counter's parent author; matched by change, else agent) has no live session, the
+  record is still accepted and the verdict carries a `counterpart_away` **warning** citing
+  the addressee's latest `leave` record ("claude-a is not in a session (left at #3); nobody
+  will answer until it starts again: retreat, wait, or escalate"). The proposal stays owed
+  (§8.4): the addressee's stop gate lists it in its next session. An adapter that was asked
+  to wait for the reply (`--wait`) MUST return at once instead of polling.
 
 ### 7.5 Claims
 

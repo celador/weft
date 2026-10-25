@@ -139,6 +139,7 @@ export const schema: JsonSchema = {
           "contract_changed",
           "trunk_advanced",
           "agent_paused",
+          "counterpart_away",
         ),
         file: { type: "string" },
         range: ref("Range"),
