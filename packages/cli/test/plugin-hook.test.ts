@@ -62,6 +62,18 @@ describe("plugin manifests", () => {
     expect(market.metadata.version).toBe(entry.version);
   });
 
+  it("pin the CLI the commands run to this repo's @celador/weft version (the directory blocks unpinned npx)", () => {
+    const cli = json(join(repo, "packages/cli/package.json"));
+    for (const f of ["setup.md", "status.md"]) {
+      const md = readFileSync(join(plugin, "commands", f), "utf8");
+      const pins = [...md.matchAll(/@celador\/weft@([^\s:`)]+)/g)].map((m) => m[1]);
+      expect(pins.length, f).toBeGreaterThan(0);
+      for (const v of pins) expect(v, `${f}: bump the pinned @celador/weft@${v} to ${cli.version}`).toBe(cli.version);
+      expect(md, f).toContain(`allowed-tools: Bash(npx -y @celador/weft@${cli.version}:*)`);
+    }
+    expect(readFileSync(join(plugin, "README.md"), "utf8")).toContain(`@celador/weft@${cli.version}`);
+  });
+
   it("point every hook at the launcher with the right harness", () => {
     for (const [m, harness, root] of [
       [claude, "claude-code", "${CLAUDE_PLUGIN_ROOT}"],
