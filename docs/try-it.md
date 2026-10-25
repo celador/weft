@@ -45,12 +45,20 @@ First run:
 
 ## See a squiggle in two minutes
 
-In the first checkout, ask the agent to change a function's signature; in the second, ask its
-agent to use that function the old way:
+No repo handy, or want the known-good collision first? This writes a two-file sample repo
+(`./weft-demo`, plus `./weft-demo-2` as the second checkout), sets it up the same way, and prints
+the two prompts to give your agents:
 
 ```sh
-cd ~/code/shop   && claude -p "In src/pricing.ts, make calcTotal take a second parameter opts: { taxRate: number }." --permission-mode acceptEdits
-cd ~/code/shop-2 && claude -p "In src/cart.ts, show the cart total computed with calcTotal(items) from ./pricing." --permission-mode acceptEdits
+npx @celador/weft demo
+```
+
+In your own repo: in the first checkout, ask the agent to change a function's signature; in the
+second, ask its agent to use that function the old way. With the demo repo:
+
+```sh
+cd weft-demo   && claude -p "In src/pricing.ts, make calcTotal take a second parameter opts: { taxRate: number }." --permission-mode acceptEdits
+cd weft-demo-2 && claude -p "In src/cart.ts, show the cart total computed with calcTotal(items) from ./pricing." --permission-mode acceptEdits
 ```
 
 The second agent's edit is refused before it reaches the disk, with a `stale_assumption`
@@ -102,6 +110,7 @@ The per-harness config files are in [packages/mcp/README.md](../packages/mcp/REA
 |---|---|
 | `npx @celador/weft status` | gateway, space, checkouts, recent events, the feed link |
 | `npx @celador/weft feed` | the live feed in your terminal |
+| `npx @celador/weft demo [dir]` | a two-file sample repo with two checkouts, set up, and the prompts that make two agents collide |
 | `npx @celador/weft add [name]` | another worktree for one more parallel agent |
 | `npx @celador/weft mcp` | Weft's MCP server for this checkout (agents with MCP but no hooks) |
 | `npx @celador/weft uninstall [--space]` | remove Weft from the repo (`--space` also deletes the space) |

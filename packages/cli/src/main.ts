@@ -1,6 +1,7 @@
 // `npx @celador/weft`: one command from a git repo to coordinated coding agents.
 //
 //   weft [--local] [--url URL] [--agents N] [--harness a,b] [--repo NAME] [--yes] [--no-open]
+//   weft demo [DIR]         a two-file sample repo (./weft-demo), set up, with the collision to try
 //   weft add [NAME]         another worktree (one per parallel agent), Weft installed
 //   weft status             gateway, space, checkouts, recent events, feed link
 //   weft feed               live feed in the terminal
@@ -13,7 +14,7 @@
 //   weft use hosted|local|URL   choose the default gateway
 import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { Api, statusOf, type FeedEvent } from "./api";
 import { MCP, WATCHER, adapterBin, detectHarnesses, ensureRuntime, harnessName, HARNESSES, installAdapter, installedIn, removeAdapters, startOrder, type HarnessId } from "./adapters";
@@ -38,7 +39,7 @@ type Opts = {
 export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
   const o: Opts = { local: false, yes: false, open: true, space: false, positional: [] };
   let cmd = "init";
-  const known = new Set(["init", "add", "status", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "help", "version"]);
+  const known = new Set(["init", "demo", "add", "status", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "help", "version"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     const val = () => {
@@ -78,6 +79,8 @@ ${c.bold("npx @celador/weft")}            in a git repo: free hosted space, hook
   --url URL                   use another Weft gateway
   --yes / --no-open           no questions / do not open the browser
 
+  demo [DIR]                  no repo handy? a two-file sample repo (./weft-demo) set up the same
+                              way, with the two prompts that make the agents collide
   add [NAME]                  another worktree for one more parallel agent
   status                      what is set up here, and the feed link
   feed                        live feed in this terminal
@@ -180,7 +183,7 @@ export function nextNotes(order: Array<{ id: string; name: string; run: string; 
   return lines.join("\n");
 }
 
-async function init(o: Opts, addName?: string | true): Promise<void> {
+async function init(o: Opts, addName?: string | true): Promise<string[]> {
   const cwd = resolve(o.dir ?? process.cwd());
   const top = gitRoot(cwd);
   const main = mainCheckout(top);
@@ -245,6 +248,50 @@ async function init(o: Opts, addName?: string | true): Promise<void> {
   for (const co of checkouts) console.log(`  ${c.dim("$")} cd ${tilde(co.root)} && ${first.run}`);
   console.log(nextNotes(order, checkouts.map((co) => co.root)));
   if (o.open) openUrl(link);
+  return checkouts.map((co) => co.root);
+}
+
+// ------------------------------------------------------------------ demo
+
+/** The sample repo `weft demo` writes: one function, and a second file that will call it. Exported for tests. */
+export const DEMO_FILES: Record<string, string> = {
+  "package.json": '{ "name": "weft-demo", "private": true, "type": "module" }\n',
+  "src/pricing.ts": "export type Item = { price: number; qty: number };\n\nexport function calcTotal(items: Item[]): number {\n  return items.reduce((s, i) => s + i.price * i.qty, 0);\n}\n",
+  "src/cart.ts": 'import type { Item } from "./pricing";\n\nexport function renderCart(items: Item[]): string {\n  return items.map((i) => `${i.qty} x ${i.price}`).join("\\n");\n}\n',
+  "README.md": "# weft-demo\n\nA two-file sample repo made by `npx @celador/weft demo`. See https://github.com/celador/weft/blob/main/docs/try-it.md\n",
+};
+export const DEMO_PROMPTS = [
+  "In src/pricing.ts, make calcTotal take a second parameter opts: { taxRate: number } and multiply the total by (1 + opts.taxRate). Only edit src/pricing.ts.",
+  "In src/cart.ts, add an exported function cartTotal(items: Item[]): string that returns calcTotal(items) from ./pricing formatted with toFixed(2).",
+];
+
+/** Create (or reuse) the sample repo with one commit. Works without a git identity. Returns its path. */
+export function makeDemoRepo(dir: string): string {
+  const root = resolve(dir);
+  if (existsSync(join(root, ".git"))) {
+    if (!existsSync(join(root, "src", "pricing.ts"))) throw new WeftError(`${tilde(root)} is already a git repo, and not a Weft demo`, "Pick another directory: npx @celador/weft demo <dir>");
+    info(`demo repo ${c.bold(tilde(root))} ${c.dim("(already there)")}`);
+    return root;
+  }
+  if (existsSync(root) && readdirSync(root).length) throw new WeftError(`${tilde(root)} exists and is not empty`, "Pick another directory: npx @celador/weft demo <dir>");
+  for (const [f, text] of Object.entries(DEMO_FILES)) {
+    mkdirSync(dirname(join(root, f)), { recursive: true });
+    writeFileSync(join(root, f), text);
+  }
+  git(root, ["init", "-q"]);
+  git(root, ["add", "-A"]);
+  // A first-time git user has no user.name/email; the demo commit must not fail on that.
+  git(root, ["-c", "user.name=weft demo", "-c", "user.email=demo@weft.invalid", "commit", "-q", "-m", "weft demo"]);
+  ok(`demo repo ${c.bold(tilde(root))} ${c.dim("(src/pricing.ts, src/cart.ts)")}`);
+  return root;
+}
+
+async function demo(o: Opts): Promise<void> {
+  const root = makeDemoRepo(o.positional[0] ?? join(resolve(o.dir ?? process.cwd()), "weft-demo"));
+  const roots = await init({ ...o, dir: root, agents: Math.max(2, o.agents ?? 2) });
+  console.log(c.bold("Make them collide:") + " ask the agent in each checkout, in this order:");
+  roots.slice(0, 2).forEach((r, i) => console.log(`  ${c.dim(tilde(r) + ":")} ${DEMO_PROMPTS[i]}`));
+  console.log(c.dim("The second agent's edit is stopped with a stale_assumption squiggle and the first agent's diff; the feed shows both.\n"));
 }
 
 // ------------------------------------------------------------------ status / feed
@@ -442,6 +489,9 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     case "init":
       await init(o);
+      return 0;
+    case "demo":
+      await demo(o);
       return 0;
     case "add":
       await init({ ...o, open: false }, o.positional[0] ?? true);

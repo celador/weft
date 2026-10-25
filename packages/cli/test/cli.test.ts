@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { detectHarnesses, HARNESSES, pruneHooks, startOrder } from "../src/adapters";
-import { main, mcpArgs, nextNotes, parseArgs } from "../src/main";
+import { DEMO_FILES, DEMO_PROMPTS, main, mcpArgs, nextNotes, parseArgs } from "../src/main";
 import { slug } from "../src/util";
 
 describe("parseArgs", () => {
@@ -75,6 +75,10 @@ describe("pruneHooks", () => {
       },
     };
     expect(pruneHooks(settings)).toEqual({ permissions: { allow: ["Bash(ls)"] }, hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "./my-lint.sh" }] }] } });
+  });
+  it("drops the allow rules the Claude Code adapter adds for .weft/bin/weft", () => {
+    expect(pruneHooks({ permissions: { allow: ["Bash(ls)", "Bash(.weft/bin/weft:*)", "Bash(/r/shop/.weft/bin/weft:*)"] } })).toEqual({ permissions: { allow: ["Bash(ls)"] } });
+    expect(pruneHooks({ permissions: { allow: ["Bash(.weft/bin/weft:*)"] } })).toEqual({});
   });
   it("prunes to empty when everything was Weft's", () => {
     expect(pruneHooks({ hooks: { Stop: [{ hooks: [{ type: "command", command: "node weft-cursor.mjs hook" }] }] } })).toEqual({});
@@ -172,6 +176,7 @@ describe("weft (init / status / add / uninstall) against a stand-in gateway", ()
       expect(cfg).toMatchObject({ url, repo: "sp0000000001-shop", agent: dir === repo ? "shop" : "shop-2" });
       expect(readFileSync(join(dir, ".weft/token"), "utf8").trim()).toMatch(/^weft_agent_/);
       expect(readFileSync(join(dir, ".claude/settings.local.json"), "utf8")).toContain("weft-claude.mjs hook");
+      expect(JSON.parse(readFileSync(join(dir, ".claude/settings.local.json"), "utf8")).permissions.allow).toContain("Bash(.weft/bin/weft:*)");
       // hooks run the per-version runtime copy, not npx's cache
       expect(readFileSync(join(dir, ".claude/settings.local.json"), "utf8")).toContain(join(realpathSync(base), "config", "runtime"));
     }
@@ -204,6 +209,40 @@ describe("weft (init / status / add / uninstall) against a stand-in gateway", ()
   it("add creates one more worktree with Weft installed", async () => {
     expect(await main(["add", "reviewer", "--url", url, "--dir", repo, "--harness", "claude-code"])).toBe(0);
     expect(JSON.parse(readFileSync(join(base, "shop-reviewer/.weft/space.json"), "utf8"))).toMatchObject({ agent: "shop-reviewer" });
+  });
+
+  it("demo makes a two-file sample repo without a git identity, sets up two checkouts, and prints the collision prompts", async () => {
+    // A stranger's first git use: no user.name / user.email anywhere.
+    const emptyCfg = join(base, "empty.gitconfig");
+    writeFileSync(emptyCfg, "");
+    const saved = { g: process.env.GIT_CONFIG_GLOBAL, s: process.env.GIT_CONFIG_NOSYSTEM };
+    process.env.GIT_CONFIG_GLOBAL = emptyCfg;
+    process.env.GIT_CONFIG_NOSYSTEM = "1";
+    logs.length = 0;
+    try {
+      expect(await main(["demo", "--url", url, "--dir", base, "--yes", "--no-open", "--harness", "claude-code"])).toBe(0);
+    } finally {
+      if (saved.g === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = saved.g;
+      if (saved.s === undefined) delete process.env.GIT_CONFIG_NOSYSTEM;
+      else process.env.GIT_CONFIG_NOSYSTEM = saved.s;
+    }
+    const d = join(base, "weft-demo");
+    for (const f of Object.keys(DEMO_FILES)) expect(readFileSync(join(d, f), "utf8")).toBe(DEMO_FILES[f]);
+    expect(execFileSync("git", ["-C", d, "log", "--oneline"], { encoding: "utf8" })).toContain("weft demo");
+    for (const dir of [d, join(base, "weft-demo-2")]) {
+      expect(readFileSync(join(dir, ".claude/settings.local.json"), "utf8")).toContain("weft-claude.mjs hook");
+      expect(JSON.parse(readFileSync(join(dir, ".weft/space.json"), "utf8"))).toMatchObject({ name: "weft-demo" });
+    }
+    const out = logs.join("\n");
+    expect(out).toContain(DEMO_PROMPTS[0]);
+    expect(out).toContain(DEMO_PROMPTS[1]);
+    // run again: reuses the repo instead of failing
+    expect(await main(["demo", "--url", url, "--dir", base, "--yes", "--no-open", "--harness", "claude-code"])).toBe(0);
+    expect(logs.join("\n")).toContain("already there");
+    // never writes into someone else's repo
+    await expect(main(["demo", repo, "--url", url, "--yes", "--no-open"])).rejects.toThrow(/not a Weft demo/);
+    await main(["uninstall", "--dir", d, "--yes"]);
   });
 
   it("status prints the setup without secrets", async () => {

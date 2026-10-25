@@ -33,6 +33,7 @@ Website: <https://weft.mx> · Source: <https://github.com/celador/weft>
 | Command | What it does |
 |---|---|
 | `npx @celador/weft` | set up this repo (space, hooks, feed link); safe to run again |
+| `npx @celador/weft demo [dir]` | no repo handy: a two-file sample repo (`./weft-demo` + a second checkout), set up, with the two prompts that make the agents collide |
 | `npx @celador/weft add [name]` | one more worktree for another parallel agent |
 | `npx @celador/weft status` | gateway, space, checkouts, recent events, feed link |
 | `npx @celador/weft feed` | the live feed in your terminal |

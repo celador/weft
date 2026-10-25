@@ -119,7 +119,10 @@ export function installedIn(root: string): Array<HarnessId | "mcp"> {
 
 const hasMark = (v: unknown) => typeof v === "string" && MARKS.some((m) => v.includes(m));
 
-/** Drop hook entries whose command runs a Weft adapter; drop entries/groups left empty. */
+/** Claude Code `permissions.allow` rules the adapter adds for the agent's Weft command. */
+const isWeftAllow = (v: unknown) => typeof v === "string" && /^Bash\(.*\.weft\/bin\/weft:\*\)$/.test(v);
+
+/** Drop hook entries whose command runs a Weft adapter (and Weft's allow rules); drop entries/groups left empty. */
 export function pruneHooks(v: unknown): unknown {
   if (Array.isArray(v)) {
     const out: unknown[] = [];
@@ -130,7 +133,7 @@ export function pruneHooks(v: unknown): unknown {
         const pruned = pruneHooks(o) as Record<string, unknown>;
         if (Array.isArray(o.hooks) && o.hooks.length && !(Array.isArray(pruned.hooks) && pruned.hooks.length)) continue;
         out.push(pruned);
-      } else if (!hasMark(item)) out.push(item);
+      } else if (!hasMark(item) && !isWeftAllow(item)) out.push(item);
     }
     return out;
   }
