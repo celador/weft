@@ -30,10 +30,19 @@ errors (`--no-verify` bypasses it).
 
 ## Configure
 
-Every harness below starts the server the same way:
+The server ships in the `@celador/weft` npm package (`@weft/mcp` is the workspace name and is
+not published). After `npx @celador/weft` has set up the repo, this is all a harness needs:
 
 ```sh
-npx -y @weft/mcp --dir /path/to/checkout --url https://weft.example --repo myrepo --agent zed-a --task T-12 --title "Session expiry"
+npx -y @celador/weft mcp --dir /path/to/checkout
+```
+
+It fills `--url`, `--repo`, `--agent` and `--task` from the checkout's `.weft/space.json` and
+reads the agent key from `.weft/token`. Any flag you pass wins. Without that setup, every harness
+below starts the server the same way, with the flags spelled out:
+
+```sh
+npx -y @celador/weft mcp --dir /path/to/checkout --url https://weft.example --repo myrepo --agent zed-a --task T-12 --title "Session expiry"
 ```
 
 - **Checkout**: `--dir`, else `WEFT_ROOT`, else the server's working directory, else the first
@@ -50,7 +59,7 @@ npx -y @weft/mcp --dir /path/to/checkout --url https://weft.example --repo myrep
   diagnostics are pushed into the session as `<channel source="weft">` events instead of waiting
   for the next tool call. Needs `claude --dangerously-load-development-channels server:weft`.
 
-Once installed in a checkout, `npx -y @weft/mcp` with no flags is enough (the config is read
+Once installed in a checkout, `npx -y @celador/weft mcp` with no flags is enough (the config is read
 from `.weft/mcp.json`).
 
 ### Zed (`settings.json`, `context_servers`)
@@ -60,7 +69,7 @@ from `.weft/mcp.json`).
   "context_servers": {
     "weft": {
       "command": "npx",
-      "args": ["-y", "@weft/mcp", "--dir", "/path/to/checkout", "--url", "https://weft.example", "--repo", "myrepo", "--agent", "zed-a", "--task", "T-12"],
+      "args": ["-y", "@celador/weft", "mcp", "--dir", "/path/to/checkout", "--url", "https://weft.example", "--repo", "myrepo", "--agent", "zed-a", "--task", "T-12"],
       "env": {}
     }
   }
@@ -75,7 +84,7 @@ profile.
 ```json
 {
   "mcpServers": {
-    "weft": { "command": "npx", "args": ["-y", "@weft/mcp", "--agent", "claude-mcp", "--repo", "myrepo", "--url", "https://weft.example", "--task", "T-12"] }
+    "weft": { "command": "npx", "args": ["-y", "@celador/weft", "mcp", "--agent", "claude-mcp", "--repo", "myrepo", "--url", "https://weft.example", "--task", "T-12"] }
   }
 }
 ```
@@ -88,7 +97,7 @@ an extra, or where hooks are disabled by policy.
 ```toml
 [mcp_servers.weft]
 command = "npx"
-args = ["-y", "@weft/mcp", "--dir", "/path/to/checkout", "--url", "https://weft.example", "--repo", "myrepo", "--agent", "codex-mcp", "--task", "T-12"]
+args = ["-y", "@celador/weft", "mcp", "--dir", "/path/to/checkout", "--url", "https://weft.example", "--repo", "myrepo", "--agent", "codex-mcp", "--task", "T-12"]
 ```
 
 ### Cursor (`.cursor/mcp.json`)
@@ -96,7 +105,7 @@ args = ["-y", "@weft/mcp", "--dir", "/path/to/checkout", "--url", "https://weft.
 ```json
 {
   "mcpServers": {
-    "weft": { "command": "npx", "args": ["-y", "@weft/mcp", "--url", "https://weft.example", "--repo", "myrepo", "--agent", "cursor-mcp", "--task", "T-12"] }
+    "weft": { "command": "npx", "args": ["-y", "@celador/weft", "mcp", "--url", "https://weft.example", "--repo", "myrepo", "--agent", "cursor-mcp", "--task", "T-12"] }
   }
 }
 ```
@@ -109,7 +118,7 @@ args = ["-y", "@weft/mcp", "--dir", "/path/to/checkout", "--url", "https://weft.
     "weft": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@weft/mcp", "--dir", "${workspaceFolder}", "--url", "https://weft.example", "--repo", "myrepo", "--agent", "copilot-mcp", "--task", "T-12"]
+      "args": ["-y", "@celador/weft", "mcp", "--dir", "${workspaceFolder}", "--url", "https://weft.example", "--repo", "myrepo", "--agent", "copilot-mcp", "--task", "T-12"]
     }
   }
 }
@@ -120,7 +129,7 @@ args = ["-y", "@weft/mcp", "--dir", "/path/to/checkout", "--url", "https://weft.
 ```json
 {
   "mcpServers": {
-    "weft": { "command": "npx", "args": ["-y", "@weft/mcp", "--dir", "/path/to/checkout", "--url", "https://weft.example", "--repo", "myrepo", "--agent", "junie-a", "--task", "T-12"] }
+    "weft": { "command": "npx", "args": ["-y", "@celador/weft", "mcp", "--dir", "/path/to/checkout", "--url", "https://weft.example", "--repo", "myrepo", "--agent", "junie-a", "--task", "T-12"] }
   }
 }
 ```
@@ -132,7 +141,7 @@ args = ["-y", "@weft/mcp", "--dir", "/path/to/checkout", "--url", "https://weft.
   "mcpServers": {
     "weft": {
       "command": "npx",
-      "args": ["-y", "@weft/mcp", "--url", "https://weft.example", "--repo", "myrepo", "--agent", "warp-a", "--task", "T-12"],
+      "args": ["-y", "@celador/weft", "mcp", "--url", "https://weft.example", "--repo", "myrepo", "--agent", "warp-a", "--task", "T-12"],
       "working_directory": "/path/to/checkout"
     }
   }

@@ -1,0 +1,18 @@
+import { spawn } from "node:child_process";
+const p = spawn("npx", ["-y", "--package=/tmp/weft-cold/celador-weft-0.2.0.tgz", "weft", "mcp", "--dir", "/tmp/weft-cold/d/weft-demo"], { env: { ...process.env, HOME: "/tmp/weft-cold/home" }, stdio: ["pipe", "pipe", "pipe"] });
+let buf = ""; const got = [];
+p.stdout.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\n")) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); if (l.trim()) got.push(JSON.parse(l)); } });
+let err = ""; p.stderr.on("data", (d) => (err += d));
+const send = (m) => p.stdin.write(JSON.stringify(m) + "\n");
+const t0 = Date.now();
+send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "smoke", version: "0" } } });
+const wait = async (id) => { while (!got.find((m) => m.id === id)) { if (Date.now() - t0 > 60000) throw new Error("timeout; stderr: " + err.slice(-500)); await new Promise((r) => setTimeout(r, 100)); } return got.find((m) => m.id === id); };
+const init = await wait(1);
+console.log("server", JSON.stringify(init.result.serverInfo), "after", Date.now() - t0, "ms");
+send({ jsonrpc: "2.0", method: "notifications/initialized" });
+send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+console.log("tools", (await wait(2)).result.tools.map((t) => t.name).join(","));
+send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "weft_status", arguments: {} } });
+console.log("weft_status:", JSON.stringify((await wait(3)).result.content[0].text).slice(0, 400));
+p.kill();
+process.exit(0);

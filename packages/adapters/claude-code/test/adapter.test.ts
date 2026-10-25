@@ -10,7 +10,7 @@ import { analyzeChanges, unifiedDiff, importReads } from "../src/analysis";
 import { ADVISORY_CAPABILITIES, CAPABILITIES, ClaudeAdapter, type HookInput } from "../src/hooks";
 import { proposedText, isGitCommit } from "../src/edits";
 import { locateUse, locateDeclaration, quoteDiff } from "../src/render";
-import { mergeSettings } from "../src/cli";
+import { mergeSettings, weftAllowRules } from "../src/cli";
 import type { Loaded } from "../src/config";
 import { CART_V1, PRICING_V1, PRICING_V2, checkout, refTransport, serve } from "./helpers";
 import type { Transport } from "../src/client";
@@ -305,6 +305,16 @@ describe("Claude Code hooks against the reference coordinator", () => {
 describe("installer, git hooks and the bundled CLI", () => {
   const servers: Array<{ close: () => void }> = [];
   afterAll(() => servers.forEach((s) => s.close()));
+
+  it("mergeSettings lets the agent run its Weft command without a prompt, keeping the user's rules", () => {
+    const rules = weftAllowRules(["/r/shop/.weft/bin/weft", "/r/shop/.weft/bin/weft"]);
+    expect(rules).toEqual(["Bash(.weft/bin/weft:*)", "Bash(/r/shop/.weft/bin/weft:*)"]);
+    const once = mergeSettings({ permissions: { allow: ["Bash(ls)", "Bash(/old/.weft/bin/weft:*)"], deny: ["Read(.env)"] } }, "node /x/weft-claude.mjs hook", rules) as any;
+    expect(once.permissions).toEqual({ allow: ["Bash(ls)", ...rules], deny: ["Read(.env)"] });
+    const twice = mergeSettings(once, "node /x/weft-claude.mjs hook", rules) as any;
+    expect(twice.permissions.allow).toEqual(["Bash(ls)", ...rules]);
+    expect((mergeSettings({}, "node /x/weft-claude.mjs hook") as any).permissions).toBeUndefined();
+  });
 
   it("mergeSettings replaces previous weft entries and keeps foreign hooks", () => {
     const merged = mergeSettings({ model: "x", hooks: { Stop: [{ hooks: [{ type: "command", command: "echo mine" }] }, { hooks: [{ type: "command", command: "node /old/weft-claude.mjs hook" }] }] } }, "node /new/weft-claude.mjs hook") as any;

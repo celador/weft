@@ -251,7 +251,12 @@ function statePath(root: string, claudeSession: string): string {
 
 export function readState(root: string, claudeSession: string): SessionState {
   try {
-    return JSON.parse(readFileSync(statePath(root, claudeSession), "utf8")) as SessionState;
+    const st = JSON.parse(readFileSync(statePath(root, claudeSession), "utf8")) as SessionState;
+    // Several adapters share .weft/state/ in one checkout (npx @celador/weft installs all of
+    // them), and `.weft/bin/weft` is one adapter's CLI: a file another adapter wrote names its
+    // session under its own key (codexSession). Keep the id it was read by, or writeState throws.
+    if (typeof st.claudeSession !== "string") st.claudeSession = claudeSession;
+    return st;
   } catch {
     return { claudeSession, base: 0, acked: 0, pending: {}, lastContact: 0 };
   }

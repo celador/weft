@@ -255,6 +255,9 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
     devDependencies:
+      '@weft/adapter-antigravity':
+        specifier: workspace:*
+        version: link:../adapters/antigravity
       '@weft/adapter-claude-code':
         specifier: workspace:*
         version: link:../adapters/claude-code
@@ -279,6 +282,9 @@ importers:
       '@weft/gateway':
         specifier: workspace:*
         version: link:../../apps/gateway
+      '@weft/mcp':
+        specifier: workspace:*
+        version: link:../mcp
       esbuild:
         specifier: ^0.25.4
         version: 0.25.4

@@ -1,14 +1,14 @@
 // CLI tests: argument parsing, hook pruning, and the whole `weft` flow (space, repo,
 // worktree, adapter install, status, uninstall) against a stand-in gateway on localhost.
 // The real gateway's space API is tested in apps/gateway/test/spaces.test.ts.
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { pruneHooks } from "../src/adapters";
-import { main, parseArgs } from "../src/main";
+import { detectHarnesses, HARNESSES, pruneHooks, startOrder } from "../src/adapters";
+import { DEMO_FILES, DEMO_PROMPTS, main, mcpArgs, nextNotes, parseArgs } from "../src/main";
 import { slug } from "../src/util";
 
 describe("parseArgs", () => {
@@ -20,11 +20,36 @@ describe("parseArgs", () => {
     expect(parseArgs(["status"]).cmd).toBe("status");
     expect(parseArgs(["add", "reviewer"]).o.positional).toEqual(["reviewer"]);
     expect(parseArgs(["deploy", "--domain", "weft.example.com"]).o.domain).toBe("weft.example.com");
+    expect(parseArgs(["--harness", "antigravity"]).o.harness).toEqual(["antigravity"]);
   });
   it("rejects unknown options and harnesses", () => {
     expect(() => parseArgs(["--bogus"])).toThrow(/unknown option/);
     expect(() => parseArgs(["--harness", "vim"])).toThrow(/unknown harness/);
     expect(() => parseArgs(["--agents", "0"])).toThrow(/1-8/);
+  });
+});
+
+describe("harness detection and the Next lines (2026-10 cold run)", () => {
+  it("finds every harness on PATH, Antigravity's agy included", () => {
+    const bin = mkdtempSync(join(tmpdir(), "weft-path-"));
+    for (const b of ["claude", "codex", "cursor-agent", "opencode", "gemini", "copilot", "agy"]) {
+      writeFileSync(join(bin, b), "#!/bin/sh\n");
+      chmodSync(join(bin, b), 0o755);
+    }
+    expect(detectHarnesses({ PATH: bin }).found.sort()).toEqual(["antigravity", "claude-code", "codex", "copilot", "cursor", "gemini", "opencode"]);
+    expect(detectHarnesses({ PATH: mkdtempSync(join(tmpdir(), "weft-path-")) }).found).toEqual([]);
+  });
+  it("starts with Claude Code, lists the other harnesses, and says what each asks on first run", () => {
+    const order = startOrder(["codex", "antigravity", "claude-code", "cursor"]);
+    expect(order.map((h) => h.id)).toEqual(["claude-code", "codex", "antigravity", "cursor"]);
+    const out = nextNotes(order, ["/r/shop", "/r/shop-2"]);
+    expect(out).toContain("codex, agy, cursor-agent");
+    // Codex skips untrusted project hooks silently (codex exec) or asks once (TUI)
+    expect(out).toMatch(/Codex asks once to review the new hooks: choose "Trust all and continue"/);
+    expect(out).toContain("--dangerously-bypass-hook-trust");
+    expect(out).toContain("npx -y @celador/weft mcp --dir <checkout>");
+    expect(nextNotes(startOrder(["claude-code"]), ["/r/shop"])).not.toContain("First run");
+    expect(HARNESSES.every((h) => h.run)).toBe(true);
   });
 });
 
@@ -50,6 +75,10 @@ describe("pruneHooks", () => {
       },
     };
     expect(pruneHooks(settings)).toEqual({ permissions: { allow: ["Bash(ls)"] }, hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "./my-lint.sh" }] }] } });
+  });
+  it("drops the allow rules the Claude Code adapter adds for .weft/bin/weft", () => {
+    expect(pruneHooks({ permissions: { allow: ["Bash(ls)", "Bash(.weft/bin/weft:*)", "Bash(/r/shop/.weft/bin/weft:*)"] } })).toEqual({ permissions: { allow: ["Bash(ls)"] } });
+    expect(pruneHooks({ permissions: { allow: ["Bash(.weft/bin/weft:*)"] } })).toEqual({});
   });
   it("prunes to empty when everything was Weft's", () => {
     expect(pruneHooks({ hooks: { Stop: [{ hooks: [{ type: "command", command: "node weft-cursor.mjs hook" }] }] } })).toEqual({});
@@ -147,6 +176,7 @@ describe("weft (init / status / add / uninstall) against a stand-in gateway", ()
       expect(cfg).toMatchObject({ url, repo: "sp0000000001-shop", agent: dir === repo ? "shop" : "shop-2" });
       expect(readFileSync(join(dir, ".weft/token"), "utf8").trim()).toMatch(/^weft_agent_/);
       expect(readFileSync(join(dir, ".claude/settings.local.json"), "utf8")).toContain("weft-claude.mjs hook");
+      expect(JSON.parse(readFileSync(join(dir, ".claude/settings.local.json"), "utf8")).permissions.allow).toContain("Bash(.weft/bin/weft:*)");
       // hooks run the per-version runtime copy, not npx's cache
       expect(readFileSync(join(dir, ".claude/settings.local.json"), "utf8")).toContain(join(realpathSync(base), "config", "runtime"));
     }
@@ -181,6 +211,40 @@ describe("weft (init / status / add / uninstall) against a stand-in gateway", ()
     expect(JSON.parse(readFileSync(join(base, "shop-reviewer/.weft/space.json"), "utf8"))).toMatchObject({ agent: "shop-reviewer" });
   });
 
+  it("demo makes a two-file sample repo without a git identity, sets up two checkouts, and prints the collision prompts", async () => {
+    // A stranger's first git use: no user.name / user.email anywhere.
+    const emptyCfg = join(base, "empty.gitconfig");
+    writeFileSync(emptyCfg, "");
+    const saved = { g: process.env.GIT_CONFIG_GLOBAL, s: process.env.GIT_CONFIG_NOSYSTEM };
+    process.env.GIT_CONFIG_GLOBAL = emptyCfg;
+    process.env.GIT_CONFIG_NOSYSTEM = "1";
+    logs.length = 0;
+    try {
+      expect(await main(["demo", "--url", url, "--dir", base, "--yes", "--no-open", "--harness", "claude-code"])).toBe(0);
+    } finally {
+      if (saved.g === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = saved.g;
+      if (saved.s === undefined) delete process.env.GIT_CONFIG_NOSYSTEM;
+      else process.env.GIT_CONFIG_NOSYSTEM = saved.s;
+    }
+    const d = join(base, "weft-demo");
+    for (const f of Object.keys(DEMO_FILES)) expect(readFileSync(join(d, f), "utf8")).toBe(DEMO_FILES[f]);
+    expect(execFileSync("git", ["-C", d, "log", "--oneline"], { encoding: "utf8" })).toContain("weft demo");
+    for (const dir of [d, join(base, "weft-demo-2")]) {
+      expect(readFileSync(join(dir, ".claude/settings.local.json"), "utf8")).toContain("weft-claude.mjs hook");
+      expect(JSON.parse(readFileSync(join(dir, ".weft/space.json"), "utf8"))).toMatchObject({ name: "weft-demo" });
+    }
+    const out = logs.join("\n");
+    expect(out).toContain(DEMO_PROMPTS[0]);
+    expect(out).toContain(DEMO_PROMPTS[1]);
+    // run again: reuses the repo instead of failing
+    expect(await main(["demo", "--url", url, "--dir", base, "--yes", "--no-open", "--harness", "claude-code"])).toBe(0);
+    expect(logs.join("\n")).toContain("already there");
+    // never writes into someone else's repo
+    await expect(main(["demo", repo, "--url", url, "--yes", "--no-open"])).rejects.toThrow(/not a Weft demo/);
+    await main(["uninstall", "--dir", d, "--yes"]);
+  });
+
   it("status prints the setup without secrets", async () => {
     logs.length = 0;
     expect(await main(["status", "--dir", repo])).toBe(0);
@@ -198,5 +262,82 @@ describe("weft (init / status / add / uninstall) against a stand-in gateway", ()
     }
     expect(existsSync(join(repo, ".git/hooks/pre-commit"))).toBe(false);
     expect([...gw.tokens.values()].every((t) => t.revoked)).toBe(true);
+  });
+});
+
+describe("every harness in one checkout, and weft mcp", () => {
+  const gw = fakeGateway();
+  let url = "";
+  const base = mkdtempSync(join(tmpdir(), "weft-cli-all-"));
+  const repo = join(base, "app");
+  const cli = join(__dirname, "..", "dist", "weft.mjs");
+
+  beforeAll(async () => {
+    await new Promise<void>((r) => gw.server.listen(0, "127.0.0.1", () => r()));
+    url = `http://127.0.0.1:${(gw.server.address() as { port: number }).port}`;
+    process.env.WEFT_HOME = join(base, "config");
+    process.env.WEFT_NO_OPEN = "1";
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(join(repo, "a.py"), "def a():\n    return 1\n");
+    execFileSync("git", ["init", "-q", "-b", "main", repo]);
+    execFileSync("git", ["-C", repo, "add", "-A"]);
+    execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "init"]);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+  });
+  afterAll(() => {
+    gw.server.close();
+    vi.restoreAllMocks();
+  });
+
+  it("installs all seven hook adapters (Antigravity's .agents/hooks.json too) and keeps git status clean", async () => {
+    const all = HARNESSES.map((h) => h.id).join(",");
+    expect(await main(["--url", url, "--dir", repo, "--yes", "--no-open", "--agents", "1", "--harness", all])).toBe(0);
+    expect(readFileSync(join(repo, ".agents/hooks.json"), "utf8")).toContain("weft-antigravity.mjs hook");
+    for (const h of HARNESSES) expect(existsSync(join(repo, h.config))).toBe(true);
+    expect(execFileSync("git", ["-C", repo, "status", "--porcelain"], { encoding: "utf8" })).toBe("");
+  });
+
+  it("weft mcp serves MCP on stdio for the checkout (stdout carries only JSON-RPC)", async () => {
+    const child = spawn(process.execPath, [cli, "mcp", "--dir", repo], { env: { ...process.env, WEFT_CLI_MAIN: "1" }, stdio: ["pipe", "pipe", "pipe"] });
+    let out = "";
+    child.stdout.on("data", (b) => (out += b));
+    child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } } }) + "\n");
+    const reply = await new Promise<string>((done, fail) => {
+      const t = setTimeout(() => fail(new Error(`no initialize reply; stdout: ${out}`)), 20_000);
+      child.stdout.on("data", () => {
+        if (out.includes("\n")) {
+          clearTimeout(t);
+          done(out);
+        }
+      });
+    });
+    child.kill();
+    const lines = reply.trim().split("\n");
+    for (const l of lines) expect(() => JSON.parse(l)).not.toThrow();
+    expect(JSON.parse(lines[0]!)).toMatchObject({ id: 1, result: { serverInfo: { name: "weft" } } });
+  }, 30_000);
+
+  it("weft mcp outside a set-up checkout says what to run", async () => {
+    const other = mkdtempSync(join(tmpdir(), "weft-cli-none-"));
+    execFileSync("git", ["init", "-q", other]);
+    await expect(main(["mcp", "--dir", other])).rejects.toThrow(/not set up/);
+  });
+
+  it("weft mcp fills the server flags from the setup and keeps the ones given (packages/mcp/README.md forms)", () => {
+    const m = JSON.parse(readFileSync(join(repo, ".weft/space.json"), "utf8"));
+    const a = mcpArgs([], repo);
+    expect(a.slice(0, 3)).toEqual(["serve", "--dir", realpathSync(repo)]);
+    expect(a).toEqual(expect.arrayContaining(["--url", url, "--repo", m.repo, "--agent", "app", "--task", m.task]));
+    const b = mcpArgs(["--dir", repo, "--agent", "zed-a", "--channels"], "/");
+    expect(b.filter((x) => x === "--dir")).toHaveLength(1);
+    expect(b[b.indexOf("--agent") + 1]).toBe("zed-a");
+    expect(b).toContain("--channels");
+    expect(b.filter((x) => x === "--agent")).toHaveLength(1);
+  });
+
+  it("uninstall removes Antigravity's hooks file", async () => {
+    expect(await main(["uninstall", "--dir", repo, "--yes"])).toBe(0);
+    expect(existsSync(join(repo, ".agents/hooks.json"))).toBe(false);
+    expect(existsSync(join(repo, ".weft"))).toBe(false);
   });
 });

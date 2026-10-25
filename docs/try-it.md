@@ -19,7 +19,7 @@ It takes about a minute and:
    (`weft-hosted.elier.ai`; Workers + Durable Objects). Its key is stored on your machine in
    `~/.config/weft` and in the repo's `.weft/`, which git ignores. Running it again reuses it;
 2. adds Weft's hooks for every coding agent it finds on your PATH (Claude Code, Codex, Cursor
-   CLI, OpenCode, Gemini CLI) to every checkout of the repo. With a single checkout it offers a
+   CLI, GitHub Copilot CLI, OpenCode, Gemini CLI, Antigravity) to every checkout of the repo. With a single checkout it offers a
    second `git worktree` (`../<repo>-2`), so two agents can work side by side; with no agent
    installed it sets up a file watcher instead;
 3. prints your private **live feed** link and opens it.
@@ -28,8 +28,8 @@ It takes about a minute and:
 ✓ created your free hosted space on Cloudflare spxxxxxxxxxx (weft-hosted.elier.ai; no account needed)
 ✓ repo shop (new)
 ✓ worktree ~/code/shop-2 (branch shop-2)
-✓ Claude Code hooks in ~/code/shop (agent shop)
-✓ Claude Code hooks in ~/code/shop-2 (agent shop-2)
+✓ Codex + Claude Code hooks in ~/code/shop (agent shop)
+✓ Codex + Claude Code hooks in ~/code/shop-2 (agent shop-2)
 
 Live feed (private to you; anyone with the link can read it)
   https://weft-hosted.elier.ai/feed#t=weft_…
@@ -37,21 +37,72 @@ Live feed (private to you; anyone with the link can read it)
 Next: start one agent per checkout, each in its own terminal:
   $ cd ~/code/shop && claude
   $ cd ~/code/shop-2 && claude
+  (or, in the same checkouts: codex)
+
+First run:
+  Codex asks once to review the new hooks: choose "Trust all and continue" (headless: codex exec --dangerously-bypass-hook-trust)
 ```
 
 ## See a squiggle in two minutes
 
-In the first checkout, ask the agent to change a function's signature; in the second, ask its
-agent to use that function the old way:
+No repo handy, or want the known-good collision first? This writes a two-file sample repo
+(`./weft-demo`, plus `./weft-demo-2` as the second checkout), sets it up the same way, and prints
+the two prompts to give your agents:
 
 ```sh
-cd ~/code/shop   && claude -p "In src/pricing.ts, make calcTotal take a second parameter opts: { taxRate: number }." --permission-mode acceptEdits
-cd ~/code/shop-2 && claude -p "In src/cart.ts, show the cart total computed with calcTotal(items) from ./pricing." --permission-mode acceptEdits
+npx @celador/weft demo
+```
+
+In your own repo: in the first checkout, ask the agent to change a function's signature; in the
+second, ask its agent to use that function the old way. With the demo repo:
+
+```sh
+cd weft-demo   && claude -p "In src/pricing.ts, make calcTotal take a second parameter opts: { taxRate: number }." --permission-mode acceptEdits
+cd weft-demo-2 && claude -p "In src/cart.ts, show the cart total computed with calcTotal(items) from ./pricing." --permission-mode acceptEdits
 ```
 
 The second agent's edit is refused before it reaches the disk, with a `stale_assumption`
 diagnostic and the first agent's diff. It then adapts its call (or negotiates with the other
 agent). The feed shows both edits and the refusal as they happen.
+
+The same two prompts with other agents (headless, so the first-run trust question is answered
+by a flag; see the next section):
+
+```sh
+codex exec --dangerously-bypass-hook-trust -s workspace-write "<prompt>"
+opencode run "<prompt>"
+copilot -p "<prompt>" --allow-all-tools --trust-folder
+gemini -p "<prompt>" --yolo --skip-trust
+cursor-agent -p --trust --force "<prompt>"
+agy -p "<prompt>" --dangerously-skip-permissions
+```
+
+## First run in each agent
+
+Most agents ask once before they run project hooks. Say yes, or Weft's hooks do not run:
+
+| Agent | Start it with | What it asks the first time |
+|---|---|---|
+| Claude Code | `claude` | nothing |
+| Codex | `codex` | "Hooks need review": choose **Trust all and continue**. Headless `codex exec` skips untrusted hooks without saying so; use `codex exec --dangerously-bypass-hook-trust` there |
+| Cursor CLI | `cursor-agent` | to trust the workspace (headless: `cursor-agent -p --trust`) |
+| GitHub Copilot CLI | `copilot` | to trust the folder (headless: `copilot -p ... --trust-folder`) |
+| Gemini CLI | `gemini` | to trust the folder; untrusted folders ignore project hooks (headless: `gemini --skip-trust`) |
+| OpenCode | `opencode` | nothing |
+| Antigravity | `agy` | nothing |
+
+The setup prints the same notes under "First run" for the agents it found.
+
+**Agents with MCP but no hooks** (Zed, Warp, JetBrains, Xcode, Trae, Continue): add Weft's MCP
+server to the agent's MCP settings, once per checkout. It reports every file the agent changes
+and gives the model `weft_check`, `weft_status` and the other Weft tools:
+
+```json
+{ "command": "npx", "args": ["-y", "@celador/weft", "mcp", "--dir", "/path/to/checkout"] }
+```
+
+The per-harness config files are in [packages/mcp/README.md](../packages/mcp/README.md).
+
 
 ## Everyday commands
 
@@ -59,7 +110,9 @@ agent). The feed shows both edits and the refusal as they happen.
 |---|---|
 | `npx @celador/weft status` | gateway, space, checkouts, recent events, the feed link |
 | `npx @celador/weft feed` | the live feed in your terminal |
+| `npx @celador/weft demo [dir]` | a two-file sample repo with two checkouts, set up, and the prompts that make two agents collide |
 | `npx @celador/weft add [name]` | another worktree for one more parallel agent |
+| `npx @celador/weft mcp` | Weft's MCP server for this checkout (agents with MCP but no hooks) |
 | `npx @celador/weft uninstall [--space]` | remove Weft from the repo (`--space` also deletes the space) |
 | `npx @celador/weft --local` | the same, with the gateway running on this machine (offline) |
 | `npx @celador/weft deploy [--domain HOST]` | your own gateway in your Cloudflare account |

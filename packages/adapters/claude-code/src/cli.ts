@@ -19,7 +19,7 @@
 //   inbox          print what is waiting for this agent (inbox, open errors, negotiations owed)
 //   claim          explicit claim on symbols: claim --keys path#sym[,…] [--firm] [--ttl MS]
 import { execFileSync } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync, readdirSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -221,7 +221,16 @@ function shellQuote(s: string): string {
 type HookEntry = { matcher?: string; hooks: Array<{ type: string; command: string; timeout?: number }> };
 
 /** Merge Weft hooks into a Claude settings object, replacing any previous Weft entries. */
-export function mergeSettings(settings: Record<string, unknown>, command: string): Record<string, unknown> {
+/**
+ * Permission rules that let the agent run its own Weft command (`.weft/bin/weft inbox`,
+ * `negotiate ...`) without a prompt. Without them a headless `claude -p --permission-mode
+ * acceptEdits` agent is refused every Weft command and can't answer the squiggle (2026-10 cold run).
+ */
+export function weftAllowRules(cliPaths: string[]): string[] {
+  return [...new Set([CLI_REL, ...cliPaths])].map((p) => `Bash(${p}:*)`);
+}
+
+export function mergeSettings(settings: Record<string, unknown>, command: string, allow: string[] = []): Record<string, unknown> {
   const hooks = { ...((settings.hooks as Record<string, HookEntry[]>) ?? {}) };
   const ours = (matcher?: string): HookEntry => ({ ...(matcher !== undefined ? { matcher } : {}), hooks: [{ type: "command", command, timeout: 30 }] });
   const want: Record<string, HookEntry> = {
@@ -241,7 +250,11 @@ export function mergeSettings(settings: Record<string, unknown>, command: string
       .filter((e) => e.hooks.length);
     hooks[event] = [...kept, entry];
   }
-  return { ...settings, hooks };
+  if (!allow.length) return { ...settings, hooks };
+  const perms = { ...((settings.permissions as Record<string, unknown>) ?? {}) };
+  const had = Array.isArray(perms.allow) ? (perms.allow as unknown[]).filter((r) => !(typeof r === "string" && r.includes(CLI_REL))) : [];
+  perms.allow = [...had, ...allow];
+  return { ...settings, permissions: perms, hooks };
 }
 
 const COMMIT_MSG = (node: string) => `#!/bin/sh
@@ -295,7 +308,14 @@ async function install(args: string[]): Promise<void> {
   const settingsPath = join(root, ".claude", args.includes("--shared") ? "settings.json" : "settings.local.json");
   mkdirSync(dirname(settingsPath), { recursive: true });
   const settings = existsSync(settingsPath) ? (JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>) : {};
-  writeFileSync(settingsPath, JSON.stringify(mergeSettings(settings, command), null, 2) + "\n");
+  const cliAbs = join(root, CLI_REL);
+  let cliReal = cliAbs;
+  try {
+    cliReal = join(realpathSync(root), CLI_REL);
+  } catch {
+    // keep the path as given
+  }
+  writeFileSync(settingsPath, JSON.stringify(mergeSettings(settings, command, weftAllowRules([cliAbs, cliReal])), null, 2) + "\n");
 
   // git hooks (respect core.hooksPath; per-worktree hooks for linked worktrees)
   const hooksDir = gitHooksDir(root);
