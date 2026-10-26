@@ -214,3 +214,6 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-10-26 00:05 — Weft land for demo move
 - t_2b43c991 (weft.elier.ai → demo.weft.mx) was fast-forwarded to main by its worker (523c377); CI Gate green. Posted Weft land #2227; verified weft.elier.ai 301 → demo.weft.mx (path+query kept), demo.weft.mx 200, /api/repos lists only `weft`. Worktree removed.
 - t_9aa3ddb8 (security audit, read-only) running 1h13m, pid alive. t_be030d1a stays in triage (publishing frozen pending John's release-brief review).
+
+## 2026-10-26 04:10 — security audit finished
+- t_9aa3ddb8 done (read-only): 5 security pages in ~/Desktop/weft-release-brief/ + 57-page PDF; findings page lists 10 (3 high, 4 medium, 3 low), verified files present. Publishing stays frozen and no fix cards are created until John reviews the brief and its 3 decisions. t_be030d1a stays in triage. Main tree's uncommitted apps/vscode edits (other session) left untouched.
