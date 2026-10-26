@@ -49,7 +49,7 @@ async function api(path, init) {
   return body;
 }
 
-/** Public read-only demo (weft.elier.ai): no approve/undo/policy controls. */
+/** Public read-only demo (demo.weft.mx): no approve/undo/policy controls. */
 const readOnly = () => Boolean(S.me?.readOnly);
 
 const repoPath = (/** @type {string} */ p = "") => `/repos/${encodeURIComponent(S.repo)}${p}`;

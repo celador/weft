@@ -8,7 +8,7 @@
 // 2. Operator key (fallback while Access is not configured): POST /login with
 //    WEFT_WEB_KEY sets an HMAC-signed, HttpOnly session cookie.
 // 3. Neither configured: fail closed (503), unless WEFT_WEB_DEV=1 (local `wrangler dev`).
-// 0. Public read-only demo (WEFT_PUBLIC_DEMO=1, env `public` at weft.elier.ai): everyone is
+// 0. Public read-only demo (WEFT_PUBLIC_DEMO=1, env `public` at demo.weft.mx): everyone is
 //    the "guest" identity, no login. index.ts then allows GET routes + the WS stream only and
 //    calls the gateway with the observe-only WEFT_PUBLIC_TOKEN (never WEFT_WEB_TOKEN).
 

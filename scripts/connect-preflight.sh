@@ -4,13 +4,13 @@
 #   scripts/connect-preflight.sh --quick    # skip the write test (read-only)
 # One line per check: green "ok" or red "FAIL", in plain words. Exits 1 if anything is red.
 # Needs only curl, dig and Node 22+ (for the WebSocket and the two-agent test). Runs no repo code.
-# The two-agent test writes to the private repo `connect-preflight` (never shown on weft.elier.ai)
+# The two-agent test writes to the private repo `connect-preflight` (never shown on demo.weft.mx)
 # with tokens in ~/.config/weft/connect-preflight.json (mode 600; minted once with the admin token).
 set -uo pipefail
 export PATH="/opt/homebrew/opt/node@24/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 QUICK=0; [ "${1:-}" = "--quick" ] && QUICK=1
-PUBLIC="https://weft.elier.ai"
+PUBLIC="https://demo.weft.mx"
 SITE="https://weft-site.elier.ai"
 GATEWAY="https://weft-gateway-preview.elier.ai"
 MEDIA="https://weft-media.elier.ai"
@@ -30,7 +30,7 @@ echo "Weft Connect preflight  $(date -u '+%Y-%m-%d %H:%M UTC')  ($(date '+%a %H:
 echo
 
 echo "Names (asked of Cloudflare's public DNS, 1.1.1.1)"
-for h in weft.elier.ai weft-site.elier.ai weft-media.elier.ai weft-gateway-preview.elier.ai; do
+for h in demo.weft.mx weft-site.elier.ai weft-media.elier.ai weft-gateway-preview.elier.ai; do
   ips=$(dig +short +time=3 +tries=2 @1.1.1.1 "$h" A 2>/dev/null | grep -E '^[0-9.]+$' | tr '\n' ' ')
   if [ -z "$ips" ]; then bad "$h does not resolve"
   elif echo "$ips" | grep -qE '^(10\.|192\.168\.|127\.|172\.(1[6-9]|2[0-9]|3[01])\.)'; then bad "$h points at a private address ($ips)"

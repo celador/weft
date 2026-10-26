@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Backup screen recording of the Connect 2026 demo flow, filmed against the LIVE public system
-// (weft-site.elier.ai + weft.elier.ai, no login), plus one PNG still per beat for no-network use.
+// (weft-site.elier.ai + demo.weft.mx, no login), plus one PNG still per beat for no-network use.
 //
 //   node demo/video/rig/connect-backup.mjs [--out demo/video/connect-2026] [--live-wait 120]
 //
@@ -64,8 +64,8 @@ await beat("site", "What Weft is: a coordinator that lets many coding agents edi
   await hold(5000);
 });
 
-await beat("live-log", "weft.elier.ai: the live, public change log of the weft repo. Every agent edit is one row.", async () => {
-  await page.goto("https://weft.elier.ai/#/r/weft/live");
+await beat("live-log", "demo.weft.mx: the live, public change log of the weft repo. Every agent edit is one row.", async () => {
+  await page.goto("https://demo.weft.mx/#/r/weft/live");
   await page.waitForSelector(".row", { timeout: 30000 });
   await hold(9000);
   await page.mouse.move(700, 450);
@@ -108,12 +108,12 @@ await beat("replay", "Replay at 64x: the repo's own build history, many agent pr
 });
 
 await beat("board", "Board: each task, its agent and its state.", async () => {
-  await page.goto("https://weft.elier.ai/#/r/weft/board");
+  await page.goto("https://demo.weft.mx/#/r/weft/board");
   await hold(10000);
 });
 
 await beat("analytics", "Analytics: edits, waits and landings over time.", async () => {
-  await page.goto("https://weft.elier.ai/#/r/weft/analytics");
+  await page.goto("https://demo.weft.mx/#/r/weft/analytics");
   await hold(10000);
 });
 

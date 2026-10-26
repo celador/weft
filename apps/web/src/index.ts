@@ -15,7 +15,7 @@
 //   POST /api/repos/{repo}/actions                 approve | undo | pause | resume | message
 //   WS   /api/repos/{repo}/stream?after=N          live log (spec §9.4), proxied to the repo DO
 //
-// Public read-only demo (WEFT_PUBLIC_DEMO=1, env `public`, weft.elier.ai): no login (guest),
+// Public read-only demo (WEFT_PUBLIC_DEMO=1, env `public`, demo.weft.mx; the old weft.elier.ai 301s there): no login (guest),
 // GET routes + the stream only (every other method: 403 read_only), gateway calls use the
 // observe-only WEFT_PUBLIC_TOKEN and never WEFT_WEB_TOKEN, repos limited to WEFT_PUBLIC_REPOS,
 // and every relayed body / stream frame is scrubbed (./scrub.ts).
@@ -48,6 +48,23 @@ export interface Env extends AuthEnv {
   WEFT_PUBLIC_REPOS?: string;
   /** Public demo: extra literal terms scrubbed from every response (secret, comma-separated). */
   WEFT_REDACT?: string;
+  /** Canonical host (public demo: demo.weft.mx). Hosts in WEFT_REDIRECT_HOSTS 301 here. */
+  WEFT_CANONICAL_HOST?: string;
+  /** Comma-separated old hosts (public demo: weft.elier.ai) that 301 to WEFT_CANONICAL_HOST,
+   *  path and query preserved. */
+  WEFT_REDIRECT_HOSTS?: string;
+}
+
+/** Old host -> 301 to the canonical host, same path and query; null when no redirect applies. */
+export function legacyRedirect(req: Request, env: Env): Response | null {
+  const canonical = env.WEFT_CANONICAL_HOST?.trim();
+  if (!canonical) return null;
+  const url = new URL(req.url);
+  const old = (env.WEFT_REDIRECT_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
+  if (!old.includes(url.hostname.toLowerCase())) return null;
+  // No fragment in Location: browsers then carry the original #/r/... route across the redirect.
+  url.protocol = "https:"; url.hostname = canonical; url.port = ""; url.hash = "";
+  return new Response(null, { status: 301, headers: { location: url.toString(), "cache-control": "public, max-age=86400" } });
 }
 
 const REPO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -367,6 +384,8 @@ export async function handle(req: Request, env: Env, fetcher?: JwksFetcher): Pro
   const path = u.pathname.replace(/\/+$/, "") || "/";
   const m = req.method;
 
+  const moved = legacyRedirect(req, env);
+  if (moved) return moved;
   if (path === "/healthz") return json({ ok: true, service: "weft-web" });
 
   if (publicDemo(env)) {

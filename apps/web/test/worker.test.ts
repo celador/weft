@@ -3,7 +3,7 @@
 // static assets + SPA fallback, security headers.
 
 import { describe, expect, it, beforeEach } from "vitest";
-import worker, { bestOfNInstanceId, handle, type Env } from "../src/index";
+import worker, { bestOfNInstanceId, handle, legacyRedirect, type Env } from "../src/index";
 import { b64url, clearJwksCache, mintSession, SESSION_COOKIE, verifyAccessJwt, type JwksFetcher } from "../src/auth";
 
 const ORIGIN = "https://weft-web.example.workers.dev";
@@ -309,6 +309,23 @@ describe("static app", () => {
     // static files are gated too
     expect((await worker.fetch(new Request(`${ORIGIN}/app.js`), env)).status).toBe(302);
     expect((await worker.fetch(new Request(`${ORIGIN}/healthz`), env)).status).toBe(200);
+  });
+});
+
+describe("old demo host redirect", () => {
+  const env = { WEFT_CANONICAL_HOST: "demo.weft.mx", WEFT_REDIRECT_HOSTS: "weft.elier.ai" } as Env;
+  it("301s weft.elier.ai to demo.weft.mx with path and query kept, before anything else", async () => {
+    for (const method of ["GET", "POST"]) {
+      const r = await worker.fetch(new Request("https://weft.elier.ai/some/path?x=1#/r/weft", { method }), { ...env, WEFT_PUBLIC_DEMO: "1" } as Env);
+      expect(r.status).toBe(301);
+      expect(r.headers.get("location")).toBe("https://demo.weft.mx/some/path?x=1");
+    }
+    expect((await handle(new Request("https://WEFT.elier.ai/healthz"), env)).status).toBe(301);
+  });
+  it("leaves the canonical host and unlisted hosts alone; no canonical host means no redirect", () => {
+    expect(legacyRedirect(new Request("https://demo.weft.mx/x"), env)).toBeNull();
+    expect(legacyRedirect(new Request("https://weft-web-preview.elier.ai/x"), env)).toBeNull();
+    expect(legacyRedirect(new Request("https://weft.elier.ai/x"), { WEFT_REDIRECT_HOSTS: "weft.elier.ai" } as Env)).toBeNull();
   });
 });
 

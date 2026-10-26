@@ -55,7 +55,7 @@ The space key is the boundary. Enforced in `apps/gateway/src/registry.ts` and te
 - deleting or suspending a space revokes all its keys; cached grants for space keys expire within
   5 seconds.
 
-The public read-only demo at `weft.elier.ai` is unchanged: it is a different Worker
+The public read-only demo at `demo.weft.mx` is unchanged: it is a different Worker
 (`weft-web-public`) in front of a different gateway, with its own repo allow-list, and fails closed.
 
 ### Limits

@@ -4,7 +4,7 @@ Weft coordinates coding agents while they edit—not only when they open a pull 
 
 The goal is to make concurrent agent work safer without file locks or requiring agents to stop and wait for a human merge. WCP is the harness-neutral wire protocol; Weft is its Cloudflare-backed implementation and set of adapters.
 
-Live demo: [weft.elier.ai](https://weft.elier.ai) — the web UI over the real event logs of the dogfood repo and the demo runs, public and read-only (no login).
+Live demo: [demo.weft.mx](https://demo.weft.mx) — the web UI over the real event logs of the dogfood repo and the demo runs, public and read-only (no login).
 
 Status: research/demo implementation; WCP v0.1 is a draft, not a published standard. See [the design](docs/design.md), [protocol specification](docs/protocol/wcp-v0.md), and [try it yourself](docs/try-it.md).
 

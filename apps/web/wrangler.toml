@@ -72,7 +72,8 @@ WEFT_ALLOWED_EMAILS = ""
 WEFT_EMAIL_REPO = "weft"
 WEFT_EMAIL_FROM = "tasks@weft.work"
 
-# Public read-only demo at https://weft.elier.ai (docs/web-ui.md "Public demo"): no login,
+# Public read-only demo at https://demo.weft.mx (old host weft.elier.ai stays attached and 301s
+# there, path + query kept: published CLI 0.2.0 and old posts link it) (docs/web-ui.md "Public demo"): no login,
 # GET routes + live stream only, observe-only gateway token, repo allow-list, scrubbed output.
 # Secrets (wrangler secret put <NAME> --env public): WEFT_PUBLIC_TOKEN (scopes ["observe"],
 # repos = WEFT_PUBLIC_REPOS), WEFT_REDACT (terms scrubbed from every response).
@@ -80,7 +81,10 @@ WEFT_EMAIL_FROM = "tasks@weft.work"
 [env.public]
 name = "weft-web-public"
 workers_dev = false   # never expose *.workers.dev: that subdomain isn't ours to show (see AGENTS.md)
-routes = [{ pattern = "weft.elier.ai", custom_domain = true }]
+routes = [
+  { pattern = "demo.weft.mx", custom_domain = true },
+  { pattern = "weft.elier.ai", custom_domain = true },
+]
 
 [[env.public.services]]
 binding = "GATEWAY"
@@ -90,3 +94,5 @@ service = "weft-gateway-preview"
 # Public site stays live; only John's weft repository may be exposed.
 WEFT_PUBLIC_DEMO = "1"
 WEFT_PUBLIC_REPOS = "weft"
+WEFT_CANONICAL_HOST = "demo.weft.mx"
+WEFT_REDIRECT_HOSTS = "weft.elier.ai"

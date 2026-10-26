@@ -18,7 +18,7 @@ It runs on Cloudflare Workers, with one Durable Object per repo acting as the se
 
 Honest notes: most of the code was written by agents, and those agents were coordinated by Weft while building it (627 events and 59 "wait for the other agent" warnings in the first 11 hours). It's a two-week prototype. The analysis is TypeScript only, the Cursor and Gemini adapters are only tested offline, and the full multi-agent demo needs a lot of Cloudflare setup. The protocol tests and local gateway run with no account.
 
-Live read-only log: https://weft.elier.ai
+Live read-only log: https://demo.weft.mx
 Video (7 min): https://weft-media.elier.ai/weft-demo.mp4
 Longer write-up: https://johnaaronnelson.com/blog/weft-built-under-weft
 

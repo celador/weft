@@ -18,7 +18,7 @@ All of these read the repo's ordered event log, so they always agree.
 
 ### 1. Web UI (`apps/web`)
 
-- **Public demo, [weft.elier.ai](https://weft.elier.ai).** Read-only, no login: the real logs of the dogfood repo and demo runs, secrets scrubbed.
+- **Public demo, [demo.weft.mx](https://demo.weft.mx).** Read-only, no login: the real logs of the dogfood repo and demo runs, secrets scrubbed.
 - **Operator UI** (`weft-web-preview.elier.ai`, sign-in with an operator key; Cloudflare Access login is coded but not configured). Views:
   - **Live:** every edit, squiggle, negotiation, landing and revert as it happens, each squiggle linked to its cause; **Replay** of a run at up to 64×.
   - **Board:** tasks in columns Queued / Working / Squiggled / Review / Landed / Reverted.

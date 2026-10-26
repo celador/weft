@@ -135,6 +135,6 @@ tests: [research/distribution-2026-10.md](research/distribution-2026-10.md).
 - `.weft/bin/weft status | inbox | negotiate ...`, run inside the checkout: the agent's own view, also used by
   the model to negotiate with other agents (see the Claude Code adapter README).
 - The web UI (`apps/web`) renders the same log; the public demo is at
-  [weft.elier.ai](https://weft.elier.ai).
+  [demo.weft.mx](https://demo.weft.mx).
 
 The full message formats are in [WCP v0.1](protocol/wcp-v0.md).
