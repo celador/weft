@@ -210,3 +210,7 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-10-25 19:55 — Weft lands for worker-merged cards
 - t_e1f17e67 (deck → celador/weft-talks), t_f8c28a0d (weft.mx privacy/terms/support, plugin 0.1.4), t_340b7fa7 (plugin 0.1.5, no IP-derived storage) were fast-forwarded to main by their workers; CI Gate green on all three. Posted Weft lands #2216–#2218; weft.mx/privacy|terms|support return 200. Worktrees removed.
 - Main checkout has uncommitted apps/vscode edits from another session (VS Code release, t_be030d1a in triage); left untouched.
+
+## 2026-10-26 00:05 — Weft land for demo move
+- t_2b43c991 (weft.elier.ai → demo.weft.mx) was fast-forwarded to main by its worker (523c377); CI Gate green. Posted Weft land #2227; verified weft.elier.ai 301 → demo.weft.mx (path+query kept), demo.weft.mx 200, /api/repos lists only `weft`. Worktree removed.
+- t_9aa3ddb8 (security audit, read-only) running 1h13m, pid alive. t_be030d1a stays in triage (publishing frozen pending John's release-brief review).
