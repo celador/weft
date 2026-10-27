@@ -55,13 +55,21 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:  # package import inside Hermes; flat import in tests
     from .wcp import WcpClient, WcpError
+    from .land import commit_time, detect_trunk, is_ancestor, pending_path, state_path, trunk_tips
 except ImportError:  # pragma: no cover
     from wcp import WcpClient, WcpError  # type: ignore
+    from land import commit_time, detect_trunk, is_ancestor, pending_path, state_path, trunk_tips  # type: ignore
 
-ADAPTER_VERSION = "0.2.1"
+ADAPTER_VERSION = "0.3.0"
 EDIT_TOOLS = {"write_file", "patch"}
 TERMINAL_TOOLS = {"terminal"}
+# Tools that can run git: HEAD moves of the session's worktrees and trunk moves are watched
+# around them (checkpoints + auto-land), whatever directory the command cd's into.
+WATCH_TOOLS = TERMINAL_TOOLS | {"execute_code"}
 COMPLETION_TOOLS = {"kanban_complete", "kanban_request_review"}
+GIT_PULL = re.compile(r"\bgit\b[^|;&]*\bpull\b")
+TRUNK_TTL_S = 600.0     # re-detect a repo's trunk branch at most this often
+LAND_RETRY_S = 60.0     # a pending (failed) auto-land is retried at most this often
 # Never reported: VCS internals, dependencies, caches and build outputs.
 SKIP_PARTS = {
     ".git", "node_modules", ".wrangler", ".turbo", "__pycache__", ".pnpm-store",
@@ -201,6 +209,10 @@ class Config:
     excludes: List[str] = field(default_factory=list)      # realpath'd, never reported
     breaker_cooldown: float = 300.0
     async_advise: bool = True  # advise repos: skip the pre-check, commit off the tool-call path
+    trunks: Dict[str, str] = field(default_factory=dict)   # repo -> trunk branch override
+    # Auto-land (0.3): when trunk moves, spawn land.py to land changes whose work reached it.
+    # Off for directly constructed configs (tests); Config.load turns it on (`auto_land`).
+    auto_land: bool = False
 
     def mode_for(self, repo: str) -> str:
         forced = os.environ.get("WEFT_HERMES_MODE")
@@ -278,6 +290,8 @@ class Config:
             tokens=tokens, modes=modes, default_mode=str(raw.get("default_mode") or "advise"),
             project_dirs=project_dirs, projects=projects, excludes=excludes,
             breaker_cooldown=float(raw.get("breaker_cooldown_s", 300.0)),
+            trunks={str(k): str(v) for k, v in (raw.get("trunks") or {}).items()},
+            auto_land=raw.get("auto_land", True) is not False,
         )
         cfg.mode = cfg.mode_for(repo) if repo else cfg.default_mode
         return cfg
@@ -702,6 +716,16 @@ class WeftAdapter:
         self._hb_thread: Optional[threading.Thread] = None
         self._hb_enabled = heartbeat
         self._closed = False
+        # auto-land (0.3): worktrees this session works in, HEAD/trunk snapshots around tool
+        # calls that can run git, and the session's own work commits (hints for land.py).
+        self.worktrees: Dict[str, None] = {}
+        self._watch: Dict[str, dict] = {}
+        self.work_shas: List[str] = []
+        self.last_tips: Optional[Dict[str, str]] = None
+        self._trunk: Optional[Tuple[Optional[str], float]] = None
+        self._land_spawned_at = -1e9
+        self._procs: List[Any] = []
+        self.spawner: Callable[[List[str]], Any] = self._popen
 
     # -- infra -----------------------------------------------------------------------------
 
@@ -927,9 +951,14 @@ class WeftAdapter:
         try:
             if name in EDIT_TOOLS:
                 return self._pre_edit(name, args, tool_call_id, task_id)
-            if name in TERMINAL_TOOLS:
-                return self._pre_terminal(name, args, tool_call_id, task_id)
+            if name in WATCH_TOOLS:
+                block = self._pre_terminal(name, args, tool_call_id, task_id) if name in TERMINAL_TOOLS else None
+                if not block:
+                    self.watch_begin(tool_call_id, str(args.get("command") or args.get("code") or ""))
+                return block
             if name in COMPLETION_TOOLS:
+                if self.worktrees or self.work_shas:
+                    self.request_land(f"{name}")  # the kanban completion path: never blocks
                 return self._gate_tool(name)
         except Exception as err:  # fail open
             self.log(f"pre_tool_call {name} failed open: {err!r}")
@@ -964,6 +993,7 @@ class WeftAdapter:
         pend = Pending("edit", name, call_id or f"anon-{time.monotonic_ns()}", targets=targets)
         for t in targets:
             pend.before[t.abs] = read_text(t.abs) if os.path.exists(t.abs) else None
+            self.worktrees.setdefault(t.worktree, None)
         with self.lock:
             self.pending[pend.call_id] = pend
         if len(targets) != 1 or self.deferred:
@@ -1007,6 +1037,7 @@ class WeftAdapter:
             if block:
                 return block
         pend = Pending("terminal", name, call_id or f"anon-{time.monotonic_ns()}", worktree=worktree)
+        self.worktrees.setdefault(worktree, None)
         pend.head = (git(worktree, "rev-parse", "HEAD") or "").strip() or None
         pend.integration = bool(GIT_INTEGRATION.search(command))
         if not pend.integration:
@@ -1146,6 +1177,8 @@ class WeftAdapter:
                 self._defer(self._drain)
         except Exception as err:
             self.log(f"post_tool_call {name} failed: {err!r}")
+        if name in WATCH_TOOLS:
+            self.watch_end(tool_call_id, name)
 
     @staticmethod
     def _current(path: str) -> Optional[str]:
@@ -1192,26 +1225,149 @@ class WeftAdapter:
                 continue
             changes.append((Target(os.path.join(worktree, rel), worktree, prefix + rel), before_text, after_text))
         moved = bool(head and pend.head and head != pend.head)
-        if not changes and not moved:
-            if self.session and time.monotonic() - self.last_drain > DRAIN_EVERY_S:
+        if not changes:
+            if not moved and self.session and time.monotonic() - self.last_drain > DRAIN_EVERY_S:
                 self.last_drain = time.monotonic()
                 self._defer(self._drain)
             return
+        # HEAD moves (checkpoints) are posted by watch_end, for every worktree of the session.
+        self._defer(lambda: self._commit_changes(changes, pend.tool, pend.call_id))
 
-        def send() -> None:
-            if changes:
-                self._commit_changes(changes, pend.tool, pend.call_id)
-            if moved:
-                event = {"kind": "checkpoint", "base_seq": self._effective_base(), "payload": {"sha": head},
-                         "tool": {"name": pend.tool, "harness_event": "post_tool_call"}}
-                if self.task.get("title"):
-                    event["summary_hint"] = self.task["title"][:100]
-                verdict = self._submit("commit", event, f"{pend.call_id}:checkpoint")
-                self._queue(verdict)
-                # A new commit on the worktree: assume it is rebased. Cleared after _queue, because
-                # this verdict repeats any still-unacked trunk item and would re-set the floor.
-                self.rebase_floor = None
-        self._defer(send)
+    # -- HEAD / trunk watch and auto-land (0.3) ----------------------------------------------
+
+    def _git_dir(self) -> Optional[str]:
+        """A checkout of this repo (refs are shared by all its worktrees): the project dir,
+        else an explicit root, else any worktree the session works in."""
+        for path, repo in self.cfg.projects.items():
+            if repo == self.cfg.repo and os.path.isdir(path):
+                return path
+        for root in self.scope.roots:
+            if self.scope.repo_of(root) == self.cfg.repo and os.path.isdir(root.path):
+                return root.path
+        for wt in self.worktrees:
+            if os.path.isdir(wt):
+                return wt
+        return None
+
+    def _tips(self, git_dir: str) -> Dict[str, str]:
+        now = time.monotonic()
+        if self._trunk is None or now - self._trunk[1] > TRUNK_TTL_S:
+            self._trunk = (detect_trunk(git_dir, self.cfg.trunks.get(self.cfg.repo)), now)
+        return trunk_tips(git_dir, self._trunk[0])
+
+    def watch_begin(self, call_id: str = "", command: str = "") -> None:
+        """Before a tool that can run git: snapshot the session's worktree HEADs and the trunk
+        tips. A trunk that moved since the previous call (another process merged) triggers a
+        land check right away."""
+        key = call_id or "anon"
+        if key in self._watch:
+            return
+        try:
+            git_dir = self._git_dir()
+            if not git_dir:
+                return
+            tips = self._tips(git_dir)
+            heads = {wt: (git(wt, "rev-parse", "HEAD") or "").strip() or None for wt in list(self.worktrees)}
+            if len(self._watch) > 64:
+                self._watch.pop(next(iter(self._watch)))
+            self._watch[key] = {"t": time.time(), "tips": tips, "heads": heads, "pull": bool(GIT_PULL.search(command))}
+            prev = self.last_tips if self.last_tips is not None else self._swept_tips()
+            if prev is not None and tips != prev:
+                self.request_land("trunk moved since the last check")
+            self.last_tips = tips
+        except Exception as err:  # fail open
+            self.log(f"[{self.cfg.repo}] watch_begin failed open: {err!r}")
+
+    def watch_end(self, call_id: str = "", tool: str = "terminal") -> None:
+        """After the tool: a worktree whose HEAD moved gets a ``checkpoint`` (``x_work`` = the
+        command made this commit: not on trunk before, committed during the call, not a pull);
+        a trunk that moved triggers the land check (after the checkpoints, in queue order)."""
+        snap = self._watch.pop(call_id or "anon", None)
+        if not snap:
+            return
+        try:
+            git_dir = self._git_dir()
+            tips = self._tips(git_dir) if git_dir else {}
+            for wt, before in snap["heads"].items():
+                after = (git(wt, "rev-parse", "HEAD") or "").strip() or None
+                if not (before and after and after != before):
+                    continue
+                work = (not snap["pull"] and (commit_time(wt, after) or 0) >= snap["t"] - 5
+                        and not any(is_ancestor(wt, after, t) for t in snap["tips"].values()))
+                if work and after not in self.work_shas:
+                    self.work_shas = (self.work_shas + [after])[-20:]
+                self._defer(lambda sha=after, w=work: self._checkpoint(sha, w, tool, call_id))
+            self.last_tips = tips
+            if tips != snap["tips"]:
+                self._defer(lambda: self.request_land("trunk moved"))
+            elif time.monotonic() - self._land_spawned_at > LAND_RETRY_S and self._pending_exists():
+                self.request_land("retrying a pending land")
+        except Exception as err:  # fail open
+            self.log(f"[{self.cfg.repo}] watch_end failed open: {err!r}")
+
+    def _checkpoint(self, sha: str, work: bool, tool: str, call_id: str) -> None:
+        event = {"kind": "checkpoint", "base_seq": self._effective_base(), "payload": {"sha": sha, "x_work": work},
+                 "tool": {"name": tool, "harness_event": "post_tool_call"}}
+        if self.task.get("title"):
+            event["summary_hint"] = self.task["title"][:100]
+        try:
+            verdict = self._submit("commit", event, f"{call_id}:checkpoint:{sha[:12]}")
+        except Exception as err:  # fail open; land.py still gets the sha as a --hint
+            self.log(f"[{self.cfg.repo}] checkpoint {sha[:12]} failed open: {err!r}")
+            return
+        self._queue(verdict)
+        # A new commit on the worktree: assume it is rebased. Cleared after _queue, because
+        # this verdict repeats any still-unacked trunk item and would re-set the floor.
+        self.rebase_floor = None
+
+    def _swept_tips(self) -> Optional[Dict[str, str]]:
+        """Trunk tips the last land.py run for this repo saw (any process), None if unknown: a
+        session's first look at a repo notices merges made while no session was watching."""
+        if not self.cfg.auto_land or not self.cfg.log_path:
+            return None
+        try:
+            tips = json.loads(state_path(self.cfg.repo, self.cfg.log_path.parent).read_text()).get("swept_tips")
+        except Exception:
+            return None
+        return tips if isinstance(tips, dict) else None
+
+    def _pending_exists(self) -> bool:
+        if not self.cfg.auto_land or not self.cfg.log_path:
+            return False
+        return pending_path(self.cfg.repo, self.cfg.log_path.parent).exists()
+
+    @staticmethod
+    def _popen(args: List[str]) -> Any:
+        return subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+
+    def request_land(self, reason: str) -> None:
+        """Spawn ``land.py --auto`` for this repo, detached: it lands every change whose newest
+        work commit is on trunk. Never waits, never raises. The land script (not this process)
+        reads the repo's system land token; this process holds only its agent token."""
+        if not self.cfg.auto_land:
+            return
+        try:
+            git_dir = self._git_dir()
+            script = Path(__file__).resolve().with_name("land.py")
+            if not git_dir or not script.exists():
+                return
+            self._procs = [p for p in self._procs if getattr(p, "poll", lambda: 0)() is None]  # reap
+            args = [sys.executable or "python3", str(script), "--auto", "--repo", self.cfg.repo,
+                    "--git-dir", git_dir, "--profile", self.cfg.profile]
+            if self.cfg.log_path:
+                args += ["--log", str(self.cfg.log_path)]
+            if self.cfg.trunks.get(self.cfg.repo):
+                args += ["--trunk", self.cfg.trunks[self.cfg.repo]]
+            for sha in self.work_shas[-5:]:
+                args += ["--hint", f"{self.change}={sha}"]
+            self._land_spawned_at = time.monotonic()
+            proc = self.spawner(args)
+            if proc is not None:
+                self._procs.append(proc)
+            self.log(f"[{self.cfg.repo}] auto-land check started ({reason})")
+        except Exception as err:  # fail open
+            self.log(f"[{self.cfg.repo}] auto-land spawn failed open: {err!r}")
 
     def _drain(self) -> None:
         batch = self._call(lambda s: self.client.drain(s, ack=self.acked or None))
@@ -1330,6 +1486,8 @@ class WeftRouter:
             adapter = WeftAdapter(cfg, client=client, analyzer=self.analyzer, heartbeat=self.heartbeat,
                                   scope=self.scope)
             self.adapters[repo] = adapter
+            if adapter._pending_exists():  # a land a previous process could not post
+                adapter.request_land("retrying a pending land")
             return adapter
 
     def _repos(self, name: str, args: dict, task_id: Any = "") -> List[str]:
@@ -1366,6 +1524,13 @@ class WeftRouter:
             block = adapter.pre_tool_call(tool_name=tool_name, args=args, **kw)
             if block:
                 return block
+        if name in WATCH_TOOLS:
+            # Every repo this process works in watches its worktrees and trunk around the call,
+            # wherever the command runs (`cd ~/github/x && git merge ...` from a scratch dir).
+            command = str(args.get("command") or args.get("code") or "")
+            for adapter in self._live():
+                if adapter not in targets:
+                    adapter.watch_begin(str(kw.get("tool_call_id") or ""), command)
         return None
 
     def post_tool_call(self, **kw: Any) -> None:

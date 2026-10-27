@@ -24,6 +24,12 @@ What install does (idempotent):
      when it was already enabled and the code changed, ``plugins disable weft`` first, so the
      running gateway (where every ``hermes chat`` turn runs) force-reloads the new code
 
+Sync also issues one system *land* token per repo (``land_tokens.<repo>``, scopes system+observe,
+principal weft-pm-land) for auto-land: only the land script the plugin spawns (land.py) and
+weft_land.py read it, and drops (revoking) the tokens of projects that no longer exist.
+``--trunk REPO=BRANCH`` records a trunk override (``trunks``) for repos whose trunk is not
+origin/HEAD / main / master.
+
 ``--sync`` runs step 2-3 only (the plugin re-reads the config in every new Hermes process; the
 admin token never leaves this script). Projects without a repo are skipped by the plugin.
 Uninstall reverses 6 -> 2 for the selected profiles (disables + removes the plugin dir, revokes
@@ -40,6 +46,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -48,7 +55,7 @@ from pathlib import Path
 
 PKG = Path(__file__).resolve().parent.parent
 PLUGIN_SRC = PKG / "plugin" / "weft"
-PLUGIN_FILES = ["plugin.yaml", "__init__.py", "adapter.py", "wcp.py"]
+PLUGIN_FILES = ["plugin.yaml", "__init__.py", "adapter.py", "wcp.py", "land.py"]
 DEFAULT_URL = "https://weft-gateway-preview.elier.ai"
 DEFAULT_ADMIN = "~/.config/weft/preview-admin-token"
 DEFAULT_PROJECT_DIRS = "~/github,~/code"
@@ -129,6 +136,34 @@ def save_config(cfg: dict) -> None:
     os.chmod(CONFIG, stat.S_IRUSR | stat.S_IWUSR)
 
 
+LAND_PRINCIPAL = "weft-pm-land"
+_SAVE_LOCK = threading.Lock()
+
+
+def issue_land_token(url: str, admin: str, repo: str):
+    """Mint the repo's system land token (scopes system+observe, repos [repo]) and save it under
+    ``land_tokens.<repo>``. Returns (entry, None) or (None, error). Used by --sync for every
+    project repo and by weft_land.py on first use; the admin token stays in these two scripts."""
+    status, body = admin_call(url, admin, "POST", "/v1/admin/tokens",
+                              {"principal": LAND_PRINCIPAL, "scopes": ["system", "observe"], "repos": [repo],
+                               "label": f"auto-land + PM landings ({repo})"})
+    if status != 201 or not isinstance(body, dict):
+        return None, f"HTTP {status}"
+    entry = {"url": url, "repo": repo, "principal": LAND_PRINCIPAL, "token": body["token"], "token_id": body["info"]["id"]}
+    with _SAVE_LOCK:  # --sync mints in parallel
+        cfg = load_config()  # re-read: never clobber a concurrent write
+        cfg.setdefault("land_tokens", {})[repo] = entry
+        save_config(cfg)
+    return entry, None
+
+
+def has_land_token(cfg: dict, url: str, repo: str) -> bool:
+    entry = (cfg.get("land_tokens") or {}).get(repo) or {}
+    legacy = cfg.get("land") or {}
+    return bool((entry.get("token") and entry.get("url") == url)
+                or (legacy.get("token") and legacy.get("url") == url and legacy.get("repo") == repo))
+
+
 def hermes(profile: str, *args: str) -> subprocess.CompletedProcess:
     cmd = ["hermes"] + ([] if profile == "default" else ["-p", profile]) + list(args)
     env = {k: v for k, v in os.environ.items() if not k.startswith("HERMES_KANBAN")}
@@ -197,6 +232,11 @@ def sync(args, cfg: dict) -> dict:
         modes[legacy_repo] = cfg["mode"]
     for r in args.enforce:
         modes[r] = "enforce"
+    trunks = dict(cfg.get("trunks") or {})
+    for pair in args.trunk:
+        repo_name, _, branch = pair.partition("=")
+        if repo_name and branch:
+            trunks[repo_name.strip()] = branch.strip()
     cfg.update({
         "url": args.url, "repo": legacy_repo,
         # 0.1 roots (weft + the hermes-ios weft-feed worktree under prefix ios/) are replaced by
@@ -206,6 +246,7 @@ def sync(args, cfg: dict) -> dict:
         "exclude": cfg.get("exclude") or ["~/.hermes"],
         "modes": modes, "default_mode": "advise", "node": node_bin(),
         "breaker_cooldown_s": cfg.get("breaker_cooldown_s", 300), "timeout": cfg.get("timeout", 4.0),
+        "trunks": trunks,
     })
     cfg.pop("mode", None)
     cfg.setdefault("agents", {})
@@ -258,8 +299,52 @@ def sync(args, cfg: dict) -> dict:
     save_config(cfg)
     print(f"tokens: issued {len(jobs) - len(failed)} for {len(args.profiles)} profile(s)"
           + (f"; FAILED {len(failed)}: {failed[:5]}" if failed else ""))
-    if failed:
+    # Auto-land: one system land token per repo, used only by the land script the plugin spawns
+    # (plugin/weft/land.py) and weft_land.py. Agent tokens keep scope [agent].
+    missing = [r for r in repos if not has_land_token(cfg, args.url, r)]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        minted = list(pool.map(lambda r: (r, issue_land_token(args.url, admin, r)), missing))
+    land_failed = [f"{r}: {err}" for r, (entry, err) in minted if not entry]
+    cfg = load_config()  # issue_land_token saved each token; pick them up
+    print(f"land tokens: issued {len(missing) - len(land_failed)} (repos with one: "
+          f"{sum(has_land_token(cfg, args.url, r) for r in repos)}/{len(repos)})"
+          + (f"; FAILED {len(land_failed)}: {land_failed[:5]}" if land_failed else ""))
+    cfg = prune(args, cfg, admin, set(repos) | {legacy_repo}, dirs)
+    if failed or land_failed:
         sys.exit(1)
+    return cfg
+
+
+def prune(args, cfg: dict, admin: str, keep: set, dirs: list) -> dict:
+    """Revoke and drop the agent + land tokens of repos whose project is gone (a deleted
+    throwaway repo). Skipped when a projects dir is missing (unmounted disk): absence proves
+    nothing then. The Weft repo itself and its log are kept."""
+    if any(not Path(d).expanduser().is_dir() for d in dirs):
+        print("prune: skipped (a projects dir is missing)")
+        return cfg
+    gone = set()
+    for entry in (cfg.get("agents") or {}).values():
+        gone |= set((entry.get("tokens") or {})) - keep
+    gone |= set(cfg.get("land_tokens") or {}) - keep
+    gone -= {r.get("repo") for r in (cfg.get("roots") or []) if r.get("repo")}
+    revoked = 0
+    for repo in sorted(gone):
+        ids = []
+        for entry in (cfg.get("agents") or {}).values():
+            tok = (entry.get("tokens") or {}).pop(repo, None)
+            if isinstance(tok, dict) and tok.get("token_id"):
+                ids.append(tok["token_id"])
+        land = (cfg.get("land_tokens") or {}).pop(repo, None) or {}
+        if land.get("token_id"):
+            ids.append(land["token_id"])
+        (cfg.get("modes") or {}).pop(repo, None)
+        (cfg.get("trunks") or {}).pop(repo, None)
+        for tid in ids:
+            status, _ = admin_call(args.url, admin, "DELETE", f"/v1/admin/tokens/{tid}")
+            revoked += status in (200, 204, 404)
+    if gone:
+        save_config(cfg)
+        print(f"prune: {len(gone)} vanished project repo(s) ({', '.join(sorted(gone))}); {revoked} token(s) revoked")
     return cfg
 
 
@@ -366,6 +451,8 @@ def main() -> None:
     p.add_argument("--project-dirs", default=DEFAULT_PROJECT_DIRS)
     p.add_argument("--enforce", default="weft", help="comma list of repos in enforce mode (others: advise)")
     p.add_argument("--admin-token-file", default=DEFAULT_ADMIN)
+    p.add_argument("--trunk", action="append", default=[],
+                   help="REPO=BRANCH trunk override for auto-land (default: origin/HEAD, else main, else master)")
     g = p.add_mutually_exclusive_group()
     g.add_argument("--sync", action="store_true", help="re-scan projects: create repos + tokens only")
     g.add_argument("--uninstall", action="store_true")

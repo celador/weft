@@ -183,6 +183,49 @@ python3 packages/adapters/hermes/scripts/weft_land.py --branch wt/x --sha <sha> 
 - Agents still have to rebase after a land: their next edit of a landed symbol is
   `stale_overwrite` until their worktree gets a new commit that includes main (`git merge main`).
 
+## Auto-land: every repo, no PM step (adapter 0.3, t_c736b10e)
+
+The Hermes plugin lands a card's change by itself when the card's work reaches its repo's trunk,
+in every repo in `~/.config/weft/hermes-adapter.json`, enforce and advise alike. Rationale and the
+rejected alternatives: docs/design.md "Auto-land".
+
+- What the plugin records: around every `terminal` / `execute_code` call it compares the HEAD of
+  each worktree the session works in (also when the command `cd`s there from a scratch dir) and
+  the trunk tips. A moved HEAD → `checkpoint {sha, x_work}` (`x_work: true` = the session's own new
+  commit). A moved trunk, `kanban_complete` / `kanban_request_review`, a trunk that moved since the
+  last check, or a pending retry → spawns `<plugin dir>/land.py --auto --repo R --git-dir D
+  [--hint change=sha]` detached (never blocks a tool, a commit or a card).
+- What `land.py` lands: each change with edits after its last land whose newest work commit made
+  after its last edit is on trunk (ancestor, or patch-equivalent after a rebase), at the landing
+  commit (merge commit, or the commit itself after a fast-forward). `op_id = uuid5(repo/change/sha)`;
+  a change whose op_id is already logged, or that is already landed, is skipped. One run per repo
+  at a time (`~/.cache/weft-hermes/land-state/<repo>.lock`, also taken by `weft_land.py`).
+- Trunk: `trunks.<repo>` in the config (`install.py --sync --trunk hermes-ios=rebrand/otto`), else
+  `origin/HEAD`, else `main`, else `master`; tips `refs/heads/<t>` + `refs/remotes/origin/<t>`.
+- Never landed: a change with no commit after its last edit (session ended without committing or
+  merging, e.g. smoke changes) or whose newest commit is not on trunk.
+- Backlog: `--auto` only looks at changes with work after its first run in the repo minus 6 h
+  (`floor_ts` in the state file; `auto_land_since` in the config overrides) plus the calling
+  session's own commits. Older unlanded changes: review, then backfill:
+  ```sh
+  python3 packages/adapters/hermes/scripts/weft_land.py --all-repos --since 2026-10-01 --dry-run
+  python3 packages/adapters/hermes/scripts/weft_land.py --all-repos --only repo-a,repo-b --since 2026-10-01
+  python3 packages/adapters/hermes/scripts/weft_land.py --sweep --repo R --git-dir ~/github/R   # one repo
+  ```
+  Dry runs read with the repo's land token, else `~/.config/weft/observer-all-token`; live runs
+  mint a missing land token from the admin token.
+- Token: `land_tokens.<repo>` (principal `weft-pm-land`, scopes `system`+`observe`, one repo),
+  issued for every project repo by `install.py --sync` and revoked by `--uninstall` or when the
+  project disappears. Only `land.py` (its own process) and `weft_land.py` read it; the plugin
+  process holds its agent token only; the admin token is read by `install.py` and `weft_land.py`
+  (live mode) only. Payload sent: `{kind: land, base_seq, change, payload: {sha, op_id, trunk_ref}}`.
+- Failures: gateway down / HTTP error → logged and `~/.cache/weft-hermes/land-pending/<repo>.json`
+  (keeps the session's commit shas); retried at the next trigger in any process (at most once a
+  minute per session, and when a router first opens the repo).
+- Logs: one line per decision in `~/.cache/weft-hermes/<profile>.log` (`auto-land repo=… change=…
+  result=landed|skip|deferred …`) and JSON in `~/.cache/weft-hermes/land.log`.
+- Off switch: `"auto_land": false` in the config.
+
 ## Hermes adapter: which process reports (operator pitfalls)
 
 - `hermes chat` turns (interactive, `-q`, `-Q`) do not run in the CLI process: the CLI is a

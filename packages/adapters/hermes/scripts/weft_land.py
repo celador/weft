@@ -40,6 +40,16 @@ printed. Every decision is appended as one JSON line to ~/.cache/weft-hermes/lan
 
 Exit status: 0 when every change was landed or legitimately skipped, 1 if any land failed.
 This is a stopgap until B8's landing queue owns landing.
+
+AUTO-LAND (adapter 0.3+). The Hermes plugin lands changes by itself when a session sees its
+repo's trunk move (plugin/weft/land.py, mapping by the change's own checkpoint commits, not branch
+names or tags). The merge-based modes above stay for manual catch-up. Sweep / backfill with the
+same mapping:
+
+    python3 packages/adapters/hermes/scripts/weft_land.py --sweep --repo lawnstarter-take-home \\
+        --git-dir ~/github/lawnstarter-take-home                          # one repo
+    python3 packages/adapters/hermes/scripts/weft_land.py --all-repos --since 2026-10-20 --dry-run
+    python3 packages/adapters/hermes/scripts/weft_land.py --all-repos --only a,b --since 2026-10-20
 """
 
 from __future__ import annotations
@@ -55,21 +65,25 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from install import CONFIG, DEFAULT_ADMIN, DEFAULT_URL, admin_call, load_config, save_config  # noqa: E402
+from install import CONFIG, DEFAULT_ADMIN, DEFAULT_URL, issue_land_token, load_config  # noqa: E402
+from weft.land import (  # noqa: E402,F401  (shared with the plugin's auto-land; re-exported for tests)
+    NS, Gateway, GatewayError, Logger, RepoLock, err_text, land_decision, op_id, post_land, run_auto, state_path,
+    sweep, trunk_ref_of,
+)
 
 DEFAULT_GIT = "~/github/weft"
 DEFAULT_KANBAN_DB = "~/.hermes/kanban/boards/weft/kanban.db"
+DEFAULT_OBSERVER = "~/.config/weft/observer-all-token"
 LOG = Path(os.environ.get("WEFT_LAND_LOG", "~/.cache/weft-hermes/land.log")).expanduser()
 TASK_RE = re.compile(r"\bt_[0-9a-f]{8}\b")
 TAG_RE = re.compile(r"\[(t_[0-9a-f]{8})\]")
 TRAILER_RE = re.compile(r"^(?:Kanban-Task|Task|Weft-Task):\s*(t_[0-9a-f]{8})\s*$", re.M | re.I)
 MERGE_SUBJECT_RE = re.compile(r"^Merge (?:remote-tracking )?branch '([^']+)'")
-NS = uuid.UUID("6f1b2c1e-9d7a-4c55-8a3e-5e2f0d7a1b10")  # uuid5 namespace for land op ids
 
 
 # ---------------------------------------------------------------------------- pure helpers
@@ -110,128 +124,6 @@ def tasks_from_kanban(db: Path, branch: str) -> List[str]:
     except sqlite3.Error:
         return []
     return [r[0] for r in rows]
-
-
-def op_id(repo: str, change: str, sha: str) -> str:
-    return str(uuid.uuid5(NS, f"{repo}\n{change}\n{sha}"))
-
-
-def land_decision(events: Iterable[dict]) -> Tuple[str, str]:
-    """('land'|'skip', reason) for one change, from its accepted records (any order).
-
-    Land iff the change has an accepted edit/claim after its last accepted land: that is what holds
-    claims and what later cards would wait on. A card that was reopened after an earlier land
-    edits again and is landed again on the next merge.
-    """
-    last_work = last_land = 0
-    for e in events:
-        if e.get("status") != "accepted":
-            continue
-        if e.get("kind") in ("edit", "claim"):
-            last_work = max(last_work, int(e["seq"]))
-        elif e.get("kind") == "land":
-            last_land = max(last_land, int(e["seq"]))
-    if not last_work:
-        return "skip", "no edits or claims"
-    if last_land > last_work:
-        return "skip", f"already landed (#{last_land})"
-    return "land", f"work through #{last_work}" + (f", last land #{last_land}" if last_land else "")
-
-
-# ---------------------------------------------------------------------------- gateway client
-
-class Gateway:
-    def __init__(self, url: str, token: str, repo: str, timeout: float = 15.0):
-        self.base = url.rstrip("/")
-        self.token = token
-        self.repo = repo
-        self.timeout = timeout
-
-    def call(self, method: str, path: str, body: Any = None) -> Tuple[int, Any]:
-        data = None if body is None else json.dumps(body).encode()
-        req = urllib.request.Request(self.base + path, data=data, method=method)
-        req.add_header("Authorization", f"Bearer {self.token}")
-        req.add_header("WCP-Version", "0.1")
-        req.add_header("User-Agent", "weft-land/0.1")  # Cloudflare 403s Python-urllib
-        if data is not None:
-            req.add_header("Content-Type", "application/json")
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                raw = resp.read()
-                return resp.status, (json.loads(raw) if raw else None)
-        except urllib.error.HTTPError as err:
-            try:
-                return err.code, json.loads(err.read() or b"{}")
-            except Exception:
-                return err.code, None
-
-    def events(self, **filters: str) -> Tuple[List[dict], int]:
-        out: List[dict] = []
-        after, head = 0, 0
-        while True:
-            q = "&".join(f"{k}={urllib.parse.quote(v, safe='')}" for k, v in filters.items())
-            status, page = self.call("GET", f"/v1/repos/{self.repo}/events?after={after}&limit=500&{q}")
-            if status != 200:
-                raise RuntimeError(f"GET events -> HTTP {status}: {err_text(page)}")
-            out += page["events"]
-            head = page["head_seq"]
-            if not page["has_more"] or page["next_after"] <= after:
-                return out, head
-            after = page["next_after"]
-
-    def head(self) -> int:
-        status, page = self.call("GET", f"/v1/repos/{self.repo}/events?tail=1&limit=1")
-        if status != 200:
-            raise RuntimeError(f"GET head -> HTTP {status}: {err_text(page)}")
-        return int(page["head_seq"])
-
-    def land(self, draft: dict) -> Tuple[int, Any]:
-        return self.call("POST", f"/v1/repos/{self.repo}/system/events", draft)
-
-
-def err_text(body: Any) -> str:
-    if isinstance(body, dict) and isinstance(body.get("error"), dict):
-        return f"{body['error'].get('code')}: {body['error'].get('message')}"
-    return str(body)[:200]
-
-
-def trunk_ref_of(branch: Optional[str]) -> Optional[str]:
-    if not branch:
-        return None
-    return branch if branch.startswith("refs/") else f"refs/heads/{branch}"
-
-
-def post_land(gw: Gateway, change: str, sha: str, retries: int = 3,
-              sleep: Callable[[float], None] = time.sleep,
-              log: Callable[[dict], None] = lambda r: None,
-              trunk_ref: Optional[str] = None) -> Tuple[str, Optional[dict]]:
-    """POST the land; on an R1 rejection log it, re-read head ("rebase") and retry."""
-    oid = op_id(gw.repo, change, sha)
-    for attempt in range(1, retries + 2):
-        base = gw.head()
-        payload: Dict[str, Any] = {"sha": sha, "op_id": oid}
-        if trunk_ref:
-            payload["trunk_ref"] = trunk_ref
-        draft = {"kind": "land", "base_seq": base, "change": change, "payload": payload}
-        status, rec = gw.land(draft)
-        if status == 200 and isinstance(rec, dict) and rec.get("status") == "accepted":
-            return "landed", rec
-        if status == 200 and isinstance(rec, dict) and rec.get("status") == "rejected":
-            diags = [f"{d.get('code')} {d.get('symbol')} (#{d.get('caused_by_seq')})" for d in rec.get("diagnostics", [])]
-            log({"event": "land_rejected", "change": change, "sha": sha, "base_seq": base, "seq": rec.get("seq"),
-                 "attempt": attempt, "diagnostics": diags})
-            if attempt <= retries:
-                sleep(min(2 ** attempt, 10))
-                continue
-            return "rejected", rec
-        if isinstance(rec, dict) and (rec.get("error") or {}).get("code") == "invalid_reference":
-            return "unknown_change", None
-        log({"event": "land_error", "change": change, "sha": sha, "http": status, "error": err_text(rec), "attempt": attempt})
-        if attempt <= retries and (status >= 500 or status == 0):
-            sleep(min(2 ** attempt, 10))
-            continue
-        return f"http_{status}", None
-    return "rejected", None
 
 
 # ---------------------------------------------------------------------------- git
@@ -285,17 +177,21 @@ def system_token(cfg: dict, url: str, repo: str, admin_file: str) -> str:
     admin_path = Path(admin_file).expanduser()
     if not admin_path.exists():
         sys.exit(f"no system token in {CONFIG} and no admin token at {admin_path}")
-    status, body = admin_call(url, admin_path.read_text().strip(), "POST", "/v1/admin/tokens",
-                              {"principal": "weft-pm-land", "scopes": ["system", "observe"], "repos": [repo],
-                               "label": "PM git-merge landings (weft_land.py)"})
-    if status != 201 or not isinstance(body, dict):
-        sys.exit(f"could not issue a system token: HTTP {status} {err_text(body)}")
-    cfg = load_config()  # re-read: never clobber a concurrent installer write
-    cfg.setdefault("land_tokens", {})[repo] = {"url": url, "repo": repo, "principal": "weft-pm-land",
-                                               "token": body["token"], "token_id": body["info"]["id"]}
-    save_config(cfg)
-    print(f"issued system token {body['info']['id']} (principal weft-pm-land, repos [{repo}]); saved to {CONFIG}")
-    return body["token"]
+    entry, error = issue_land_token(url, admin_path.read_text().strip(), repo)
+    if not entry:
+        sys.exit(f"could not issue a system token: {error}")
+    print(f"issued system token {entry['token_id']} (principal weft-pm-land, repos [{repo}]); saved to {CONFIG}")
+    return entry["token"]
+
+
+def read_token(cfg: dict, url: str, repo: str, observer_file: str) -> Optional[str]:
+    """A token that can read ``repo``'s events without minting anything (dry runs): the repo's land
+    token, else the observer token (scope observe, all repos)."""
+    cached = cached_token(cfg, url, repo)
+    if cached:
+        return cached
+    p = Path(observer_file).expanduser()
+    return p.read_text().strip() if p.exists() else None
 
 
 # ---------------------------------------------------------------------------- main
@@ -350,6 +246,66 @@ def process(gw: Gateway, info: dict, kanban_db: Path, dry_run: bool,
     return results
 
 
+def parse_since(value: Optional[str]) -> float:
+    if not value:
+        return 0.0
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        sys.exit(f"--since: expected a date like 2026-10-20, got {value!r}")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+def project_repos(cfg: dict) -> List[Tuple[str, str]]:
+    """[(project dir, repo)] from the adapter config, one entry per Weft repo."""
+    seen: Dict[str, str] = {}
+    for path, repo in sorted(((cfg.get("projects") or {}).get("repos") or {}).items()):
+        if repo not in seen and Path(path).is_dir():
+            seen[repo] = path
+    return [(path, repo) for repo, path in sorted(seen.items())]
+
+
+def run_sweeps(a: argparse.Namespace, cfg: dict, url: str) -> int:
+    """--sweep (one repo) / --all-repos: land every change whose newest work commit is on trunk."""
+    since = parse_since(a.since)
+    if a.all_repos:
+        targets = project_repos(cfg)
+        if a.only:
+            wanted = {x.strip() for x in a.only.split(",") if x.strip()}
+            targets = [t for t in targets if t[1] in wanted]
+    else:
+        targets = [(str(Path(a.git_dir).expanduser()), a.repo or cfg.get("repo") or "weft")]
+    failed = False
+    totals: Dict[str, int] = {}
+    for path, repo in targets:
+        token = (read_token(cfg, url, repo, a.observer_token_file) if a.dry_run
+                 else system_token(cfg, url, repo, a.admin_token_file))
+        if not token:
+            print(f"[{repo}] no token to read events (no land token, no observer token); skipped")
+            continue
+        gw = Gateway(url, token, repo)
+        trunk = a.trunk_ref or (cfg.get("trunks") or {}).get(repo)
+        try:
+            with RepoLock(repo):
+                results = sweep(gw, repo, path, trunk=trunk, since_ts=since, dry_run=a.dry_run, log=write_log)
+        except Exception as err:
+            print(f"[{repo}] FAILED: {type(err).__name__}: {err}")
+            failed = True
+            continue
+        for r in results:
+            write_log(r)
+            totals[r["result"]] = totals.get(r["result"], 0) + 1
+            extra = f" seq #{r['seq']}" if r.get("seq") else ""
+            sha = f" @{r['sha'][:10]}" if r.get("sha") else ""
+            print(f"[{repo}] {r['change']}: {r['result']}{sha}{extra} ({r.get('reason', '')})")
+            if r["result"] not in ("landed", "skip", "would_land", "unknown_change"):
+                failed = True
+    print(f"{len(targets)} repo(s); " + (", ".join(f"{k} {v}" for k, v in sorted(totals.items())) or "no open changes"))
+    return 1 if failed else 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--git-dir", default=DEFAULT_GIT, help="repo whose main received the merge")
@@ -362,15 +318,24 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--url", help="gateway URL (default: config url)")
     p.add_argument("--kanban-db", default=DEFAULT_KANBAN_DB)
     p.add_argument("--admin-token-file", default=DEFAULT_ADMIN)
+    p.add_argument("--observer-token-file", default=DEFAULT_OBSERVER,
+                   help="read-only token for --dry-run sweeps of repos without a land token")
     p.add_argument("--token-file", help="use this system token instead of the config's")
     p.add_argument("--trunk-ref", help="trunk branch recorded in each land (e.g. rebrand/otto)")
     p.add_argument("--note-install", metavar="JSON",
                    help='record an install of <ref>: {"build": "87", "target": "mac", "devices": [...]}')
+    p.add_argument("--sweep", action="store_true",
+                   help="land every change of --repo whose newest work commit is on trunk (checkpoint mapping)")
+    p.add_argument("--all-repos", action="store_true", help="--sweep every project repo in the adapter config")
+    p.add_argument("--only", help="with --all-repos: comma list of repos")
+    p.add_argument("--since", help="with --sweep/--all-repos: only changes with work on/after this date (UTC)")
     p.add_argument("--dry-run", action="store_true")
     a = p.parse_args(argv)
 
     cfg = load_config()
     url = a.url or cfg.get("url") or DEFAULT_URL
+    if a.sweep or a.all_repos:
+        return run_sweeps(a, cfg, url)
     repo = a.repo or cfg.get("repo") or "weft"
     token = (Path(a.token_file).expanduser().read_text().strip() if a.token_file
              else system_token(cfg, url, repo, a.admin_token_file))
@@ -397,15 +362,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         infos += [merge_info(git_dir, m) for m in (a.merge or [a.ref])]
 
     failed = False
-    for info in infos:
-        if not info["merge"] and not a.branch:
-            print(f"{info['sha'][:12]} is not a merge commit ({info['subject'][:60]}); pass --branch for a fast-forward")
-            continue
-        for r in process(gw, info, Path(a.kanban_db).expanduser(), a.dry_run, trunk_ref):
-            extra = f" seq #{r['seq']}" if r.get("seq") else ""
-            print(f"{r['sha']} {r.get('branch') or '-'} {r.get('change') or r.get('task') or ''}: {r['result']}{extra} ({r.get('reason', '')})")
-            if r["result"] not in ("landed", "skip", "would_land", "unknown_change"):
-                failed = True
+    with RepoLock(repo):  # never race the plugin's auto-land for the same repo
+        for info in infos:
+            if not info["merge"] and not a.branch:
+                print(f"{info['sha'][:12]} is not a merge commit ({info['subject'][:60]}); pass --branch for a fast-forward")
+                continue
+            for r in process(gw, info, Path(a.kanban_db).expanduser(), a.dry_run, trunk_ref):
+                extra = f" seq #{r['seq']}" if r.get("seq") else ""
+                print(f"{r['sha']} {r.get('branch') or '-'} {r.get('change') or r.get('task') or ''}: {r['result']}{extra} ({r.get('reason', '')})")
+                if r["result"] not in ("landed", "skip", "would_land", "unknown_change"):
+                    failed = True
     return 1 if failed else 0
 
 

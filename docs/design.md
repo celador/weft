@@ -217,6 +217,38 @@ WCP v0.1 is specified in `docs/protocol/wcp-v0.md` (normative; implemented by `p
   posts `land {sha, op_id = uuid5(repo/change/sha)}` with `base_seq` = head for every change with
   edits after its last land; R1 rejections are retried on a fresh head. When B8 lands, the queue
   takes this over: the PM enqueues instead of merging, and the script goes away.
+- Auto-land (t_c736b10e, adapter 0.3): the merge-mapping script only worked where merges name
+  the card (weft's `wt/<key>`, hermes-ios' `land_card.sh`). On other projects workers merge
+  branches like `milestone-2` with no task id anywhere, so their changes were never landed
+  (lawnstarter-take-home). Now every Hermes process lands by itself, in every registered repo,
+  enforce or advise. Route chosen, of the three candidates:
+  - **(a) the adapter, chosen**, with the mapping inverted: not "which card does this merge
+    belong to" but "is this change's own work on trunk". The adapter records the session's
+    commits as it sees them: around every tool that can run git (`terminal`, `execute_code`) it
+    snapshots the HEAD of every worktree the session works in and the trunk tips, wherever the
+    command runs (lawnstarter workers ran `cd ~/github/x && git commit` from a scratch workdir,
+    so the old in-scope-workdir check had recorded zero checkpoints there). A moved HEAD becomes
+    `checkpoint {sha, x_work}`; `x_work` marks the session's own new commit (made during the
+    call, not reachable from trunk before it, not a `git pull`), so a `git checkout master` is
+    never mistaken for work. A moved trunk, a kanban completion, or a trunk that moved since the
+    previous call (someone else merged) spawns `plugin/weft/land.py --auto` detached. It lands
+    each change whose newest work commit made after its last edit is on trunk: ancestor of the
+    trunk tip, or patch-equivalent (rebase-and-merge). The land sha is the first commit on
+    trunk's first-parent chain containing it (the merge commit; the commit itself after a
+    fast-forward), so `op_id = uuid5(repo/change/sha)` is identical for every detector and a
+    second detection posts nothing. The PM's merge in weft is also a Hermes terminal call, so
+    weft lands with no PM step; `weft_land.py` stays for manual catch-up.
+  - (b) kanban completion alone: misses merges done after `done` (the weft PM merges later) and
+    cards that never complete; kept only as an extra trigger.
+  - (c) a git hook from `install.py --sync`: per-clone config that fights husky/`core.hooksPath`
+    in other people's repos and would need a system token reachable from every git process;
+    rejected. Merges by a human with no Hermes session in the repo are caught at the next
+    trigger (any session's next tool call there) or by `weft_land.py --all-repos`.
+  Token: the system land token per repo (`land_tokens.<repo>`, minted by `--sync`) is read only
+  by `land.py`/`weft_land.py` in their own process; the plugin process keeps its agent token.
+  Failures (gateway down) leave `~/.cache/weft-hermes/land-pending/<repo>.json` (with the
+  session's commit shas) and are retried on the next trigger. Changes with no commit after
+  their last edit (an ad-hoc session that ended without merging) are never landed.
 - Adapter fix found by the live landing check: a rebase checkpoint's verdict repeats the still
   unacked `trunk` item, which re-set the adapter's rebase floor right after the commit cleared
   it, so a rebased agent's next edit of a landed symbol was blocked with `stale_overwrite`. The

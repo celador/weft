@@ -14,8 +14,9 @@ Declared capability: **L3** (`observe: sync`, `inject: immediate`, `deny_edit`, 
 |---|---|---|
 | `pre_tool_call` | `write_file`, `patch` (replace mode) | analyze proposed before/after → `submit mode:"check"`; `reject` → `{"action":"block","message": verdict.context}` (L2) |
 | `pre_tool_call` | `terminal` in scope | snapshot dirty files + HEAD; a `git commit` command first asks `gate commit` |
-| `pre_tool_call` | `kanban_complete`, `kanban_request_review` | `gate stop`; refused → block with the rendered open errors (L3) |
-| `post_tool_call` | any edit above, `patch` V4A mode, terminal-made changes | real before/after → `submit mode:"commit"` (diff, reads, writes); HEAD moved → `checkpoint {sha}` |
+| `pre_tool_call` / `post_tool_call` | `terminal`, `execute_code` (any workdir) | HEAD of every worktree the session works in + trunk tips; HEAD moved → `checkpoint {sha, x_work}`; trunk moved → auto-land (`land.py`, detached) |
+| `pre_tool_call` | `kanban_complete`, `kanban_request_review` | auto-land check (detached); `gate stop`; refused → block with the rendered open errors (L3) |
+| `post_tool_call` | any edit above, `patch` V4A mode, terminal-made changes | real before/after → `submit mode:"commit"` (diff, reads, writes) |
 | `post_tool_call` | other tools, session open | `inbox.drain` at most every 20 s |
 | `transform_tool_result` | queued verdict/inbox context | adds `weft_diagnostics` to the JSON tool result (or appends text) — L1 |
 | `pre_verify` | session open | `gate stop`; refused → `{"action":"continue"}` (L3, bounded by `agent.max_verify_nudges`) |
@@ -126,6 +127,12 @@ python3 packages/adapters/hermes/scripts/verify_live.py   # two adapters vs the 
 ```
 
 ## Landing (PM merges → `land`)
+
+Since adapter 0.3 the plugin lands by itself (auto-land): when a session sees its repo's trunk
+move, it spawns `plugin/weft/land.py`, which lands every change whose newest work commit (from the
+change's own `checkpoint` records, not branch names) is on trunk, in every registered repo. Details:
+docs/runbook.md "Auto-land". `scripts/weft_land.py` stays for manual catch-up and backfill
+(`--all-repos --since <date> [--dry-run]`).
 
 Weft's build merges kanban branches with `git merge`, outside Weft. `scripts/weft_land.py` appends
 the system `land` for each merged change so its claims are released and other cards get
