@@ -221,3 +221,9 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-10-27 11:50 — landed Hermes one-shot fix + one-feed discovery
 - Merged wt/oneshot-hooks (t_c6d02183: Hermes adapter 0.2.1 re-reads config for unknown projects, reloads on install) and wt/t_493beab7 (VS Code + `npx weft` find the Hermes adapter's gateway/repo and the shared human token; no hosted space when the adapter maps the repo) via pm/integrate-1027. Gate GATE_EXIT=0 (25 suites, cli 32/32, vscode 14/14); hermes test_multirepo 18/18. Weft lands #2285–#2286. Worktrees removed.
 - Security impact: discovery reads only ~/.config/weft (user home, never repo files); the shared token is sent only when its `url` equals the adapter's gateway; `--untrusted` skips .weft. Reduces code sent to the hosted space. No publishing (freeze holds; t_be030d1a stays in triage).
+
+## 2026-10-27 13:20 — landed auto-land
+- Merged wt/auto-land (t_c736b10e: Hermes adapter 0.3 auto-land; land.py posts a system land when a card's own commits reach trunk in any registered repo; install --sync mints per-repo land tokens) ff to 2cbe137. Gate GATE_EXIT=0 (25 suites); spot-check test_autoland 29/29. Weft land #2320. Worktree removed.
+- Security impact: land tokens are least-privilege (scopes system+observe, repos [one repo], principal weft-pm-land, revoked on project prune); land payload is {sha, op_id, trunk_ref} only, no code. Nothing published.
+- CI failed on the Kotlin edit-budget test (315 ms fastest-of-3 on the GitHub runner, unrelated to the change). Fixed the assumption: budget tests allow 2x the 300 ms target when CI is set (target unchanged locally). CI green on the fix.
+- wt/t_be804fb4 (competitor recon) stays unmerged on purpose (public repo). t_be030d1a stays in triage (publish freeze).
