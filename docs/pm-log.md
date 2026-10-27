@@ -217,3 +217,7 @@ Append-only. One dated entry per heartbeat that changed something.
 
 ## 2026-10-26 04:10 — security audit finished
 - t_9aa3ddb8 done (read-only): 5 security pages in ~/Desktop/weft-release-brief/ + 57-page PDF; findings page lists 10 (3 high, 4 medium, 3 low), verified files present. Publishing stays frozen and no fix cards are created until John reviews the brief and its 3 decisions. t_be030d1a stays in triage. Main tree's uncommitted apps/vscode edits (other session) left untouched.
+
+## 2026-10-27 11:50 — landed Hermes one-shot fix + one-feed discovery
+- Merged wt/oneshot-hooks (t_c6d02183: Hermes adapter 0.2.1 re-reads config for unknown projects, reloads on install) and wt/t_493beab7 (VS Code + `npx weft` find the Hermes adapter's gateway/repo and the shared human token; no hosted space when the adapter maps the repo) via pm/integrate-1027. Gate GATE_EXIT=0 (25 suites, cli 32/32, vscode 14/14); hermes test_multirepo 18/18. Weft lands #2285–#2286. Worktrees removed.
+- Security impact: discovery reads only ~/.config/weft (user home, never repo files); the shared token is sent only when its `url` equals the adapter's gateway; `--untrusted` skips .weft. Reduces code sent to the hosted space. No publishing (freeze holds; t_be030d1a stays in triage).
