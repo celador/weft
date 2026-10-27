@@ -231,6 +231,153 @@ class RouterTests(Workspace):
         self.assertEqual((cfg.agent, cfg.tokens["alpha"]), ("hermes-default", "ta"), "no env: profile config")
 
 
+class GatewayProcessTests(Workspace):
+    """Every `hermes chat` turn (`-q`/`-Q` included) runs inside the long-lived Hermes gateway
+    process, not in the CLI process: the plugin's router lives for days there."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg_path = self.tmp / "hermes-adapter.json"
+        self.cache = self.tmp / "cache"
+        self._env = {k: os.environ.get(k) for k in ("WEFT_HERMES_CACHE", "HERMES_KANBAN_WORKSPACE")}
+        os.environ["WEFT_HERMES_CACHE"] = str(self.cache)
+
+    def tearDown(self):
+        for k, v in self._env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        sys.modules.pop("tools.terminal_tool", None)
+        super().tearDown()
+
+    def write_config(self, tokens):
+        self.cfg_path.write_text(json.dumps({
+            "url": "http://fake", "default_mode": "advise",
+            "projects": {"dirs": [str(self.gh), str(self.code)], "repos": self.projects},
+            "exclude": [str(self.hermes)],
+            "agents": {"test": {"agent": "hermes-test", "tokens": {r: {"token": t} for r, t in tokens.items()}}}}))
+
+    def router(self, now):
+        self.clients, self.loads = {}, 0
+
+        def factory(cfg):
+            c = self.clients[cfg.repo] = FakeClient()
+            return c
+
+        def loader():
+            self.loads += 1
+            return Config.load(self.cfg_path, profile="test")
+        return WeftRouter(loader(), client_factory=factory, heartbeat=False, loader=loader, clock=lambda: now[0])
+
+    def edit(self, r, path, content, call_id, **kw):
+        args = {"path": str(path), "content": content}
+        self.assertIsNone(r.pre_tool_call(tool_name="write_file", args=args, tool_call_id=call_id, **kw))
+        (path if os.path.isabs(str(path)) else self.gh / "alpha" / path).write_text(content)
+        r.post_tool_call(tool_name="write_file", args=args, tool_call_id=call_id, **kw)
+
+    def test_project_synced_after_start_reports_without_a_restart(self):
+        now = [1000.0]
+        self.write_config({"alpha": "ta"})
+        r = self.router(now)
+        beta = self.gh / "beta" / "src" / "a.md"
+        self.edit(r, beta, "two\n", "c1")
+        self.assertEqual(self.clients, {}, "beta has no token yet")
+        self.write_config({"alpha": "ta", "beta": "tb"})  # `install.py --sync` adds beta
+        now[0] += 30
+        self.edit(r, beta, "three\n", "c2")
+        self.assertEqual((self.clients, self.loads), ({}, 1), "unknown repos re-check at most once a minute")
+        now[0] += 31
+        self.edit(r, beta, "four\n", "c3")
+        self.assertEqual(self.loads, 2)
+        self.assertTrue(r.flush(5))
+        self.assertEqual([c[3]["files"] for c in self.clients["beta"].submits("commit")], [["src/a.md"]])
+        self.assertEqual(r.adapter_for("beta").cfg.token, "tb")
+        log = (self.cache / "test.log").read_text()
+        self.assertEqual(log.count("project 'beta' has no Weft repo/token"), 1, log)
+        self.assertIn("config reloaded: project 'beta' now has a Weft repo/token", log)
+        for i in range(8):  # a still-unknown repo never re-reads the config more than once a minute
+            now[0] += 10
+            self.edit(r, self.code / "gamma" / "src" / "a.md", f"{i}\n", f"g{i}")
+        self.assertEqual(self.loads, 3)
+        r.close()
+
+    def test_relative_paths_resolve_against_the_hermes_session_cwd(self):
+        import types
+        os.environ.pop("HERMES_KANBAN_WORKSPACE", None)
+        self.write_config({"alpha": "ta"})
+        r = self.router([0.0])
+        # what the gateway has: file tools anchor relative paths at the session's workspace root
+        paths = types.SimpleNamespace(
+            _authoritative_workspace_root=lambda task_id: str(self.gh / "alpha") if task_id == "sess-1" else None)
+        # fallback: the terminal tool's per-session cwd record
+        term = types.SimpleNamespace(
+            resolve_task_overrides=lambda task_id: {},
+            get_session_cwd=lambda task_id: str(self.gh / "alpha") if task_id == "sess-2" else None)
+        sys.modules["tools.file_tools_paths"], sys.modules["tools.terminal_tool"] = paths, term
+        cwd = os.getcwd()
+        os.chdir(self.tmp)  # the gateway's own cwd is not the chat's directory
+        try:
+            self.edit(r, "src/a.md", "two\n", "c1", task_id="sess-1")
+            self.edit(r, "src/a.md", "three\n", "c2", task_id="sess-2")
+            self.edit(r, "src/a.md", "four\n", "c3", task_id="unknown-session")  # tmp/src/a.md: out of scope
+        finally:
+            os.chdir(cwd)
+            sys.modules.pop("tools.file_tools_paths", None)
+        self.assertTrue(r.flush(5))
+        self.assertEqual([c[3]["files"] for c in self.clients["alpha"].submits("commit")], [["src/a.md"]] * 2)
+
+    def test_get_adapter_retries_a_missing_config(self):
+        import weft.adapter as mod
+        saved = (mod._ADAPTER, mod._LOADED, mod._LOAD_TRIED_AT, mod._load_config)
+        try:
+            mod._ADAPTER, mod._LOADED, mod._LOAD_TRIED_AT = None, False, 0.0
+            mod._load_config = lambda: Config.load(self.cfg_path, profile="test")
+            self.assertIsNone(mod.get_adapter(), "no config file yet")
+            self.write_config({"alpha": "ta"})
+            self.assertIsNone(mod.get_adapter(), "rate-limited")
+            mod._LOAD_TRIED_AT -= mod.RELOAD_EVERY_S
+            r = mod.get_adapter()
+            self.assertIsNotNone(r)
+            self.assertIs(mod.get_adapter(), r)
+        finally:
+            mod._ADAPTER, mod._LOADED, mod._LOAD_TRIED_AT, mod._load_config = saved
+
+    def test_plugin_unload_closes_the_router(self):
+        """`hermes plugins enable` makes the gateway force-reload plugins: the old router says bye."""
+        import weft
+        import weft.adapter as mod
+        hooks, unloads = {}, []
+
+        class Ctx:
+            def register_hook(self, name, fn):
+                hooks[name] = fn
+
+            def on_unload(self, cb):
+                unloads.append(cb)
+        weft.register(Ctx())
+        self.assertIn("post_tool_call", hooks)
+        self.assertEqual(len(unloads), 1)
+        saved = (mod._ADAPTER, mod._LOADED, mod._LOAD_TRIED_AT, mod._load_config)
+        try:
+            mod._ADAPTER, mod._LOADED = None, False
+            mod._load_config = lambda: Config.load(self.cfg_path, profile="test")
+            self.write_config({"alpha": "ta"})
+            r = mod.get_adapter()
+            r.client_factory = lambda cfg: FakeClient()
+            r.heartbeat = False
+            a = r.adapter_for("alpha")
+            a.ensure_session()
+            unloads[0]()
+            self.assertIsNone(mod._ADAPTER)
+            deadline = time.monotonic() + 5
+            while ("bye", a.session) not in a.client.calls and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertIn(("bye", a.session), a.client.calls)
+        finally:
+            mod._ADAPTER, mod._LOADED, mod._LOAD_TRIED_AT, mod._load_config = saved
+
+
 class Silent:
     """A TCP server that accepts and never answers (a hung gateway)."""
 
