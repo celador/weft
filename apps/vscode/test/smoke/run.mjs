@@ -23,7 +23,10 @@ const humanToken = "smoke-human-token";
 const lastTs = Math.max(...fx.events.map((e) => Date.parse(e.ts)));
 const shift = Date.now() - 60_000 - lastTs;
 const events = fx.events.filter((e) => e.seq <= 11).map((e) => ({ ...e, ts: new Date(Date.parse(e.ts) + shift).toISOString() }));
-const stub = await startStub({ repo: fx.repo, events, holdFrom: 9, observeToken, humanToken });
+// The token also sees 40 idle repos (a token with repos "*"): the panel must show only the
+// workspace's repo and stream only it.
+const extraRepos = Array.from({ length: 40 }, (_, i) => `other-${i}`);
+const stub = await startStub({ repo: fx.repo, events, holdFrom: 9, observeToken, humanToken, extraRepos });
 
 const tmp = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "weft-vscode-smoke-"));
 const ws = join(tmp, "checkout-b");

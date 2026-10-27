@@ -148,6 +148,12 @@ function onMessage(m: ToView): void {
       canAct = m.canAct;
       tokenWhere = m.tokenWhere;
       session.repoList = m.repos;
+      // init carries the host's whole log for the workspace's repos: drop rows of repos that
+      // fell out of scope (e.g. the folder's repo became known after an unscoped start).
+      {
+        const keep = new Set([...m.events.map((e) => e.repo), ...m.repos.map((r) => r.repo)]);
+        for (const r of session.log.repos) if (!keep.has(r)) session.log.reset(r);
+      }
       client.status = m.status;
       client.feedListener!.onStatus?.(m.status, m.error);
       client.feedListener!.onEvents(m.events.map(normalize), "");

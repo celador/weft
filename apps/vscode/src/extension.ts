@@ -25,6 +25,7 @@ import {
   openSquiggles,
   parseId,
   renderText,
+  type RepoSummary,
   repoForFolder,
   type Squiggle,
   type StreamStatus,
@@ -171,12 +172,16 @@ class WeftExtension {
     this.client = new ObserverClient({ baseUrl: target.url, token: this.tokens[0]!.token });
     // Per-repo sockets when this extension host has WebSocket (Node >= 22); else poll /v1/feed.
     this.perRepo = !!WS;
-    const session = new FeedSession(this.client, { perRepoStreams: this.perRepo });
+    // Folders whose repo is configured (.weft/, settings) scope the streams from the start; a
+    // repo guessed from a folder name narrows them once /v1/repos has been read (rescope()).
+    const configured = this.workspaceRepos();
+    const session = new FeedSession(this.client, { perRepoStreams: this.perRepo, ...(configured.length ? { repos: configured } : {}) });
     this.session = session;
     this.status = "connecting";
     let lastStatus = session.status;
     this.off = session.on((added) => {
-      if (added.length) this.post({ t: "events", events: added, live: true });
+      const mine = added.filter((e) => this.inScope(e.repo));
+      if (mine.length) this.post({ t: "events", events: mine, live: true });
       if (session.status !== lastStatus) {
         lastStatus = session.status;
         this.status = session.status;
@@ -189,10 +194,13 @@ class WeftExtension {
     });
     await session.start();
     if (this.session !== session) return;
-    this.status = session.status;
-    for (const r of session.repoList) this.streamed.add(r.repo);
     this.resolveRepoGuesses();
-    this.log(`connected: ${session.repoList.length} repo(s) visible: ${session.repoList.map((r) => r.repo).join(", ")}`);
+    await this.rescope();
+    if (this.session !== session) return;
+    this.status = session.status;
+    for (const r of this.wanted()) this.streamed.add(r);
+    const ws = this.workspaceRepos();
+    this.log(`connected: ${session.repoList.length} repo(s) visible; feed shows ${ws.length ? ws.join(", ") : "all of them (no repo mapped to this workspace)"}`);
     this.broadcastInit();
     this.scheduleDiagnostics(0);
     this.renderStatus();
@@ -217,15 +225,51 @@ class WeftExtension {
     } catch {
       return;
     }
-    this.post({ t: "repos", repos: s.repoList });
-    // Per-repo streams cover the repos known at start; a new repo needs a restart (the log is kept).
-    if (this.perRepo && s.repoList.some((r) => !this.streamed.has(r.repo))) {
-      for (const r of s.repoList) this.streamed.add(r.repo);
+    const before = this.workspaceRepos().join("\n");
+    this.resolveRepoGuesses();
+    if (await this.rescope()) {
+      if (this.session !== s) return;
+      for (const r of this.wanted()) this.streamed.add(r);
+    } else if (this.perRepo && this.wanted().some((r) => !this.streamed.has(r))) {
+      // Per-repo streams cover the repos known at start; a new repo needs a restart (the log is kept).
+      for (const r of this.wanted()) this.streamed.add(r);
       this.log("new repo visible; restarting streams");
       await s.start();
     }
-    this.resolveRepoGuesses();
+    if (this.workspaceRepos().join("\n") !== before) this.broadcastInit();
+    else this.post({ t: "repos", repos: this.viewRepos() });
     this.renderStatus();
+  }
+
+  /** Repos the streams should cover: the workspace's, else every visible one. */
+  private wanted(): string[] {
+    return this.session?.scope ?? this.session?.repoList.map((r) => r.repo) ?? [];
+  }
+
+  /**
+   * Narrows the streams to the workspace's repos once they are known (a folder name guessed
+   * against /v1/repos). Returns true when the streams were restarted.
+   */
+  private async rescope(): Promise<boolean> {
+    const s = this.session;
+    const ws = this.workspaceRepos();
+    if (!s || !ws.length) return false;
+    const cur = s.scope ?? [];
+    if (cur.length === ws.length && ws.every((r) => cur.includes(r))) return false;
+    s.setScope(ws);
+    this.log(`scoping the feed to ${ws.join(", ")}`);
+    await s.start();
+    return true;
+  }
+
+  /** A repo the panel shows: one this workspace maps to, or any repo when it maps to none. */
+  inScope(repo: string): boolean {
+    const ws = this.workspaceRepos();
+    return !ws.length || ws.includes(repo);
+  }
+
+  private viewRepos(): RepoSummary[] {
+    return (this.session?.repoList ?? []).filter((r) => this.inScope(r.repo));
   }
 
   workspaceRepos(): string[] {
@@ -352,8 +396,8 @@ class WeftExtension {
     const s = this.session;
     return {
       t: "init",
-      events: s?.log.combined ?? [],
-      repos: s?.repoList ?? [],
+      events: (s?.log.combined ?? []).filter((e) => this.inScope(e.repo)),
+      repos: this.viewRepos(),
       status: this.status === "no-token" ? "error" : (s?.status ?? "connecting"),
       ...(this.status === "no-token" ? { error: "No Weft token. Run “Weft: Set token”, set WEFT_TOKEN, or run npx @celador/weft in this repo." } : s?.error ? { error: s.error } : {}),
       title: "Weft",
@@ -402,7 +446,7 @@ class WeftExtension {
     if (!s || !this.client) throw new WeftHttpError(401, "no_token", "No Weft token. Run “Weft: Set token”.");
     switch (m) {
       case "repos":
-        return s.repoList.length ? s.repoList : await this.client.repos();
+        return (s.repoList.length ? s.repoList : await this.client.repos()).filter((r) => this.inScope(r.repo));
       case "event": {
         const [repo, seq] = args as [string, number];
         const e = await s.loadDetail(repo, seq);

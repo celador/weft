@@ -13,7 +13,7 @@ import {
 } from "../actions";
 import { parseDiff } from "../diff";
 import type { FeedFilter } from "../log";
-import { repoSummary } from "../repo";
+import { stripRepos } from "../repo";
 import type { FeedSession } from "../session";
 import { type Editing, type FeedRow, feedRow, fileNames, lineStats, relTime, stripModel, trailOf } from "../strip";
 import { agentColorIndex, codeLabel, displayKey, symbolFile, summaryWithActor } from "../summary";
@@ -128,14 +128,14 @@ export function mountFeed(root: HTMLElement, o: FeedViewOptions): FeedView {
       toggle("Only conflicts", !!filter.onlyConflicts, (v) => (filter = { ...filter, onlyConflicts: v })),
       toggle("Session events", !!filter.showSessionEvents, (v) => (filter = { ...filter, showSessionEvents: v })),
     );
+    const strip = stripRepos(s.repoList, { log: s.log, now: t });
     const repos = h(
       "ul",
       "wf-repos",
-      s.repoList.map((r) => {
-        const line = repoSummary(r, { log: s.log, now: t });
-        return h("li", line.attention ? "wf-repo wf-attention" : "wf-repo", line.text);
-      }),
+      strip.shown.map((line) => h("li", line.attention ? "wf-repo wf-attention" : "wf-repo", line.text)),
+      strip.idle ? h("li", "wf-repo wf-repo-idle", strip.shown.length ? `+${strip.idle} idle` : `${strip.idle} repos, all idle`) : null,
     );
+    repos.setAttribute("aria-label", "Repositories");
     header.replaceChildren();
     add(header, [
       h(

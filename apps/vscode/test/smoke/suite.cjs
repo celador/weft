@@ -44,6 +44,15 @@ exports.run = async function run() {
     await until("live socket", () => api.state().status === "live");
   });
 
+  await check("the token sees 41 repos; only the workspace's repo is streamed and shown", async () => {
+    const s = api.session();
+    assert.equal(s.repoList.length, 41);
+    assert.deepEqual(s.scope, [REPO]);
+    const { streamed } = await (await fetch(`${STUB}/__test/streams`)).json();
+    assert.deepEqual([...new Set(streamed)], [REPO]);
+    assert.ok(s.log.repos.every((r) => r === REPO), `log holds only ${REPO}: ${s.log.repos.join(", ")}`);
+  });
+
   await check("the feed view opens in the panel", async () => {
     await vscode.commands.executeCommand("weft.showFeed");
     await until("webview", () => api.state().views >= 1);

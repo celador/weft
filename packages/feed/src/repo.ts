@@ -48,6 +48,22 @@ export function repoSummary(r: RepoSummary, opts: { log?: FeedLog; now?: number 
 
 export type HeaderStatus = { text: string; tone: "live" | "connecting" | "offline" };
 
+/** A repo counts as idle in the header strip after this long without a record. */
+export const IDLE_REPO_MS = 24 * 3600_000;
+
+/**
+ * The repos the header strip lists: every repo when there is only one, else the ones with
+ * live agents, active changes, open conflicts or a record in the last `idleMs`. A token that
+ * sees 100 repos would otherwise fill the panel with "0 agents · 0 changes" lines.
+ */
+export function stripRepos(list: RepoSummary[], opts: { log?: FeedLog; now: number; idleMs?: number }): { shown: RepoLine[]; idle: number } {
+  const lines = list.map((r) => repoSummary(r, opts));
+  if (lines.length <= 1) return { shown: lines, idle: 0 };
+  const since = opts.now - (opts.idleMs ?? IDLE_REPO_MS);
+  const shown = lines.filter((l) => l.agents || l.changes || l.conflicts || (l.lastEventAt !== undefined && l.lastEventAt >= since));
+  return { shown, idle: lines.length - shown.length };
+}
+
 /**
  * The feed header: "Live · N repos" while the last successful read is recent, where N counts
  * repos with activity in the last 7 days; "Connecting" before the first success; "Offline"

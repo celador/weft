@@ -34,12 +34,14 @@ export class FeedSession {
   private listeners = new Set<(added: FeedEvent[]) => void>();
   private ever = false;
   private readonly now: () => number;
+  private readonly opts: SessionOptions;
 
   constructor(
     readonly client: ObserverClient,
-    private readonly opts: SessionOptions = {},
+    opts: SessionOptions = {},
     log?: FeedLog,
   ) {
+    this.opts = { ...opts };
     this.log = log ?? new FeedLog();
     this.now = opts.now ?? (() => Date.now());
   }
@@ -115,6 +117,17 @@ export class FeedSession {
       );
     }
     this.emit();
+  }
+
+  /** The repos the next `start()` streams (undefined = every repo `/v1/repos` lists). */
+  get scope(): string[] | undefined {
+    return this.opts.repos;
+  }
+
+  /** Narrows (or widens, with undefined) the repos streamed; takes effect on the next `start()`. */
+  setScope(repos: string[] | undefined): void {
+    if (repos?.length) this.opts.repos = [...repos];
+    else delete this.opts.repos;
   }
 
   stop(): void {

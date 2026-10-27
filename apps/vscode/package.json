@@ -1,6 +1,6 @@
 {
   "name": "@weft/vscode",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Weft for VS Code and every VS Code fork (Cursor, Windsurf, Kiro, Antigravity, VSCodium, Trae): the live Changes feed, Editing now, per-event diffs, squiggles linked to their cause, and Approve/Undo/Pause/Resume/Message.",
   "license": "MIT",

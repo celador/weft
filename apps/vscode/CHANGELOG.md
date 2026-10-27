@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2
+
+- The panel shows only the repos this workspace maps to (from `.weft/` or the folder name) and
+  streams only those; every repo the token sees is shown only when the workspace maps to none.
+  A token with access to 100 repos no longer fills the panel with repo lines.
+- The repo strip hides idle repos (no agents, no changes, no record in 24 h) and is capped at
+  two lines; the Changes list keeps its height and scrolls in a short bottom panel.
+
 ## 0.1.1
 
 - First Marketplace and Open VSX release (`celador.weft`).

@@ -43,7 +43,7 @@
 .wf-root code { font-family: var(--wf-mono); font-size: 12px; }
 
 /* header */
-.wf-header { padding: 10px 14px 8px; border-bottom: 1px solid var(--wf-line); background: var(--wf-panel); }
+.wf-header { flex: none; padding: 10px 14px 8px; border-bottom: 1px solid var(--wf-line); background: var(--wf-panel); }
 .wf-titlebar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .wf-title { font-size: 15px; margin: 0; font-weight: 650; }
 .wf-status { display: inline-flex; align-items: center; gap: 6px; color: var(--wf-muted); font-size: 12px; }
@@ -53,13 +53,16 @@
 .wf-filters { margin-left: auto; display: flex; gap: 6px; }
 .wf-chip { border: 1px solid var(--wf-line); background: transparent; border-radius: 999px; padding: 2px 10px; font-size: 12px; cursor: pointer; color: var(--wf-fg2); }
 .wf-chip.wf-on { background: var(--wf-panel2); border-color: var(--wf-accent); color: var(--wf-fg); }
-.wf-repos { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--wf-muted); font-size: 12px; }
+/* At most ~2 lines of repo summaries; more scroll inside the strip so the feed keeps its height. */
+.wf-repos { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--wf-muted); font-size: 12px; line-height: 16px; max-height: 34px; overflow-y: auto; }
 .wf-repo.wf-attention { color: var(--wf-warn); }
+.wf-repo-idle { font-style: italic; }
 .wf-error { color: var(--wf-warn); margin: 6px 0 0; font-size: 12px; }
 
-/* layout */
-.wf-body { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(320px, 1.15fr); flex: 1; min-height: 0; }
-@media (max-width: 760px) { .wf-body { grid-template-columns: 1fr; } .wf-detail { border-left: 0; border-top: 1px solid var(--wf-line); } }
+/* layout: the body keeps a usable height; on a panel shorter than header + that, the root scrolls. */
+.wf-root { overflow-y: auto; }
+.wf-body { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(320px, 1.15fr); grid-template-rows: minmax(0, 1fr); flex: 1 1 0; min-height: 160px; }
+@media (max-width: 760px) { .wf-body { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); min-height: 260px; } .wf-detail { border-left: 0; border-top: 1px solid var(--wf-line); } }
 .wf-list, .wf-detail { overflow: auto; min-height: 0; }
 .wf-detail { border-left: 1px solid var(--wf-line); padding: 12px 16px 24px; background: var(--wf-panel); }
 .wf-section { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--wf-muted); margin: 12px 14px 4px; font-weight: 650; }

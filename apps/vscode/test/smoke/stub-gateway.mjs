@@ -5,7 +5,9 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 
-export function startStub({ repo, events, holdFrom, observeToken, humanToken }) {
+// `extraRepos`: more repos the token sees (idle, no records), like a token with repos "*".
+export function startStub({ repo, events, holdFrom, observeToken, humanToken, extraRepos = [] }) {
+  const streamed = [];
   const held = events.filter((e) => e.seq >= holdFrom);
   const log = events.filter((e) => e.seq < holdFrom);
   const actions = [];
@@ -42,9 +44,12 @@ export function startStub({ repo, events, holdFrom, observeToken, humanToken }) 
       return json(res, e ? 200 : 404, { ok: !!e });
     }
     if (p === "/__test/actions") return json(res, 200, { actions });
+    if (p === "/__test/streams") return json(res, 200, { streamed });
     const who = authOk(req, ["observe"]);
     if (!who) return json(res, 401, { error: { code: "unauthorized", message: "bad token" } });
-    if (p === "/v1/repos") return json(res, 200, { repos: [{ repo, head_seq: head(), agents: 2, active_changes: 2, open_conflicts: 1, last_event_at: log.at(-1)?.ts }] });
+    if (p === "/v1/repos") return json(res, 200, { repos: [{ repo, head_seq: head(), agents: 2, active_changes: 2, open_conflicts: 1, last_event_at: log.at(-1)?.ts }, ...extraRepos.map((r) => ({ repo: r, head_seq: 0, active_agents: 0, active_changes: 0, open_conflicts: 0 }))] });
+    const extra = p.match(/^\/v1\/repos\/([^/]+)\/events$/);
+    if (extra && extraRepos.includes(decodeURIComponent(extra[1]))) return json(res, 200, { repo: decodeURIComponent(extra[1]), events: [], head_seq: 0, next_after: 0, has_more: false });
     const m = p.match(/^\/v1\/repos\/([^/]+)\/(events|actions)(?:\/(\d+))?$/);
     if (m && decodeURIComponent(m[1]) === repo) {
       if (m[2] === "events" && m[3]) {
@@ -94,6 +99,7 @@ export function startStub({ repo, events, holdFrom, observeToken, humanToken }) 
     const accept = createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
     sock.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
     const s = { sock, repo: decodeURIComponent(m[1]), after: Number(url.searchParams.get("after") ?? 0), authed: false };
+    streamed.push(s.repo);
     sockets.add(s);
     let buf = Buffer.alloc(0);
     sock.on("data", (d) => {
