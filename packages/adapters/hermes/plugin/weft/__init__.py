@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from .adapter import get_adapter
+from .adapter import get_adapter, shutdown
 
 
 def _pre_tool_call(**kwargs: Any) -> Optional[dict]:
@@ -37,7 +37,8 @@ def _pre_verify(**kwargs: Any) -> Optional[dict]:
 
 def _flush(**_: Any) -> None:
     """End of a turn / session: give deferred (advise) submissions a bounded chance to land.
-    One-shot and kanban runs may leave via ``os._exit``, which skips atexit."""
+    Kanban workers may leave via ``os._exit``, which skips atexit. (``hermes chat`` turns,
+    ``-q``/``-Q`` included, run inside the long-lived gateway process, not the CLI process.)"""
     adapter = get_adapter()
     if adapter:
         adapter.flush(3.0)
@@ -50,3 +51,6 @@ def register(ctx: Any) -> None:
     ctx.register_hook("pre_verify", _pre_verify)
     ctx.register_hook("on_session_end", _flush)
     ctx.register_hook("on_session_finalize", _flush)
+    on_unload = getattr(ctx, "on_unload", None)  # Hermes reload-plugins: close the old router
+    if callable(on_unload):
+        on_unload(shutdown)

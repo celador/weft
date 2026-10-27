@@ -183,6 +183,27 @@ python3 packages/adapters/hermes/scripts/weft_land.py --branch wt/x --sha <sha> 
 - Agents still have to rebase after a land: their next edit of a landed symbol is
   `stale_overwrite` until their worktree gets a new commit that includes main (`git merge main`).
 
+## Hermes adapter: which process reports (operator pitfalls)
+
+- `hermes chat` turns (interactive, `-q`, `-Q`) do not run in the CLI process: the CLI is a
+  transport and the turn, its tools and the plugin hooks run inside the long-lived Hermes gateway
+  (`hermes_cli/gateway_agent.py`: "the CLI process never builds an agent, never runs a tool").
+  So the Weft log line for a one-shot comes from the gateway's router, and a project the gateway
+  had already found "unknown" logs nothing more. Kanban workers (`agent.managed_worker`) are fresh
+  processes and read the config at start.
+- New project → `install.py --sync`. Plugin 0.2.1+: the gateway re-reads
+  `~/.config/weft/hermes-adapter.json` for an unknown project at most once a minute, so it starts
+  reporting within ~60 s (log: `config reloaded: project '<repo>' now has a Weft repo/token`).
+  Up to 0.2.0 the gateway cached "project has no Weft repo/token" for its whole life and
+  kept skipping the project until `hermes gateway restart`.
+- New plugin code → `install.py` (not `--sync`). `hermes plugins enable` on an already-enabled
+  plugin is a no-op, so when the code changed install runs `plugins disable weft` + `enable`:
+  each makes the running gateway force-reload plugins (`reload-plugins` on the control socket)
+  and the old router says `bye` on unload (0.2.1+). Without that the gateway keeps the code it
+  imported at start (`hermes gateway restart` also works, but drops live sessions).
+- Check what a turn did: `tail ~/.cache/weft-hermes/<profile>.log` and
+  `GET /v1/repos/<repo>/events` (agent `hermes-<profile>`).
+
 ## Artifacts integration (B6)
 
 Resources (all `weft-`): Artifacts namespaces `weft` (prod) / `weft-preview`; Queues `weft-artifacts-events` /

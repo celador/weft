@@ -46,6 +46,7 @@ import re
 import select
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -57,7 +58,7 @@ try:  # package import inside Hermes; flat import in tests
 except ImportError:  # pragma: no cover
     from wcp import WcpClient, WcpError  # type: ignore
 
-ADAPTER_VERSION = "0.2.0"
+ADAPTER_VERSION = "0.2.1"
 EDIT_TOOLS = {"write_file", "patch"}
 TERMINAL_TOOLS = {"terminal"}
 COMPLETION_TOOLS = {"kanban_complete", "kanban_request_review"}
@@ -71,6 +72,7 @@ SKIP_PARTS = {
 MAX_FILE_BYTES = 512 * 1024
 MAX_SNAPSHOT_FILES = 300
 DRAIN_EVERY_S = 20.0
+RELOAD_EVERY_S = 60.0  # long-lived processes re-read the config for unknown projects at most this often
 RELEASE_AFTER_REFUSALS = 2
 SYMBOL_KEY = re.compile(r"^[^#\s]+#[^#\s]+$")  # WCP SymbolKey (schema $defs.SymbolKey)
 # Terminal commands that move other people's changes into the worktree: their file changes are
@@ -613,6 +615,40 @@ def git(worktree: str, *args: str, timeout: float = 3.0) -> Optional[str]:
         return None
 
 
+def hermes_session_cwd(task_id: Any) -> Optional[str]:
+    """The cwd Hermes's file/terminal tools use for this call's session, when it is known.
+
+    Every ``hermes chat`` turn (``-q`` included) runs in the long-lived gateway process, whose
+    ``os.getcwd()`` is not the directory the chat was started in. Hermes's file tools anchor a
+    relative path at ``tools.file_tools_paths._authoritative_workspace_root(task_id)`` (session cwd
+    record, else the session's registered cwd override); ask the same function, falling back to
+    ``tools.terminal_tool``'s override / recorded cwd. Only modules Hermes already loaded are
+    used (never import Hermes internals from here); any failure -> None.
+    """
+    if not isinstance(task_id, str) or not task_id:
+        return None
+    cwd: Any = None
+    paths = sys.modules.get("tools.file_tools_paths")
+    if paths is not None:
+        try:
+            cwd = paths._authoritative_workspace_root(task_id)
+        except Exception:
+            cwd = None
+    term = sys.modules.get("tools.terminal_tool")
+    if not cwd and term is not None:
+        try:
+            cwd = (term.resolve_task_overrides(task_id) or {}).get("cwd") or term.get_session_cwd(task_id)
+        except Exception:
+            cwd = None
+    return cwd if isinstance(cwd, str) and os.path.isabs(cwd) and os.path.isdir(cwd) else None
+
+
+def base_dir(task_id: Any = "") -> str:
+    """Directory relative tool paths resolve against: kanban workspace, else the Hermes session's
+    cwd, else this process's cwd."""
+    return os.environ.get("HERMES_KANBAN_WORKSPACE") or hermes_session_cwd(task_id) or os.getcwd()
+
+
 def normalize_tool(name: Any) -> str:
     n = str(name or "")
     for prefix in ("mcp__", "functions."):
@@ -742,8 +778,8 @@ class WeftAdapter:
                 self.log(f"kanban lookup failed: {err}")
         return info
 
-    def _base_dir(self) -> str:
-        return os.environ.get("HERMES_KANBAN_WORKSPACE") or os.getcwd()
+    def _base_dir(self, task_id: Any = "") -> str:
+        return base_dir(task_id)
 
     # -- session ---------------------------------------------------------------------------
 
@@ -806,6 +842,8 @@ class WeftAdapter:
         self._hb_thread.start()
 
     def close(self, close_analyzer: bool = True) -> None:
+        if self._closed:
+            return
         self.flush(5.0)
         self._closed = True
         if self.session:
@@ -883,22 +921,22 @@ class WeftAdapter:
     # -- hook: pre_tool_call ---------------------------------------------------------------
 
     def pre_tool_call(self, tool_name: str = "", args: Optional[dict] = None, tool_call_id: str = "",
-                      **_: Any) -> Optional[dict]:
+                      task_id: Any = "", **_: Any) -> Optional[dict]:
         name = normalize_tool(tool_name)
         args = args if isinstance(args, dict) else {}
         try:
             if name in EDIT_TOOLS:
-                return self._pre_edit(name, args, tool_call_id)
+                return self._pre_edit(name, args, tool_call_id, task_id)
             if name in TERMINAL_TOOLS:
-                return self._pre_terminal(name, args, tool_call_id)
+                return self._pre_terminal(name, args, tool_call_id, task_id)
             if name in COMPLETION_TOOLS:
                 return self._gate_tool(name)
         except Exception as err:  # fail open
             self.log(f"pre_tool_call {name} failed open: {err!r}")
         return None
 
-    def _edit_targets(self, name: str, args: dict) -> List[Target]:
-        base = self._base_dir()
+    def _edit_targets(self, name: str, args: dict, task_id: Any = "") -> List[Target]:
+        base = self._base_dir(task_id)
         paths = edit_paths(name, args)
         out = []
         for p in paths:
@@ -919,8 +957,8 @@ class WeftAdapter:
             return before.replace(old, new) if args.get("replace_all") else before.replace(old, new, 1)
         return None
 
-    def _pre_edit(self, name: str, args: dict, call_id: str) -> Optional[dict]:
-        targets = self._edit_targets(name, args)
+    def _pre_edit(self, name: str, args: dict, call_id: str, task_id: Any = "") -> Optional[dict]:
+        targets = self._edit_targets(name, args, task_id)
         if not targets:
             return None  # SCOPE GUARD: not a weft path
         pend = Pending("edit", name, call_id or f"anon-{time.monotonic_ns()}", targets=targets)
@@ -957,8 +995,8 @@ class WeftAdapter:
             "Re-read the cited symbols, adapt your edit to the current code, then retry. The log "
             "base has advanced, so a corrected edit will be validated against the new state.")}
 
-    def _pre_terminal(self, name: str, args: dict, call_id: str) -> Optional[dict]:
-        workdir = args.get("workdir") or self._base_dir()
+    def _pre_terminal(self, name: str, args: dict, call_id: str, task_id: Any = "") -> Optional[dict]:
+        workdir = args.get("workdir") or self._base_dir(task_id)
         hit = self.scope.locate_dir(workdir)
         if not hit or hit[1] != self.cfg.repo:
             return None  # SCOPE GUARD
@@ -1210,18 +1248,51 @@ class WeftRouter:
     A project without a token for this profile (no Weft repo yet: ``install.py --sync`` creates
     them) is a no-op with one log line per process. Gates (completion / pre_verify) ask every
     adapter that has a session; only ``enforce`` repos can refuse.
+
+    LONG-LIVED PROCESSES. Every ``hermes`` / ``hermes chat -q`` turn runs inside the gateway
+    process, which lives for days. An unknown project is therefore re-checked: at most once per
+    ``RELOAD_EVERY_S`` the config file is re-read, so a project added by ``install.py --sync``
+    starts reporting without a gateway restart. Live sessions keep their tokens.
     """
 
     def __init__(self, config: Config, client_factory: Optional[Callable[[Config], Any]] = None,
-                 analyzer: Optional[Analyzer] = None, heartbeat: bool = True):
+                 analyzer: Optional[Analyzer] = None, heartbeat: bool = True,
+                 loader: Optional[Callable[[], Optional[Config]]] = None,
+                 clock: Callable[[], float] = time.monotonic):
         self.cfg = config
         self.scope = config.scope()
         self.adapters: Dict[str, WeftAdapter] = {}
-        self.unknown: set = set()
+        self.unknown: Dict[str, float] = {}  # repo -> when it was last found to have no token
         self.client_factory = client_factory
         self.heartbeat = heartbeat
         self.lock = threading.RLock()
         self._analyzer = analyzer
+        self._loader = loader
+        self._clock = clock
+        self._loaded_at = clock()
+
+    def _reload(self) -> bool:
+        """Re-read the config (rate-limited to once per ``RELOAD_EVERY_S``); True when it was
+        re-read. Only token/mode/project maps change: the reload can add repos this profile
+        already holds tokens for in the config file, nothing else."""
+        now = self._clock()
+        if self._loader is None or now - self._loaded_at < RELOAD_EVERY_S:
+            return False
+        self._loaded_at = now
+        try:
+            fresh = self._loader()
+        except Exception as err:
+            self.log(f"config reload failed: {err!r}")
+            return False
+        if not fresh or fresh.profile != self.cfg.profile:
+            return False
+        self.cfg = fresh
+        # Shared with live adapters: update in place (single attribute stores, GIL-atomic).
+        self.scope.projects = dict(fresh.projects)
+        self.scope.project_dirs = list(fresh.project_dirs)
+        self.scope.excludes = list(fresh.excludes)
+        self.scope._ext = {}
+        return True
 
     def log(self, message: str) -> None:
         WeftAdapter.log(self, message)  # type: ignore[arg-type]
@@ -1239,22 +1310,30 @@ class WeftRouter:
             hit = self.adapters.get(repo)
             if hit:
                 return hit
-            if repo in self.unknown:
-                return None
             cfg = self.cfg.for_repo(repo)
             if not cfg:
-                self.unknown.add(repo)
-                self.log(f"project '{repo}' has no Weft repo/token for profile {self.cfg.profile}; "
-                         "skipping (run `install.py --sync` to add it)")
-                return None
+                seen = self.unknown.get(repo)
+                if seen is not None and self._clock() - seen < RELOAD_EVERY_S:
+                    return None
+                if self._reload():
+                    cfg = self.cfg.for_repo(repo)
+                if not cfg:
+                    if seen is None:
+                        self.log(f"project '{repo}' has no Weft repo/token for profile {self.cfg.profile}; "
+                                 f"skipping (run `install.py --sync` to add it; re-checked every "
+                                 f"{int(RELOAD_EVERY_S)} s)")
+                    self.unknown[repo] = self._clock()
+                    return None
+                self.unknown.pop(repo, None)
+                self.log(f"config reloaded: project '{repo}' now has a Weft repo/token")
             client = self.client_factory(cfg) if self.client_factory else None
             adapter = WeftAdapter(cfg, client=client, analyzer=self.analyzer, heartbeat=self.heartbeat,
                                   scope=self.scope)
             self.adapters[repo] = adapter
             return adapter
 
-    def _repos(self, name: str, args: dict) -> List[str]:
-        base = os.environ.get("HERMES_KANBAN_WORKSPACE") or os.getcwd()
+    def _repos(self, name: str, args: dict, task_id: Any = "") -> List[str]:
+        base = base_dir(task_id)
         repos: List[str] = []
         if name in EDIT_TOOLS:
             for p in edit_paths(name, args):
@@ -1278,7 +1357,8 @@ class WeftRouter:
             if name in COMPLETION_TOOLS:
                 targets = self._live()
             else:
-                targets = [a for a in (self.adapter_for(r) for r in self._repos(name, args)) if a]
+                targets = [a for a in (self.adapter_for(r) for r in self._repos(name, args, kw.get("task_id")))
+                           if a]
         except Exception as err:  # fail open
             self.log(f"route {name} failed open: {err!r}")
             return None
@@ -1336,17 +1416,40 @@ def edit_paths(name: str, args: dict) -> List[str]:
 _ADAPTER: Optional[WeftRouter] = None
 _ADAPTER_LOCK = threading.Lock()
 _LOADED = False
+_LOAD_TRIED_AT = 0.0
+
+
+def _load_config() -> Optional[Config]:
+    return Config.load()
 
 
 def get_adapter() -> Optional[WeftRouter]:
-    global _ADAPTER, _LOADED
-    if _LOADED:
+    """The process-wide router. A process that found no usable config (or no agent for this
+    profile) retries at most once per ``RELOAD_EVERY_S``: the Hermes gateway outlives installs."""
+    global _ADAPTER, _LOADED, _LOAD_TRIED_AT
+    if _LOADED and (_ADAPTER is not None or time.monotonic() - _LOAD_TRIED_AT < RELOAD_EVERY_S):
         return _ADAPTER
     with _ADAPTER_LOCK:
-        if not _LOADED:
-            cfg = Config.load()
-            _ADAPTER = WeftRouter(cfg) if cfg else None
+        if not _LOADED or (_ADAPTER is None and time.monotonic() - _LOAD_TRIED_AT >= RELOAD_EVERY_S):
+            _LOAD_TRIED_AT = time.monotonic()
+            cfg = _load_config()
+            _ADAPTER = WeftRouter(cfg, loader=_load_config) if cfg else None
             if _ADAPTER:
                 atexit.register(_ADAPTER.close)
             _LOADED = True
     return _ADAPTER
+
+
+def shutdown(wait: bool = False) -> None:
+    """Plugin unload (a gateway ``reload-plugins`` / ``hermes plugins enable|disable``): close the
+    router's sessions (bounded flush + bye) off the caller's thread. The reloaded module builds a
+    fresh router, so the old one must not keep heartbeating."""
+    global _ADAPTER, _LOADED
+    with _ADAPTER_LOCK:
+        router, _ADAPTER, _LOADED = _ADAPTER, None, False
+    if router is None:
+        return
+    t = threading.Thread(target=router.close, name="weft-unload", daemon=True)
+    t.start()
+    if wait:
+        t.join(10.0)

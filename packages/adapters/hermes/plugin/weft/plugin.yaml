@@ -1,5 +1,5 @@
 name: weft
-version: 0.2.0
+version: 0.2.1
 description: "Weft edit-time coordination (WCP v0.1): streams every edit in John's projects (~/github/*, ~/code/*; one Weft repo per project) into the Weft log and injects diagnostics into tool results. Enforce repos block conflicting edits and completion while Weft errors are open; advise repos (the default) never block or wait. Fail-open with a circuit breaker; ~/.hermes is never reported."
 author: "Weft (github.com/celador/weft)"
 provides_hooks:

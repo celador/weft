@@ -20,7 +20,9 @@ What install does (idempotent):
   3. writes ~/.config/weft/hermes-adapter.json (mode 600): url, projects, modes, per-profile tokens
   4. backs up each profile's config.yaml to ~/.hermes/cache/backups/weft-plugins-<date>/
   5. copies plugin/weft/* + analyze.mjs + grammars/ into <profile home>/plugins/weft/ (+ INSTALLED.json, no secrets)
-  6. enables the plugin: ``hermes [-p <profile>] plugins enable weft --no-allow-tool-override``
+  6. enables the plugin: ``hermes [-p <profile>] plugins enable weft --no-allow-tool-override``;
+     when it was already enabled and the code changed, ``plugins disable weft`` first, so the
+     running gateway (where every ``hermes chat`` turn runs) force-reloads the new code
 
 ``--sync`` runs step 2-3 only (the plugin re-reads the config in every new Hermes process; the
 admin token never leaves this script). Projects without a repo are skipped by the plugin.
@@ -133,6 +135,15 @@ def hermes(profile: str, *args: str) -> subprocess.CompletedProcess:
     env.pop("HERMES_PROFILE", None)
     env["HERMES_HOME"] = str(profile_home(profile))
     return subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=120)
+
+
+def code_changed(dest: Path, bundle: Path) -> bool:
+    """True when the installed plugin code differs from what install is about to copy."""
+    pairs = [(PLUGIN_SRC / n, dest / n) for n in PLUGIN_FILES] + [(bundle, dest / "analyze.mjs")]
+    try:
+        return any(not d.exists() or s.read_bytes() != d.read_bytes() for s, d in pairs)
+    except OSError:
+        return True
 
 
 def enabled_in_config(profile: str) -> bool:
@@ -267,6 +278,8 @@ def install(args) -> None:
         agent = cfg["agents"][profile]["agent"]
         dest = home / "plugins" / "weft"
         dest.mkdir(parents=True, exist_ok=True)
+        was_enabled = enabled_in_config(profile)
+        changed = code_changed(dest, bundle)
         for name in PLUGIN_FILES:
             shutil.copy2(PLUGIN_SRC / name, dest / name)
         shutil.copy2(bundle, dest / "analyze.mjs")
@@ -285,9 +298,17 @@ def install(args) -> None:
             "uninstall": f"python3 {PKG / 'scripts' / 'install.py'} --uninstall --profiles {profile}",
         }
         (dest / "INSTALLED.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        reload_note = ""
+        if was_enabled and changed:
+            # `enable` on an enabled plugin is a no-op, so the running gateway (which runs every
+            # `hermes chat` turn, -q included) would keep the old code until it restarts. A
+            # disable+enable pair makes it force-reload plugins now (Hermes `reload-plugins`).
+            hermes(profile, "plugins", "disable", "weft")
+            reload_note = " ; gateway reloaded (disable+enable)"
         res = hermes(profile, "plugins", "enable", "weft", "--no-allow-tool-override")
         ok = enabled_in_config(profile)
-        print(f"[{profile}] plugin -> {dest} ; enabled={ok}" + ("" if ok else f" ({res.stdout.strip()} {res.stderr.strip()})"))
+        print(f"[{profile}] plugin -> {dest} ; enabled={ok}{reload_note}"
+              + ("" if ok else f" ({res.stdout.strip()} {res.stderr.strip()})"))
     print(f"config: {CONFIG} (mode 600); config.yaml backups: {backups}")
 
 
