@@ -8,9 +8,10 @@
 // viewer tokens; each checkout keeps a pointer in .weft/space.json and a copy of the owner
 // token in .weft/space-token (0600, git-ignored) so the repo can find its space again.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { createServer as createNetServer } from "node:net";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, join, resolve, sep } from "node:path";
 import { Api, statusOf } from "./api";
 import { packageDist } from "./adapters";
 import { c, configDir, info, ok, readJson, readSecret, VERSION, WeftError, which, writeJson, writeSecret } from "./util";
@@ -45,6 +46,57 @@ export type RepoPointer = { url: string; space: string; repo: string; name: stri
 export function readPointer(root: string): RepoPointer | undefined {
   const p = readJson<RepoPointer | null>(join(root, ".weft", "space.json"), null);
   return p && p.url && p.space && p.repo ? p : undefined;
+}
+
+// ------------------------------------------------------------------ the Hermes adapter's feed
+//
+// Hermes kanban workers report through the Hermes adapter (<configDir>/hermes-adapter.json, or
+// $WEFT_HERMES_CONFIG) to one gateway: `url`, with each project directory mapped to a repo in
+// `projects.repos`. A checkout that sits in such a project already has a feed, so the CLI uses it
+// rather than creating a second, empty one in a hosted space. The VS Code extension and the
+// hermes-ios relay (Otto) read the same two files, so every client shows the same events.
+
+/** The shared human token file every client reads ({url, token, scopes:["human"], repos:"*"}). */
+export const HUMAN_TOKEN_FILE = "otto-human-token.json";
+
+export type HermesPointer = { url: string; repo: string; project: string; config: string };
+
+export function hermesConfigPath(env = process.env): string {
+  const p = env.WEFT_HERMES_CONFIG?.trim();
+  if (p) return p.startsWith("~/") ? join(homedir(), p.slice(2)) : p;
+  return join(configDir(env), "hermes-adapter.json");
+}
+
+const real = (p: string) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+};
+
+/** The Hermes adapter mapping for any of `dirs` (this checkout, its main checkout), longest project first. */
+export function hermesPointer(dirs: string[], env = process.env): HermesPointer | undefined {
+  const config = hermesConfigPath(env);
+  const cfg = readJson<{ url?: unknown; enabled?: unknown; projects?: { repos?: Record<string, unknown> } } | null>(config, null);
+  const url = typeof cfg?.url === "string" ? cfg.url.trim().replace(/\/+$/, "") : "";
+  if (!cfg || cfg.enabled === false || !url) return undefined;
+  const projects = Object.entries(cfg.projects?.repos ?? {})
+    .filter((e): e is [string, string] => typeof e[1] === "string" && !!e[0] && !!e[1])
+    .map(([p, repo]) => ({ dir: real(p.startsWith("~/") ? join(homedir(), p.slice(2)) : p), repo }))
+    .sort((a, b) => b.dir.length - a.dir.length);
+  for (const d of dirs.map(real)) {
+    const hit = projects.find((p) => d === p.dir || d.startsWith(p.dir + sep));
+    if (hit) return { url, repo: hit.repo, project: hit.dir, config };
+  }
+  return undefined;
+}
+
+/** The shared human token, when it was minted for `url`. */
+export function sharedHumanToken(url: string, env = process.env): string | undefined {
+  const j = readJson<{ url?: unknown; token?: unknown } | null>(join(configDir(env), HUMAN_TOKEN_FILE), null);
+  if (!j || typeof j.url !== "string" || typeof j.token !== "string") return undefined;
+  return j.url.replace(/\/+$/, "") === url.replace(/\/+$/, "") ? j.token.trim() || undefined : undefined;
 }
 
 export function writePointer(root: string, p: RepoPointer, owner: string): void {

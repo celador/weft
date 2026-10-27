@@ -134,8 +134,10 @@ class WeftExtension {
     const cfg = vscode.workspace.getConfiguration("weft");
     return (vscode.workspace.workspaceFolders ?? []).map((folder) => {
       // An untrusted workspace's .weft/ is ignored entirely: a cloned repo could plant a gateway
-      // URL there (and receive WEFT_TOKEN / the saved token) or a token.
-      const checkout: Checkout = vscode.workspace.isTrusted ? readCheckout(folder.uri.fsPath) : { root: folder.uri.fsPath, agents: [], prefix: "", tokenFiles: [] };
+      // URL there (and receive WEFT_TOKEN / the saved token) or a token. The Hermes adapter
+      // mapping lives in the user's own ~/.config/weft, so it applies either way.
+      const root = folder.uri.fsPath;
+      const checkout: Checkout = vscode.workspace.isTrusted ? readCheckout(root) : readCheckout(root, { untrusted: true });
       const target = resolveTarget({ settingUrl: cfg.get<string>("url"), settingRepo: cfg.get<string>("repo"), checkout });
       return { folder, checkout, target, ...(target.repo ? { repo: target.repo } : {}) };
     });

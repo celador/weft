@@ -5,16 +5,21 @@
 //   1. WEFT_TOKEN in the environment VS Code was started with;
 //   2. the checkout's .weft/: `human-token` (a human token you put there), then the adapter's
 //      agent token (`tokenFile` in .weft/<adapter>.json, default `.weft/token`);
-//   3. ~/.config/weft (written by `npx @celador/weft`): the space's viewer key in cli.json for
+//   3. ~/.config/weft: the shared human token `otto-human-token.json` (when minted for this
+//      gateway), then (written by `npx @celador/weft`) the space's viewer key in cli.json for
 //      this gateway, then `<repo>.token`, then `token`;
 //   4. the editor's SecretStorage ("Weft: Set token").
 // Actions (approve, undo, pause, resume, message) need the `human` scope. They try the same
 // list in order and skip a token the gateway answers 403 for, so a human token set with
 // "Weft: Set token" works even when the checkout holds an agent token for reading.
+//
+// Gateway + repo: settings, env, the checkout's .weft/, then the Hermes adapter config
+// (~/.config/weft/hermes-adapter.json: its `url`, and the repo `projects.repos` maps this folder
+// to), so a folder Hermes kanban workers report from shows the same feed with no .weft/ setup.
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 export const DEFAULT_URL = "http://localhost:8787";
 
@@ -56,8 +61,92 @@ function readSecret(path: string): string | undefined {
   }
 }
 
-/** Reads `<root>/.weft/`: `space.json` (npx weft) first, then every adapter config with url + repo. */
-export function readCheckout(root: string): Checkout {
+/** The Hermes adapter config: `$WEFT_HERMES_CONFIG`, else <configDir>/hermes-adapter.json. */
+export function hermesConfigPath(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
+  const p = str(env.WEFT_HERMES_CONFIG);
+  if (p) return p.startsWith("~/") ? join(home, p.slice(2)) : p;
+  return join(configDir(env, home), "hermes-adapter.json");
+}
+
+function real(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
+/** The main checkout of a linked worktree (`.git` file -> `<main>/.git/worktrees/<name>`), if any. */
+function mainOfWorktree(root: string): string | undefined {
+  try {
+    const dotgit = join(root, ".git");
+    if (!statSync(dotgit).isFile()) return undefined;
+    const m = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotgit, "utf8"));
+    if (!m) return undefined;
+    const gitdir = resolve(root, m[1]!.trim());
+    const at = gitdir.lastIndexOf(`${sep}.git${sep}worktrees${sep}`);
+    return at > 0 ? gitdir.slice(0, at) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export type HermesTarget = { url: string; repo: string; project: string; from: string };
+
+/**
+ * The gateway and repo the Hermes adapter reports this folder to: the folder (or the main checkout
+ * of a linked worktree) sits in a project of `projects.repos`; the URL is the config's `url`. The
+ * same mapping the Hermes kanban workers use, so the editor shows their feed.
+ */
+export function hermesTarget(root: string, env: NodeJS.ProcessEnv = process.env, home = homedir()): HermesTarget | undefined {
+  const path = hermesConfigPath(env, home);
+  const cfg = readJson(path);
+  const url = str(cfg?.url);
+  if (!cfg || cfg.enabled === false || !url) return undefined;
+  const repos = ((cfg.projects as Json | undefined)?.repos ?? {}) as Record<string, unknown>;
+  const expand = (p: string) => (p.startsWith("~/") ? join(home, p.slice(2)) : p);
+  const projects = Object.entries(repos)
+    .filter(([p, r]) => str(p) && str(r))
+    .map(([p, r]) => ({ dir: real(expand(p)), repo: str(r)! }))
+    .sort((a, b) => b.dir.length - a.dir.length);
+  const find = (dir: string) => projects.find((p) => dir === p.dir || dir.startsWith(p.dir + sep));
+  const here = real(root);
+  const main = mainOfWorktree(here);
+  const hit = find(here) ?? (main ? find(real(main)) : undefined);
+  if (!hit) return undefined;
+  return { url: url.replace(/\/+$/, ""), repo: hit.repo, project: hit.dir, from: `${path.startsWith(home + sep) ? `~${path.slice(home.length)}` : path} (projects.repos)` };
+}
+
+/**
+ * The shared human token every client reads: <configDir>/otto-human-token.json
+ * (`{url, token, scopes:["human"], repos:"*"}`), minted and renewed by the hermes-ios relay. Used
+ * only when it was minted for this gateway.
+ */
+export const HUMAN_TOKEN_FILE = "otto-human-token.json";
+export function sharedHumanToken(url: string, env: NodeJS.ProcessEnv = process.env, home = homedir()): string | undefined {
+  const j = readJson(join(configDir(env, home), HUMAN_TOKEN_FILE));
+  if (!j || str(j.url)?.replace(/\/+$/, "") !== url.replace(/\/+$/, "")) return undefined;
+  return str(j.token);
+}
+
+/**
+ * Reads `<root>/.weft/`: `space.json` (npx weft) first, then every adapter config with url + repo.
+ * A folder without either falls back to the Hermes adapter's mapping (hermesTarget).
+ */
+export function readCheckout(root: string, o: { env?: NodeJS.ProcessEnv; home?: string; untrusted?: boolean } = {}): Checkout {
+  const c: Checkout = o.untrusted ? { root, agents: [], prefix: "", tokenFiles: [] } : readWeftDir(root);
+  if (!c.url) {
+    const h = hermesTarget(root, o.env ?? process.env, o.home ?? homedir());
+    if (h) {
+      c.url = h.url;
+      c.repo = h.repo;
+      c.from = h.from;
+    }
+  }
+  return c;
+}
+
+function readWeftDir(root: string): Checkout {
   const dir = join(root, ".weft");
   const c: Checkout = { root, agents: [], prefix: "", tokenFiles: [] };
   const space = readJson(join(dir, "space.json"));
@@ -139,6 +228,7 @@ export function tokenCandidates(o: { env?: NodeJS.ProcessEnv; checkout?: Checkou
     push(readSecret(join(root, ".weft", "human-token")), "repo", ".weft/human-token");
     for (const tf of o.checkout.tokenFiles) push(readSecret(resolve(root, tf)), "repo", tf);
   }
+  push(sharedHumanToken(o.url, env, o.home), "config", `~/.config/weft/${HUMAN_TOKEN_FILE}`);
   const dir = configDir(env, o.home);
   const cli = readJson(join(dir, "cli.json"));
   const gws = (cli?.gateways ?? {}) as Record<string, Json>;

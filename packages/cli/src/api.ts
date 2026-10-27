@@ -98,7 +98,7 @@ export class Api {
     return this.call<void>("DELETE", "/v1/space", owner);
   }
   events(token: string, repo: string, q = "") {
-    return this.call<{ events: FeedEvent[]; head_seq: number }>("GET", `/v1/repos/${encodeURIComponent(repo)}/events${q}`, token);
+    return this.call<{ events: FeedEvent[]; head_seq: number; has_more?: boolean }>("GET", `/v1/repos/${encodeURIComponent(repo)}/events${q}`, token);
   }
   feed(token: string, q: string) {
     return this.call<{ events: FeedEvent[]; cursor?: string; has_more?: boolean }>("GET", `/v1/feed${q}`, token);
