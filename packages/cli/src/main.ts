@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { basename, dirname, join, resolve } from "node:path";
 import { Api, statusOf, type FeedEvent } from "./api";
 import { MCP, WATCHER, adapterBin, detectHarnesses, ensureRuntime, harnessName, HARNESSES, installAdapter, installedIn, removeAdapters, startOrder, type HarnessId } from "./adapters";
-import { deploy, ensureSpace, feedLink, HOSTED_URL, kindOf, loadState, readPointer, saveState, startLocal, stopLocal, writePointer, LOCAL_PORT } from "./gateways";
+import { deploy, ensureSpace, feedLink, hermesPointer, HOSTED_URL, HUMAN_TOKEN_FILE, kindOf, loadState, readPointer, saveState, sharedHumanToken, startLocal, stopLocal, writePointer, LOCAL_PORT, type HermesPointer } from "./gateways";
 import { ask, c, configDir, git, info, mainCheckout, ok, openUrl, readJson, readSecret, slug, tilde, tryGit, VERSION, warn, WeftError, worktrees, writeJson } from "./util";
 
 type Opts = {
@@ -183,11 +183,19 @@ export function nextNotes(order: Array<{ id: string; name: string; run: string; 
   return lines.join("\n");
 }
 
-async function init(o: Opts, addName?: string | true): Promise<string[]> {
+async function init(o: Opts, addName?: string | true, fresh = false): Promise<string[]> {
   const cwd = resolve(o.dir ?? process.cwd());
   const top = gitRoot(cwd);
   const main = mainCheckout(top);
   console.log(`\n${c.bold("weft")} ${c.dim("·")} red ${c.squiggle("squiggles")} for teams of coding agents ${c.dim(`v${VERSION}`)}\n`);
+
+  // 0. a Hermes adapter already reports this repo to a gateway: that is its feed. Use it rather than
+  // creating a second, empty repo in a hosted space (--url / WEFT_URL / --local still choose).
+  const hp = !fresh && !addName && !o.url && !process.env.WEFT_URL && !o.local && !readPointer(top) && !readPointer(main) ? hermesPointer([top, main]) : undefined;
+  if (hp) {
+    await hermesInit(hp);
+    return [];
+  }
 
   // 1. gateway
   const state = loadState();
@@ -288,7 +296,7 @@ export function makeDemoRepo(dir: string): string {
 
 async function demo(o: Opts): Promise<void> {
   const root = makeDemoRepo(o.positional[0] ?? join(resolve(o.dir ?? process.cwd()), "weft-demo"));
-  const roots = await init({ ...o, dir: root, agents: Math.max(2, o.agents ?? 2) });
+  const roots = await init({ ...o, dir: root, agents: Math.max(2, o.agents ?? 2) }, undefined, true);
   console.log(c.bold("Make them collide:") + " ask the agent in each checkout, in this order:");
   roots.slice(0, 2).forEach((r, i) => console.log(`  ${c.dim(tilde(r) + ":")} ${DEMO_PROMPTS[i]}`));
   console.log(c.dim("The second agent's edit is stopped with a stale_assumption squiggle and the first agent's diff; the feed shows both.\n"));
@@ -296,11 +304,36 @@ async function demo(o: Opts): Promise<void> {
 
 // ------------------------------------------------------------------ status / feed
 
-function here(o: Opts): { root: string; main: string; ptr: ReturnType<typeof readPointer> } {
+function here(o: Opts): { root: string; main: string; ptr: ReturnType<typeof readPointer>; hp?: HermesPointer } {
   const root = gitRoot(resolve(o.dir ?? process.cwd()));
   const main = mainCheckout(root);
   const ptr = readPointer(root) ?? readPointer(main) ?? worktrees(root).map((w) => readPointer(w.path)).find(Boolean);
-  return { root, main, ptr };
+  return { root, main, ptr, hp: ptr ? undefined : hermesPointer([root, main]) };
+}
+
+const humanTokenHint = (url: string) =>
+  `Put a human token for ${url} in ${tilde(join(configDir(), HUMAN_TOKEN_FILE))} as {"url","token"} (the hermes-ios relay writes it), or set WEFT_TOKEN.`;
+
+/** `npx @celador/weft` in a repo the Hermes adapter already reports: show that feed, create nothing. */
+async function hermesInit(hp: HermesPointer): Promise<void> {
+  const api = new Api(hp.url);
+  await api.health();
+  ok(`this repo already reports to ${c.bold(hp.url)} as ${c.bold(hp.repo)} ${c.dim(`(Hermes adapter, ${tilde(hp.config)})`)}`);
+  info("Using that feed. No hosted space was created and nothing was written to this repo.");
+  const tok = process.env.WEFT_TOKEN?.trim() || sharedHumanToken(hp.url);
+  if (!tok) {
+    warn(`no human token for this gateway. ${humanTokenHint(hp.url)}`);
+    return;
+  }
+  try {
+    const ev = await api.events(tok, hp.repo, "?tail=1&limit=5");
+    console.log(c.bold("recent events") + c.dim(` (head #${ev.head_seq})`));
+    if (!ev.events.length) console.log(c.dim("  none yet"));
+    for (const e of ev.events) console.log(formatEvent(e));
+  } catch (e) {
+    warn(`events unavailable: ${(e as Error).message}`);
+  }
+  console.log(`\n${c.bold("Next")}  ${c.cyan("npx @celador/weft feed")} ${c.dim("(the same events Otto and the VS Code extension show)")}`);
 }
 
 function viewerFor(url: string): string | undefined {
@@ -327,7 +360,29 @@ export function formatEvent(e: FeedEvent, space?: string): string {
 }
 
 async function status(o: Opts): Promise<void> {
-  const { root, main, ptr } = here(o);
+  const { root, main, ptr, hp } = here(o);
+  if (!ptr && hp) {
+    let up = true;
+    try {
+      await new Api(hp.url).health();
+    } catch {
+      up = false;
+    }
+    console.log(`${c.bold("gateway")}  ${hp.url} ${up ? c.green("up") : c.red("unreachable")} ${c.dim(`(Hermes adapter, ${tilde(hp.config)})`)}`);
+    console.log(`${c.bold("repo")}     ${hp.repo} ${c.dim(`(project ${tilde(hp.project)})`)}`);
+    const tok = process.env.WEFT_TOKEN?.trim() || sharedHumanToken(hp.url);
+    console.log(`${c.bold("token")}    ${tok ? `human ${c.dim(`(${process.env.WEFT_TOKEN?.trim() ? "WEFT_TOKEN" : tilde(join(configDir(), HUMAN_TOKEN_FILE))})`)}` : c.red("none")}`);
+    if (tok && up) {
+      try {
+        const ev = await new Api(hp.url).events(tok, hp.repo, "?tail=1&limit=5");
+        console.log(c.bold(`recent events`) + c.dim(` (head #${ev.head_seq})`));
+        for (const e of ev.events) console.log(formatEvent(e));
+      } catch (e) {
+        console.log(c.dim(`  (events unavailable: ${(e as Error).message})`));
+      }
+    }
+    return;
+  }
   if (!ptr) {
     console.log(`Weft is not set up in ${tilde(root)}. Run ${c.bold("npx @celador/weft")} here.`);
     return;
@@ -373,7 +428,8 @@ async function status(o: Opts): Promise<void> {
 }
 
 async function feed(o: Opts): Promise<void> {
-  const { ptr } = here(o);
+  const { ptr, hp } = here(o);
+  if (!ptr && hp) return hermesFeed(hp);
   if (!ptr) throw new WeftError("Weft is not set up in this repo", "Run npx @celador/weft first.");
   const viewer = viewerFor(ptr.url);
   if (!viewer) throw new WeftError("this machine has no viewer key for the space", "Run npx @celador/weft once in this repo.");
@@ -389,6 +445,27 @@ async function feed(o: Opts): Promise<void> {
     } catch (e) {
       console.log(c.red(`  ${(e as Error).message}; retrying`));
     }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+}
+
+/** The live feed of the repo the Hermes adapter reports to, read with the shared human token. */
+async function hermesFeed(hp: HermesPointer): Promise<void> {
+  const tok = process.env.WEFT_TOKEN?.trim() || sharedHumanToken(hp.url);
+  if (!tok) throw new WeftError(`no human token for ${hp.url}`, humanTokenHint(hp.url));
+  const api = new Api(hp.url);
+  console.log(c.dim(`live feed for ${hp.repo} on ${hp.url} via the Hermes adapter (Ctrl-C to stop)\n`));
+  let after: number | undefined;
+  for (;;) {
+    try {
+      const page = await api.events(tok, hp.repo, after === undefined ? "?tail=1&limit=20" : `?after=${after}&limit=200`);
+      for (const e of page.events) console.log(formatEvent(e));
+      after = page.events.at(-1)?.seq ?? after ?? page.head_seq;
+      if (page.has_more) continue;
+    } catch (e) {
+      console.log(c.red(`  ${(e as Error).message}; retrying`));
+    }
+    if (process.env.WEFT_FEED_ONCE === "1") return; // tests
     await new Promise((r) => setTimeout(r, 1500));
   }
 }

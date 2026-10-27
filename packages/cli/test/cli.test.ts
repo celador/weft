@@ -341,3 +341,80 @@ describe("every harness in one checkout, and weft mcp", () => {
     expect(existsSync(join(repo, ".weft"))).toBe(false);
   });
 });
+
+describe("a repo the Hermes adapter already reports (one feed everywhere)", () => {
+  const seen: { path: string; auth: string }[] = [];
+  const events = [
+    { seq: 1, kind: "intent", agent: "hermes-worker", repo: "lawn", ts: new Date().toISOString(), summary: "edit src/a.ts" },
+    { seq: 2, kind: "change", agent: "hermes-worker", repo: "lawn", ts: new Date().toISOString(), summary: "changed src/a.ts" },
+  ];
+  const server = createServer((req, res) => {
+    const u = new URL(req.url!, "http://x");
+    seen.push({ path: u.pathname + u.search, auth: req.headers.authorization ?? "" });
+    res.setHeader("content-type", "application/json");
+    if (u.pathname === "/v1/health") return res.end(JSON.stringify({ type: "health", service: "weft-gateway", ok: true }));
+    if (u.pathname === "/v1/repos/lawn/events" && req.headers.authorization === "Bearer weft_human_shared") {
+      const after = Number(u.searchParams.get("after") ?? 0);
+      return res.end(JSON.stringify({ type: "events", events: events.filter((e) => e.seq > after), head_seq: 2, has_more: false }));
+    }
+    res.statusCode = 404;
+    res.end(JSON.stringify({ type: "error", error: { code: "repo_not_found", message: u.pathname } }));
+  });
+  let url = "";
+  const base = mkdtempSync(join(tmpdir(), "weft-hermes-"));
+  const repo = join(base, "lawn");
+  const logs: string[] = [];
+
+  beforeAll(async () => {
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    process.env.WEFT_HOME = join(base, "config");
+    process.env.WEFT_NO_OPEN = "1";
+    process.env.WEFT_FEED_ONCE = "1";
+    delete process.env.WEFT_URL;
+    delete process.env.WEFT_TOKEN;
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(join(repo, "src/a.ts"), "export const a = 1;\n");
+    execFileSync("git", ["init", "-q", "-b", "main", repo]);
+    mkdirSync(join(base, "config"), { recursive: true });
+    writeFileSync(join(base, "config", "hermes-adapter.json"), JSON.stringify({ url: url + "/", projects: { repos: { [repo]: "lawn" } } }));
+    writeFileSync(join(base, "config", "otto-human-token.json"), JSON.stringify({ url, token: "weft_human_shared", scopes: ["human"], repos: "*" }));
+    vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => void logs.push(a.join(" ")));
+  });
+  afterAll(() => {
+    server.close();
+    delete process.env.WEFT_FEED_ONCE;
+    vi.restoreAllMocks();
+  });
+
+  it("npx @celador/weft uses the adapter's gateway and repo, creates no hosted space, and writes nothing", async () => {
+    expect(await main(["--dir", join(repo, "src"), "--yes", "--no-open"])).toBe(0);
+    expect(seen.some((s) => s.path.startsWith("/v1/spaces"))).toBe(false);
+    expect(existsSync(join(repo, ".weft"))).toBe(false);
+    expect(existsSync(join(base, "config", "cli.json")) && JSON.parse(readFileSync(join(base, "config", "cli.json"), "utf8")).spaces).toBeFalsy();
+    const out = logs.join("\n");
+    expect(out).toContain(url);
+    expect(out).toContain("lawn");
+    expect(out).toContain("changed src/a.ts");
+    expect(out).not.toContain("weft_human_shared");
+  });
+
+  it("status and feed read the same repo with the shared human token", async () => {
+    logs.length = 0;
+    expect(await main(["status", "--dir", repo])).toBe(0);
+    expect(logs.join("\n")).toMatch(/Hermes adapter/);
+    logs.length = 0;
+    expect(await main(["feed", "--dir", repo])).toBe(0);
+    const out = logs.join("\n");
+    expect(out).toContain("edit src/a.ts");
+    expect(out).toContain("changed src/a.ts");
+    expect(out).not.toContain("weft_human_shared");
+    expect(seen.filter((s) => s.path.startsWith("/v1/repos/lawn/events")).every((s) => s.auth === "Bearer weft_human_shared")).toBe(true);
+  });
+
+  it("a token minted for another gateway is not sent", async () => {
+    writeFileSync(join(base, "config", "otto-human-token.json"), JSON.stringify({ url: "https://elsewhere.example", token: "weft_human_other" }));
+    await expect(main(["feed", "--dir", repo])).rejects.toThrow(/no human token/);
+    expect(seen.some((s) => s.auth.includes("weft_human_other"))).toBe(false);
+  });
+});

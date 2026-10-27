@@ -36,7 +36,38 @@ describe("readCheckout", () => {
   });
 
   it("a folder without .weft/ is empty", () => {
-    expect(readCheckout(scratch())).toMatchObject({ agents: [], tokenFiles: [], prefix: "" });
+    expect(readCheckout(scratch(), { env: { WEFT_HOME: scratch() } })).toMatchObject({ agents: [], tokenFiles: [], prefix: "" });
+  });
+
+  it("a folder without .weft/ falls back to the Hermes adapter's projects.repos (and its worktrees)", () => {
+    const weftHome = scratch();
+    const proj = scratch();
+    mkdirSync(join(proj, ".git"));
+    mkdirSync(join(proj, ".git", "worktrees", "t1"), { recursive: true });
+    const wt = scratch();
+    writeFileSync(join(wt, ".git"), `gitdir: ${join(proj, ".git", "worktrees", "t1")}\n`);
+    writeFileSync(join(weftHome, "hermes-adapter.json"), JSON.stringify({ url: "https://gw.example/", projects: { repos: { [proj]: "lawn" } } }));
+    const env = { WEFT_HOME: weftHome };
+    for (const root of [proj, join(proj, "src"), wt]) {
+      mkdirSync(join(proj, "src"), { recursive: true });
+      const c = readCheckout(root, { env });
+      expect([c.url, c.repo]).toEqual(["https://gw.example", "lawn"]);
+      expect(c.from).toMatch(/hermes-adapter\.json \(projects\.repos\)$/);
+      expect(resolveTarget({ env, checkout: c })).toMatchObject({ url: "https://gw.example", repo: "lawn" });
+    }
+    expect(readCheckout(scratch(), { env }).url).toBeUndefined();
+    // .weft/ still wins
+    mkdirSync(join(proj, ".weft"));
+    writeFileSync(join(proj, ".weft", "space.json"), JSON.stringify({ url: "https://other", repo: "x" }));
+    expect(readCheckout(proj, { env }).repo).toBe("x");
+  });
+
+  it("reads the shared human token otto-human-token.json only for its own gateway", () => {
+    const weftHome = scratch();
+    writeFileSync(join(weftHome, "otto-human-token.json"), JSON.stringify({ url: "https://gw.example", token: "weft_h", scopes: ["human"], repos: "*" }));
+    const env = { WEFT_HOME: weftHome };
+    expect(tokenCandidates({ env, url: "https://gw.example", repo: "lawn" })[0]).toMatchObject({ token: "weft_h", source: "config" });
+    expect(tokenCandidates({ env, url: "https://other", repo: "lawn" }).map((t) => t.token)).not.toContain("weft_h");
   });
 });
 
