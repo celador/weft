@@ -150,17 +150,21 @@ GROUP BY day, event, placement, source ORDER BY day`;
   return JSON.parse(text).data.map((x) => ({ ...x, n: Number(x.n) }));
 }
 
-// Cloudflare's GraphQL Analytics API has an account-wide query budget shared with every other
-// caller (the site-stats Worker polls it every 15 min). When it runs out it answers
-// "Rate limiter budget depleted. Please try again after 5 minutes." (HTTP 200 with errors, or 429).
-// 2 retries x 5 min 10 s = 10 min 20 s worst case, inside the 1 h Hermes cron script timeout.
+// Cloudflare's GraphQL Analytics API rate-limits per user by default, and every user-owned token
+// (the site-stats Worker's CF_ANALYTICS_TOKEN polls every 15 min) shares John's user budget.
+// `X-Rate-Limit-Type: account-based` moves this query onto the account's own budget instead
+// (developers.cloudflare.com/analytics/graphql-api/account-based-rate-limiting/). When a budget
+// runs out the API answers "Rate limiter budget depleted. Please try again after 5 minutes." or
+// "Account <tag> has exceeded its rate limit" (errors[].extensions.code "budget", HTTP 200 or 429).
+// 2 retries x 5 min 10 s per query; the --alert run makes 2 queries (14 days in 7-day windows),
+// so the worst case is ~21 min, inside the 1 h Hermes cron script timeout.
 export const GRAPHQL_RETRIES = 2;
 export const GRAPHQL_RETRY_WAIT_MS = 310_000;
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** True when a GraphQL Analytics response is the account rate limiter, not a real error. */
 export function isGraphqlRateLimited(status, errors) {
-  return status === 429 || (errors ?? []).some((e) => String(e?.message ?? "").includes("Rate limiter budget depleted"));
+  return status === 429 || (errors ?? []).some((e) => e?.extensions?.code === "budget" || /Rate limiter budget depleted|has exceeded its rate limit/i.test(String(e?.message ?? "")));
 }
 
 /**
@@ -169,7 +173,7 @@ export function isGraphqlRateLimited(status, errors) {
  */
 export async function graphqlQuery(token, body, { fetchFn = fetch, sleep = sleepMs, retries = GRAPHQL_RETRIES, waitMs = GRAPHQL_RETRY_WAIT_MS, log = (m) => console.error(m) } = {}) {
   for (let attempt = 0; ; attempt++) {
-    const r = await fetchFn(`${CF}/graphql`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    const r = await fetchFn(`${CF}/graphql`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-rate-limit-type": "account-based" }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     if (r.ok && !j.errors?.length && j.data) return j.data;
     if (isGraphqlRateLimited(r.status, j.errors) && attempt < retries) {

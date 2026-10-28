@@ -84,6 +84,7 @@ test("graphqlQuery returns data on first success without sleeping", async () => 
   assert.equal(f.calls.length, 1);
   assert.deepEqual(sleeps, []);
   assert.match(f.calls[0].url, /\/graphql$/);
+  assert.equal(f.calls[0].init.headers["x-rate-limit-type"], "account-based");
 });
 
 test("graphqlQuery retries the rate-limiter error and succeeds", async () => {
@@ -96,6 +97,13 @@ test("graphqlQuery retries the rate-limiter error and succeeds", async () => {
 
 test("graphqlQuery retries HTTP 429 even with a non-JSON body", async () => {
   const f = fakeFetch([[429, "html"], [200, OK]]), sleeps = [];
+  assert.deepEqual(await graphqlQuery("tok", {}, opts(f, sleeps)), OK.data);
+  assert.deepEqual(sleeps, [GRAPHQL_RETRY_WAIT_MS]);
+});
+
+test("graphqlQuery retries the account-based budget error (extensions.code budget)", async () => {
+  const acct = { data: null, errors: [{ message: "Account abc has exceeded its rate limit. Please try again after 5 minutes.", extensions: { code: "budget" } }] };
+  const f = fakeFetch([[200, acct], [200, OK]]), sleeps = [];
   assert.deepEqual(await graphqlQuery("tok", {}, opts(f, sleeps)), OK.data);
   assert.deepEqual(sleeps, [GRAPHQL_RETRY_WAIT_MS]);
 });
