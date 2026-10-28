@@ -227,3 +227,6 @@ Append-only. One dated entry per heartbeat that changed something.
 - Security impact: land tokens are least-privilege (scopes system+observe, repos [one repo], principal weft-pm-land, revoked on project prune); land payload is {sha, op_id, trunk_ref} only, no code. Nothing published.
 - CI failed on the Kotlin edit-budget test (315 ms fastest-of-3 on the GitHub runner, unrelated to the change). Fixed the assumption: budget tests allow 2x the 300 ms target when CI is set (target unchanged locally). CI green on the fix.
 - wt/t_be804fb4 (competitor recon) stays unmerged on purpose (public repo). t_be030d1a stays in triage (publish freeze).
+
+## 2026-10-28 16:26 — unblocked funnel rate-limit card
+- t_1d7ab39a crashed twice ("Kanban owner refused: execution unknown", worker transport). Its code (77e92fe retry helper, c39d48b account-based GraphQL rate limit) is already on main, CI Gate green. Commented a resume note (finish Part B evidence, run the alert script once, remove worktree), unblocked, re-dispatched (pid live). Security impact: none (analytics read path only). Publish freeze holds; t_be030d1a stays in triage.
