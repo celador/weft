@@ -150,6 +150,37 @@ GROUP BY day, event, placement, source ORDER BY day`;
   return JSON.parse(text).data.map((x) => ({ ...x, n: Number(x.n) }));
 }
 
+// Cloudflare's GraphQL Analytics API has an account-wide query budget shared with every other
+// caller (the site-stats Worker polls it every 15 min). When it runs out it answers
+// "Rate limiter budget depleted. Please try again after 5 minutes." (HTTP 200 with errors, or 429).
+// 2 retries x 5 min 10 s = 10 min 20 s worst case, inside the 1 h Hermes cron script timeout.
+export const GRAPHQL_RETRIES = 2;
+export const GRAPHQL_RETRY_WAIT_MS = 310_000;
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** True when a GraphQL Analytics response is the account rate limiter, not a real error. */
+export function isGraphqlRateLimited(status, errors) {
+  return status === 429 || (errors ?? []).some((e) => String(e?.message ?? "").includes("Rate limiter budget depleted"));
+}
+
+/**
+ * POST one GraphQL Analytics query and return its `data`. Waits and retries on the rate limiter;
+ * any other error throws at once. `fetchFn`/`sleep` are injectable for tests.
+ */
+export async function graphqlQuery(token, body, { fetchFn = fetch, sleep = sleepMs, retries = GRAPHQL_RETRIES, waitMs = GRAPHQL_RETRY_WAIT_MS, log = (m) => console.error(m) } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const r = await fetchFn(`${CF}/graphql`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && !j.errors?.length && j.data) return j.data;
+    if (isGraphqlRateLimited(r.status, j.errors) && attempt < retries) {
+      log(`funnel: Cloudflare GraphQL rate limited (HTTP ${r.status}); retry ${attempt + 1}/${retries} in ${Math.round(waitMs / 1000)} s`);
+      await sleep(waitMs);
+      continue;
+    }
+    throw new Error(`Web Analytics: ${JSON.stringify(j.errors ?? r.status).slice(0, 200)}`);
+  }
+}
+
 async function rumVisits(cf, days) {
   // Web Analytics samples (10x) any query spanning more than 7 days, so ask in 7-day windows.
   const query = `query($a:String!,$t:[String!],$h:[String!],$d:Date!,$e:Date!){viewer{accounts(filter:{accountTag:$a}){rumPageloadEventsAdaptiveGroups(limit:5000,filter:{date_geq:$d,date_leq:$e,siteTag_in:$t,requestHost_in:$h}){sum{visits} dimensions{date siteTag}}}}}`;
@@ -157,10 +188,8 @@ async function rumVisits(cf, days) {
   for (let i = 0; i < days.length; i += 7) {
     const w = days.slice(i, i + 7);
     const variables = { a: ACCOUNT, t: [RUM_SITE_TAG, RUM_OLD_SITE_TAG], h: SITE_HOSTS, d: w[0], e: w[w.length - 1] };
-    const r = await fetch(`${CF}/graphql`, { method: "POST", headers: { authorization: `Bearer ${cf.token}`, "content-type": "application/json" }, body: JSON.stringify({ query, variables }) });
-    const j = await r.json();
-    if (!r.ok || j.errors?.length) throw new Error(`Web Analytics: ${JSON.stringify(j.errors ?? r.status).slice(0, 200)}`);
-    groups.push(...(j.data.viewer.accounts[0]?.rumPageloadEventsAdaptiveGroups ?? []));
+    const data = await graphqlQuery(cf.token, { query, variables });
+    groups.push(...(data.viewer.accounts[0]?.rumPageloadEventsAdaptiveGroups ?? []));
   }
   return rumByDay(groups);
 }

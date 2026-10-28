@@ -1,7 +1,7 @@
 // node --test site/funnel.test.mjs   (pure parts of site/funnel.mjs; no network)
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { detectAlerts, dayList, formatReport, rumByDay, RUM_OLD_SITE_TAG, RUM_SITE_TAG } from "./funnel.mjs";
+import { detectAlerts, dayList, formatReport, graphqlQuery, GRAPHQL_RETRY_WAIT_MS, rumByDay, RUM_OLD_SITE_TAG, RUM_SITE_TAG } from "./funnel.mjs";
 
 const report = (rows, spaces = null) => ({
   days: rows.length,
@@ -61,4 +61,57 @@ test("formatReport shows '-' for days npm hasn't published", () => {
   const out = formatReport({ ...report([{ visits: 3, downloads: null }]), totals: { visits: 3, copies: 0, downloads: null, firstRuns: 0, hostedSpacesAllTime: 0 } });
   assert.match(out, /2026-11-01 +3 +0 +- +0$/m);
   assert.match(out, /3 visits -> 0 copies -> - npm downloads -> 0 first runs/);
+});
+
+// ---------- graphqlQuery retry (injected fetch + sleep; never really waits) ----------
+
+const RATE = { errors: [{ message: "Rate limiter budget depleted. Please try again after 5 minutes. Refer to this page ..." }], data: null };
+const OK = { data: { viewer: { accounts: [] } }, errors: null };
+function fakeFetch(responses) {
+  const calls = [];
+  const fn = async (url, init) => {
+    calls.push({ url, init });
+    const [status, body] = responses[Math.min(calls.length - 1, responses.length - 1)];
+    return { ok: status >= 200 && status < 300, status, json: async () => (body === "html" ? Promise.reject(new SyntaxError("not json")) : body) };
+  };
+  return { fn, calls };
+}
+const opts = (f, sleeps) => ({ fetchFn: f.fn, sleep: async (ms) => { sleeps.push(ms); }, log: () => {} });
+
+test("graphqlQuery returns data on first success without sleeping", async () => {
+  const f = fakeFetch([[200, OK]]), sleeps = [];
+  assert.deepEqual(await graphqlQuery("tok", { query: "q" }, opts(f, sleeps)), OK.data);
+  assert.equal(f.calls.length, 1);
+  assert.deepEqual(sleeps, []);
+  assert.match(f.calls[0].url, /\/graphql$/);
+});
+
+test("graphqlQuery retries the rate-limiter error and succeeds", async () => {
+  const f = fakeFetch([[200, RATE], [200, RATE], [200, OK]]), sleeps = [];
+  assert.deepEqual(await graphqlQuery("tok", {}, opts(f, sleeps)), OK.data);
+  assert.equal(f.calls.length, 3);
+  assert.deepEqual(sleeps, [GRAPHQL_RETRY_WAIT_MS, GRAPHQL_RETRY_WAIT_MS]);
+  assert.equal(GRAPHQL_RETRY_WAIT_MS, 310_000); // 5 min 10 s
+});
+
+test("graphqlQuery retries HTTP 429 even with a non-JSON body", async () => {
+  const f = fakeFetch([[429, "html"], [200, OK]]), sleeps = [];
+  assert.deepEqual(await graphqlQuery("tok", {}, opts(f, sleeps)), OK.data);
+  assert.deepEqual(sleeps, [GRAPHQL_RETRY_WAIT_MS]);
+});
+
+test("graphqlQuery gives up after 2 retries on persistent rate limiting", async () => {
+  const f = fakeFetch([[200, RATE]]), sleeps = [];
+  await assert.rejects(graphqlQuery("tok", {}, opts(f, sleeps)), /Web Analytics: .*Rate limiter budget depleted/);
+  assert.equal(f.calls.length, 3);
+  assert.equal(sleeps.length, 2);
+});
+
+test("graphqlQuery throws other errors at once", async () => {
+  const f = fakeFetch([[200, { errors: [{ message: "unknown field siteTag" }], data: null }]]), sleeps = [];
+  await assert.rejects(graphqlQuery("tok", {}, opts(f, sleeps)), /unknown field siteTag/);
+  const g = fakeFetch([[403, { errors: [{ message: "not authorized" }] }]]);
+  await assert.rejects(graphqlQuery("tok", {}, opts(g, sleeps)), /not authorized/);
+  assert.equal(f.calls.length + g.calls.length, 2);
+  assert.deepEqual(sleeps, []);
 });
