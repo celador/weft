@@ -7,7 +7,8 @@
 //   POST   /v1/space/tokens            {kind: agent|system|viewer, repo?, agent?, label?}
 //   DELETE /v1/space/tokens/{id}       revoke one of the space's tokens
 //   DELETE /v1/space                   delete the space (every token revoked)
-//   GET    /v1/admin/stats             new spaces per day (= first runs of `npx weft`)
+//   GET    /v1/admin/stats             new spaces per day (= first runs of `npx weft`) and retention counts
+//   POST   /v1/admin/spaces/{id}/tag   {"internal": true|false}: leave our own test/demo spaces out of the stats
 //   GET    /feed                       the private live feed page (viewer token in the #fragment)
 //
 // Abuse limits, all configurable with vars: signups per network per day, signups per day, total
@@ -194,7 +195,7 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
   k.fail("not_found", `no route ${m} ${path}`);
 }
 
-/** Operator routes: GET /v1/admin/spaces, POST /v1/admin/spaces/{id}/suspend, GET|POST /v1/admin/hosted. */
+/** Operator routes: GET /v1/admin/spaces, POST /v1/admin/spaces/{id}/suspend|tag, GET /v1/admin/stats, GET|POST /v1/admin/hosted. */
 export async function spacesAdmin(req: Request, env: SpacesEnv, k: SpacesKit, path: string): Promise<Response | null> {
   const reg = registry(env);
   const m = req.method;
@@ -204,9 +205,23 @@ export async function spacesAdmin(req: Request, env: SpacesEnv, k: SpacesKit, pa
     if (!(await reg.deleteSpace(decodeURIComponent(sm[1]!), "suspended"))) k.fail("not_found", "no such active space");
     return k.json({ type: "space.suspended", space: sm[1] });
   }
+  const tm = /^\/v1\/admin\/spaces\/([^/]+)\/tag$/.exec(path);
+  if (tm && m === "POST") {
+    const body = (await k.readJson(req)) as { internal?: unknown };
+    if (typeof body?.internal !== "boolean") k.fail("invalid_message", "internal must be true or false", { issues: [{ path: "/internal", message: "boolean" }] });
+    const id = decodeURIComponent(tm[1]!);
+    if (!(await reg.setSpaceInternal(id, body.internal as boolean))) k.fail("not_found", "no such space");
+    return k.json({ type: "space.tagged", space: id, internal: body.internal });
+  }
   if (path === "/v1/admin/stats" && m === "GET") {
-    const all = await reg.listSpaces();
-    return k.json({ type: "stats", days: await reg.signupStats(), spaces: { total: all.length, active: all.filter((s) => s.status === "active").length } });
+    // Headline numbers leave out spaces tagged internal; `retention.spaces` lists every space with its flag.
+    const all = (await reg.listSpaces()).filter((s) => !s.internal);
+    return k.json({
+      type: "stats",
+      days: await reg.signupStats(),
+      spaces: { total: all.length, active: all.filter((s) => s.status === "active").length },
+      retention: await reg.retentionStats(),
+    });
   }
   if (path === "/v1/admin/hosted" && m === "GET") return k.json({ type: "hosted", mode: await reg.hostedMode(), env_off: env.WEFT_HOSTED_OFF === "1", signups: env.WEFT_SIGNUPS === "open" });
   if (path === "/v1/admin/hosted" && m === "POST") {

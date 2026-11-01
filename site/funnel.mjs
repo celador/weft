@@ -4,6 +4,8 @@
 //   2. command copies   Workers Analytics Engine dataset weft_site_events (site/worker.js)
 //   3. npm downloads    api.npmjs.org, @celador/weft, per day
 //   4. first runs       new hosted spaces per day, GET weft-hosted.elier.ai/v1/admin/stats
+//      + retention      active (7d/30d) and retained hosted spaces, events per day, from the same call
+//                       (counts only; spaces tagged internal are left out: site/hosted-admin.mjs)
 //
 // Usage: node site/funnel.mjs [days=7] [--json] [--alert [--seed]]
 //   --json    machine-readable report on stdout
@@ -13,13 +15,14 @@
 //
 // Cloudflare auth, first that works: macOS keychain item `weft-funnel-cf-token` (Account
 // Analytics: Read) -> CLOUDFLARE_API_TOKEN -> the local `wrangler login` OAuth token (refreshed
-// with `wrangler whoami` when expired). Hosted admin key: ~/.config/weft/hosted-admin-token.
+// with `wrangler whoami` when expired). Hosted admin key: macOS keychain item `weft-hosted-admin`, else ~/.config/weft/hosted-admin-token.
 // Never prints a token.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readHostedAdminToken, TOKEN_HELP } from "./admin-token.mjs";
 
 export const ACCOUNT = "2d659dee148763a8d64c80135da7165d";
 export const RUM_SITE_TAG = "78447487cc6640c8b09d69ae840f73eb"; // Web Analytics site for weft.mx (beacon in site/public/index.html)
@@ -41,6 +44,7 @@ const LABEL = { visits: "site visits", copies: "command copies", downloads: "npm
 // A spike also needs at least this many on the day, so 1 -> 3 on a quiet week stays silent.
 export const SPIKE_FLOOR = { visits: 50, copies: 10, downloads: 50, firstRuns: 5 };
 export const FIRST_RUN_MILESTONES = [25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
+export const RETAINED_MILESTONES = [1, 3, 10, 25, 50, 100, 250, 500, 1000];
 
 // ---------- pure helpers (tested in site/funnel.test.mjs) ----------
 
@@ -74,6 +78,11 @@ export function detectAlerts(report, state = {}) {
   }
   const spaces = report.totals.hostedSpacesAllTime;
   if (typeof spaces === "number") for (const t of FIRST_RUN_MILESTONES) if (spaces >= t) add(`milestone:firstRuns:${t}`, `Hosted spaces passed ${t} (now ${spaces} all-time).`);
+  // Retention (hosted, internal spaces excluded). Each fires once: the first space that is active at all,
+  // then each retained-space milestone. Missing data (older gateway, no admin key) never alerts.
+  const ret = report.retention;
+  if (ret && ret.active7 > 0) add("first:activeSpace", `First active hosted space (a space outside our own tests sent events in the last 7 days): ${ret.active7} active in 7d, ${ret.active30} in 30d.`);
+  if (ret) for (const t of RETAINED_MILESTONES) if (ret.retained >= t) add(`milestone:retained:${t}`, `Retained hosted spaces passed ${t} (now ${ret.retained}: events on 2+ days, one in the last 7 days).`);
   return { alerts: out, state: { alerted: [...alerted].sort(), seenNonzero: seen } };
 }
 
@@ -87,6 +96,13 @@ export function formatReport(r) {
   if (Object.keys(r.copiesBy).length) lines.push(`copies by source/placement: ${Object.entries(r.copiesBy).map(([k, v]) => `${k} ${v}`).join(", ")}`);
   if (Object.keys(r.viewsBySource).length) lines.push(`page views (AE) by source: ${Object.entries(r.viewsBySource).map(([k, v]) => `${k} ${v}`).join(", ")}`);
   if (typeof t.hostedSpacesAllTime === "number") lines.push(`hosted spaces all-time: ${t.hostedSpacesAllTime}`);
+  const ret = r.retention;
+  if (ret) {
+    lines.push(`hosted retention: ${ret.active7} active in 7d, ${ret.active30} in 30d, ${ret.retained} retained (events on 2+ days, one in the last 7d); ${ret.internalSpaces} internal spaces left out`);
+    lines.push(`hosted last event (outside internal spaces): ${ret.lastEventAt ?? "none yet"}`);
+    const days = r.daily.map((d) => `${d.day.slice(5)} ${ret.eventsByDay[d.day] ?? 0}`);
+    lines.push(`hosted events/day: ${days.join(", ")}`);
+  }
   for (const w of r.notes) lines.push(`note: ${w}`);
   return lines.join("\n");
 }
@@ -223,14 +239,31 @@ async function npmDaily(since, until, notes) {
   return { by: {}, end: ref.end ?? null };
 }
 
-async function hostedStats(notes) {
-  let key;
-  try { key = readFileSync(`${HOME}/.config/weft/hosted-admin-token`, "utf8").trim(); } catch {}
-  if (!key) { notes.push("first runs: no hosted admin key at ~/.config/weft/hosted-admin-token"); return null; }
-  const r = await fetch(`${HOSTED}/v1/admin/stats`, { headers: { authorization: `Bearer ${key}` } });
-  if (!r.ok) { notes.push(`first runs: ${HOSTED}/v1/admin/stats HTTP ${r.status}`); return null; }
+/**
+ * GET /v1/admin/stats -> first runs per day, all-time spaces and the retention counts. A gateway from
+ * before the retention release has no `retention` field: first runs still work, retention is null.
+ * `readToken`/`fetchFn` are injectable for tests.
+ */
+export async function hostedStats(notes, { readToken = readHostedAdminToken, fetchFn = fetch, base = HOSTED } = {}) {
+  const key = readToken()?.token;
+  if (!key) { notes.push(`first runs: ${TOKEN_HELP}`); return null; }
+  const r = await fetchFn(`${base}/v1/admin/stats`, { headers: { authorization: `Bearer ${key}` } });
+  if (!r.ok) { notes.push(`first runs: ${base}/v1/admin/stats HTTP ${r.status}`); return null; }
   const j = await r.json();
-  return { by: Object.fromEntries(j.days.map((d) => [d.day, d.spaces])), total: j.spaces.total };
+  return { by: Object.fromEntries(j.days.map((d) => [d.day, d.spaces])), total: j.spaces.total, retention: parseRetention(j.retention) };
+}
+
+/** The gateway's `retention` block -> the numbers the report shows (no per-space data leaves this function except in --json via `spaces`). */
+export function parseRetention(x) {
+  if (!x || typeof x.active_7d !== "number") return null;
+  const spaces = Array.isArray(x.spaces) ? x.spaces : [];
+  const real = spaces.filter((s) => !s.internal && s.last_event_at);
+  return {
+    active7: x.active_7d, active30: x.active_30d, retained: x.retained, internalSpaces: x.internal_spaces ?? 0,
+    eventsByDay: Object.fromEntries((x.events_per_day ?? []).map((e) => [e.day, e.events])),
+    lastEventAt: real.map((s) => s.last_event_at).sort().at(-1) ?? null,
+    spaces: spaces.map((s) => ({ id: s.id, label: s.label ?? null, created: s.created, lastEventAt: s.last_event_at ?? null, activeDays30: s.active_days_30, internal: Boolean(s.internal) })),
+  };
 }
 
 export async function buildReport(days) {
@@ -263,6 +296,7 @@ export async function buildReport(days) {
     days, generatedAt: new Date().toISOString(), cloudflareAuth: cf.source,
     daily,
     totals: { visits: sum("visits"), copies: sum("copies"), downloads: sum("downloads"), firstRuns: sum("firstRuns"), hostedSpacesAllTime: hosted?.total ?? null },
+    retention: hosted?.retention ?? null,
     copiesBy: Object.fromEntries(Object.entries(copiesBy).sort((a, b) => b[1] - a[1])),
     viewsBySource: Object.fromEntries(Object.entries(viewsBySource).sort((a, b) => b[1] - a[1])),
     notes,

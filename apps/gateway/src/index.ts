@@ -100,6 +100,15 @@ async function authenticate(req: Request, env: Env): Promise<SpaceGrant> {
   return grant as SpaceGrant;
 }
 
+/** Retention counter (counts only): one accepted event for a hosted space. Never fails the request. */
+async function countSpaceEvent(env: Env, space: string): Promise<void> {
+  try {
+    await registry(env).recordSpaceEvent(space);
+  } catch (e) {
+    console.error("recordSpaceEvent failed", e instanceof Error ? e.message : String(e));
+  }
+}
+
 function spacesKit(env: Env): SpacesKit {
   return {
     fail(code, message, details) {
@@ -295,7 +304,9 @@ async function route(req: Request, env: Env): Promise<Response> {
         if (key !== undefined && (key.length === 0 || key.length > 128))
           throw new HttpError("invalid_message", "Idempotency-Key must be 1..128 chars", { issues: [{ path: "", message: "Idempotency-Key" }] });
         const body = await readJson(req);
-        return json(unwrap(await stub.op("submit", [sid, body, { owner, ...(key ? { idempotencyKey: key } : {}) }])));
+        const res = unwrap(await stub.op("submit", [sid, body, { owner, ...(key ? { idempotencyKey: key } : {}) }]));
+        if (g.space) await countSpaceEvent(env, g.space);
+        return json(res);
       }
       case "/inbox": {
         const body = check<{ ack?: number }>("InboxDrain", (await readJson(req, true)) ?? { type: "inbox.drain" });

@@ -36,14 +36,14 @@ It needs no login from a fresh shell:
   Account Analytics, Read) and run `security add-generic-password -U -a weft -s weft-funnel-cf-token -w`
   (prompts for the value). The wrangler OAuth token can't create API tokens, so an agent can't
   mint this one.
-- **First runs**: the hosted admin key in `~/.config/weft/hosted-admin-token`.
+- **First runs and retention**: the hosted admin key, from the macOS keychain item `weft-hosted-admin`, else `~/.config/weft/hosted-admin-token`. Retention is counts only: spaces active in the last 7 / 30 days, retained spaces (events on 2+ days, one in the last 7), events per day; spaces tagged `internal` (our own tests and demos) are left out. See `docs/hosted.md`.
 - **npm**: public. npm publishes download counts with a 1-3 day lag; until a package's first
   day is indexed the API answers `package ... not found` (scoped names work unencoded,
   `@celador/weft`). Days npm hasn't published yet show `-`.
 
 Caveats: first runs count every new hosted space, including the Weft team's own test runs
-(2026-10-22's 14 were the publish and demo tests; `GET /v1/admin/spaces` shows each space's repo
-label). Web Analytics samples any query spanning more than 7 days, so the script asks in
+(2026-10-22's 14 were the publish and demo tests; `node site/hosted-admin.mjs spaces` shows each
+space's label and activity, and `tag` marks ours as internal so they drop out of the numbers). Web Analytics samples any query spanning more than 7 days, so the script asks in
 7-day windows; days older than about a week may still come back sampled (multiples of 10).
 
 ## Alerts
@@ -55,7 +55,8 @@ messages John, only when one of these happens for the first time:
 - a step goes above zero for the first time (`First first runs: …`);
 - a day has at least 10x the average of the 7 days before it, and at least 50 visits, 10
   copies, 50 downloads or 5 first runs;
-- all-time hosted spaces pass 25, 50, 100, 250, 500, 1000, 2500, 5000 or 10000.
+- all-time hosted spaces pass 25, 50, 100, 250, 500, 1000, 2500, 5000 or 10000;
+- the first non-internal hosted space is active (an event in the last 7 days), and the retained-space count passes 1, 3, 10, 25, 50, 100, 250, 500 or 1000.
 
 Each alert fires once; state lives in `~/.config/weft/funnel-alert-state.json` (delete it and
 run `node site/funnel.mjs --alert --seed` to reset without a message). A script error (no

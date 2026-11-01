@@ -154,6 +154,11 @@ export class Registry extends DurableObject<RegistryEnv> {
     // networkKey); deleted within 48 hours (pruneSignupCounters, also on the alarm).
     this.sql.exec(`CREATE TABLE IF NOT EXISTS signup_counters (day TEXT NOT NULL, net_key TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, net_key))`);
     this.pruneSignupCounters();
+    // Retention metrics, counts only (see recordSpaceEvent): when a space last sent an event, how many
+    // events per UTC day (day rows older than ACTIVITY_DAYS are deleted), and the operator's `internal` tag.
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS space_activity (space TEXT PRIMARY KEY, last_event_at TEXT NOT NULL)`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS space_days (space TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (space, day))`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS space_tags (space TEXT PRIMARY KEY, internal INTEGER NOT NULL DEFAULT 1)`);
     for (const [table, col] of [
       ["repos", "space"],
       ["tokens", "space"],
@@ -187,6 +192,7 @@ export class Registry extends DurableObject<RegistryEnv> {
   override async alarm(): Promise<void> {
     this.ensureSpaces();
     await this.scheduleCounterPrune(this.pruneSignupCounters());
+    this.pruneActivity();
   }
 
   /** Operator kill switch: `open` (default), `no-signups` (existing spaces keep working), `off` (every space token refused). */
@@ -314,30 +320,112 @@ export class Registry extends DurableObject<RegistryEnv> {
     this.ensureSpaces();
     const n = this.sql.exec(`UPDATE spaces SET status = ?, deleted_at = ? WHERE id = ? AND status = 'active'`, status, new Date().toISOString(), space).rowsWritten;
     this.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE space = ? AND revoked_at IS NULL`, new Date().toISOString(), space);
+    // A deleted space keeps no activity record (a suspended one does: the operator may restore context).
+    if (status === "deleted") {
+      this.sql.exec(`DELETE FROM space_activity WHERE space = ?`, space);
+      this.sql.exec(`DELETE FROM space_days WHERE space = ?`, space);
+    }
     return n > 0;
   }
 
-  async listSpaces(): Promise<Array<SpaceInfo & { repos: number; tokens: number }>> {
+  async listSpaces(): Promise<Array<SpaceInfo & { repos: number; tokens: number; internal?: true }>> {
     this.ensureSpaces();
     return this.sql
-      .exec<{ id: string; status: string; label: string | null; created_at: string; repos: number; tokens: number }>(
+      .exec<{ id: string; status: string; label: string | null; created_at: string; repos: number; tokens: number; internal: number }>(
         `SELECT s.id, s.status, s.label, s.created_at,
            (SELECT COUNT(*) FROM repos r WHERE r.space = s.id) AS repos,
-           (SELECT COUNT(*) FROM tokens t WHERE t.space = s.id AND t.revoked_at IS NULL) AS tokens
+           (SELECT COUNT(*) FROM tokens t WHERE t.space = s.id AND t.revoked_at IS NULL) AS tokens,
+           COALESCE((SELECT internal FROM space_tags g WHERE g.space = s.id), 0) AS internal
          FROM spaces s ORDER BY s.created_at`,
       )
       .toArray()
-      .map((r) => ({ id: r.id, status: r.status as SpaceInfo["status"], created_at: r.created_at, ...(r.label ? { label: r.label } : {}), repos: r.repos, tokens: r.tokens }));
+      .map((r) => ({ id: r.id, status: r.status as SpaceInfo["status"], created_at: r.created_at, ...(r.label ? { label: r.label } : {}), repos: r.repos, tokens: r.tokens, ...(r.internal ? { internal: true } : {}) }));
   }
 
-  /** First runs per day (spaces created), the last `days` days: the funnel's last step. */
+  /** First runs per day (spaces created, internal spaces excluded), the last `days` days: the funnel's last step. */
   async signupStats(days = 30): Promise<Array<{ day: string; spaces: number }>> {
     this.ensureSpaces();
     const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
     return this.sql
-      .exec<{ day: string; n: number }>(`SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n FROM spaces WHERE created_at >= ? GROUP BY day ORDER BY day`, since)
+      .exec<{ day: string; n: number }>(
+        `SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n FROM spaces WHERE created_at >= ? AND id NOT IN (SELECT space FROM space_tags WHERE internal = 1) GROUP BY day ORDER BY day`,
+        since,
+      )
       .toArray()
       .map((r) => ({ day: r.day, spaces: r.n }));
+  }
+
+  // ------------------------------------------------------------------ retention metrics (counts only)
+
+  private prunedDay = "";
+
+  /** Delete per-day activity rows older than ACTIVITY_DAYS (today included in the window). */
+  pruneActivity(now = Date.now()): void {
+    this.ensureSpaces();
+    this.sql.exec(`DELETE FROM space_days WHERE day < ?`, utcDay(now - (ACTIVITY_DAYS - 1) * 86_400_000));
+  }
+
+  /**
+   * One accepted event from a space: bumps last_event_at and today's (UTC) event count. Stores only the
+   * space id, a timestamp and a number. Unknown or non-active spaces are ignored.
+   */
+  async recordSpaceEvent(space: string, now = Date.now()): Promise<void> {
+    if (!this.activeSpace(space)) return;
+    const day = utcDay(now);
+    this.sql.exec(`INSERT INTO space_activity (space, last_event_at) VALUES (?, ?) ON CONFLICT(space) DO UPDATE SET last_event_at = MAX(last_event_at, excluded.last_event_at)`, space, new Date(now).toISOString());
+    this.sql.exec(`INSERT INTO space_days (space, day, n) VALUES (?, ?, 1) ON CONFLICT(space, day) DO UPDATE SET n = n + 1`, space, day);
+    if (this.prunedDay !== day) {
+      this.pruneActivity(now);
+      this.prunedDay = day;
+    }
+  }
+
+  /** Operator tag: internal spaces (our own tests and demos) are left out of the headline numbers. False when the space does not exist. */
+  async setSpaceInternal(space: string, internal: boolean): Promise<boolean> {
+    this.ensureSpaces();
+    if (!this.sql.exec<{ id: string }>(`SELECT id FROM spaces WHERE id = ?`, space).toArray()[0]) return false;
+    if (internal) this.sql.exec(`INSERT INTO space_tags (space, internal) VALUES (?, 1) ON CONFLICT(space) DO UPDATE SET internal = 1`, space);
+    else this.sql.exec(`DELETE FROM space_tags WHERE space = ?`, space);
+    return true;
+  }
+
+  /**
+   * Retention numbers for GET /v1/admin/stats. Headline counts leave internal spaces out. Windows are UTC
+   * days ending today: 7 days = today and the 6 before. Active = at least one event in the window;
+   * retained = events on at least two distinct days (within ACTIVITY_DAYS) and at least one in the last 7.
+   */
+  async retentionStats(now = Date.now()): Promise<RetentionStats> {
+    this.ensureSpaces();
+    this.pruneActivity(now);
+    const from7 = utcDay(now - 6 * 86_400_000);
+    const from30 = utcDay(now - 29 * 86_400_000);
+    const rows = this.sql
+      .exec<{ id: string; status: string; label: string | null; created_at: string; internal: number; last_event_at: string | null; active_days_30: number; days: number; active7: number }>(
+        `SELECT s.id, s.status, s.label, s.created_at,
+           COALESCE((SELECT internal FROM space_tags g WHERE g.space = s.id), 0) AS internal,
+           (SELECT last_event_at FROM space_activity a WHERE a.space = s.id) AS last_event_at,
+           (SELECT COUNT(*) FROM space_days d WHERE d.space = s.id AND d.day >= ?) AS active_days_30,
+           (SELECT COUNT(*) FROM space_days d WHERE d.space = s.id) AS days,
+           (SELECT COUNT(*) FROM space_days d WHERE d.space = s.id AND d.day >= ?) AS active7
+         FROM spaces s WHERE s.status != 'deleted'
+         ORDER BY (last_event_at IS NULL), last_event_at DESC, s.created_at DESC`,
+        from30,
+        from7,
+      )
+      .toArray();
+    const real = rows.filter((r) => !r.internal);
+    const events = this.sql
+      .exec<{ day: string; n: number }>(`SELECT day, SUM(n) AS n FROM space_days WHERE day >= ? AND space NOT IN (SELECT space FROM space_tags WHERE internal = 1) GROUP BY day ORDER BY day`, from30)
+      .toArray();
+    return {
+      active_7d: real.filter((r) => r.active7 > 0).length,
+      active_30d: real.filter((r) => r.active_days_30 > 0).length,
+      retained: real.filter((r) => r.days >= 2 && r.active7 > 0).length,
+      internal_spaces: rows.filter((r) => r.internal).length,
+      events_per_day: events.map((e) => ({ day: e.day, events: e.n })),
+      spaces_total: rows.length,
+      spaces: rows.slice(0, MAX_LISTED_SPACES).map((r) => ({ id: r.id, ...(r.label ? { label: r.label } : {}), status: r.status as SpaceInfo["status"], created: r.created_at, last_event_at: r.last_event_at, active_days_30: r.active_days_30, ...(r.internal ? { internal: true } : {}) })),
+    };
   }
 
   /** verify() plus space semantics: suspended/deleted spaces and `off` mode refuse; viewers see the space's current repos. */
@@ -356,6 +444,24 @@ export type SignupLimits = { perIpDay: number; perDay: number; maxSpaces: number
 export type SpaceInfo = { id: string; status: "active" | "deleted" | "suspended"; label?: string; created_at: string };
 /** A grant minted for a hosted space. `role` owner = the space API only (no WCP scopes). */
 export type SpaceGrant = Grant & { space?: string; role?: "owner" | "agent" | "system" | "viewer" };
+
+/** Per-day activity rows are kept this many UTC days (today included), then deleted. */
+export const ACTIVITY_DAYS = 90;
+const MAX_LISTED_SPACES = 500;
+const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+export type RetentionStats = {
+  /** Spaces (internal excluded) with at least one event in the last 7 / 30 UTC days. */
+  active_7d: number;
+  active_30d: number;
+  /** Events on 2+ distinct days, at least one in the last 7. */
+  retained: number;
+  internal_spaces: number;
+  /** Total events per UTC day over the last 30 days, internal spaces excluded. */
+  events_per_day: Array<{ day: string; events: number }>;
+  spaces_total: number;
+  /** Non-deleted spaces, most recently active first (internal ones flagged); at most MAX_LISTED_SPACES. */
+  spaces: Array<{ id: string; label?: string; status: SpaceInfo["status"]; created: string; last_event_at: string | null; active_days_30: number; internal?: true }>;
+};
 
 export const SPACE_REPO_NAME = /^[a-z0-9][a-z0-9._-]{0,47}$/;
 const AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;

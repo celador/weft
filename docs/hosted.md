@@ -78,18 +78,43 @@ an agent keeps working (uncoordinated) and is told so.
 
 ### Operator controls (kill switch)
 
-With the hosted admin key (`~/.config/weft/hosted-admin-token` on John's machine;
-`wrangler secret put WEFT_ADMIN_TOKEN --env hosted`):
+With the hosted admin key (macOS keychain item `weft-hosted-admin` on John's machine, or the
+older `~/.config/weft/hosted-admin-token`; `wrangler secret put WEFT_ADMIN_TOKEN --env hosted`):
 
 ```sh
-U=https://weft-hosted.elier.ai; AD="authorization: Bearer $(cat ~/.config/weft/hosted-admin-token)"
-curl -s -H "$AD" $U/v1/admin/stats                       # new spaces per day (first runs), totals
+U=https://weft-hosted.elier.ai; AD="authorization: Bearer $(security find-generic-password -s weft-hosted-admin -w 2>/dev/null || cat ~/.config/weft/hosted-admin-token)"
+curl -s -H "$AD" $U/v1/admin/stats                       # first runs per day, totals, retention (below)
 curl -s -H "$AD" $U/v1/admin/spaces                      # every space: status, repos, keys
 curl -sX POST -H "$AD" $U/v1/admin/spaces/<id>/suspend   # ban one space (all its keys revoked)
+curl -sX POST -H "$AD" $U/v1/admin/spaces/<id>/tag -d '{"internal":true}'   # our own test/demo space: out of the headline numbers
 curl -sX POST -H "$AD" $U/v1/admin/hosted -d '{"mode":"no-signups"}'  # stop new spaces; existing ones keep working
 curl -sX POST -H "$AD" $U/v1/admin/hosted -d '{"mode":"off"}'         # refuse every space key, at once
 curl -sX POST -H "$AD" $U/v1/admin/hosted -d '{"mode":"open"}'        # back to normal
 ```
+
+`node site/hosted-admin.mjs spaces` and `node site/hosted-admin.mjs tag <id>... [--off]` do the
+per-space listing and tagging without the key touching a shell history.
+
+### Retention metrics (counts only)
+
+Whether anyone keeps using Weft, without storing anything about the user. For each space the
+Registry keeps `last_event_at` and a count of events per UTC day (an event = one accepted
+`POST .../sessions/<id>/events` from one of the space's agent tokens); day rows older than 90 days
+are deleted, and a deleted space's rows go with it. No IP, no repo names, no paths, no content.
+
+`GET /v1/admin/stats` adds `retention`:
+
+| field | meaning |
+|---|---|
+| `active_7d`, `active_30d` | spaces with at least one event in the last 7 / 30 UTC days (today included) |
+| `retained` | spaces with events on 2 or more distinct days (within the 90 kept), at least one in the last 7 days |
+| `events_per_day` | all events per UTC day, last 30 days |
+| `internal_spaces` | spaces tagged internal |
+| `spaces` | per space: `id`, `label`, `status`, `created`, `last_event_at`, `active_days_30`, `internal` (500 at most, most recently active first; `spaces_total` is the full count) |
+
+Spaces tagged `internal` (`POST /v1/admin/spaces/<id>/tag {"internal": true}`) are left out of every
+headline number, including `spaces.total` and the first-runs `days`, and stay in the per-space list
+with `internal: true`. `node site/funnel.mjs` prints the same retention lines after "first runs".
 
 The hard stop, without the Registry: set `WEFT_HOSTED_OFF = "1"` in `[env.hosted.vars]` and run
 `pnpm --filter @weft/gateway deploy:hosted`. Every space request then gets `503 unavailable`.
