@@ -8,7 +8,7 @@ included.
 ## Before you start
 
 - For anything bigger than a small fix, open an issue first and say what you plan to change.
-- Security problems: don't open a public issue. See [SECURITY.md](SECURITY.md).
+- Security problems: don't open a public issue. See [SECURITY.md](.github/SECURITY.md).
 
 ## What every pull request needs
 

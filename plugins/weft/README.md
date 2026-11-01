@@ -44,6 +44,12 @@ npx @celador/weft --harness copilot      # in your repo
   the CLI they run that runtime's adapter, which sends the edit (file paths, the diff, the
   symbols it touches) to the checkout's Weft gateway and passes the gateway's squiggles back to
   the agent. Nothing else is sent anywhere.
+- The gateway is the one you chose, not one a repo names. The CLI records your choice for each
+  checkout in `~/.config/weft/pins.json` (outside the repo), and the plugin starts the adapter
+  with that gateway (`hook --pinned --url … --repo …`). The adapter ignores any `.weft/` config
+  that points anywhere else, so a repository you clone that ships its own `.weft/` (or sets
+  `WEFT_URL`) cannot redirect your edits: Weft stays off there until you run the CLI in that
+  checkout. If Weft stopped working after an update, run `npx @celador/weft` in the repo once.
 - `scripts/weft-hook.mjs adopt` (run by `/weft:setup`) removes the CLI's own Weft hook entries
   from `.claude/settings.local.json` (or `.github/hooks/weft.json`) so each hook runs once. It
   leaves every other setting alone.

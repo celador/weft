@@ -121,9 +121,20 @@ export function readConfigFile(root: string, configRel: string = CONFIG_REL): Pa
  * Env overrides a by-path hook must ignore: each would point a pinned checkout somewhere else, or
  * (WEFT_TOKEN, inherited from the parent session) make the worker act with the parent's identity.
  */
-export function withoutPinnedOverrides(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const { WEFT_URL: _url, WEFT_ROOT: _root, WEFT_MODE: _mode, WEFT_TOKEN: _token, ...rest } = env;
-  return rest;
+export function withoutPinnedOverrides(env: NodeJS.ProcessEnv, keepToken = false): NodeJS.ProcessEnv {
+  const { WEFT_URL: _url, WEFT_ROOT: _root, WEFT_MODE: _mode, WEFT_TOKEN: token, ...rest } = env;
+  return keepToken && token ? { ...rest, WEFT_TOKEN: token } : rest;
+}
+
+/** The pin a `hook --by-path|--pinned` was started with: `--url U --repo R [--mode advise]`. Undefined unless both are given. */
+export function pinFromArgs(args: string[]): Pin | undefined {
+  const get = (name: string) => {
+    const i = args.indexOf(`--${name}`);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const url = get("url");
+  const repo = get("repo");
+  return url && repo ? { url, repo, mode: get("mode") === "advise" ? "advise" : "enforce" } : undefined;
 }
 
 /**
@@ -152,8 +163,8 @@ export function throughSymlink(path: string): boolean {
  * A repo can ship its own config, so an unpinned or mismatched one must not route edits to a
  * server it chose. No pin means nothing is trusted.
  */
-export function pinMatches(root: string, pin: Pin | undefined): boolean {
-  const c = readConfigFile(root);
+export function pinMatches(root: string, pin: Pin | undefined, configRel: string = CONFIG_REL): boolean {
+  const c = readConfigFile(root, configRel);
   return !!pin && !!c && c.url === pin.url && c.repo === pin.repo && (c.mode ?? "enforce") === (pin.mode ?? "enforce");
 }
 
@@ -207,6 +218,18 @@ export function loadConfig(start: string, env: NodeJS.ProcessEnv = process.env, 
   }
   if (!config.url || !config.repo || !config.agent || !config.change || !config.task?.id || !token) return undefined;
   return { root, config, token };
+}
+
+/**
+ * The config for a hook that runs with a pin (`hook --pinned`, the plugin path), FAILING CLOSED:
+ * undefined unless the checkout's own config equals the pin. Env overrides that would move the
+ * coordinator (WEFT_URL, WEFT_ROOT, WEFT_MODE) are ignored, and the token must stay under `.weft/`.
+ * A repo-shipped `.weft/` can therefore never redirect diffs to a server the user did not choose.
+ */
+export function loadPinned(start: string, pin: Pin | undefined, env: NodeJS.ProcessEnv = process.env, configRel: string = CONFIG_REL): Loaded | undefined {
+  if (!pin) return undefined;
+  const found = loadConfig(start, withoutPinnedOverrides(env, true), configRel, true);
+  return found && pinMatches(found.root, pin, configRel) ? found : undefined;
 }
 
 export type PendingEdit = {

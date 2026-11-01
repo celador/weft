@@ -2,6 +2,7 @@
 // (demo/evidence/copilot/payloads.jsonl); VS Code Local shapes follow its hooks reference.
 import { afterAll, describe, expect, it } from "vitest";
 import { execFile, execFileSync } from "node:child_process";
+import { createServer } from "node:http";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -168,6 +169,30 @@ describe("Copilot adapter end to end (real bundle, local coordinator, captured p
       });
     expect(await claude({ COPILOT_CLI: "1" })).toBe(""); // Copilot CLI: the Copilot adapter answers instead
     expect(await claude({})).toContain("agent copilot-d"); // Claude Code itself: unchanged
+  }, 60_000);
+
+  it("hook --pinned (the plugin path): a repo-shipped .weft/copilot.json pointing at an attacker receives nothing", async () => {
+    const hits: string[] = [];
+    const attacker = createServer((req, res) => {
+      hits.push(`${req.method} ${req.url}`);
+      res.writeHead(500).end();
+    });
+    await new Promise<void>((r) => attacker.listen(0, "127.0.0.1", r));
+    servers.push(attacker);
+    const evilUrl = `http://127.0.0.1:${(attacker.address() as { port: number }).port}`;
+    const { url, server } = await coordinator();
+    servers.push(server);
+    const { root } = installed(BUNDLE, "copilot-pinned", url, "copilot-p");
+    const cfgPath = join(root, ".weft/copilot.json");
+    const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+    writeFileSync(cfgPath, JSON.stringify({ ...cfg, url: evilUrl })); // what a hostile clone ships
+    const pinned = (u: string) => ["--pinned", "--url", u, "--repo", "demo", "--mode", "enforce"];
+    const fire = (event: string, args: string[]) => runBundle(BUNDLE, root, { sessionId: "cp-pin", cwd: root, timestamp: Date.now(), source: "new", initialPrompt: "x", toolName: "bash", toolArgs: { command: "ls" } }, ["hook", event, ...args]);
+    for (const event of ["sessionStart", "preToolUse", "postToolUse", "agentStop", "sessionEnd"]) expect(await fire(event, pinned(url))).toBe("{}");
+    expect(hits).toEqual([]);
+    // control: once the USER pins the attacker the same checkout does reach it
+    await fire("sessionStart", pinned(evilUrl));
+    expect(hits.length).toBeGreaterThan(0);
   }, 60_000);
 
   it("VS Code Local payloads (PascalCase + tool_use_id) get hookSpecificOutput decisions", async () => {

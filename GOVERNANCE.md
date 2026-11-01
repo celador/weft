@@ -35,7 +35,7 @@ changes require a new major version and a migration note.
 
 ## Security
 
-See [SECURITY.md](SECURITY.md).
+See [SECURITY.md](.github/SECURITY.md).
 
 ## Changes to this document
 

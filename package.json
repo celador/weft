@@ -13,5 +13,17 @@
     "typescript": "^5.9.3",
     "vitest": "^3.2.4",
     "wrangler": "4.147.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "basic-ftp": ">=6.2.1",
+      "ip-address": ">=10.7.4"
+    },
+    "auditConfig": {
+      "ignoreGhsas": [
+        "GHSA-jmr9-qjv8-65gv",
+        "GHSA-7pqw-9j4j-h8q3"
+      ]
+    }
   }
 }

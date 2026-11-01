@@ -3,7 +3,7 @@
 // The workspace package is "@weft/vscode"; the shipped extension is "celador.weft".
 // Publishing (Marketplace, Open VSX) is NOT done here: it needs John's OK.
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,6 +23,11 @@ cpSync(join(root, "..", "..", "LICENSE"), join(stage, "LICENSE"));
 cpSync(join(root, "dist"), join(stage, "dist"), { recursive: true, filter: (s) => !s.endsWith(".map") });
 cpSync(join(root, "media"), join(stage, "media"), { recursive: true, filter: (s) => !s.endsWith(".map") });
 writeFileSync(join(stage, ".vscodeignore"), "**/*.map\n");
+// No source maps ship (they name the original source files): none copied above, no dangling sourceMappingURL trailers, and a hard stop if one slips in.
+for (const f of readdirSync(stage, { recursive: true }).map(String)) {
+  if (f.endsWith(".map")) throw new Error(`source map in the package: ${f}`);
+  if (/\.c?js$/.test(f)) writeFileSync(join(stage, f), readFileSync(join(stage, f), "utf8").replace(/^\/\/# sourceMappingURL=.*\n?/gm, ""));
+}
 
 if (process.argv.includes("--stage-only")) {
   console.log(`staged ${stage}`);

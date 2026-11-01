@@ -181,6 +181,10 @@ describe("weft (init / status / add / uninstall) against a stand-in gateway", ()
       expect(readFileSync(join(dir, ".claude/settings.local.json"), "utf8")).toContain(join(realpathSync(base), "config", "runtime"));
     }
     expect(existsSync(join(base, "config", "runtime", "0.0.0-dev", "node_modules", "typescript", "package.json"))).toBe(true);
+    // the user's choice is recorded outside the repo, for the plugin to pin its hooks to; the runtime says it understands the pin
+    const pins = JSON.parse(readFileSync(join(base, "config", "pins.json"), "utf8")).checkouts;
+    for (const dir of [repo, wt]) expect(pins[realpathSync(dir)]["claude-code"]).toEqual({ url, repo: "sp0000000001-shop", mode: "enforce" });
+    expect(existsSync(join(base, "config", "runtime", "0.0.0-dev", ".pinned-hook-v1"))).toBe(true);
     // no token is printed except the viewer link
     const out = logs.join("\n");
     expect(out).toContain(`${url}/feed#t=weft_viewer_`);
@@ -262,6 +266,9 @@ describe("weft (init / status / add / uninstall) against a stand-in gateway", ()
     }
     expect(existsSync(join(repo, ".git/hooks/pre-commit"))).toBe(false);
     expect([...gw.tokens.values()].every((t) => t.revoked)).toBe(true);
+    // the plugin no longer has a coordinator to pin for these checkouts
+    const left = Object.keys(JSON.parse(readFileSync(join(base, "config", "pins.json"), "utf8")).checkouts);
+    for (const dir of [repo, join(base, "shop-2"), join(base, "shop-reviewer")]) expect(left).not.toContain(realpathSync(dir));
   });
 });
 

@@ -8,6 +8,7 @@ import { cpSync, existsSync, readFileSync, readdirSync, realpathSync, renameSync
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { forgetPins } from "./pins";
 import { configDir, readJson, tryGit, VERSION, WeftError, which } from "./util";
 
 export type HarnessId = "antigravity" | "claude-code" | "codex" | "copilot" | "cursor" | "gemini" | "opencode" | "watcher";
@@ -74,7 +75,8 @@ export function runtimeDir(env = process.env): string {
 export function ensureRuntime(env = process.env): string {
   const rt = runtimeDir(env);
   const done = join(rt, ".complete");
-  if (existsSync(done) && !VERSION.includes("dev")) return rt;
+  // .pinned-hook-v1: these adapters understand `hook --pinned` (the plugin runs only runtimes that do; see plugins/weft/scripts/weft-hook.mjs).
+  if (existsSync(done) && existsSync(join(rt, ".pinned-hook-v1")) && !VERSION.includes("dev")) return rt;
   const dist = packageDist();
   const tmp = `${rt}.tmp-${process.pid}`;
   rmSync(tmp, { recursive: true, force: true });
@@ -87,6 +89,7 @@ export function ensureRuntime(env = process.env): string {
     throw new WeftError("the `typescript` package is missing", "Reinstall: npx @celador/weft@latest");
   }
   cpSync(tsDir, join(tmp, "node_modules", "typescript"), { recursive: true, dereference: true });
+  writeFileSync(join(tmp, ".pinned-hook-v1"), "");
   writeFileSync(join(tmp, ".complete"), new Date().toISOString() + "\n");
   rmSync(rt, { recursive: true, force: true });
   renameSync(tmp, rt);
@@ -201,6 +204,7 @@ export function removeAdapters(root: string): string[] {
       }
     }
   }
+  if (forgetPins(root)) touched.push("coordinator pin (~/.config/weft/pins.json)");
   const weft = join(root, ".weft");
   if (existsSync(weft) && statSync(weft).isDirectory()) {
     rmSync(weft, { recursive: true, force: true });

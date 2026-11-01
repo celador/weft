@@ -1,0 +1,7 @@
+# Code that users run on their machines, and the pipeline that builds and publishes it, needs the
+# owner's review (branch protection on main: "Require review from Code Owners").
+/plugins/            @celador
+/packages/cli/       @celador
+/packages/adapters/  @celador
+/.github/            @celador
+/.gitleaks.toml      @celador

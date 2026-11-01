@@ -85,7 +85,8 @@ async function hook(args: string[]): Promise<void> {
   try {
     const raw = JSON.parse(await readStdin()) as CopilotInput;
     const n = normalize(raw, args[0]);
-    const loaded = n.session ? host.load(n.cwd) : undefined;
+    // `--pinned` (the plugin): the checkout's config counts only if it equals the coordinator the user chose.
+    const loaded = n.session ? (args.includes("--pinned") ? host.loadPinned(n.cwd, args) : host.load(n.cwd)) : undefined;
     if (loaded && n.event) {
       const inputs = toCore(n);
       const outs: HookOutput[] = [];

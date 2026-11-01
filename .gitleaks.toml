@@ -1,0 +1,47 @@
+# gitleaks config for CI (.github/workflows/ci.yml, job `secrets`): the default rules plus the allowlist
+# below. Every entry is a reviewed false positive, matched as narrowly as possible (value shape + place).
+# A real secret must be removed from the tree AND rotated, never added here.
+title = "Weft gitleaks config"
+
+[extend]
+useDefault = true
+
+# 1. The placeholder an agent sandbox sees in place of a provider key; the Worker swaps in the real key outbound.
+[[allowlists]]
+description = "sandbox placeholder token (apps/sandbox/image/agent-run.mjs PLACEHOLDER_TOKEN)"
+regexes = ['''^weft-outbound-injected$''']
+
+# 2. A public Anthropic beta header value that sits next to the "oauth-2025-04-20" header in captured transcripts.
+[[allowlists]]
+description = "anthropic-beta header value interleaved-thinking-<date> in captured transcripts"
+paths = ['''^demo/evidence/''']
+regexes = ['''^interleaved-thinking-\d{4}-\d{2}-\d{2}$''']
+condition = "AND"
+
+# 3. Copilot CLI's `apiCallId` in captured session events: an opaque response id, not a credential.
+[[allowlists]]
+description = "Copilot apiCallId blobs in captured Copilot CLI session events"
+paths = ['''^demo/evidence/copilot/''']
+regexes = ['''^[A-Za-z0-9+/]{300,}={0,2}$''']
+condition = "AND"
+
+# 4. Weft token *ids* (tok_ + 16 hex) in the Otto evidence run; the bearer secrets themselves are never recorded.
+[[allowlists]]
+description = "token_id values in the Otto demo evidence"
+paths = ['''^demo/evidence/otto/''']
+regexes = ['''^tok_[0-9a-f]{16}$''']
+condition = "AND"
+
+# 5. Test fixtures: the secret-redaction tests need a string that looks like an AWS key, and the WebSocket
+# handshake test uses RFC 6455's sample Sec-WebSocket-Key.
+[[allowlists]]
+description = "redaction-test fixture shaped like an AWS access key id"
+paths = ['''^apps/gateway/test/(wcp/)?observer(\.suite|\.test)\.ts$''']
+regexes = ['''^AKIA[A-Z0-9]{16}$''']
+condition = "AND"
+
+[[allowlists]]
+description = "RFC 6455 sample Sec-WebSocket-Key"
+paths = ['''^apps/local/test/ws\.test\.ts$''']
+regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']
+condition = "AND"

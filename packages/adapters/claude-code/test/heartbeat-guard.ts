@@ -5,6 +5,9 @@
 // and then fails the run if any tagged loop survives. Count before = count after = 0.
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 export type LoopProc = { pid: number; command: string };
 
@@ -49,12 +52,16 @@ export async function waitGone(tag: string, ms: number): Promise<LoopProc[]> {
 }
 
 export default function setup(): () => Promise<void> {
+  // `install` records the coordinator pin in <WEFT_HOME>/pins.json: tests must never write the real ~/.config/weft.
+  const home = mkdtempSync(join(tmpdir(), "weft-test-home-"));
+  process.env.WEFT_HOME = home;
   const tag = process.env.WEFT_HEARTBEAT_TAG ?? `weft-test-${process.pid}-${randomBytes(4).toString("hex")}`;
   process.env.WEFT_HEARTBEAT_TAG = tag;
   // Loops notice a dead owner / deleted checkout within one poll.
   process.env.WEFT_HEARTBEAT_POLL_MS ??= "200";
   const before = heartbeatLoops(tag).length;
   return async () => {
+    rmSync(home, { recursive: true, force: true });
     const alive = heartbeatLoops(tag);
     kill(alive.map((p) => p.pid));
     const survivors = await waitGone(tag, 5_000);

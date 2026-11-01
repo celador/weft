@@ -12,10 +12,11 @@ import { dirname, join, resolve } from "node:path";
 import type { Capabilities } from "@weft/protocol";
 import { NEGOTIATE_USAGE, parseNegotiate } from "@weft/protocol";
 import { HttpTransport, type Transport } from "./client";
-import { currentSession, loadConfig, readState, stateDir, withLock, writeState, type AdapterConfig, type Loaded } from "./config";
+import { currentSession, loadConfig, loadPinned, pinFromArgs, readState, stateDir, withLock, writeState, type AdapterConfig, type Loaded } from "./config";
 import { ClaudeAdapter, type HookInput, type HookOutput } from "./hooks";
 import { flushJobs, type LspJob } from "./lsp-queue";
 import { stableNodePath } from "./node-path";
+import { recordPin } from "./pins";
 import { loopArgs, runHeartbeatLoop, spawnHeartbeat } from "./heartbeat";
 
 // Not imported from ./cli: that module runs Claude's main() when it is the entry bundle,
@@ -107,6 +108,11 @@ export class Host {
 
   load(start: string = process.cwd()): Loaded | undefined {
     return loadConfig(start, process.env, this.spec.configRel);
+  }
+
+  /** `hook --pinned --url U --repo R [--mode M]` (the plugin): the checkout's config only if it equals the pin; fails closed. */
+  loadPinned(start: string, args: string[]): Loaded | undefined {
+    return loadPinned(start, pinFromArgs(args), process.env, this.spec.configRel);
   }
 
   cliFor(root: string): string {
@@ -245,6 +251,8 @@ export class Host {
     if (missing.length) throw new Error(`install: missing --${missing.join(", --")}`);
     mkdirSync(dirname(cfgPath), { recursive: true });
     writeFileSync(cfgPath, JSON.stringify(config, null, 2) + "\n");
+    // The plugin trusts this checkout's config only through what the user chose here, kept outside the repo (see pins.ts).
+    if (arg(args, "url") && arg(args, "repo")) recordPin(root, spec.harness, { url: config.url, repo: config.repo, mode: config.mode ?? "enforce" });
     if (process.env.WEFT_TOKEN) {
       const tokenPath = resolve(root, config.tokenFile!);
       mkdirSync(dirname(tokenPath), { recursive: true });

@@ -1,0 +1,59 @@
+name: Release @celador/weft
+
+# Publishes packages/cli to npm WITH PROVENANCE: npm's attestation says "this tarball was built from
+# commit <sha> of celador/weft by this workflow", and `npm audit signatures` checks it. npm only
+# signs that from a supported CI (GitHub Actions) via the OIDC token below, so a publish from a
+# laptop cannot carry provenance (packages/cli/package.json sets publishConfig.provenance, which
+# makes a local `npm publish` fail instead of shipping an unattested package).
+#
+# Manual only. Bump packages/cli/package.json "version" (and the pins that must equal it, see
+# packages/cli/test/plugin-hook.test.ts) in a commit on main first, then run this workflow from main
+# with dry_run=false. Auth, either of:
+#   - npm trusted publishing: add this repo + workflow file (release.yml) as a trusted publisher in the
+#     package's settings on npmjs.com (no token stored anywhere); or
+#   - a repository secret NPM_TOKEN (npm automation token with publish rights to @celador/weft).
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run the full gate and `npm publish --dry-run`; publish nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish-cli:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # the OIDC token npm signs the provenance attestation with
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - name: Gate (typecheck + tests) on the exact commit being released
+        run: pnpm -r typecheck && pnpm -r test
+      - name: Publish with provenance
+        working-directory: packages/cli
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            npm publish --provenance --access public --dry-run
+          else
+            npm publish --provenance --access public
+          fi

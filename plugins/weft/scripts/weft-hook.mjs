@@ -11,6 +11,14 @@
 // own hook file already runs the adapter (`npx @celador/weft` writes .claude/settings.local.json or
 // .github/hooks/weft.json), the plugin steps aside so each hook runs once.
 //
+// Fails closed: a repo can ship its own .weft/ config (and token), so the config in the checkout
+// never decides where diffs go. `hook` acts only in a checkout whose coordinator the user chose,
+// recorded OUTSIDE the repo in ~/.config/weft/pins.json by `npx @celador/weft`, and runs the adapter
+// as `hook --pinned --url <pinned> --repo <pinned> --mode <pinned>`: the adapter ignores any checkout
+// config that differs from that pin and ignores WEFT_URL/WEFT_ROOT/WEFT_MODE. No pin: silent, exit 0.
+// (`--pinned`, not `--by-path`: by-path is the subagent mode and denies Bash commands that do not
+// start with `cd <worktree> &&`, which would break a normal session.)
+//
 // `adopt` removes the adapter's entries from the checkout's hook file, so the plugin's hooks
 // (loaded at session start) take over: Weft works in the running session with no restart.
 import { spawnSync } from "node:child_process";
@@ -53,19 +61,32 @@ function newer(a, b) {
   return false;
 }
 
-/** The newest complete runtime's adapter for this harness. */
+/** The newest complete runtime's adapter for this harness. Only runtimes that understand `hook --pinned`
+ * (the CLI marks them with .pinned-hook-v1) qualify: an older adapter would ignore the flag and trust the repo's config. */
 function adapter() {
   const rt = join(configDir(), "runtime");
   let best;
   try {
     for (const v of readdirSync(rt)) {
       const p = join(rt, v, "adapters", harnessId, h.entry);
-      if (existsSync(join(rt, v, ".complete")) && existsSync(p) && (!best || newer(v, best.v))) best = { v, p: realpathSync(p) };
+      if (existsSync(join(rt, v, ".complete")) && existsSync(join(rt, v, ".pinned-hook-v1")) && existsSync(p) && (!best || newer(v, best.v))) best = { v, p: realpathSync(p) };
     }
   } catch {
     /* no runtime yet */
   }
   return best?.p;
+}
+
+/** The coordinator the user chose for this checkout (pins.json, written by `npx @celador/weft`), or undefined. */
+function pinFor(root) {
+  try {
+    const all = JSON.parse(readFileSync(join(configDir(), "pins.json"), "utf8"));
+    const p = all?.checkouts?.[realpathSync(root)]?.[harnessId];
+    if (p && typeof p.url === "string" && p.url && typeof p.repo === "string" && p.repo) return { url: p.url, repo: p.repo, mode: p.mode === "advise" ? "advise" : "enforce" };
+  } catch {
+    /* no pins yet */
+  }
+  return undefined;
 }
 
 const hasMark = (p) => {
@@ -115,16 +136,17 @@ if (cmd === "hook") {
     /* not JSON: use the process cwd */
   }
   const root = findRoot(cwd);
-  const bin = root && !ownHookFiles(root).length ? adapter() : undefined;
-  if (!bin) process.exit(0);
-  const r = spawnSync(process.execPath, [bin, "hook", ...(arg ? [arg] : [])], { input, cwd, stdio: ["pipe", "inherit", "inherit"], env: process.env });
+  const pin = root ? pinFor(root) : undefined;
+  const bin = root && pin && !ownHookFiles(root).length ? adapter() : undefined;
+  if (!bin || !pin) process.exit(0); // fail closed: no pin means nothing in this checkout is trusted
+  const r = spawnSync(process.execPath, [bin, "hook", ...(arg ? [arg] : []), "--pinned", "--url", pin.url, "--repo", pin.repo, "--mode", pin.mode], { input, cwd, stdio: ["pipe", "inherit", "inherit"], env: process.env });
   process.exit(r.status ?? 0);
 }
 
 const root = findRoot(arg ? resolve(arg) : process.cwd());
 if (cmd === "where") {
   const own = root ? ownHookFiles(root) : [];
-  console.log(JSON.stringify({ checkout: root ?? null, adapter: adapter() ?? null, hooksFrom: !root ? "none (run npx @celador/weft)" : own.length ? own.join(", ") : "plugin" }, null, 2));
+  console.log(JSON.stringify({ checkout: root ?? null, adapter: adapter() ?? null, pinned: root ? Boolean(pinFor(root)) : false, hooksFrom: !root ? "none (run npx @celador/weft)" : own.length ? own.join(", ") : "plugin" }, null, 2));
   process.exit(0);
 }
 
@@ -134,7 +156,11 @@ if (!root) {
   process.exit(1);
 }
 if (!adapter()) {
-  console.error("No Weft runtime in ~/.config/weft/runtime. Run `npx @celador/weft` first.");
+  console.error("No up-to-date Weft runtime in ~/.config/weft/runtime. Run `npx @celador/weft` first.");
+  process.exit(1);
+}
+if (!pinFor(root)) {
+  console.error(`${root} has a ${h.config} but no coordinator you chose (~/.config/weft/pins.json), so the plugin will not run Weft here. Run \`npx @celador/weft\` in this checkout if you trust it.`);
   process.exit(1);
 }
 const isOurs = (e) => e && typeof e === "object" && [e.command, e.bash].some((c) => typeof c === "string" && c.includes(h.mark));

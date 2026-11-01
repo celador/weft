@@ -25,11 +25,12 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CLAIM_USAGE, NEGOTIATE_USAGE, parseClaim, parseNegotiate } from "@weft/protocol";
 import { HttpTransport, type Transport } from "./client";
-import { BASH_TARGET_FORMS, CONFIG_REL, appendAdapterLog, bashTargetDir, configStarts, withoutPinnedOverrides, currentSession, findRoot, loadConfig, hasDotDot, pinMatches, throughSymlink, readConfigFile, readState, stateDir, type AdapterConfig, type Loaded, type Pin } from "./config";
+import { BASH_TARGET_FORMS, CONFIG_REL, appendAdapterLog, bashTargetDir, configStarts, pinFromArgs, withoutPinnedOverrides, currentSession, findRoot, loadConfig, hasDotDot, pinMatches, throughSymlink, readConfigFile, readState, stateDir, type AdapterConfig, type Loaded, type Pin } from "./config";
 import { EDIT_TOOLS, editPath } from "./edits";
 import { ClaudeAdapter, type HookInput } from "./hooks";
 import { flushJobs, type LspJob } from "./lsp-queue";
 import { stableNodePath } from "./node-path";
+import { recordPin } from "./pins";
 import { loopArgs, runHeartbeatLoop, spawnHeartbeat } from "./heartbeat";
 
 const SELF = fileURLToPath(import.meta.url);
@@ -100,6 +101,10 @@ export const BY_PATH_WEFT_DIR =
 export const BY_PATH_REFUSED =
   "[weft] This checkout is not coordinated: its .weft/claude.json does not match the coordinator this subagent is pinned to (see .weft/log/adapter.log). Work only in the worktree you were given.";
 
+/** `--pinned` note when the checkout's config does not match the coordinator the user chose. */
+export const PINNED_REFUSED =
+  "[weft] Weft is off in this checkout: its .weft/claude.json does not match the coordinator chosen when Weft was set up here (see .weft/log/adapter.log). Run `npx @celador/weft` in a checkout you trust to turn it on.";
+
 async function hook(byPath: boolean, args: string[] = []): Promise<void> {
   let out: unknown;
   let input: HookInput | undefined;
@@ -107,8 +112,9 @@ async function hook(byPath: boolean, args: string[] = []): Promise<void> {
   const calls: Call[] = [];
   const lspJobs: LspJob[] = [];
   const handleStart = performance.now();
-  const pinMode = arg(args, "mode") === "advise" ? "advise" : "enforce";
-  const pin: Pin | undefined = arg(args, "url") && arg(args, "repo") ? { url: arg(args, "url")!, repo: arg(args, "repo")!, mode: pinMode } : undefined;
+  // `--pinned` (the plugin): the cwd's checkout, trusted only through the pin. `--by-path` (a subagent): the edited file's checkout, same rule.
+  const pinned = args.includes("--pinned");
+  const pin: Pin | undefined = pinFromArgs(args);
   try {
     input = JSON.parse(await readStdin()) as HookInput;
     const command = typeof input.tool_input?.command === "string" ? input.tool_input.command : "";
@@ -131,12 +137,12 @@ async function hook(byPath: boolean, args: string[] = []): Promise<void> {
       out = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: BY_PATH_WEFT_DIR } };
     } else {
       for (const start of configStarts(input, byPath)) {
-        const found = byPath ? loadConfig(start, withoutPinnedOverrides(process.env), CONFIG_REL, true) : loadConfig(start);
+        const found = byPath || pinned ? loadConfig(start, withoutPinnedOverrides(process.env, pinned), CONFIG_REL, true) : loadConfig(start);
         if (!found) continue;
-        if (byPath && !pinMatches(found.root, pin)) {
+        if ((byPath || pinned) && !pinMatches(found.root, pin)) {
           // A checkout whose config does not match the pinned coordinator is not coordinated.
-          appendAdapterLog(found.root, `hook --by-path refused: ${found.root}/${CONFIG_REL} url/repo/mode do not match the pinned coordinator`);
-          if (input.hook_event_name === "PreToolUse") out = { hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: BY_PATH_REFUSED } };
+          appendAdapterLog(found.root, `hook ${pinned ? "--pinned" : "--by-path"} refused: ${found.root}/${CONFIG_REL} url/repo/mode do not match the pinned coordinator`);
+          if (input.hook_event_name === "PreToolUse") out = { hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: pinned ? PINNED_REFUSED : BY_PATH_REFUSED } };
           break;
         }
         loaded = found;
@@ -288,6 +294,9 @@ async function install(args: string[]): Promise<void> {
   if (missing.length) throw new Error(`install: missing --${missing.join(", --")}`);
   mkdirSync(join(root, ".weft"), { recursive: true });
   writeFileSync(cfgPath, JSON.stringify(config, null, 2) + "\n");
+  // The plugin trusts this checkout's config only through what the user chose here, kept outside the repo.
+  // Only an explicit --url/--repo counts: a config that was already in the checkout is not a choice.
+  if (arg(args, "url") && arg(args, "repo")) recordPin(root, "claude-code", { url: config.url, repo: config.repo, mode: config.mode ?? "enforce" });
   if (process.env.WEFT_TOKEN) {
     const tokenPath = resolve(root, config.tokenFile!);
     mkdirSync(dirname(tokenPath), { recursive: true });

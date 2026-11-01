@@ -33,5 +33,5 @@
     "@weft/mcp": "workspace:*",
     "esbuild": "^0.25.4"
   },
-  "publishConfig": { "access": "public" }
+  "publishConfig": { "access": "public", "provenance": true, "registry": "https://registry.npmjs.org/" }
 }
