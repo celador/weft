@@ -230,3 +230,8 @@ Append-only. One dated entry per heartbeat that changed something.
 
 ## 2026-10-28 16:26 — unblocked funnel rate-limit card
 - t_1d7ab39a crashed twice ("Kanban owner refused: execution unknown", worker transport). Its code (77e92fe retry helper, c39d48b account-based GraphQL rate limit) is already on main, CI Gate green. Commented a resume note (finish Part B evidence, run the alert script once, remove worktree), unblocked, re-dispatched (pid live). Security impact: none (analytics read path only). Publish freeze holds; t_be030d1a stays in triage.
+
+## 2026-11-01 18:35 — security/sales batch landed; release card needs John
+- Workers fast-forwarded to main: t_5938152a (tier 1), t_9c9bf2df (device-paired feed viewers), t_ac4b8746 (real erasure + admin key in keychain), t_2a301499 (local default, CLI 0.3.0), t_247e16d2 (retention metrics), t_edb55d58 (usage billing, Stripe test mode, inert without secrets). Main bb84f96, CI Gate green (run 41349059565). All wt/ branches merged, no unmerged work. Sales drafts (t_1fab312a) in ~/Documents/Weft/sales/, nothing sent.
+- t_75164d16 (security release) blocked: npm logged out (E401), screen locked (~90 min idle), so npm web login can't finish. Hosted gateway already deployed and verified by the card. Plugin on main pins @celador/weft@0.3.0, not on npm yet (latest 0.2.0). Needs John to unlock the Mac, then unblock the card. The card's deployed gateway predates the billing landing; billing is inert without Stripe secrets, so no deploy needed for it yet.
+- Security impact of this entry: none (log only). Publish freeze stays except this card.
