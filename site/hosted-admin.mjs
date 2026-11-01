@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Operator tool for the hosted gateway's retention metrics (counts only). The admin key comes from
-// the macOS keychain (`weft-hosted-admin`) or ~/.config/weft/hosted-admin-token and is never printed.
+// the macOS keychain (`weft-hosted-admin`, never a file) and is never printed.
 //
 //   node site/hosted-admin.mjs spaces                  every space: created, last event, active days (30d), internal flag
 //   node site/hosted-admin.mjs tag <space-id>... [--off]   mark spaces internal (our own tests/demos); --off clears the tag

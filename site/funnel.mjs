@@ -15,7 +15,7 @@
 //
 // Cloudflare auth, first that works: macOS keychain item `weft-funnel-cf-token` (Account
 // Analytics: Read) -> CLOUDFLARE_API_TOKEN -> the local `wrangler login` OAuth token (refreshed
-// with `wrangler whoami` when expired). Hosted admin key: macOS keychain item `weft-hosted-admin`, else ~/.config/weft/hosted-admin-token.
+// with `wrangler whoami` when expired). Hosted admin key: macOS keychain item `weft-hosted-admin` (admin-token.mjs).
 // Never prints a token.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";

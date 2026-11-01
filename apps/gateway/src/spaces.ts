@@ -6,7 +6,8 @@
 //   POST   /v1/space/repos             {name} -> repo `<space>-<name>` (idempotent)
 //   POST   /v1/space/tokens            {kind: agent|system|viewer, repo?, agent?, label?}
 //   DELETE /v1/space/tokens/{id}       revoke one of the space's tokens
-//   DELETE /v1/space                   delete the space (every token revoked)
+//   DELETE /v1/space                   erase the space: every repo's stored log is deleted, rows removed
+//   DELETE /v1/admin/spaces/{id}       (operator) the same for any space, suspended ones included
 //   GET    /v1/admin/stats             new spaces per day (= first runs of `npx weft`) and retention counts
 //   POST   /v1/admin/spaces/{id}/tag   {"internal": true|false}: leave our own test/demo spaces out of the stats
 //   GET    /feed                       the private live feed page (viewer token in the #fragment)
@@ -17,7 +18,7 @@
 // switch: WEFT_HOSTED_OFF=1 (deploy-time, refuses every space request without a DO call) or
 // POST /v1/admin/hosted {"mode": "open" | "no-signups" | "off"} (instant, no redeploy).
 
-import type { Registry, SpaceGrant } from "./registry";
+import type { EraseReport, Registry, SpaceGrant } from "./registry";
 import { FEED_HTML } from "./feed-page";
 
 export interface SpacesEnv {
@@ -159,8 +160,11 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
     return k.json({ type: "space", space: info, limits: { repos: L.maxRepos, tokens: L.maxTokens, requests_per_minute: L.rpm } });
   }
   if (path === "/v1/space" && m === "DELETE") {
-    await reg.deleteSpace(space);
-    return new Response(null, { status: 204 });
+    // Real erasure: every repo Durable Object of the space is emptied and its Registry rows are deleted.
+    const r = await reg.eraseSpace(space);
+    if (!r) k.fail("unauthorized", "space not found");
+    if ("error" in r!) k.fail("unavailable", r.error);
+    return k.json({ type: "space.erased", ...(r as EraseReport) });
   }
   if (path === "/v1/space/repos" && m === "POST") {
     const body = (await k.readJson(req)) as { name?: unknown };
@@ -202,7 +206,7 @@ export async function spacesAdmin(req: Request, env: SpacesEnv, k: SpacesKit, pa
   if (path === "/v1/admin/spaces" && m === "GET") return k.json({ spaces: await reg.listSpaces() });
   const sm = /^\/v1\/admin\/spaces\/([^/]+)\/suspend$/.exec(path);
   if (sm && m === "POST") {
-    if (!(await reg.deleteSpace(decodeURIComponent(sm[1]!), "suspended"))) k.fail("not_found", "no such active space");
+    if (!(await reg.suspendSpace(decodeURIComponent(sm[1]!)))) k.fail("not_found", "no such active space");
     return k.json({ type: "space.suspended", space: sm[1] });
   }
   const tm = /^\/v1\/admin\/spaces\/([^/]+)\/tag$/.exec(path);
@@ -212,6 +216,14 @@ export async function spacesAdmin(req: Request, env: SpacesEnv, k: SpacesKit, pa
     const id = decodeURIComponent(tm[1]!);
     if (!(await reg.setSpaceInternal(id, body.internal as boolean))) k.fail("not_found", "no such space");
     return k.json({ type: "space.tagged", space: id, internal: body.internal });
+  }
+  // Operator erasure: any space (active, suspended, or one soft-deleted by an older gateway). Idempotent.
+  const em = /^\/v1\/admin\/spaces\/([^/]+)$/.exec(path);
+  if (em && m === "DELETE") {
+    const r = await reg.eraseSpace(decodeURIComponent(em[1]!));
+    if (!r) k.fail("not_found", "no such space");
+    if ("error" in r!) k.fail("unavailable", r.error);
+    return k.json({ type: "space.erased", ...(r as EraseReport) });
   }
   if (path === "/v1/admin/stats" && m === "GET") {
     // Headline numbers leave out spaces tagged internal; `retention.spaces` lists every space with its flag.

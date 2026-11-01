@@ -36,7 +36,7 @@ It needs no login from a fresh shell:
   Account Analytics, Read) and run `security add-generic-password -U -a weft -s weft-funnel-cf-token -w`
   (prompts for the value). The wrangler OAuth token can't create API tokens, so an agent can't
   mint this one.
-- **First runs and retention**: the hosted admin key, from the macOS keychain item `weft-hosted-admin`, else `~/.config/weft/hosted-admin-token`. Retention is counts only: spaces active in the last 7 / 30 days, retained spaces (events on 2+ days, one in the last 7), events per day; spaces tagged `internal` (our own tests and demos) are left out. See `docs/hosted.md`.
+- **First runs and retention**: the hosted admin key, from the macOS keychain item `weft-hosted-admin` (account `john`; `$WEFT_HOSTED_ADMIN_TOKEN` on a machine without a keychain). It is not kept in a file. Retention is counts only: spaces active in the last 7 / 30 days, retained spaces (events on 2+ days, one in the last 7), events per day; spaces tagged `internal` (our own tests and demos) are left out. See `docs/hosted.md`.
 - **npm**: public. npm publishes download counts with a 1-3 day lag; until a package's first
   day is indexed the API answers `package ... not found` (scoped names work unencoded,
   `@celador/weft`). Days npm hasn't published yet show `-`.

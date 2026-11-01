@@ -40,7 +40,7 @@ Website: <https://weft.mx> · Source: <https://github.com/celador/weft>
 | `npx @celador/weft open` | open the live feed in your browser |
 | `npx @celador/weft watch` | report edits from tools without hooks (file watcher) |
 | `npx @celador/weft mcp` | MCP server for this checkout, for agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode): `{"command":"npx","args":["-y","@celador/weft","mcp","--dir","/path/to/checkout"]}` |
-| `npx @celador/weft uninstall [--space]` | remove Weft from this repo; `--space` also deletes the space |
+| `npx @celador/weft uninstall [--space]` | remove Weft from this repo; `--space` also erases the space on the gateway: every stored event, diff and key, for good (asks first; `--yes` skips) |
 | `npx @celador/weft --hosted` | opt in to a hosted space on Weft's Cloudflare gateway instead (usage-based pricing is coming) |
 | `npx @celador/weft deploy [--domain HOST]` | run your own gateway in your Cloudflare account |
 | `npx @celador/weft use local\|hosted\|URL` | choose the default gateway (local unless you chose otherwise; `--local` is still accepted) |

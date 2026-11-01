@@ -3,6 +3,8 @@ import { WeftError } from "./util";
 
 export type SpaceCreated = { space: { id: string; created_at: string }; token: string; limits?: Record<string, number> };
 export type SpaceRepo = { name: string; repo: string; created: boolean };
+/** What DELETE /v1/space (and the operator's DELETE /v1/admin/spaces/{id}) reports: the space is erased, only a tombstone stays. */
+export type SpaceErased = { type?: string; space: string; status: "erased"; already_erased: boolean; erased: { repos: string[]; events: number; tokens: number } };
 export type IssuedToken = { token: string; info: { id: string; principal: string } };
 export type FeedEvent = {
   seq: number;
@@ -94,8 +96,9 @@ export class Api {
   revoke(owner: string, id: string) {
     return this.call<void>("DELETE", `/v1/space/tokens/${encodeURIComponent(id)}`, owner);
   }
-  deleteSpace(owner: string) {
-    return this.call<void>("DELETE", "/v1/space", owner);
+  /** Erase the space and everything the gateway stores for it. Older gateways answer 204 (they only disabled it): undefined. */
+  eraseSpace(owner: string) {
+    return this.call<SpaceErased | undefined>("DELETE", "/v1/space", owner);
   }
   events(token: string, repo: string, q = "") {
     return this.call<{ events: FeedEvent[]; head_seq: number; has_more?: boolean }>("GET", `/v1/repos/${encodeURIComponent(repo)}/events${q}`, token);

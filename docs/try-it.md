@@ -117,7 +117,7 @@ The per-harness config files are in [packages/mcp/README.md](../packages/mcp/REA
 | `npx @celador/weft demo [dir]` | a two-file sample repo with two checkouts, set up, and the prompts that make two agents collide |
 | `npx @celador/weft add [name]` | another worktree for one more parallel agent |
 | `npx @celador/weft mcp` | Weft's MCP server for this checkout (agents with MCP but no hooks) |
-| `npx @celador/weft uninstall [--space]` | remove Weft from the repo (`--space` also deletes the space) |
+| `npx @celador/weft uninstall [--space]` | remove Weft from the repo (`--space` also erases the space on the gateway: every stored event, diff and key, for good; asks first, `--yes` skips) |
 | `npx @celador/weft --hosted` | opt in to a hosted space on Weft's Cloudflare gateway instead (your edits are sent there; usage-based pricing is coming) |
 | `npx @celador/weft use local\|hosted\|URL` | choose the default gateway; local is the default (`--local` is still accepted and does nothing extra) |
 | `npx @celador/weft deploy [--domain HOST]` | your own gateway in your Cloudflare account |

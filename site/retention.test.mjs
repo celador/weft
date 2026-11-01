@@ -1,5 +1,6 @@
 // node --test site/retention.test.mjs   (retention lines of the funnel, the admin-key helper, the operator CLI; no network)
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { detectAlerts, formatReport, hostedStats, parseRetention, RETAINED_MILESTONES } from "./funnel.mjs";
 import { readHostedAdminToken } from "./admin-token.mjs";
@@ -91,14 +92,22 @@ test("--alert semantics: silent without retention or activity; first active spac
   assert.ok(RETAINED_MILESTONES.includes(1));
 });
 
-test("admin key: keychain first, then the old file, neither -> null; keychain is skipped off macOS", () => {
-  const kc = () => "from-keychain", file = () => "from-file", none = () => null;
-  assert.deepEqual(readHostedAdminToken({ platform: "darwin", fromKeychain: kc, fromFile: file }), { token: "from-keychain", source: "keychain weft-hosted-admin" });
-  assert.deepEqual(readHostedAdminToken({ platform: "darwin", fromKeychain: none, fromFile: file }), { token: "from-file", source: "~/.config/weft/hosted-admin-token" });
-  assert.equal(readHostedAdminToken({ platform: "darwin", fromKeychain: none, fromFile: none }), null);
+test("admin key: the keychain, else $WEFT_HOSTED_ADMIN_TOKEN, neither -> null; never a file; keychain is skipped off macOS", () => {
+  const kc = () => "from-keychain", none = () => null;
+  assert.deepEqual(readHostedAdminToken({ platform: "darwin", fromKeychain: kc, env: { WEFT_HOSTED_ADMIN_TOKEN: "from-env" } }), { token: "from-keychain", source: "keychain weft-hosted-admin" });
+  assert.deepEqual(readHostedAdminToken({ platform: "darwin", fromKeychain: none, env: { WEFT_HOSTED_ADMIN_TOKEN: " from-env \n" } }), { token: "from-env", source: "$WEFT_HOSTED_ADMIN_TOKEN" });
+  assert.equal(readHostedAdminToken({ platform: "darwin", fromKeychain: none, env: {} }), null);
   const seen = [];
-  readHostedAdminToken({ platform: "linux", fromKeychain: (p) => { seen.push(p); return null; }, fromFile: file });
+  readHostedAdminToken({ platform: "linux", fromKeychain: (p) => { seen.push(p); return null; }, env: {} });
   assert.deepEqual(seen, ["linux"]); // the real keychain reader returns null for non-darwin
+});
+
+test("no operator script reads ~/.config/weft/hosted-admin-token any more (finding #8)", () => {
+  for (const f of ["admin-token.mjs", "funnel.mjs", "hosted-admin.mjs"]) {
+    const src = readFileSync(new URL(`./${f}`, import.meta.url), "utf8");
+    assert.ok(!/readFileSync\([^)]*hosted-admin-token/.test(src), f);
+    assert.ok(!src.includes("TOKEN_FILE"), f);
+  }
 });
 
 test("hosted-admin: tag posts {internal:true} per space with the key; --off clears; bad ids and failures exit non-zero", async () => {

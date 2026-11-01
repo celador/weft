@@ -55,7 +55,7 @@ npx @celador/weft --harness copilot      # in your repo
   leaves every other setting alone.
 
 Uninstall: `npx @celador/weft uninstall` in the repo removes `.weft/` and the hooks it wrote
-(`--space` also deletes the space); `/plugin uninstall weft` removes the plugin.
+(`--space` also erases the space for good); `/plugin uninstall weft` removes the plugin.
 
 Privacy: <https://weft.mx/privacy> (what a hosted space stores and for how long; local mode stores nothing off your machine) · Terms:
 <https://weft.mx/terms> · Support: <https://weft.mx/support>

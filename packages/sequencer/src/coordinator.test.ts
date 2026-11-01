@@ -566,3 +566,14 @@ describe("block mode: own claims, claim submissions, and wait-die (per repo)", (
     expect(j.call<Verdict>("submit", senior.session, edit)).toMatchObject({ verdict: "reject", diagnostics: [{ code: "claim_wait", severity: "error" }] });
   });
 });
+
+describe("initialized() on a repo that was never created or was erased", () => {
+  it("answers false and creates no tables (an erased Durable Object stays empty storage)", () => {
+    const sql = nodeSql();
+    expect(SqlCoordinator.initialized(sql)).toBe(false);
+    expect(sql.exec(`SELECT name FROM sqlite_master WHERE type = 'table'`).toArray()).toEqual([]);
+    expect(SqlCoordinator.init(sql, { repo: "demo" })).toBe(true);
+    expect(SqlCoordinator.initialized(sql)).toBe(true);
+    expect(sql.exec(`SELECT name FROM sqlite_master WHERE type = 'table'`).toArray().length).toBeGreaterThan(0);
+  });
+});

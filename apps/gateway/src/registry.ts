@@ -169,6 +169,9 @@ export class Registry extends DurableObject<RegistryEnv> {
     this.sql.exec(`CREATE INDEX IF NOT EXISTS repos_space ON repos(space)`);
     this.sql.exec(`CREATE INDEX IF NOT EXISTS tokens_space ON tokens(space)`);
     this.spacesReady = true;
+    // Spaces the owner deleted before real erasure existed (status 'deleted') and erasures that were
+    // interrupted ('erasing') still hold data: erase them from the alarm, shortly after this wakes.
+    if (this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM spaces WHERE status IN ('erasing', 'deleted')`).one().n > 0) void this.scheduleAlarmAt(Date.now() + 1_000);
   }
 
   /**
@@ -181,18 +184,23 @@ export class Registry extends DurableObject<RegistryEnv> {
     return this.sql.exec<{ day: string | null }>(`SELECT MIN(day) AS day FROM signup_counters`).one().day ?? undefined;
   }
 
+  /** Set the alarm to `due` unless one is already pending at or before it. */
+  private async scheduleAlarmAt(due: number): Promise<void> {
+    const cur = await this.ctx.storage.getAlarm();
+    if (cur === null || cur > due) await this.ctx.storage.setAlarm(due);
+  }
+
   /** Make sure an alarm fires when the oldest counter left turns 48 hours old, even with no traffic. */
   private async scheduleCounterPrune(oldest: string | undefined): Promise<void> {
     if (!oldest) return;
-    const due = Date.parse(`${oldest}T00:00:00Z`) + 2 * 86_400_000;
-    const cur = await this.ctx.storage.getAlarm();
-    if (cur === null || cur > due) await this.ctx.storage.setAlarm(due);
+    await this.scheduleAlarmAt(Date.parse(`${oldest}T00:00:00Z`) + 2 * 86_400_000);
   }
 
   override async alarm(): Promise<void> {
     this.ensureSpaces();
     await this.scheduleCounterPrune(this.pruneSignupCounters());
     this.pruneActivity();
+    await this.resumeErasures();
   }
 
   /** Operator kill switch: `open` (default), `no-signups` (existing spaces keep working), `off` (every space token refused). */
@@ -315,17 +323,68 @@ export class Registry extends DurableObject<RegistryEnv> {
     return this.revoke(tokenId);
   }
 
-  /** Delete a space: every token (owner included) is revoked at once; its repos stop being reachable. */
-  async deleteSpace(space: string, status: "deleted" | "suspended" = "deleted"): Promise<boolean> {
+  /** Suspend a space (operator ban): every token (owner included) is revoked at once; its data is kept until the operator erases it. */
+  async suspendSpace(space: string): Promise<boolean> {
     this.ensureSpaces();
-    const n = this.sql.exec(`UPDATE spaces SET status = ?, deleted_at = ? WHERE id = ? AND status = 'active'`, status, new Date().toISOString(), space).rowsWritten;
-    this.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE space = ? AND revoked_at IS NULL`, new Date().toISOString(), space);
-    // A deleted space keeps no activity record (a suspended one does: the operator may restore context).
-    if (status === "deleted") {
-      this.sql.exec(`DELETE FROM space_activity WHERE space = ?`, space);
-      this.sql.exec(`DELETE FROM space_days WHERE space = ?`, space);
-    }
+    const now = new Date().toISOString();
+    const n = this.sql.exec(`UPDATE spaces SET status = 'suspended', deleted_at = ? WHERE id = ? AND status = 'active'`, now, space).rowsWritten;
+    this.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE space = ? AND revoked_at IS NULL`, now, space);
     return n > 0;
+  }
+
+  /** The repos an erasure of `space` removes: those recorded for it, plus one whose row never got its space column (a crash between createRepo and the UPDATE). */
+  private erasableRepos(space: string): string[] {
+    return this.sql
+      .exec<{ repo: string }>(`SELECT repo FROM repos WHERE space = ? OR (space IS NULL AND substr(repo, 1, ?) = ?) ORDER BY repo`, space, space.length + 1, `${space}-`)
+      .toArray()
+      .map((r) => r.repo);
+  }
+
+  /**
+   * Erase a space for good (owner request, operator request, or a leftover soft delete). Order:
+   *   1. status -> 'erasing' and every token revoked: from this point nothing can read or write the space;
+   *   2. every repo Durable Object of the space is erased (RepoCoordinator.erase: sockets closed,
+   *      alarm cleared, all storage deleted);
+   *   3. only when all of them are gone: the space's repos and tokens rows are deleted and the space
+   *      row is cut down to a tombstone (id, status 'erased', deleted_at, created_at as a date).
+   * If a repo fails to erase, the space stays 'erasing' (unreachable) and the alarm retries every
+   * minute; the operator can also call this again. A space that is already erased returns the same
+   * answer with already_erased. Works for active, suspended and 'deleted' (legacy) spaces.
+   */
+  async eraseSpace(space: string): Promise<EraseReport | { error: string; code: "incomplete" } | undefined> {
+    this.ensureSpaces();
+    const row = this.sql.exec<{ status: string }>(`SELECT status FROM spaces WHERE id = ?`, space).toArray()[0];
+    if (!row) return undefined;
+    if (row.status === "erased") return { space, status: "erased", already_erased: true, erased: { repos: [], events: 0, tokens: 0 } };
+    this.sql.exec(`UPDATE spaces SET status = 'erasing' WHERE id = ?`, space);
+    this.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE space = ? AND revoked_at IS NULL`, new Date().toISOString(), space);
+    const repos = this.erasableRepos(space);
+    const results = await Promise.allSettled(repos.map((repo) => this.env.WEFT_REPO.get(this.env.WEFT_REPO.idFromName(repo)).erase()));
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed) {
+      await this.scheduleAlarmAt(Date.now() + 60_000);
+      return { error: `${failed} of ${repos.length} repos could not be erased yet; the space is already unreachable and the erase is retried automatically`, code: "incomplete" };
+    }
+    const events = results.reduce((n, r) => n + (r.status === "fulfilled" ? r.value.events : 0), 0);
+    const tokens = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM tokens WHERE space = ?`, space).one().n;
+    this.sql.exec(`DELETE FROM repos WHERE space = ? OR (space IS NULL AND substr(repo, 1, ?) = ?)`, space, space.length + 1, `${space}-`);
+    this.sql.exec(`DELETE FROM tokens WHERE space = ?`, space);
+    // Retention counts (last event time, events per day) go with the space; the operator's internal tag stays so the first-run counts keep leaving it out.
+    this.sql.exec(`DELETE FROM space_activity WHERE space = ?`, space);
+    this.sql.exec(`DELETE FROM space_days WHERE space = ?`, space);
+    this.sql.exec(`UPDATE spaces SET status = 'erased', label = NULL, created_at = substr(created_at, 1, 10), deleted_at = ? WHERE id = ?`, new Date().toISOString(), space);
+    return { space, status: "erased", already_erased: false, erased: { repos: repos.map((r) => r.slice(space.length + 1)), events, tokens } };
+  }
+
+  /** Erase every space left 'erasing' (interrupted) or 'deleted' (soft-deleted before real erasure existed). Called from the alarm. */
+  private async resumeErasures(): Promise<void> {
+    const ids = this.sql.exec<{ id: string }>(`SELECT id FROM spaces WHERE status IN ('erasing', 'deleted') ORDER BY created_at LIMIT 25`).toArray();
+    let more = ids.length === 25;
+    for (const { id } of ids) {
+      const r = await this.eraseSpace(id);
+      if (r && "error" in r) more = true;
+    }
+    if (more) await this.scheduleAlarmAt(Date.now() + 60_000);
   }
 
   async listSpaces(): Promise<Array<SpaceInfo & { repos: number; tokens: number; internal?: true }>> {
@@ -407,7 +466,7 @@ export class Registry extends DurableObject<RegistryEnv> {
            (SELECT COUNT(*) FROM space_days d WHERE d.space = s.id AND d.day >= ?) AS active_days_30,
            (SELECT COUNT(*) FROM space_days d WHERE d.space = s.id) AS days,
            (SELECT COUNT(*) FROM space_days d WHERE d.space = s.id AND d.day >= ?) AS active7
-         FROM spaces s WHERE s.status != 'deleted'
+         FROM spaces s WHERE s.status NOT IN ('deleted', 'erasing', 'erased')
          ORDER BY (last_event_at IS NULL), last_event_at DESC, s.created_at DESC`,
         from30,
         from7,
@@ -441,7 +500,9 @@ export class Registry extends DurableObject<RegistryEnv> {
 
 export type HostedMode = "open" | "no-signups" | "off";
 export type SignupLimits = { perIpDay: number; perDay: number; maxSpaces: number };
-export type SpaceInfo = { id: string; status: "active" | "deleted" | "suspended"; label?: string; created_at: string };
+export type SpaceInfo = { id: string; status: "active" | "deleted" | "suspended" | "erasing" | "erased"; label?: string; created_at: string };
+/** What an erasure removed. After it, the Registry keeps only the tombstone: space id, status 'erased', deleted_at, created_at (date only). */
+export type EraseReport = { space: string; status: "erased"; already_erased: boolean; erased: { repos: string[]; events: number; tokens: number } };
 /** A grant minted for a hosted space. `role` owner = the space API only (no WCP scopes). */
 export type SpaceGrant = Grant & { space?: string; role?: "owner" | "agent" | "system" | "viewer" };
 

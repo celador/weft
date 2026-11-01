@@ -40,7 +40,7 @@ same space.
 | `POST /v1/space/tokens {"kind": "system", "repo"}` | a lander key (system + observe) for one repo |
 | `POST /v1/space/tokens {"kind": "viewer"}` | a read-only key for every repo of the space, current and future (the feed link) |
 | `DELETE /v1/space/tokens/{id}` | revoke one of the space's keys |
-| `DELETE /v1/space` | delete the space: every key, the owner key included, stops working at once |
+| `DELETE /v1/space` | **erase** the space (see "Deleting your data"): every repo's stored log is deleted for good, every key, the owner key included, stops working; answers `200` with what was erased |
 
 **The feed.** `GET /feed` is a static page; the viewer key travels in the URL fragment
 (`/feed#t=…`), which browsers never send to a server or put in a `Referer`. The page uses it as a
@@ -58,11 +58,58 @@ The space key is the boundary. Enforced in `apps/gateway/src/registry.ts` and te
   another space's repo, or an operator repo);
 - a repo outside a key's list answers `404 repo_not_found` (its existence is not leaked);
 - a space cannot mint keys for, revoke keys of, or name a repo in another space;
-- deleting or suspending a space revokes all its keys; cached grants for space keys expire within
-  5 seconds.
+- erasing or suspending a space revokes all its keys; cached grants for space keys expire within
+  5 seconds (and a cached grant reaches an emptied repo, which answers `404 repo_not_found`).
 
 The public read-only demo at `demo.weft.mx` is unchanged: it is a different Worker
 (`weft-web-public`) in front of a different gateway, with its own repo allow-list, and fails closed.
+
+### Deleting your data (erasure)
+
+`npx @celador/weft uninstall --space` (asks first; `--yes` skips the question) or
+`DELETE /v1/space` with the owner key **erases the space for good**. It is irreversible: there is
+no undo, no grace period and no backup on our side.
+
+What happens, in this order (`Registry.eraseSpace`, `RepoCoordinator.erase`):
+
+1. The space is marked `erasing` and every key it has is revoked: from this moment nothing can
+   read or write it.
+2. Every repo Durable Object of the space is erased: its sockets are closed, its alarm is cleared
+   and `ctx.storage.deleteAll()` removes its whole SQLite database. That is every event, diff,
+   intent, transcript pointer, claim, session and the input journal. The object is empty
+   afterwards and a later read does not recreate a schema.
+3. Only when all repos are gone are the space's rows deleted from the Registry (repos and keys)
+   and the space row is cut down to a tombstone.
+
+If step 2 fails for a repo, the space stays `erasing` (unreachable) and the Registry retries every
+minute until it succeeds, so an erase request is never dropped halfway. The command answers
+`503` in that case and can be run again by the operator (`DELETE /v1/admin/spaces/{id}`).
+
+**What remains after an erase** (the tombstone, in the Registry): the space id, its status
+`erased`, the time it was erased, and the day it was created (the time of day is dropped). No
+label, no repo names, no keys, no key hashes, no events. The tombstone makes a repeated erase
+answer the same way (`already_erased`) and keeps the "new spaces per day" count honest. Aggregate
+numbers (signup counts per day) and Cloudflare's own operational request logs (a few days, no
+bodies) are not part of the space and are not touched.
+
+**Cloudflare's side.** Cloudflare documents point-in-time recovery for SQLite Durable Objects
+over the last 30 days. That API can only be called by code running inside the object, and Weft's
+code never calls it. We have not verified whether Cloudflare keeps recoverable history after
+`deleteAll()`, so treat up to 30 days as the outer bound for remnants inside Cloudflare's systems.
+
+**Who can erase what.** The owner key erases its own space and nothing else (the route has no
+space id; it takes the space from the key). The operator can erase any space, a suspended one
+included (suspending keeps the data so the operator can look at abuse; erasing then removes it).
+Spaces an older gateway only soft-deleted (`status = deleted`, data still stored) are erased by the
+Registry's alarm shortly after this version is deployed.
+
+**Local and self-hosted gateways** run the same code, so `uninstall --space` erases there too.
+A gateway older than this version answers `204` and only switches the space off; the CLI says
+so and tells you to update it.
+
+On the machine, the command also deletes `.weft/space-token` and removes the space (owner and
+viewer keys) from `~/.config/weft/cli.json`, and prints what the gateway reported erased. If the
+gateway cannot be reached or fails, nothing local is removed and the command can be run again.
 
 ### Limits
 
@@ -84,14 +131,18 @@ an agent keeps working (uncoordinated) and is told so.
 
 ### Operator controls (kill switch)
 
-With the hosted admin key (macOS keychain item `weft-hosted-admin` on John's machine, or the
-older `~/.config/weft/hosted-admin-token`; `wrangler secret put WEFT_ADMIN_TOKEN --env hosted`):
+With the hosted admin key (`wrangler secret put WEFT_ADMIN_TOKEN --env hosted` on the gateway; on the
+operator's Mac it lives in the login keychain as service `weft-hosted-admin`, account `john`, never
+in a file; store it with `security add-generic-password -U -a john -s weft-hosted-admin -w`, which
+prompts for the value; `site/admin-token.mjs` is the one reader the operator scripts share). The CLI
+never writes this key anywhere on a user's machine:
 
 ```sh
-U=https://weft-hosted.elier.ai; AD="authorization: Bearer $(security find-generic-password -s weft-hosted-admin -w 2>/dev/null || cat ~/.config/weft/hosted-admin-token)"
+U=https://weft-hosted.elier.ai; AD="authorization: Bearer $(security find-generic-password -s weft-hosted-admin -a john -w)"
 curl -s -H "$AD" $U/v1/admin/stats                       # first runs per day, totals, retention (below)
 curl -s -H "$AD" $U/v1/admin/spaces                      # every space: status, repos, keys
-curl -sX POST -H "$AD" $U/v1/admin/spaces/<id>/suspend   # ban one space (all its keys revoked)
+curl -sX POST -H "$AD" $U/v1/admin/spaces/<id>/suspend   # ban one space (all its keys revoked, data kept)
+curl -sX DELETE -H "$AD" $U/v1/admin/spaces/<id>         # erase one space for good (any status); idempotent
 curl -sX POST -H "$AD" $U/v1/admin/spaces/<id>/tag -d '{"internal":true}'   # our own test/demo space: out of the headline numbers
 curl -sX POST -H "$AD" $U/v1/admin/hosted -d '{"mode":"no-signups"}'  # stop new spaces; existing ones keep working
 curl -sX POST -H "$AD" $U/v1/admin/hosted -d '{"mode":"off"}'         # refuse every space key, at once

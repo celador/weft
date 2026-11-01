@@ -89,9 +89,11 @@ describe("pruneHooks", () => {
 
 type Tok = { id: string; kind: string; repo?: string; agent?: string; revoked?: boolean };
 function fakeGateway() {
-  const spaces = new Map<string, { repos: Set<string> }>();
+  const spaces = new Map<string, { repos: Set<string>; erased?: boolean }>();
   const tokens = new Map<string, Tok & { space: string }>();
   let n = 0;
+  // how DELETE /v1/space answers: the real erasure report, an older gateway's 204, or a failure
+  const del = { mode: "erase" as "erase" | "old" | "fail", calls: 0 };
   const server: Server = createServer(async (req, res) => {
     let body = "";
     for await (const ch of req) body += ch;
@@ -114,8 +116,19 @@ function fakeGateway() {
     const sp = spaces.get(t.space)!;
     if (u.pathname === "/v1/space" && req.method === "GET") return send(200, { space: { id: t.space, repos: [...sp.repos].map((r) => ({ repo: r, name: r.slice(13) })), tokens: tokens.size } });
     if (u.pathname === "/v1/space" && req.method === "DELETE") {
-      for (const x of tokens.values()) if (x.space === t.space) x.revoked = true;
-      return send(204);
+      del.calls++;
+      if (del.mode === "fail") return send(500, { type: "error", error: { code: "internal", message: "internal error" } });
+      let count = 0;
+      for (const x of tokens.values())
+        if (x.space === t.space) {
+          x.revoked = true;
+          count++;
+        }
+      if (del.mode === "old") return send(204);
+      const repos = [...sp.repos].map((r) => r.slice(13));
+      sp.repos.clear();
+      sp.erased = true;
+      return send(200, { type: "space.erased", space: t.space, status: "erased", already_erased: false, erased: { repos, events: 7, tokens: count } });
     }
     if (u.pathname === "/v1/space/repos") {
       const name = JSON.parse(body).name;
@@ -138,7 +151,7 @@ function fakeGateway() {
     if (/^\/v1\/repos\/[^/]+\/events$/.test(u.pathname)) return send(200, { type: "events", events: [], head_seq: 0, has_more: false });
     return send(404, { type: "error", error: { code: "not_found", message: u.pathname } });
   });
-  return { server, tokens, spaces };
+  return { server, tokens, spaces, del };
 }
 
 describe("weft (init / status / add / uninstall) against a stand-in gateway", () => {
@@ -269,6 +282,111 @@ describe("weft (init / status / add / uninstall) against a stand-in gateway", ()
     // the plugin no longer has a coordinator to pin for these checkouts
     const left = Object.keys(JSON.parse(readFileSync(join(base, "config", "pins.json"), "utf8")).checkouts);
     for (const dir of [repo, join(base, "shop-2"), join(base, "shop-reviewer")]) expect(left).not.toContain(realpathSync(dir));
+  });
+});
+
+describe("uninstall --space erases the space (finding #3)", () => {
+  const gw = fakeGateway();
+  let url = "";
+  const base = mkdtempSync(join(tmpdir(), "weft-erase-"));
+  const config = join(base, "config");
+  const logs: string[] = [];
+  let n = 0;
+
+  beforeAll(async () => {
+    await new Promise<void>((r) => gw.server.listen(0, "127.0.0.1", () => r()));
+    url = `http://127.0.0.1:${(gw.server.address() as { port: number }).port}`;
+    process.env.WEFT_HOME = config;
+    process.env.WEFT_NO_OPEN = "1";
+    vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => void logs.push(a.join(" ")));
+  });
+  afterAll(() => {
+    gw.server.close();
+    vi.restoreAllMocks();
+  });
+
+  /** A set-up repo with its own space on the stand-in gateway. */
+  async function setUp(): Promise<string> {
+    const repo = join(base, `app${++n}`);
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(join(repo, "a.ts"), "export const a = 1;\n");
+    execFileSync("git", ["init", "-q", "-b", "main", repo]);
+    execFileSync("git", ["-C", repo, "add", "-A"]);
+    execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "init"]);
+    expect(await main(["--url", url, "--dir", repo, "--yes", "--no-open", "--harness", "claude-code"])).toBe(0);
+    return repo;
+  }
+  const state = () => JSON.parse(readFileSync(join(config, "cli.json"), "utf8")) as { gateways: Record<string, Record<string, unknown>> };
+
+  it("erases on the gateway, removes .weft/space-token and the space from cli.json, and prints what was erased", async () => {
+    const repo = await setUp();
+    expect(existsSync(join(repo, ".weft/space-token"))).toBe(true);
+    expect(state().gateways[url]).toMatchObject({ owner: expect.any(String), viewer: expect.any(String) });
+    gw.del.mode = "erase";
+    gw.del.calls = 0;
+    logs.length = 0;
+    expect(await main(["uninstall", "--dir", repo, "--space", "--yes"])).toBe(0);
+    expect(gw.del.calls).toBe(1);
+    const out = logs.join("\n");
+    expect(out).toMatch(/erased space sp\d+ on http:\/\/127\.0\.0\.1:\d+: 1 repo \(app\d+\), 7 logged events .*diffs, intents and transcripts.*, \d+ keys/);
+    expect(out).toContain("Irreversible");
+    expect(out).not.toMatch(/weft_(owner|agent|viewer)_/); // never prints a key
+    expect(existsSync(join(repo, ".weft"))).toBe(false);
+    expect(state().gateways[url]).toBeUndefined();
+    expect(readFileSync(join(config, "cli.json"), "utf8")).not.toMatch(/weft_(owner|viewer)_/);
+  });
+
+  it("without --yes and without a terminal it asks nothing, erases nothing, and says how", async () => {
+    const repo = await setUp();
+    gw.del.mode = "erase";
+    gw.del.calls = 0;
+    logs.length = 0;
+    expect(await main(["uninstall", "--dir", repo, "--space"])).toBe(0);
+    expect(gw.del.calls).toBe(0);
+    expect(logs.join("\n")).toContain("space not erased");
+    expect(state().gateways[url]).toMatchObject({ owner: expect.any(String) }); // the key is kept so it can still be erased later
+    // plain uninstall (no --space) never erases
+    expect(await main(["uninstall", "--dir", repo, "--yes"])).toBe(0);
+    expect(gw.del.calls).toBe(0);
+    // erase it later with the key that was kept
+    expect(await main(["uninstall", "--dir", repo, "--space", "--yes"])).toBe(0);
+  });
+
+  it("if the gateway cannot erase, nothing is removed locally and the command can be run again", async () => {
+    const repo = await setUp();
+    gw.del.mode = "fail";
+    await expect(main(["uninstall", "--dir", repo, "--space", "--yes"])).rejects.toThrow(/could not erase space/);
+    expect(existsSync(join(repo, ".weft/space-token"))).toBe(true);
+    expect(existsSync(join(repo, ".claude/settings.local.json"))).toBe(true);
+    expect(state().gateways[url]).toMatchObject({ owner: expect.any(String) });
+    gw.del.mode = "erase";
+    expect(await main(["uninstall", "--dir", repo, "--space", "--yes"])).toBe(0);
+    expect(existsSync(join(repo, ".weft"))).toBe(false);
+    expect(state().gateways[url]).toBeUndefined();
+  });
+
+  it("a gateway that already forgot the space (401) counts as erased; an older gateway (204) is called out", async () => {
+    const repo = await setUp();
+    for (const t of gw.tokens.values()) t.revoked = true; // the gateway no longer accepts the key
+    logs.length = 0;
+    expect(await main(["uninstall", "--dir", repo, "--space", "--yes"])).toBe(0);
+    expect(logs.join("\n")).toContain("already erased");
+    expect(existsSync(join(repo, ".weft"))).toBe(false);
+    expect(state().gateways[url]).toBeUndefined();
+
+    const repo2 = await setUp();
+    gw.del.mode = "old";
+    logs.length = 0;
+    expect(await main(["uninstall", "--dir", repo2, "--space", "--yes"])).toBe(0);
+    expect(logs.join("\n")).toMatch(/older gateway that only switched the space off/);
+    gw.del.mode = "erase";
+  });
+
+  it("never persists an operator key for the hosted gateway on this machine", () => {
+    // The CLI stores a viewer and an owner key per space and, for a local or own gateway, that gateway's
+    // admin key. A hosted-gateway admin key is the operator's (docs/hosted.md): nothing in the CLI writes one.
+    const s = state();
+    expect(Object.values(s.gateways).every((g) => g.kind !== "hosted" || g.admin === undefined)).toBe(true);
   });
 });
 

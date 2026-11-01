@@ -9,13 +9,13 @@
 //   weft open               open the live feed in the browser
 //   weft watch              report edits from this checkout (for tools without hooks)
 //   weft mcp                stdio MCP server for this checkout (harnesses with MCP but no hooks)
-//   weft uninstall [--space] remove Weft from this repo's checkouts (and delete the space)
+//   weft uninstall [--space] remove Weft from this repo's checkouts (--space also erases the space)
 //   weft deploy [--name N] [--domain HOST]   your own gateway on your Cloudflare account
 //   weft local stop          stop the local gateway
 //   weft use hosted|local|URL   choose the default gateway
 import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { Api, statusOf, type FeedEvent } from "./api";
 import { MCP, WATCHER, adapterBin, detectHarnesses, ensureRuntime, harnessName, HARNESSES, installAdapter, installedIn, removeAdapters, startOrder, type HarnessId } from "./adapters";
@@ -94,7 +94,8 @@ ${c.bold("npx @celador/weft")}            in a git repo: a gateway on this machi
   watch                       report edits made here by tools without hooks (file watcher)
   mcp                         MCP server for this checkout, for agents with MCP but no hooks
                               (Zed, Warp, JetBrains, Xcode, ...): {"command":"npx","args":["-y","@celador/weft","mcp","--dir","<checkout>"]}
-  uninstall [--space]         remove Weft from this repo (--space also deletes your space)
+  uninstall [--space]         remove Weft from this repo (--space also erases your space: every stored
+                              event, diff and key on the gateway; asks first, --yes skips; irreversible)
   deploy [--name N] [--domain HOST]
                               your own gateway on your Cloudflare account (wrangler login)
   use local|hosted|URL        choose the default gateway (local unless you chose otherwise)
@@ -507,10 +508,20 @@ async function uninstall(o: Opts): Promise<void> {
   const { main, ptr } = here(o);
   const owner = ptr ? (loadState().gateways[ptr.url]?.owner ?? readSecret(join(main, ".weft", "space-token"))) : undefined;
   const api = ptr ? new Api(ptr.url) : undefined;
+
+  // --space: erase on the gateway FIRST. If that fails (network, gateway error) nothing local has been
+  // removed yet, so the owner key is still here and the command can simply be run again.
+  let erased = false;
+  if (o.space) {
+    if (!ptr || !api) info("no Weft space is set up in this repo, so there is nothing to erase");
+    else if (!owner) throw new WeftError(`this machine does not hold the owner key for space ${ptr.space}`, `It is kept in ${tilde(join(configDir(), "cli.json"))} and ${tilde(join(main, ".weft", "space-token"))}. Without it only the gateway's operator can erase the space.`);
+    else erased = await eraseSpace(api, ptr, owner, o.yes);
+  }
+
   let n = 0;
   for (const w of worktrees(main)) {
     const m = readJson<{ tokenId?: string }>(join(w.path, ".weft", "space.json"), {});
-    if (api && owner && m.tokenId) await api.revoke(owner, m.tokenId).catch(() => undefined);
+    if (!erased && api && owner && m.tokenId) await api.revoke(owner, m.tokenId).catch(() => undefined);
     const touched = removeAdapters(w.path);
     if (touched.length) {
       n++;
@@ -518,17 +529,66 @@ async function uninstall(o: Opts): Promise<void> {
     }
   }
   if (!n) info("Weft was not installed in this repo's checkouts");
-  if (o.space && ptr && api && owner) {
-    const go = o.yes || (await ask(`Delete space ${ptr.space} and everything in it (all repos, every machine)?`, false));
-    if (go) {
-      await api.deleteSpace(owner);
-      const s = loadState();
-      delete s.gateways[ptr.url];
+  if (erased && ptr) {
+    // The owner key is useless now, and a leftover copy only invites confusion: drop every local trace of the space.
+    rmSync(join(main, ".weft", "space-token"), { force: true });
+    const s = loadState();
+    const gw = s.gateways[ptr.url];
+    if (gw) {
+      for (const k of ["space", "owner", "viewer", "viewerId", "created_at"] as const) delete gw[k];
+      if (!gw.admin && !gw.name) delete s.gateways[ptr.url];
       saveState(s);
-      ok(`deleted space ${ptr.space}`);
     }
+    ok(`removed the space from ${tilde(join(configDir(), "cli.json"))} and ${tilde(join(main, ".weft", "space-token"))}`);
   }
   console.log(c.dim("Worktrees Weft added are left as they are; remove one with: git worktree remove <path>"));
+}
+
+/** `uninstall --space`: ask, erase on the gateway, say exactly what went. Returns whether the space is gone. */
+async function eraseSpace(api: Api, ptr: NonNullable<ReturnType<typeof readPointer>>, owner: string, yes: boolean): Promise<boolean> {
+  let repos: string[] = [];
+  try {
+    repos = (await api.space(owner)).space.repos.map((r) => r.name);
+  } catch (e) {
+    if (statusOf(e) === 401 || statusOf(e) === 403) {
+      info(`${ptr.url} no longer accepts this space's key: the space is already erased (or was never there)`);
+      return true;
+    }
+    throw e;
+  }
+  const what = `${repos.length} repo${repos.length === 1 ? "" : "s"}${repos.length ? ` (${repos.join(", ")})` : ""}`;
+  if (!yes) {
+    const go = await ask(
+      `Erase space ${ptr.space} on ${ptr.url}: ${what}, every event, diff, intent and transcript the gateway holds, and all keys, for every machine? This cannot be undone.`,
+      false,
+    );
+    if (!go) {
+      info("space not erased (run `npx @celador/weft uninstall --space` again to erase it)");
+      return false;
+    }
+  }
+  let r;
+  try {
+    r = await api.eraseSpace(owner);
+  } catch (e) {
+    if (statusOf(e) === 401 || statusOf(e) === 403) {
+      info("the gateway no longer accepts this space's key: the space is already erased");
+      return true;
+    }
+    throw new WeftError(`could not erase space ${ptr.space}: ${(e as Error).message}`, "Nothing was removed on this machine. Run the command again.");
+  }
+  if (!r) {
+    warn(`${ptr.url} runs an older gateway that only switched the space off; its stored data is not purged. Ask its operator to update it (npx @celador/weft deploy) and erase space ${ptr.space}.`);
+    return true;
+  }
+  const e = r.erased;
+  ok(
+    r.already_erased
+      ? `space ${r.space} was already erased`
+      : `erased space ${r.space} on ${ptr.url}: ${e.repos.length} repo${e.repos.length === 1 ? "" : "s"}${e.repos.length ? ` (${e.repos.join(", ")})` : ""}, ${e.events} logged event${e.events === 1 ? "" : "s"} with their diffs, intents and transcripts, ${e.tokens} key${e.tokens === 1 ? "" : "s"}`,
+  );
+  console.log(c.dim("  Irreversible. The gateway keeps only a tombstone: the space id, when it was erased, and the day it was created."));
+  return true;
 }
 
 function watch(o: Opts): void {

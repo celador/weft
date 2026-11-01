@@ -146,7 +146,9 @@ describe("hosted spaces: tenant isolation (the space token is the boundary)", ()
     const repo = await spaceRepo(s.owner, "gone");
     const a = await spaceToken(s.owner, { kind: "agent", repo, agent: "g1" });
     const v = await spaceToken(s.owner, { kind: "viewer" });
-    expect((await call("DELETE", "/v1/space", s.owner)).status).toBe(204);
+    const del = await call("DELETE", "/v1/space", s.owner);
+    expect(del.status).toBe(200);
+    expect(await del.json()).toMatchObject({ type: "space.erased", space: s.id, status: "erased", already_erased: false, erased: { repos: ["gone"] } });
     await new Promise((r) => setTimeout(r, 5_200));
     expect((await call("GET", "/v1/space", s.owner)).status).toBe(401);
     expect((await call("POST", `/v1/repos/${repo}/sessions`, a.token, hello("g1", "I-g"))).status).toBe(401);
@@ -230,6 +232,168 @@ describe("hosted spaces: quotas, rate limits, kill switch", () => {
     expect((await call("GET", "/v1/admin/spaces", s.owner)).status).toBe(401);
     const stats = await wcp<{ days: Array<{ day: string; spaces: number }> }>("GET", "/v1/admin/stats", ADMIN);
     expect(stats.days.at(-1)!.spaces).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------- real erasure
+//
+// DELETE /v1/space (owner) and DELETE /v1/admin/spaces/{id} (operator) empty every repo Durable
+// Object of the space (sockets closed, alarm cleared, ctx.storage.deleteAll()) and delete the
+// space's Registry rows; only a tombstone stays (docs/hosted.md "Deleting your data").
+
+describe("hosted spaces: real erasure", () => {
+  const registryStub = () => env.WEFT_REGISTRY.get(env.WEFT_REGISTRY.idFromName("registry"));
+  const repoStub = (repo: string) => env.WEFT_REPO.get(env.WEFT_REPO.idFromName(repo));
+
+  /** A repo with real content in it: an agent session and an edit carrying a diff, an intent and a transcript pointer. */
+  async function seed(owner: string, name: string, agent: string) {
+    const repo = await spaceRepo(owner, name);
+    const a = await spaceToken(owner, { kind: "agent", repo, agent });
+    const sess = await wcp<Welcome>("POST", `/v1/repos/${repo}/sessions`, a.token, hello(agent, `I-${agent}`));
+    await wcp("POST", `/v1/repos/${repo}/sessions/${sess.session}/events`, a.token, {
+      type: "submit",
+      mode: "commit",
+      event: { kind: "edit", base_seq: sess.head_seq, writes: [{ key: "src/private.ts#secretFn", kind: "body" }], diff: "+const unshipped = 'customer code';", intent: "unshipped feature", transcript: { uri: "r2://t/1.jsonl", offset: 1 } },
+    });
+    return { repo, token: a.token };
+  }
+
+  /** What is left in a repo Durable Object: user tables (the platform's own _cf_ tables aside), KV keys, alarm. */
+  const leftIn = (repo: string) =>
+    runInDurableObject(repoStub(repo), async (_i, state: DurableObjectState) => ({
+      tables: state.storage.sql.exec<{ name: string }>(`SELECT name FROM sqlite_master WHERE name NOT LIKE '_cf_%' AND name NOT LIKE 'sqlite_%'`).toArray().map((t) => t.name),
+      keys: [...(await state.storage.list()).keys()],
+      alarm: await state.storage.getAlarm(),
+    }));
+  const rowsOf = (space: string) =>
+    runInDurableObject(registryStub(), (_i: Registry, state: DurableObjectState) => {
+      const sql = state.storage.sql;
+      const n = (q: string) => sql.exec<{ n: number }>(q, space).one().n;
+      return {
+        repos: n(`SELECT COUNT(*) AS n FROM repos WHERE space = ?`),
+        tokens: n(`SELECT COUNT(*) AS n FROM tokens WHERE space = ?`),
+        spaces: sql.exec<Record<string, unknown>>(`SELECT * FROM spaces WHERE id = ?`, space).toArray(),
+      };
+    });
+
+  it("owner erase: the repo Durable Objects are empty, the Registry has no repos or tokens left, only a tombstone remains", async () => {
+    const s = await signup();
+    const a = await seed(s.owner, "alpha", "al1");
+    const b = await seed(s.owner, "beta", "be1");
+    // content is there before
+    expect((await leftIn(a.repo)).tables).toContain("events");
+    const before = await call("GET", `/v1/repos/${a.repo}/events?include=diff`, await observerToken([a.repo]));
+    expect(JSON.stringify(await before.json())).toContain("customer code");
+
+    const del = await call("DELETE", "/v1/space", s.owner);
+    expect(del.status).toBe(200);
+    const rep = (await del.json()) as { type: string; erased: { repos: string[]; events: number; tokens: number } };
+    expect(rep).toMatchObject({ type: "space.erased", space: s.id, status: "erased", already_erased: false });
+    expect(rep.erased.repos.sort()).toEqual(["alpha", "beta"]);
+    expect(rep.erased.events).toBeGreaterThanOrEqual(4); // hello + edit in each repo
+    expect(rep.erased.tokens).toBe(3); // owner + two agent tokens
+
+    for (const repo of [a.repo, b.repo]) {
+      expect(await leftIn(repo)).toEqual({ tables: [], keys: [], alarm: null });
+      // The object still answers (a stale cached grant, an operator "*" token) but there is nothing in it.
+      const r = await call("GET", `/v1/repos/${repo}/events`, await observerToken("*"));
+      expect(r.status).toBe(404);
+      expect(await r.json()).toMatchObject({ error: { code: "repo_not_found" } });
+      expect(await leftIn(repo)).toEqual({ tables: [], keys: [], alarm: null }); // reading did not recreate a schema
+    }
+    const rows = await rowsOf(s.id);
+    expect(rows.repos).toBe(0);
+    expect(rows.tokens).toBe(0);
+    expect(rows.spaces).toHaveLength(1);
+    // the tombstone: id, status, deleted_at, created_at as a date; no label
+    expect(rows.spaces[0]).toMatchObject({ id: s.id, status: "erased", label: null });
+    expect(String(rows.spaces[0]!.deleted_at)).toMatch(/^\d{4}-\d\d-\d\dT/);
+    expect(String(rows.spaces[0]!.created_at)).toMatch(/^\d{4}-\d\d-\d\d$/);
+
+    // the repo name is free of the space's data: the operator's list shows the tombstone and no repos
+    const list = await wcp<{ spaces: Array<{ id: string; status: string; repos: number; tokens: number }> }>("GET", "/v1/admin/spaces", ADMIN);
+    expect(list.spaces.find((x) => x.id === s.id)).toMatchObject({ status: "erased", repos: 0, tokens: 0 });
+    // an owner token no longer works (after the 5 s grant cache): 401
+    await new Promise((r) => setTimeout(r, 5_200));
+    expect((await call("GET", "/v1/space", s.owner)).status).toBe(401);
+    expect((await call("DELETE", "/v1/space", s.owner)).status).toBe(401); // already gone
+    expect((await call("POST", `/v1/repos/${a.repo}/sessions`, a.token, hello("al1", "I-al1"))).status).toBe(401);
+  });
+
+  it("admin erase is idempotent, 404 for an unknown space, 401 without the admin token", async () => {
+    const s = await signup();
+    const a = await seed(s.owner, "once", "on1");
+    expect((await call("DELETE", `/v1/admin/spaces/${s.id}`, s.owner)).status).toBe(401); // an owner token is not the operator
+    expect((await call("DELETE", `/v1/admin/spaces/${s.id}`)).status).toBe(401);
+    const first = await wcp<{ already_erased: boolean; erased: { repos: string[] } }>("DELETE", `/v1/admin/spaces/${s.id}`, ADMIN);
+    expect(first).toMatchObject({ already_erased: false, erased: { repos: ["once"] } });
+    const second = await wcp<{ type: string; status: string; already_erased: boolean; erased: { repos: string[]; events: number; tokens: number } }>("DELETE", `/v1/admin/spaces/${s.id}`, ADMIN);
+    expect(second).toMatchObject({ type: "space.erased", status: "erased", already_erased: true, erased: { repos: [], events: 0, tokens: 0 } });
+    expect(await leftIn(a.repo)).toEqual({ tables: [], keys: [], alarm: null });
+    expect((await call("DELETE", "/v1/admin/spaces/spdoesnotexist", ADMIN)).status).toBe(404);
+  });
+
+  it("the owner of space A cannot erase space B; erasing A leaves B's data untouched", async () => {
+    const A = await signup();
+    const B = await signup();
+    const a = await seed(A.owner, "same", "a1");
+    const b = await seed(B.owner, "same", "b1");
+    // the space API takes its space from the token only: there is no id to aim at B, and A's token on the admin route is refused
+    expect((await call("DELETE", `/v1/admin/spaces/${B.id}`, A.owner)).status).toBe(401);
+    expect((await call("DELETE", `/v1/space/${B.id}`, A.owner)).status).toBe(404);
+    expect((await call("DELETE", "/v1/space", b.token)).status).toBe(403); // an agent token is not an owner token
+    expect((await call("DELETE", "/v1/space", A.owner)).status).toBe(200);
+
+    expect(await leftIn(a.repo)).toEqual({ tables: [], keys: [], alarm: null });
+    const bEvents = await wcp<{ events: Array<{ kind: string }> }>("GET", `/v1/repos/${b.repo}/events`, await observerToken([b.repo]));
+    expect(bEvents.events.some((e) => e.kind === "edit")).toBe(true);
+    expect((await rowsOf(B.id)).repos).toBe(1);
+    expect((await rowsOf(B.id)).spaces[0]).toMatchObject({ status: "active" });
+    expect((await call("GET", "/v1/space", B.owner)).status).toBe(200);
+  });
+
+  it("a suspended space can be erased by the operator", async () => {
+    const s = await signup();
+    const a = await seed(s.owner, "held", "h1");
+    expect((await call("POST", `/v1/admin/spaces/${s.id}/suspend`, ADMIN)).status).toBe(200);
+    expect((await rowsOf(s.id)).spaces[0]).toMatchObject({ status: "suspended" });
+    expect((await leftIn(a.repo)).tables).toContain("events"); // suspending keeps the data for the operator
+    const r = await wcp<{ erased: { repos: string[] } }>("DELETE", `/v1/admin/spaces/${s.id}`, ADMIN);
+    expect(r.erased.repos).toEqual(["held"]);
+    expect(await leftIn(a.repo)).toEqual({ tables: [], keys: [], alarm: null });
+    expect(await rowsOf(s.id)).toMatchObject({ repos: 0, tokens: 0, spaces: [{ status: "erased" }] });
+  });
+
+  it("the alarm finishes spaces an older gateway only soft-deleted and erasures that were interrupted", async () => {
+    const legacy = await signup();
+    const interrupted = await signup();
+    const keep = await signup();
+    const l = await seed(legacy.owner, "old", "l1");
+    const i = await seed(interrupted.owner, "half", "i1");
+    const k = await seed(keep.owner, "safe", "k1");
+    await runInDurableObject(registryStub(), (_inst: Registry, state: DurableObjectState) => {
+      // the old soft delete: status flipped, tokens revoked, nothing purged
+      state.storage.sql.exec(`UPDATE spaces SET status = 'deleted', deleted_at = ? WHERE id = ?`, new Date().toISOString(), legacy.id);
+      state.storage.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE space = ?`, new Date().toISOString(), legacy.id);
+      // an erase that stopped after step 1
+      state.storage.sql.exec(`UPDATE spaces SET status = 'erasing' WHERE id = ?`, interrupted.id);
+    });
+    expect((await leftIn(l.repo)).tables).toContain("events");
+    await runInDurableObject(registryStub(), (inst: Registry) => inst.alarm());
+    for (const [x, repo] of [[legacy, l.repo], [interrupted, i.repo]] as const) {
+      expect(await leftIn(repo)).toEqual({ tables: [], keys: [], alarm: null });
+      expect(await rowsOf(x.id)).toMatchObject({ repos: 0, tokens: 0, spaces: [{ status: "erased" }] });
+    }
+    expect((await leftIn(k.repo)).tables).toContain("events"); // an active space is never touched by the sweep
+    expect((await rowsOf(keep.id)).spaces[0]).toMatchObject({ status: "active" });
+  });
+
+  it("a suspended space is not swept by the alarm (the operator decides)", async () => {
+    const s = await signup();
+    const a = await seed(s.owner, "kept", "k2");
+    await call("POST", `/v1/admin/spaces/${s.id}/suspend`, ADMIN);
+    await runInDurableObject(registryStub(), (inst: Registry) => inst.alarm());
+    expect((await leftIn(a.repo)).tables).toContain("events");
   });
 });
 

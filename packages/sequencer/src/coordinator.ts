@@ -262,6 +262,8 @@ export class SqlCoordinator {
   }
 
   static initialized(sql: Sql): boolean {
+    // A read never creates the schema: an erased (or never created) repo stays empty storage.
+    if (!one(sql, `SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'meta'`)) return false;
     migrate(sql);
     return Boolean(one(sql, `SELECT v FROM meta WHERE k = 'config'`));
   }

@@ -95,6 +95,27 @@ export class RepoCoordinator extends DurableObject<SequencerEnv> {
     return SqlCoordinator.initialized(this.sql);
   }
 
+  /**
+   * Erase this repo for good: close every socket, clear the alarm, delete all storage (the SQLite
+   * database holding the log, intents, diffs, transcripts and the input journal). Afterwards the
+   * object is empty and answers repo_not_found; a read does not recreate a schema. Idempotent.
+   * Only the Registry calls this (Registry.eraseSpace), after it has already refused the space's tokens.
+   */
+  async erase(): Promise<{ events: number }> {
+    const events = SqlCoordinator.initialized(this.sql) ? this.j.coord.head : 0;
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.close(closeCode("repo_not_found"), "repo erased");
+      } catch {
+        /* already closed */
+      }
+    }
+    this.engine = undefined;
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    return { events };
+  }
+
   /** Every state change goes through here: journaled, applied, then broadcast. */
   async op<T = unknown>(op: JournalOp, args: unknown[]): Promise<Result<T>> {
     return this.mutate(() => this.j.call<T>(op, ...args));
