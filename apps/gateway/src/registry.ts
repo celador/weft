@@ -283,6 +283,12 @@ export class Registry extends DurableObject<RegistryEnv> {
     if (this.spaceRepos(space).length >= maxRepos) return { error: `a space holds at most ${maxRepos} repos`, code: "quota" };
     const r = await this.createRepo({ repo });
     if ("error" in r) return { error: r.error, code: "invalid" };
+    if (!this.activeSpace(space)) {
+      // The space was erased or suspended while this repo was being created: do not leave a repo behind.
+      await this.env.WEFT_REPO.get(this.env.WEFT_REPO.idFromName(repo)).erase();
+      this.sql.exec(`DELETE FROM repos WHERE repo = ? AND space IS NULL`, repo);
+      return { error: "space not found", code: "gone" };
+    }
     this.sql.exec(`UPDATE repos SET space = ? WHERE repo = ?`, space, repo);
     return { created: r.created, name, repo };
   }

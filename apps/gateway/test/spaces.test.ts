@@ -272,7 +272,7 @@ describe("hosted spaces: real erasure", () => {
       return {
         repos: n(`SELECT COUNT(*) AS n FROM repos WHERE space = ?`),
         tokens: n(`SELECT COUNT(*) AS n FROM tokens WHERE space = ?`),
-        spaces: sql.exec<Record<string, unknown>>(`SELECT * FROM spaces WHERE id = ?`, space).toArray(),
+        spaces: sql.exec(`SELECT * FROM spaces WHERE id = ?`, space).toArray() as Array<Record<string, unknown>>,
       };
     });
 
@@ -386,6 +386,21 @@ describe("hosted spaces: real erasure", () => {
     }
     expect((await leftIn(k.repo)).tables).toContain("events"); // an active space is never touched by the sweep
     expect((await rowsOf(keep.id)).spaces[0]).toMatchObject({ status: "active" });
+  });
+
+  it("a repo being created while the space is erased does not survive the erase", async () => {
+    const s = await signup();
+    const out = await runInDurableObject(registryStub(), async (inst: Registry) => {
+      const creating = inst.spaceCreateRepo(s.id, "late", 5); // passes the active check, then awaits the repo's init
+      const erased = await inst.eraseSpace(s.id);
+      return { created: await creating, erased };
+    });
+    expect(out.erased).toMatchObject({ status: "erased" });
+    expect(out.created).toMatchObject({ code: "gone" });
+    expect(await rowsOf(s.id)).toMatchObject({ repos: 0, tokens: 0, spaces: [{ status: "erased" }] });
+    expect(await leftIn(`${s.id}-late`)).toEqual({ tables: [], keys: [], alarm: null });
+    const orphan = await runInDurableObject(registryStub(), (_i: Registry, state: DurableObjectState) => state.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM repos WHERE repo = ?`, `${s.id}-late`).one().n);
+    expect(orphan).toBe(0);
   });
 
   it("a suspended space is not swept by the alarm (the operator decides)", async () => {
