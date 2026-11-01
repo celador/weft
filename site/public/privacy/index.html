@@ -54,7 +54,7 @@
       <li><strong>keys:</strong> only SHA-256 hashes of the space&#39;s keys. The keys themselves stay on your machine (<code>~/.config/weft/</code> and each checkout&#39;s git-ignored <code>.weft/</code>);</li>
       <li><strong>each repo&#39;s event log:</strong> the edits, diffs, symbol names and messages listed above, in order.</li>
     </ul>
-    <p>There is no account, login or email address. Only someone holding one of your space&#39;s keys, or its feed link, can read the space. The feed link carries its key in the URL fragment, which browsers never send to a server.</p>
+    <p>There is no account, login or email address. Only someone holding one of your space&#39;s keys, or a browser or phone you paired with a one-time code, can read the space. The feed address has no key in it; a paired device holds a session that expires after a week of not being used, and you can unpair it at any time with <code>npx @celador/weft viewers</code>.</p>
     <p><strong>How long:</strong> the event log and the space are kept until you erase the space. They don&#39;t expire on their own, so expect them to be kept for more than 30 days unless you erase them. Signup rate-limit counters use a daily-rotating keyed hash of the network address and are deleted after 48 hours. Activity counts are deleted after 90 days. Cloudflare keeps the gateway&#39;s operational request logs for a few days for debugging.</p>
     <p><strong>Deleting your space:</strong> run <code>npx @celador/weft uninstall --space</code> in the repo (it asks first; <code>--yes</code> skips the question). This erases the space immediately and for good:</p>
     <ul>

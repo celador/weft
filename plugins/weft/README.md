@@ -18,7 +18,7 @@ Claude Code:
 
 (or `/plugin marketplace add celador/weft`, then `/plugin install weft@weft`). Then, in your
 repo, run `/weft:setup`. It starts a Weft gateway on your machine (no account, no sign-up; your code never leaves it),
-sets up a second git worktree for a second agent, and prints the live feed link. Weft works in the running session
+sets up a second git worktree for a second agent, and prints the live feed address with a one-time pairing code. Weft works in the running session
 without a restart. `/weft:status` shows what is connected.
 
 GitHub Copilot CLI:

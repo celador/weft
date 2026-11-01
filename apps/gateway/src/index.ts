@@ -17,7 +17,7 @@ import {
   type Result,
 } from "@weft/sequencer";
 import { REPO_NAME, Registry, sha256Hex, type SpaceGrant, type TokenSpec } from "./registry";
-import { spacesAdmin, spacesRoute, throttleSpace, type SpacesEnv, type SpacesKit } from "./spaces";
+import { readSessionCookie, spacesAdmin, spacesRoute, throttleSpace, type SpacesEnv, type SpacesKit } from "./spaces";
 import { artifactsAdmin, artifactsRoute, forwardApproval, handleArtifactsBatch, startRevert, type ArtifactsEnv, type Kit } from "./artifacts";
 
 export { RepoCoordinator } from "@weft/sequencer";
@@ -82,9 +82,27 @@ function repoStub(env: Env, repo: string) {
   return env.WEFT_REPO.get(env.WEFT_REPO.idFromName(repo));
 }
 
+/**
+ * A paired browser authenticates with its session cookie, and only for what the feed page does: GET the
+ * repo list, the combined feed, a repo's events, and who-am-I; plus the page's own logout (which must also
+ * carry a header no cross-site form can send). Everything else needs a bearer token.
+ */
+const COOKIE_READS = /^\/v1\/(?:viewer|feed|repos|repos\/[^/]+\/events(?:\/\d+)?)\/?$/;
+function cookieToken(req: Request): string | undefined {
+  const { pathname } = new URL(req.url);
+  const read = (req.method === "GET" || req.method === "HEAD") && COOKIE_READS.test(pathname);
+  const logout = req.method === "POST" && pathname === "/v1/viewer/logout" && req.headers.get("x-weft-feed") === "1";
+  if (!read && !logout) return undefined;
+  // A browser says where a request came from: never honour the cookie on a cross-site one.
+  const site = req.headers.get("sec-fetch-site");
+  if (site && site !== "same-origin" && site !== "none") return undefined;
+  return readSessionCookie(req);
+}
+
 async function authenticate(req: Request, env: Env): Promise<SpaceGrant> {
-  const token = bearer(req);
-  if (!token) throw new HttpError("unauthorized", "missing bearer token");
+  const viaBearer = bearer(req);
+  const token = viaBearer ?? cookieToken(req);
+  if (!token) throw new HttpError("unauthorized", viaBearer === undefined && req.headers.has("cookie") ? "not paired (or the pairing ended)" : "missing bearer token");
   const key = await sha256Hex(token);
   const hit = grantCache.get(key);
   let grant: Grant | null;
@@ -95,6 +113,8 @@ async function authenticate(req: Request, env: Env): Promise<SpaceGrant> {
     grantCache.set(key, { grant, exp: Date.now() + (!grant || (grant as SpaceGrant).space ? 5_000 : GRANT_CACHE_MS) });
   }
   if (!grant) throw new HttpError("unauthorized", "invalid token");
+  // A cookie only ever stands for a paired device, never for an owner, agent or lander key.
+  if (viaBearer === undefined && (grant as SpaceGrant).role !== "device") throw new HttpError("unauthorized", "invalid token");
   // Hosted spaces: per-space rate limit and the deploy-time kill switch.
   await throttleSpace(env, spacesKit(env), grant as SpaceGrant);
   return grant as SpaceGrant;
@@ -119,6 +139,7 @@ function spacesKit(env: Env): SpacesKit {
     authenticate: (req) => authenticate(req, env),
     bearer,
     isAdmin: (t) => Boolean(env.WEFT_ADMIN_TOKEN && t && timingSafeEqual(t, env.WEFT_ADMIN_TOKEN)),
+    dropGrants: () => grantCache.clear(),
   };
 }
 

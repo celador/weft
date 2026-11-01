@@ -5,11 +5,11 @@
 //   own     your Cloudflare account         `weft deploy`
 //
 // ~/.config/weft/cli.json (0600) keeps, per gateway URL, the space id and its owner and
-// viewer tokens; each checkout keeps a pointer in .weft/space.json and a copy of the owner
+// read session (`viewer`: a device session for this CLI, see below); each checkout keeps a pointer in .weft/space.json and a copy of the owner
 // token in .weft/space-token (0600, git-ignored) so the repo can find its space again.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { createServer as createNetServer } from "node:net";
 import { delimiter, dirname, join, resolve, sep } from "node:path";
 import { Api, statusOf } from "./api";
@@ -147,18 +147,60 @@ export async function ensureSpace(api: Api, url: string, root: string, label: st
     created = true;
   }
   gw.space = id;
-  if (!gw.viewer) {
-    const v = await api.token(gw.owner!, { kind: "viewer", label: "feed link" });
-    gw.viewer = v.token;
-    gw.viewerId = v.info.id;
-  }
   state.gateways[url] = gw;
   saveState(state);
-  return { gw, created };
+  if (!gw.viewer) await mintViewer(api, url);
+  return { gw: loadState().gateways[url]!, created };
 }
 
-export function feedLink(url: string, viewer: string): string {
-  return `${url}/feed#t=${encodeURIComponent(viewer)}`;
+/**
+ * The feed address: the space, and nothing secret. A browser opens it, is asked for a one-time
+ * pairing code (`weft pair`) and becomes a paired device. A forwarded or screenshotted URL is useless.
+ */
+export function feedUrl(url: string, space: string): string {
+  return `${url}/feed?space=${encodeURIComponent(space)}`;
+}
+
+/**
+ * This machine's own read access to the feed (`weft status`, `weft feed`, the VS Code panel's fallback):
+ * a device session, paired by the owner key. It expires after 7 days without use (30 in all), shows up
+ * in `weft viewers`, and is replaced by the next command that finds it gone. Kept in cli.json as `viewer`.
+ */
+export async function mintViewer(api: Api, url: string): Promise<string> {
+  const state = loadState();
+  const gw = state.gateways[url];
+  if (!gw?.owner) throw new WeftError("this machine does not hold the space's owner key", "Run npx @celador/weft inside the repo that created the space.");
+  const label = `weft CLI on ${hostname().split(".")[0]}`;
+  let token: string;
+  let id: string;
+  try {
+    const d = await api.mintViewer(gw.owner, label);
+    token = d.token;
+    id = d.device.id;
+  } catch (e) {
+    // A gateway deployed before device pairing has only the old long-lived read key. Use it here, on this
+    // machine, for the CLI; it is never printed or put in a URL. (`weft deploy` updates such a gateway.)
+    if (statusOf(e) !== 404) throw e;
+    const v = await api.token(gw.owner, { kind: "viewer", label: "weft CLI" });
+    token = v.token;
+    id = v.info.id;
+  }
+  gw.viewer = token;
+  gw.viewerId = id;
+  saveState(state);
+  return token;
+}
+
+/** Run `fn` with this machine's read session; if the gateway no longer accepts it (expired, revoked), mint a new one and retry once. */
+export async function withViewer<T>(api: Api, url: string, fn: (viewer: string) => Promise<T>): Promise<T> {
+  let viewer = loadState().gateways[url]?.viewer ?? (await mintViewer(api, url));
+  try {
+    return await fn(viewer);
+  } catch (e) {
+    if (statusOf(e) !== 401) throw e;
+    viewer = await mintViewer(api, url);
+    return fn(viewer);
+  }
 }
 
 // ------------------------------------------------------------------ local gateway (the default)

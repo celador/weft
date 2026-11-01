@@ -4,9 +4,11 @@
 //        (no flags = a gateway on this machine; --local is kept as an alias for that)
 //   weft demo [DIR]         a two-file sample repo (./weft-demo), set up, with the collision to try
 //   weft add [NAME]         another worktree (one per parallel agent), Weft installed
-//   weft status             gateway, space, checkouts, recent events, feed link
+//   weft status             gateway, space, checkouts, recent events, feed address + a pairing code
+//   weft pair               a one-time code (10 min, single use) that pairs a browser with the live feed
+//   weft viewers [revoke <id>|--all]   paired devices (label, created, last seen); revoke one or all
 //   weft feed               live feed in the terminal
-//   weft open               open the live feed in the browser
+//   weft open               open the live feed in the browser (prints a pairing code)
 //   weft watch              report edits from this checkout (for tools without hooks)
 //   weft mcp                stdio MCP server for this checkout (harnesses with MCP but no hooks)
 //   weft uninstall [--space] remove Weft from this repo's checkouts (--space also erases the space)
@@ -17,9 +19,9 @@ import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { Api, statusOf, type FeedEvent } from "./api";
+import { Api, statusOf, type FeedEvent, type Viewer } from "./api";
 import { MCP, WATCHER, adapterBin, detectHarnesses, ensureRuntime, harnessName, HARNESSES, installAdapter, installedIn, removeAdapters, startOrder, type HarnessId } from "./adapters";
-import { deploy, ensureSpace, feedLink, hermesPointer, HOSTED_URL, HUMAN_TOKEN_FILE, kindOf, loadState, readPointer, saveState, sharedHumanToken, startLocal, stopLocal, writePointer, LOCAL_PORT, type CliState, type HermesPointer } from "./gateways";
+import { deploy, ensureSpace, feedUrl, hermesPointer, HOSTED_URL, HUMAN_TOKEN_FILE, kindOf, loadState, readPointer, saveState, sharedHumanToken, startLocal, stopLocal, withViewer, writePointer, LOCAL_PORT, type CliState, type HermesPointer, type RepoPointer } from "./gateways";
 import { ask, c, configDir, git, info, mainCheckout, ok, openUrl, readJson, readSecret, slug, tilde, tryGit, VERSION, warn, WeftError, worktrees, writeJson } from "./util";
 
 type Opts = {
@@ -32,6 +34,7 @@ type Opts = {
   yes: boolean;
   open: boolean;
   space: boolean;
+  all: boolean;
   name?: string;
   domain?: string;
   dir?: string;
@@ -39,9 +42,9 @@ type Opts = {
 };
 
 export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
-  const o: Opts = { local: false, hosted: false, yes: false, open: true, space: false, positional: [] };
+  const o: Opts = { local: false, hosted: false, yes: false, open: true, space: false, all: false, positional: [] };
   let cmd = "init";
-  const known = new Set(["init", "demo", "add", "status", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "help", "version"]);
+  const known = new Set(["init", "demo", "add", "status", "pair", "viewers", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "help", "version"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     const val = () => {
@@ -61,6 +64,7 @@ export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
     else if (a === "--yes" || a === "-y") o.yes = true;
     else if (a === "--no-open") o.open = false;
     else if (a === "--space") o.space = true;
+    else if (a === "--all") o.all = true;
     else if (a === "-h" || a === "--help") cmd = "help";
     else if (a === "-v" || a === "--version") cmd = "version";
     else if (a.startsWith("-")) throw new WeftError(`unknown option ${a}`, "Run `npx @celador/weft help`.");
@@ -88,9 +92,13 @@ ${c.bold("npx @celador/weft")}            in a git repo: a gateway on this machi
   demo [DIR]                  no repo handy? a two-file sample repo (./weft-demo) set up the same
                               way, with the two prompts that make the agents collide
   add [NAME]                  another worktree for one more parallel agent
-  status                      what is set up here, and the feed link
+  status                      what is set up here, the feed address and a pairing code
+  pair                        a one-time code (10 min, single use) to pair a browser with the live feed:
+                              the feed address carries no key; the page asks for the code once
+  viewers                     paired devices: label, created, last seen
+  viewers revoke <id>|--all   unpair one device, or all of them
   feed                        live feed in this terminal
-  open                        open the live feed in your browser
+  open                        open the live feed in your browser (prints a pairing code)
   watch                       report edits made here by tools without hooks (file watcher)
   mcp                         MCP server for this checkout, for agents with MCP but no hooks
                               (Zed, Warp, JetBrains, Xcode, ...): {"command":"npx","args":["-y","@celador/weft","mcp","--dir","<checkout>"]}
@@ -280,8 +288,7 @@ async function init(o: Opts, addName?: string | true, fresh = false): Promise<st
   if (det.hermes && !o.harness) info(`Hermes Agent found: its Weft plugin installs per profile, see ${c.dim("https://github.com/celador/weft/tree/main/packages/adapters/hermes")}`);
 
   // 5. feed + next steps
-  const link = feedLink(url!, gw.viewer!);
-  console.log(`\n${c.bold("Live feed")} ${c.dim(kindOf(url!) === "local" ? "(on this machine; anyone with the link and access to this machine can read it)" : "(private to you; anyone with the link can read it)")}\n  ${c.cyan(link)}\n`);
+  const link = await showFeed(api, url!, gw.space!, gw.owner!);
   const order = startOrder(harnesses);
   const first = order[0]!;
   console.log(c.bold("Next:") + (checkouts.length > 1 ? " start one agent per checkout, each in its own terminal:" : " start your agent here:"));
@@ -368,9 +375,51 @@ async function hermesInit(hp: HermesPointer): Promise<void> {
   console.log(`\n${c.bold("Next")}  ${c.cyan("npx @celador/weft feed")} ${c.dim("(the same events Otto and the VS Code extension show)")}`);
 }
 
-function viewerFor(url: string): string | undefined {
-  return loadState().gateways[url]?.viewer;
+/** The space's owner key on this machine (cli.json, else the repo's .weft/space-token), remembered in cli.json for the CLI's own read session. */
+function ownerFor(ptr: RepoPointer, main: string): string | undefined {
+  const state = loadState();
+  const gw = state.gateways[ptr.url] ?? { kind: kindOf(ptr.url) };
+  if (gw.owner) return gw.owner;
+  const owner = readSecret(join(main, ".weft", "space-token"));
+  if (!owner) return undefined;
+  state.gateways[ptr.url] = { ...gw, space: gw.space ?? ptr.space, owner };
+  saveState(state);
+  return owner;
 }
+
+/**
+ * Print the feed address (no key in it) and a fresh one-time pairing code, and return the address.
+ * A browser that opens the address is asked for the code once and becomes a paired device.
+ */
+async function showFeed(api: Api, url: string, space: string, owner: string): Promise<string> {
+  const address = feedUrl(url, space);
+  try {
+    const p = await api.pairing(owner);
+    console.log(`\n${c.bold("Live feed")} ${c.dim("(the address has no key in it; a browser pairs once with the code)")}`);
+    console.log(`  ${c.cyan(address)}`);
+    console.log(`  ${c.bold("pairing code")}  ${c.bold(c.cyan(p.code))}  ${c.dim(`one use, expires in ${Math.round(p.expires_in / 60)} minutes`)}`);
+    console.log(c.dim("  more devices: npx @celador/weft pair · see or revoke them: npx @celador/weft viewers\n"));
+  } catch (e) {
+    if (statusOf(e) !== 404) throw e;
+    warn("this gateway predates device pairing, so it has no browser feed that is safe to share. Update it (npx @celador/weft deploy), or read the feed here: npx @celador/weft feed");
+  }
+  return address;
+}
+
+/** The repo's own hosted space (owner key and all), or an error that says what to do. Not for repos that report through the Hermes adapter. */
+function spaceHere(o: Opts): { api: Api; ptr: RepoPointer; owner: string } {
+  const { main, ptr, hp } = here(o);
+  if (!ptr && hp) throw new WeftError(`this repo reports to ${hp.url} through the Hermes adapter and has no hosted space of its own`, "Otto and the VS Code panel read that feed with the shared human token; there is nothing to pair.");
+  if (!ptr) throw new WeftError("Weft is not set up in this repo", "Run npx @celador/weft first.");
+  const owner = ownerFor(ptr, main);
+  if (!owner) throw new WeftError("this machine does not hold the space's owner key", "Run npx @celador/weft inside the repo that created the space (it keeps the key in .weft/space-token).");
+  return { api: new Api(ptr.url), ptr, owner };
+}
+
+const until = (ts: string) => {
+  const s = (Date.parse(ts) - Date.now()) / 1000;
+  return s <= 0 ? "expired" : s < 3600 ? `${Math.max(1, Math.floor(s / 60))}m` : s < 172800 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`;
+};
 
 const when = (ts: string) => {
   const s = Math.max(0, (Date.now() - Date.parse(ts)) / 1000);
@@ -445,32 +494,66 @@ async function status(o: Opts): Promise<void> {
     }
     console.log(`  ${w.path === root ? c.cyan("›") : " "} ${tilde(w.path)}  ${m.agent ? `${c.bold(m.agent)} ${c.dim(inst.map(harnessName).join(", "))} ${tokOk}` : c.dim("not set up (npx @celador/weft adds it)")}`);
   }
-  const viewer = viewerFor(ptr.url);
-  if (viewer && up) {
-    try {
-      const ev = await api.events(viewer, ptr.repo, "?tail=1&limit=5");
-      console.log(c.bold(`recent events`) + c.dim(` (head #${ev.head_seq})`));
-      if (!ev.events.length) console.log(c.dim("  none yet: start an agent in one of the checkouts"));
-      for (const e of ev.events) console.log(formatEvent(e, ptr.space));
-    } catch (e) {
-      console.log(c.dim(`  (events unavailable: ${(e as Error).message})`));
+  const owner = ownerFor(ptr, main);
+  if (!up) return;
+  if (!owner) {
+    console.log(c.dim("feed     (this machine does not hold the space's owner key; run npx @celador/weft in the repo that created it)"));
+    return;
+  }
+  try {
+    const ev = await withViewer(api, ptr.url, (v) => api.events(v, ptr.repo, "?tail=1&limit=5"));
+    console.log(c.bold(`recent events`) + c.dim(` (head #${ev.head_seq})`));
+    if (!ev.events.length) console.log(c.dim("  none yet: start an agent in one of the checkouts"));
+    for (const e of ev.events) console.log(formatEvent(e, ptr.space));
+  } catch (e) {
+    console.log(c.dim(`  (events unavailable: ${(e as Error).message})`));
+  }
+  await showFeed(api, ptr.url, ptr.space, owner);
+}
+
+/** `weft pair`: a one-time code that pairs a browser with this space's feed. */
+async function pair(o: Opts): Promise<void> {
+  const { api, ptr, owner } = spaceHere(o);
+  await api.health();
+  await showFeed(api, ptr.url, ptr.space, owner);
+}
+
+/** `weft viewers` lists paired devices; `weft viewers revoke <id>|--all` unpairs them. */
+async function viewers(o: Opts): Promise<void> {
+  const { api, ptr, owner } = spaceHere(o);
+  const [sub, target] = o.positional;
+  if (sub !== undefined && sub !== "revoke") throw new WeftError(`unknown viewers command ${sub}`, "Use: weft viewers · weft viewers revoke <id> · weft viewers revoke --all");
+  if (sub === "revoke") {
+    if (o.all) {
+      const r = await api.revokeAllViewers(owner);
+      ok(`unpaired ${r.revoked} device${r.revoked === 1 ? "" : "s"}`);
+      return;
     }
-    console.log(`${c.bold("feed")}     ${c.cyan(feedLink(ptr.url, viewer))}`);
-  } else if (!viewer) console.log(c.dim("feed     (this machine does not hold the space's viewer key; run npx @celador/weft once to get a link)"));
+    if (!target) throw new WeftError("revoke needs a device id or --all", "List them with: npx @celador/weft viewers");
+    const all = await api.viewers(owner);
+    const hits = all.filter((v) => v.id === target || v.id.startsWith(target));
+    if (hits.length !== 1) throw new WeftError(hits.length ? `${target} matches ${hits.length} devices; use the full id` : `no paired device ${target}`, "List them with: npx @celador/weft viewers");
+    await api.revokeViewer(owner, hits[0]!.id);
+    ok(`unpaired ${c.bold(hits[0]!.label || hits[0]!.id)} ${c.dim(`(${hits[0]!.id})`)}`);
+    return;
+  }
+  const list: Viewer[] = await api.viewers(owner);
+  console.log(`${c.bold("paired devices")} ${c.dim(`for space ${ptr.space} on ${new URL(ptr.url).host}`)}`);
+  if (!list.length) console.log(c.dim("  none: pair a browser with npx @celador/weft pair"));
+  for (const v of list) console.log(`  ${c.bold(v.id)}  ${(v.label || "device").padEnd(28)} ${c.dim(`paired ${when(v.created_at)} · last seen ${when(v.last_seen_at)} · unpairs itself in ${until(v.expires_at)} unless used`)}`);
+  if (list.length) console.log(c.dim("\nunpair one: npx @celador/weft viewers revoke <id> · all: npx @celador/weft viewers revoke --all"));
 }
 
 async function feed(o: Opts): Promise<void> {
   const { ptr, hp } = here(o);
   if (!ptr && hp) return hermesFeed(hp);
   if (!ptr) throw new WeftError("Weft is not set up in this repo", "Run npx @celador/weft first.");
-  const viewer = viewerFor(ptr.url);
-  if (!viewer) throw new WeftError("this machine has no viewer key for the space", "Run npx @celador/weft once in this repo.");
-  const api = new Api(ptr.url);
+  const { api } = spaceHere(o);
   console.log(c.dim(`live feed for space ${ptr.space} on ${ptr.url} (Ctrl-C to stop)\n`));
   let cursor: string | undefined;
   for (;;) {
     try {
-      const page = await api.feed(viewer, cursor ? `?after=${encodeURIComponent(cursor)}&limit=200` : "?tail=1&limit=20");
+      const page = await withViewer(api, ptr.url, (v) => api.feed(v, cursor ? `?after=${encodeURIComponent(cursor)}&limit=200` : "?tail=1&limit=20"));
       for (const e of page.events) console.log(formatEvent(e, ptr.space));
       if (page.cursor) cursor = page.cursor;
       if (page.has_more) continue;
@@ -670,12 +753,15 @@ export async function main(argv: string[]): Promise<number> {
     case "feed":
       await feed(o);
       return 0;
+    case "pair":
+      await pair(o);
+      return 0;
+    case "viewers":
+      await viewers(o);
+      return 0;
     case "open": {
-      const { ptr } = here(o);
-      const v = ptr && viewerFor(ptr.url);
-      if (!ptr || !v) throw new WeftError("no feed link here yet", "Run npx @celador/weft first.");
-      console.log(feedLink(ptr.url, v));
-      openUrl(feedLink(ptr.url, v));
+      const { api, ptr, owner } = spaceHere(o);
+      openUrl(await showFeed(api, ptr.url, ptr.space, owner));
       return 0;
     }
     case "watch":

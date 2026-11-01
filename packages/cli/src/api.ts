@@ -6,6 +6,8 @@ export type SpaceRepo = { name: string; repo: string; created: boolean };
 /** What DELETE /v1/space (and the operator's DELETE /v1/admin/spaces/{id}) reports: the space is erased, only a tombstone stays. */
 export type SpaceErased = { type?: string; space: string; status: "erased"; already_erased: boolean; erased: { repos: string[]; events: number; tokens: number } };
 export type IssuedToken = { token: string; info: { id: string; principal: string } };
+export type Pairing = { code: string; url: string; expires_in: number; expires_at: string; space: string };
+export type Viewer = { id: string; label: string; created_at: string; last_seen_at: string; expires_at: string };
 export type FeedEvent = {
   seq: number;
   repo: string;
@@ -92,6 +94,24 @@ export class Api {
   }
   token(owner: string, spec: { kind: "agent" | "system" | "viewer"; repo?: string; agent?: string; label?: string }) {
     return this.call<IssuedToken>("POST", "/v1/space/tokens", owner, spec);
+  }
+  /** A one-time code (10 minutes, single use) a browser trades for its own session at the feed page. */
+  pairing(owner: string) {
+    return this.call<Pairing>("POST", "/v1/space/pairings", owner, {});
+  }
+  /** The paired devices: browsers, and this CLI's own read session. */
+  viewers(owner: string) {
+    return this.call<{ viewers: Viewer[] }>("GET", "/v1/space/viewers", owner).then((r) => r.viewers);
+  }
+  /** A read-only device session for this machine's CLI (expires, slides with use, revocable). */
+  mintViewer(owner: string, label: string) {
+    return this.call<{ token: string; device: Viewer }>("POST", "/v1/space/viewers", owner, { label });
+  }
+  revokeViewer(owner: string, id: string) {
+    return this.call<void>("DELETE", `/v1/space/viewers/${encodeURIComponent(id)}`, owner);
+  }
+  revokeAllViewers(owner: string) {
+    return this.call<{ revoked: number }>("DELETE", "/v1/space/viewers", owner);
   }
   revoke(owner: string, id: string) {
     return this.call<void>("DELETE", `/v1/space/tokens/${encodeURIComponent(id)}`, owner);

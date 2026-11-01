@@ -192,7 +192,7 @@ class_name = "Registry"
 tag = "v1"
 new_sqlite_classes = ["RepoCoordinator", "Registry"]
 
-# Workers Rate Limiting: per space (all requests) and per network key (POST /v1/spaces).
+# Workers Rate Limiting: per space (all requests), per network key (POST /v1/spaces), and pairing attempts (POST /v1/pair).
 [[env.hosted.ratelimits]]
 name = "WEFT_RATE"
 namespace_id = "7301"
@@ -202,6 +202,13 @@ simple = { limit = 600, period = 60 }
 name = "WEFT_SIGNUP_RATE"
 namespace_id = "7302"
 simple = { limit = 5, period = 60 }
+
+# Pairing attempts on the feed page (POST /v1/pair): keyed per space and per network key, so a
+# guessed code is rate limited on both. Codes are 10 symbols (~2^49) and single use.
+[[env.hosted.ratelimits]]
+name = "WEFT_PAIR_RATE"
+namespace_id = "7303"
+simple = { limit = 10, period = 60 }
 
 [env.hosted.vars]
 WEFT_ARTIFACTS_NAMESPACE = "weft-hosted"

@@ -27,6 +27,7 @@ export default defineWorkersConfig(async () => {
               WEFT_SPACE_MAX_REPOS: "3",
               WEFT_SPACE_MAX_TOKENS: "6",
               WEFT_SPACE_RPM: "20",
+              WEFT_SPACE_MAX_DEVICES: "3",
             },
           },
         },

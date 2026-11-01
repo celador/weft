@@ -38,14 +38,48 @@ same space.
 | `POST /v1/space/repos {"name"}` | repo `<space>-<name>`; idempotent |
 | `POST /v1/space/tokens {"kind": "agent", "repo", "agent"}` | an agent key (scopes agent + observe) bound to one repo and one agent id |
 | `POST /v1/space/tokens {"kind": "system", "repo"}` | a lander key (system + observe) for one repo |
-| `POST /v1/space/tokens {"kind": "viewer"}` | a read-only key for every repo of the space, current and future (the feed link) |
+| `POST /v1/space/pairings` | a one-time pairing code for the feed page (single use, 10 minutes); at most 3 are open at a time |
+| `GET /v1/space/viewers` | the paired devices: id, label, created, last seen, expiry |
+| `POST /v1/space/viewers {"label"}` | a device session for the owner's own CLI (the token is returned once) |
+| `DELETE /v1/space/viewers/{id}` · `DELETE /v1/space/viewers` | unpair one device, or all of them; immediate on the gateway instance that handles it, within 5 s on others |
 | `DELETE /v1/space/tokens/{id}` | revoke one of the space's keys |
 | `DELETE /v1/space` | **erase** the space (see "Deleting your data"): every repo's stored log is deleted for good, every key, the owner key included, stops working; answers `200` with what was erased |
 
-**The feed.** `GET /feed` is a static page; the viewer key travels in the URL fragment
-(`/feed#t=…`), which browsers never send to a server or put in a `Referer`. The page uses it as a
-bearer token for `/v1/repos` and `/v1/feed` on the same origin. It is private in the sense that
-matters: only someone holding the link can read the space.
+**The feed.** `GET /feed?space=<id>` is a static page. **There is no credential in its address**,
+so a forwarded link, a screenshot or a screen-share of it gives nobody access. A browser gets in by
+*pairing*:
+
+1. the owner runs `npx @celador/weft pair` (also printed by `npx @celador/weft` and `status`): a
+   one-time code like `K7M2P-9XQ4T`, valid for 10 minutes, single use;
+2. the page asks for it once and trades it (`POST /v1/pair {space, code, label}`) for a *device
+   session*: a random token that exists only in an `HttpOnly`, `SameSite=Strict` cookie
+   (`__Host-weft_session`, also `Secure`, on https). Page scripts cannot read it, it is never in a URL
+   or a response body, and the browser sends it only to this gateway, for the feed's own reads
+   (`GET /v1/repos`, `/v1/feed`, a repo's `/events`, `/v1/viewer`), never on a cross-site request;
+3. the session reads one space, read-only. It expires after 7 days without use (the expiry slides with
+   use) and in any case 30 days after pairing, then the device pairs again. The owner lists devices with
+   `npx @celador/weft viewers` and unpairs one (`viewers revoke <id>`) or all (`viewers revoke --all`);
+   a browser can also leave itself ("Unpair this browser"). Deleting or suspending the space ends them all.
+
+Guessing a code: it is 10 symbols from a 31-symbol alphabet (about 2^49), single use, expires in 10
+minutes, is stored only as a salted hash, and is compared in constant time against the space's open
+codes. `POST /v1/pair` is rate limited per network and per space (10 a minute each, `WEFT_PAIR_RATE`),
+and every failure answers the same `401`, so it does not reveal whether a space exists. A space holds
+at most 20 paired devices (`WEFT_SPACE_MAX_DEVICES`).
+
+`/feed` is sent with `Content-Security-Policy: … frame-ancestors 'none'`, `X-Frame-Options: DENY`,
+`Referrer-Policy: no-referrer` and `Cache-Control: no-store`, so it cannot be embedded in another page.
+
+**Retired: `/feed#t=…` links.** Earlier versions put a read-only key in the link, and anyone who got the
+link read the space for as long as the space lived. The gateway revokes every such key (a one-time
+migration in the Registry, run the first time it handles a space request after the update),
+`POST /v1/space/tokens {"kind": "viewer"}` now answers `400` and says so, and a page opened with an old
+`#t=…` link drops the fragment and shows "This link format was retired", with the command to run.
+
+The CLI itself reads the feed (`weft status`, `weft feed`, the VS Code panel's fallback) with its own
+device session, kept in `~/.config/weft/cli.json`; it appears in `weft viewers` as `weft CLI on <host>`
+and is replaced by the next command if it expires or is revoked. Otto and the VS Code panel read your own
+Hermes-adapter gateway with the shared human token, not this page, and are unaffected.
 
 ### Tenant isolation
 
@@ -54,12 +88,14 @@ The space key is the boundary. Enforced in `apps/gateway/src/registry.ts` and te
 
 - an owner key has no WCP scopes; it can only manage its own space;
 - every key a space mints is bound to that space's repos: agent and lander keys to exactly one
-  repo, viewer keys to the space's repo list as it is when the key is checked (so they never see
+  repo, paired devices to the space's repo list as it is when the session is checked (so they never see
   another space's repo, or an operator repo);
 - a repo outside a key's list answers `404 repo_not_found` (its existence is not leaked);
 - a space cannot mint keys for, revoke keys of, or name a repo in another space;
-- erasing or suspending a space revokes all its keys; cached grants for space keys expire within
-  5 seconds (and a cached grant reaches an emptied repo, which answers `404 repo_not_found`).
+- a pairing code only opens the space it was minted for, and a device session reads only that space;
+- erasing or suspending a space revokes all its keys and device sessions and drops its open pairing codes;
+  cached grants for space keys expire within 5 seconds (and a cached grant reaches an emptied repo,
+  which answers `404 repo_not_found`).
 
 The public read-only demo at `demo.weft.mx` is unchanged: it is a different Worker
 (`weft-web-public`) in front of a different gateway, with its own repo allow-list, and fails closed.
@@ -119,6 +155,8 @@ Set as vars in `[env.hosted.vars]`; the per-minute ones also use Workers Rate Li
 |---|---|
 | new spaces per network per day (counted under a daily-rotating HMAC of the IP, deleted after 48 h; nothing IP-derived is stored on the space) | 20 |
 | new spaces per minute per network | 5 (`WEFT_SIGNUP_RATE`) |
+| pairing attempts per minute, per network and per space | 10 each (`WEFT_PAIR_RATE`) |
+| paired devices per space | 20 |
 | new spaces per day, whole gateway | 2,000 |
 | active spaces, whole gateway | 20,000 |
 | repos per space | 20 |

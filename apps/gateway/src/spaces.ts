@@ -4,13 +4,20 @@
 //   POST   /v1/spaces                  create a space (open signups, or the admin token)
 //   GET    /v1/space                   the space, its repos, token count, limits
 //   POST   /v1/space/repos             {name} -> repo `<space>-<name>` (idempotent)
-//   POST   /v1/space/tokens            {kind: agent|system|viewer, repo?, agent?, label?}
+//   POST   /v1/space/tokens            {kind: agent|system, repo, agent?, label?}
 //   DELETE /v1/space/tokens/{id}       revoke one of the space's tokens
 //   DELETE /v1/space                   erase the space: every repo's stored log is deleted, rows removed
 //   DELETE /v1/admin/spaces/{id}       (operator) the same for any space, suspended ones included
 //   GET    /v1/admin/stats             new spaces per day (= first runs of `npx weft`) and retention counts
 //   POST   /v1/admin/spaces/{id}/tag   {"internal": true|false}: leave our own test/demo spaces out of the stats
-//   GET    /feed                       the private live feed page (viewer token in the #fragment)
+//   POST   /v1/space/pairings          a one-time pairing code (10 min, single use) for the feed page
+//   GET    /v1/space/viewers           the paired devices (label, created, last seen, expiry)
+//   POST   /v1/space/viewers           {label} a device session for the owner's own CLI (token returned once)
+//   DELETE /v1/space/viewers[/{id}]    revoke one paired device, or all of them
+//   POST   /v1/pair                    {space, code, label?} no auth: trade a code for a device session cookie
+//   GET    /v1/viewer                  who this browser is paired as (refreshes the cookie); 401 = pair again
+//   POST   /v1/viewer/logout           this browser leaves
+//   GET    /feed                       the live feed page: asks for a pairing code once, no credential in the URL
 //
 // Abuse limits, all configurable with vars: signups per network per day, signups per day, total
 // spaces, repos and active tokens per space, and requests per minute per space (the
@@ -18,7 +25,7 @@
 // switch: WEFT_HOSTED_OFF=1 (deploy-time, refuses every space request without a DO call) or
 // POST /v1/admin/hosted {"mode": "open" | "no-signups" | "off"} (instant, no redeploy).
 
-import type { EraseReport, Registry, SpaceGrant } from "./registry";
+import type { DeviceInfo, EraseReport, Registry, SpaceGrant } from "./registry";
 import { FEED_HTML } from "./feed-page";
 
 export interface SpacesEnv {
@@ -36,6 +43,12 @@ export interface SpacesEnv {
   WEFT_SPACE_MAX_REPOS?: string;
   WEFT_SPACE_MAX_TOKENS?: string;
   WEFT_SPACE_RPM?: string;
+  /** Paired devices (feed sessions) per space. */
+  WEFT_SPACE_MAX_DEVICES?: string;
+  /** Pairing attempts per minute, per space and per network (fallback when WEFT_PAIR_RATE is not bound). */
+  WEFT_PAIR_PER_MIN?: string;
+  /** Workers Rate Limiting binding for POST /v1/pair, keyed `space:<id>` and `net:<key>` (optional). */
+  WEFT_PAIR_RATE?: RateLimit;
   /** Workers Rate Limiting binding keyed by space id (optional). */
   WEFT_RATE?: RateLimit;
   /** Workers Rate Limiting binding keyed by client IP for POST /v1/spaces (optional). */
@@ -50,6 +63,8 @@ export type SpacesKit = {
   authenticate: (req: Request) => Promise<SpaceGrant>;
   bearer: (req: Request) => string | undefined;
   isAdmin: (token: string | undefined) => boolean;
+  /** Forget cached grants in this isolate (revocation takes effect at once here, within 5 s elsewhere). */
+  dropGrants: () => void;
 };
 
 const num = (v: string | undefined, d: number) => {
@@ -65,6 +80,8 @@ export function limits(env: SpacesEnv) {
     maxRepos: num(env.WEFT_SPACE_MAX_REPOS, 20),
     maxTokens: num(env.WEFT_SPACE_MAX_TOKENS, 200),
     rpm: num(env.WEFT_SPACE_RPM, 1200),
+    maxDevices: num(env.WEFT_SPACE_MAX_DEVICES, 20),
+    pairPerMin: num(env.WEFT_PAIR_PER_MIN, 10),
   };
 }
 
@@ -116,19 +133,93 @@ function signupSecret(env: SpacesEnv): string {
   return env.WEFT_SIGNUP_SECRET || env.WEFT_ADMIN_TOKEN || "weft-local-signup";
 }
 
+// ------------------------------------------------------------------ the device session cookie
+//
+// The session token lives only in this cookie: HttpOnly (page scripts cannot read it), SameSite=Strict
+// (never sent on a cross-site request), Secure on https, and `__Host-` prefixed there (the browser then
+// pins it to this exact host, Path=/). It is not in a URL, not in the page, not in a response body.
+
+const COOKIE_PLAIN = "weft_session";
+const COOKIE_HOST = "__Host-weft_session";
+const isHttps = (req: Request) => new URL(req.url).protocol === "https:";
+
+export function readSessionCookie(req: Request): string | undefined {
+  const h = req.headers.get("cookie");
+  if (!h) return undefined;
+  for (const part of h.split(";")) {
+    const i = part.indexOf("=");
+    if (i < 0) continue;
+    const name = part.slice(0, i).trim();
+    if (name === COOKIE_HOST || name === COOKIE_PLAIN) return part.slice(i + 1).trim() || undefined;
+  }
+  return undefined;
+}
+
+function sessionCookie(req: Request, token: string, maxAgeSeconds: number): string {
+  const https = isHttps(req);
+  return `${https ? COOKIE_HOST : COOKIE_PLAIN}=${token}; Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}; Path=/; HttpOnly; SameSite=Strict${https ? "; Secure" : ""}`;
+}
+
+const clearedCookie = (req: Request) => sessionCookie(req, "", 0);
+
+const SPACE_ID = /^sp[a-z0-9]{10}$/;
+
+/** The page and its API answer with these on every response that could be framed or leak a URL. */
+const PAGE_HEADERS = {
+  "content-type": "text/html; charset=utf-8",
+  "cache-control": "no-store",
+  "referrer-policy": "no-referrer",
+  "x-frame-options": "DENY",
+  "x-content-type-options": "nosniff",
+  "permissions-policy": "camera=(), microphone=(), geolocation=()",
+  "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+};
+
+/** Throttle pairing attempts: per network first (cheap), then per space. Every attempt counts, right or wrong. */
+async function throttlePairing(env: SpacesEnv, k: Pick<SpacesKit, "fail">, net: string, space: string): Promise<void> {
+  const perMin = limits(env).pairPerMin;
+  const hit = async (key: string) => (env.WEFT_PAIR_RATE ? (await env.WEFT_PAIR_RATE.limit({ key })).success : localLimit(`pair:${key}`, perMin));
+  if (!(await hit(`net:${net}`)) || !(await hit(`space:${space}`))) k.fail("rate_limited", "too many pairing attempts; wait a minute and try again");
+}
+
+const deviceView = (d: DeviceInfo) => ({ id: d.id, label: d.label, created_at: d.created_at, last_seen_at: d.last_seen_at, expires_at: d.expires_at });
+
 /** Routes under /v1/spaces, /v1/space and /feed; null when the path is not one of them. */
 export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, path: string): Promise<Response | null> {
   const m = req.method;
   if (path === "/feed" && m === "GET") {
-    return new Response(FEED_HTML, {
-      headers: {
-        "content-type": "text/html; charset=utf-8",
-        "cache-control": "no-cache",
-        "referrer-policy": "no-referrer",
-        "x-frame-options": "DENY",
-        "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-      },
-    });
+    return new Response(FEED_HTML, { headers: PAGE_HEADERS });
+  }
+  // ----- the feed page's own API: pair this browser, who am I, leave
+  if (path === "/v1/pair" && m === "POST") {
+    if (env.WEFT_HOSTED_OFF === "1") k.fail("unavailable", "hosted spaces are switched off on this gateway");
+    const net = await networkKey(req.headers.get("cf-connecting-ip") ?? "local", signupSecret(env), new Date().toISOString().slice(0, 10));
+    const body = ((await k.readJson(req, true)) ?? {}) as { space?: unknown; code?: unknown; label?: unknown };
+    await throttlePairing(env, k, net, typeof body.space === "string" ? body.space.slice(0, 40) : "");
+    if (typeof body.space !== "string" || !SPACE_ID.test(body.space) || typeof body.code !== "string" || !body.code || body.code.length > 64)
+      k.fail("invalid_message", "space and code are required", { issues: [{ path: "", message: "space, code" }] });
+    const r = await registry(env).pairingExchange({ space: body.space as string, code: body.code as string, label: typeof body.label === "string" ? body.label : "", maxDevices: limits(env).maxDevices });
+    if ("error" in r) k.fail(r.code === "quota" ? "rate_limited" : r.code === "closed" ? "unavailable" : "unauthorized", r.error);
+    const ok = r as { token: string; device: DeviceInfo };
+    const secs = (Date.parse(ok.device.expires_at) - Date.now()) / 1000;
+    return k.json({ type: "viewer.paired", device: deviceView(ok.device) }, 200, { "set-cookie": sessionCookie(req, ok.token, secs) });
+  }
+  if (path === "/v1/viewer" && m === "GET") {
+    const g = await k.authenticate(req);
+    if (g.role !== "device" || !g.space) k.fail("forbidden", "this is for paired devices");
+    const d = await registry(env).deviceInfo(g.space!, g.id);
+    if (!d) k.fail("unauthorized", "this device is no longer paired");
+    const dev = d as DeviceInfo;
+    const cookie = readSessionCookie(req);
+    // Refresh the cookie to the session's remaining life: the server slides the expiry, the browser has to be told.
+    return k.json({ type: "viewer", space: g.space, device: deviceView(dev) }, 200, cookie ? { "set-cookie": sessionCookie(req, cookie, (Date.parse(dev.expires_at) - Date.now()) / 1000) } : {});
+  }
+  if (path === "/v1/viewer/logout" && m === "POST") {
+    const g = await k.authenticate(req);
+    if (g.role !== "device" || !g.space) k.fail("forbidden", "this is for paired devices");
+    await registry(env).deviceRevoke(g.space!, g.id);
+    k.dropGrants();
+    return new Response(null, { status: 204, headers: { "set-cookie": clearedCookie(req), "cache-control": "no-store" } });
   }
   if (path === "/v1/spaces" && m === "POST") {
     const L = limits(env);
@@ -164,6 +255,7 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
     const r = await reg.eraseSpace(space);
     if (!r) k.fail("unauthorized", "space not found");
     if ("error" in r!) k.fail("unavailable", r.error);
+    k.dropGrants();
     return k.json({ type: "space.erased", ...(r as EraseReport) });
   }
   if (path === "/v1/space/repos" && m === "POST") {
@@ -177,11 +269,12 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
   if (path === "/v1/space/tokens" && m === "POST") {
     const body = ((await k.readJson(req)) ?? {}) as { kind?: unknown; repo?: unknown; agent?: unknown; label?: unknown };
     const kind = body.kind;
-    if (kind !== "agent" && kind !== "system" && kind !== "viewer") k.fail("invalid_message", "kind must be agent, system or viewer", { issues: [{ path: "/kind", message: "enum" }] });
+    // "viewer" still parses so the registry can answer it with the explanation that links were retired.
+    if (kind !== "agent" && kind !== "system" && kind !== "viewer") k.fail("invalid_message", "kind must be agent or system", { issues: [{ path: "/kind", message: "enum" }] });
     const r = await reg.spaceIssueToken(
       space,
       {
-        kind: kind as "agent" | "system" | "viewer",
+        kind: kind as "agent" | "system",
         ...(typeof body.repo === "string" ? { repo: body.repo } : {}),
         ...(typeof body.agent === "string" ? { agent: body.agent } : {}),
         ...(typeof body.label === "string" ? { label: body.label } : {}),
@@ -190,6 +283,32 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
     );
     if ("error" in r) k.fail(r.code === "quota" ? "rate_limited" : r.code === "repo" ? "repo_not_found" : r.code === "gone" ? "unauthorized" : "invalid_message", r.error, { issues: [{ path: "", message: r.error }] });
     return k.json({ type: "space.token", ...(r as object) }, 201);
+  }
+  // ----- paired devices: pairing codes, the device list, revocation
+  if (path === "/v1/space/pairings" && m === "POST") {
+    const r = await reg.pairingCreate(space);
+    if ("error" in r) k.fail("unauthorized", r.error);
+    const p = r as { code: string; expires_at: string; expires_in: number };
+    return k.json({ type: "space.pairing", space, ...p, url: `${new URL(req.url).origin}/feed?space=${space}` }, 201);
+  }
+  if (path === "/v1/space/viewers" && m === "GET") return k.json({ type: "space.viewers", viewers: await reg.devices(space) });
+  if (path === "/v1/space/viewers" && m === "POST") {
+    const body = ((await k.readJson(req, true)) ?? {}) as { label?: unknown };
+    const r = await reg.deviceCreate(space, typeof body.label === "string" ? body.label : "", L.maxDevices);
+    if ("error" in r) k.fail(r.code === "quota" ? "rate_limited" : "unauthorized", r.error);
+    const ok = r as { token: string; device: DeviceInfo };
+    return k.json({ type: "space.viewer", token: ok.token, device: deviceView(ok.device) }, 201);
+  }
+  if (path === "/v1/space/viewers" && m === "DELETE") {
+    const revoked = await reg.deviceRevokeAll(space);
+    k.dropGrants();
+    return k.json({ type: "space.viewers.revoked", revoked });
+  }
+  const vm = /^\/v1\/space\/viewers\/([^/]+)$/.exec(path);
+  if (vm && m === "DELETE") {
+    if (!(await reg.deviceRevoke(space, decodeURIComponent(vm[1]!)))) k.fail("not_found", "no such paired device in this space");
+    k.dropGrants();
+    return new Response(null, { status: 204 });
   }
   const tm = /^\/v1\/space\/tokens\/([^/]+)$/.exec(path);
   if (tm && m === "DELETE") {

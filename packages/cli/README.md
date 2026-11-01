@@ -16,7 +16,10 @@ and diffs never leave your machine.
    OpenCode, Gemini CLI, Antigravity) and adds Weft's hooks to every checkout of the repo. If the repo has only one
    checkout, it offers to add a second `git worktree` so two agents can work side by side.
    With none installed, it sets up a file watcher instead.
-3. It prints your **live feed** link and opens it. The link carries a read-only key after the `#`.
+3. It prints your **live feed** address and a **one-time pairing code**, and opens the address.
+   The address has no key in it: the page asks for the code once and pairs that browser as a
+   device (a session that expires after a week of not being used and can be revoked).
+   Forwarding the address, or a screenshot of it, gives nobody access.
 
 Then start one agent per checkout. Codex, Cursor, Copilot and Gemini ask once whether to trust
 the folder or its hooks: say yes, or the hooks do not run (the setup prints this for the agents
@@ -32,12 +35,15 @@ Website: <https://weft.mx> · Source: <https://github.com/celador/weft>
 
 | Command | What it does |
 |---|---|
-| `npx @celador/weft` | set up this repo (space, hooks, feed link); safe to run again |
+| `npx @celador/weft` | set up this repo (space, hooks, feed address + pairing code); safe to run again |
 | `npx @celador/weft demo [dir]` | no repo handy: a two-file sample repo (`./weft-demo` + a second checkout), set up, with the two prompts that make the agents collide |
 | `npx @celador/weft add [name]` | one more worktree for another parallel agent |
-| `npx @celador/weft status` | gateway, space, checkouts, recent events, feed link |
+| `npx @celador/weft status` | gateway, space, checkouts, recent events, feed address + a pairing code |
+| `npx @celador/weft pair` | a one-time code (10 minutes, single use) to pair another browser or phone with the live feed |
+| `npx @celador/weft viewers` | the paired devices: label, when paired, last seen |
+| `npx @celador/weft viewers revoke <id>` / `--all` | unpair one device, or all of them (takes effect at once) |
 | `npx @celador/weft feed` | the live feed in your terminal |
-| `npx @celador/weft open` | open the live feed in your browser |
+| `npx @celador/weft open` | open the live feed in your browser (prints a pairing code) |
 | `npx @celador/weft watch` | report edits from tools without hooks (file watcher) |
 | `npx @celador/weft mcp` | MCP server for this checkout, for agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode): `{"command":"npx","args":["-y","@celador/weft","mcp","--dir","/path/to/checkout"]}` |
 | `npx @celador/weft uninstall [--space]` | remove Weft from this repo; `--space` also erases the space on the gateway: every stored event, diff and key, for good (asks first; `--yes` skips) |

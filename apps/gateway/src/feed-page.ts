@@ -1,6 +1,8 @@
-// The private live feed for a hosted space: GET /feed#t=<viewer token>. The token stays in
-// the URL fragment (never sent to the server, never in a Referer) and is used from this page
-// as a bearer token against /v1/feed on the same origin. Plain HTML + inline JS, no deps.
+// The live feed for a space: GET /feed (or /feed?space=<id>). There is no credential in the URL.
+// The first visit asks for the one-time pairing code `npx @celador/weft pair` prints, trades it
+// (POST /v1/pair) for a per-device session that lives in an HttpOnly cookie this script cannot
+// read, and then polls /v1/repos and /v1/feed on the same origin. The old `/feed#t=<token>` links
+// are retired: the page drops the fragment and says so. Plain HTML + inline JS, no deps.
 
 export const FEED_HTML = `<!doctype html>
 <html lang="en">
@@ -50,90 +52,173 @@ export const FEED_HTML = `<!doctype html>
   footer { color: var(--muted); font-size: 12px; text-align: center; padding: 20px; }
   footer a { color: var(--muted); }
   .notice { margin: 40px auto; max-width: 560px; color: var(--muted); }
+  .retired { margin: 0 0 16px; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(245,158,61,.4); background: rgba(245,158,61,.07); color: var(--text); }
+  .retired code, .notice code { background: var(--bg2); padding: 1px 6px; border-radius: 6px; font-family: var(--mono); }
+  .pair { margin: 40px auto; max-width: 440px; display: grid; gap: 12px; }
+  .pair h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
+  .pair p { margin: 0; color: var(--muted); }
+  .pair code { background: var(--bg2); padding: 2px 6px; border-radius: 6px; font-family: var(--mono); color: var(--text); }
+  .pair label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+  .pair input { background: var(--bg2); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 10px 12px; font: 16px var(--mono); }
+  .pair input#code { font-size: 22px; letter-spacing: .12em; text-transform: uppercase; text-align: center; }
+  .pair button { background: var(--accent); color: #1a1205; border: 0; border-radius: 8px; padding: 10px 14px; font: 600 15px var(--sans); cursor: pointer; }
+  .pair button:disabled { opacity: .6; cursor: wait; }
+  .pair .err { color: var(--err); min-height: 1.4em; }
+  #leave { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 3px 10px; font: 12px var(--sans); cursor: pointer; }
 </style>
 </head>
 <body>
-<header><b>Weft <span class="sq">live feed</span></b><span id="state"><span id="dot"></span><span id="status">connecting…</span></span></header>
+<header><b>Weft <span class="sq">live feed</span></b><span id="state"><span id="dot"></span><span id="status">connecting…</span><button id="leave" type="button" hidden>Unpair this browser</button></span></header>
 <main>
   <div class="repos" id="repos"></div>
   <ol id="events"></ol>
   <div class="empty" id="empty" hidden>No events yet. Start a coding agent in a checkout where you ran <code>npx @celador/weft</code>; every edit it makes shows up here.</div>
 </main>
-<footer>Private to you: this link carries your space's read-only key after the <code>#</code>, which never leaves your browser except to this gateway. <a href="https://github.com/celador/weft">Weft</a> · MIT</footer>
+<footer>This browser is paired to one space and can only read it. Pair other devices with <code>npx @celador/weft pair</code>; list or revoke them with <code>npx @celador/weft viewers</code>. <a href="https://github.com/celador/weft">Weft</a> · MIT</footer>
 <script>
 (() => {
-  const key = new URLSearchParams(location.hash.slice(1)).get("t");
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-  if (!key) {
-    document.querySelector("main").innerHTML = '<p class="notice">This page needs the feed link that <code>npx @celador/weft</code> printed (it ends in <code>#t=…</code>). Run <code>npx @celador/weft status</code> in your repo to see it again.</p>';
-    $("status").textContent = "no key"; $("dot").className = "bad"; return;
+  const main = document.querySelector("main");
+  const SPACE = /^sp[a-z0-9]{10}$/;
+
+  // Links of the old form (/feed#t=<token>) carried a bearer that never expired. They are retired:
+  // forget the fragment at once (so it leaves the address bar and history), never send it anywhere, say why.
+  let retired = false;
+  if (/(^|[#&])t=/.test(location.hash.slice(1))) {
+    retired = true;
+    history.replaceState(null, "", location.pathname + location.search);
   }
-  history.replaceState(null, "", location.pathname + location.search + "#t=" + encodeURIComponent(key));
-  const H = { authorization: "Bearer " + key, "wcp-version": "0.1" };
-  let names = {}; let space = ""; let cursor = null; let filter = null; const shown = [];
-  const short = (repo) => names[repo] ?? (space && repo.startsWith(space + "-") ? repo.slice(space.length + 1) : repo);
-  const ago = (ts) => { const s = Math.max(0, (Date.now() - Date.parse(ts)) / 1000); return s < 60 ? Math.floor(s) + "s ago" : s < 3600 ? Math.floor(s / 60) + "m ago" : new Date(ts).toLocaleString(); };
-  function render(e) {
-    const li = document.createElement("li"); li.className = "ev"; li.dataset.repo = e.repo;
-    const status = e.status || "";
-    const who = e.agent || (e.actor && e.actor.id) || "system";
-    const diags = (e.diagnostics || []).map((d) => {
-      const at = d.range && d.range.start ? ":" + (d.range.start.line + 1) : "";
-      const where = " " + esc(d.file || "") + at + (d.caused_by_agent ? " · caused by " + esc(d.caused_by_agent) + " (#" + esc(d.caused_by_seq) + ")" : "");
-      return '<div class="diag ' + esc(d.severity === "warning" ? "warning" : "") + '"><span class="code">' + esc(d.code) + "</span>" + where + "\\n" + esc(d.message) + "</div>";
-    }).join("");
-    const files = (e.files || []).slice(0, 6).join("  ") + ((e.files || []).length > 6 ? "  …" : "");
-    li.innerHTML = '<div class="seq">#' + esc(e.seq) + '</div><div class="line"><span class="agent">' + esc(who) + '</span><span class="kind">' + esc(e.kind) + "</span>" +
-      (status ? '<span class="badge ' + esc(status) + '">' + esc(status) + "</span>" : "") + '<span class="repo">' + esc(short(e.repo)) + '</span><span class="when" data-ts="' + esc(e.ts) + '">' + esc(ago(e.ts)) + "</span></div>" +
-      (e.summary ? '<div class="sum">' + esc(e.summary) + "</div>" : "") + (files ? '<div class="files">' + esc(files) + "</div>" : "") + diags;
-    li.hidden = filter !== null && filter !== e.repo;
-    return li;
+  const banner = () => retired
+    ? '<p class="retired" role="alert"><b>This link format was retired.</b> Feed links used to carry a key; they no longer work. Run <code>npx @celador/weft pair</code> in your repo for a one-time code, and enter it below.</p>'
+    : "";
+
+  const params = new URLSearchParams(location.search);
+  const spaceParam = (params.get("space") || "").trim();
+  const H = { "wcp-version": "0.1" };
+  const get = (path) => fetch(path, { headers: H, credentials: "same-origin", cache: "no-store" });
+
+  function deviceName() {
+    const ua = navigator.userAgent || "";
+    const has = (w) => ua.indexOf(w) >= 0;
+    const browser = has("Edg") ? "Edge" : has("Firefox") ? "Firefox" : has("Chrome") ? "Chrome" : has("Safari") ? "Safari" : "Browser";
+    const os = has("iPhone") || has("iPad") ? "iOS" : has("Android") ? "Android" : has("Mac OS X") ? "macOS" : has("Windows") ? "Windows" : has("Linux") ? "Linux" : "";
+    return os ? browser + " on " + os : browser;
   }
-  function chips(repos) {
-    const box = $("repos"); box.innerHTML = "";
-    if (repos.length < 2) return;
-    const mk = (label, val) => { const b = document.createElement("button"); b.className = "chip" + (filter === val ? " on" : ""); b.textContent = label;
-      b.onclick = () => { filter = val; chips(repos); for (const li of $("events").children) li.hidden = filter !== null && filter !== li.dataset.repo; }; box.appendChild(b); };
-    mk("all", null); for (const r of repos) mk(short(r.repo), r.repo);
+
+  function showPair(message) {
+    $("leave").hidden = true; $("dot").className = "bad"; $("status").textContent = "not paired";
+    main.innerHTML = banner() + '<form class="pair" id="pair" autocomplete="off"><h1>Pair this browser</h1>' +
+      '<p>Run <code>npx @celador/weft pair</code> in your repo. It prints a one-time code that works for 10 minutes. Enter it here once; this browser then stays paired for a week of use (until you unpair it).</p>' +
+      '<label>Space<input id="space" name="space" required maxlength="12" spellcheck="false" autocapitalize="none" placeholder="spxxxxxxxxxx"></label>' +
+      '<label>Pairing code<input id="code" name="code" required maxlength="16" spellcheck="false" autocapitalize="characters" autocomplete="one-time-code" placeholder="XXXXX-XXXXX"></label>' +
+      '<label>Name for this device<input id="label" name="label" maxlength="60"></label>' +
+      '<button type="submit" id="go">Pair</button><div class="err" id="err" role="alert"></div></form>';
+    $("space").value = spaceParam; $("label").value = deviceName();
+    if (message) $("err").textContent = message;
+    ($("space").value ? $("code") : $("space")).focus();
+    $("pair").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const space = $("space").value.trim().toLowerCase(), code = $("code").value.trim();
+      if (!SPACE.test(space)) { $("err").textContent = "The space looks like sp followed by 10 letters or digits; the CLI prints it."; return; }
+      $("go").disabled = true; $("err").textContent = "";
+      try {
+        const r = await fetch("/v1/pair", { method: "POST", headers: { ...H, "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ space, code, label: $("label").value }) });
+        if (r.ok) { history.replaceState(null, "", location.pathname + "?space=" + space); start(); return; }
+        const j = await r.json().catch(() => ({}));
+        $("err").textContent = r.status === 401 ? "That code is not valid or has expired. Run npx @celador/weft pair for a new one."
+          : r.status === 429 ? ((j.error && j.error.message) || "Too many attempts. Wait a minute and try again.") : ((j.error && j.error.message) || "Pairing failed (" + r.status + ").");
+      } catch (e) { $("err").textContent = "Could not reach the gateway."; }
+      $("go").disabled = false;
+    });
   }
-  async function loadRepos() {
-    const r = await fetch("/v1/repos", { headers: H });
-    if (r.status === 401) throw Object.assign(new Error("key not valid (space deleted, or link mistyped)"), { fatal: true });
-    if (!r.ok) throw new Error("gateway " + r.status);
-    const j = await r.json();
-    const repos = j.repos || [];
-    const first = repos[0] && repos[0].repo; const m = first && /^(sp[a-z0-9]{10})-/.exec(first); if (m) space = m[1];
-    chips(repos);
-    return repos;
+
+  async function start() {
+    let me;
+    try { me = await get("/v1/viewer"); } catch (e) { return showPair("Could not reach the gateway."); }
+    if (me.status === 401 || me.status === 403) return showPair();
+    if (!me.ok) return showPair("The gateway answered " + me.status + ".");
+    const who = await me.json().catch(() => ({}));
+    main.innerHTML = banner() + '<div class="repos" id="repos"></div><ol id="events"></ol>' +
+      '<div class="empty" id="empty" hidden>No events yet. Start a coding agent in a checkout where you ran <code>npx @celador/weft</code>; every edit it makes shows up here.</div>';
+    $("leave").hidden = false;
+    retired = false;
+    run(who.space || "");
+    setInterval(() => get("/v1/viewer").catch(() => undefined), 3600000); // keeps the cookie as long as the session
   }
-  async function poll() {
-    const q = cursor ? "?after=" + encodeURIComponent(cursor) + "&limit=200" : "?tail=1&limit=100";
-    const r = await fetch("/v1/feed" + q, { headers: H });
-    if (r.status === 401) throw Object.assign(new Error("key not valid (space deleted, or link mistyped)"), { fatal: true });
-    if (!r.ok) throw new Error("gateway " + r.status);
-    const j = await r.json();
-    const list = $("events");
-    for (const e of j.events || []) { if (shown.includes(e.repo + "#" + e.seq)) continue; shown.push(e.repo + "#" + e.seq); list.insertBefore(render(e), list.firstChild); }
-    if (j.cursor) cursor = j.cursor;
-    $("empty").hidden = list.children.length > 0;
-    return j.has_more;
-  }
-  let repoCount = -1;
-  async function tick() {
-    try {
-      const repos = await loadRepos();
-      if (repos.length !== repoCount) { repoCount = repos.length; }
-      while (await poll()) {}
-      $("dot").className = "live"; $("status").textContent = "live · " + repos.length + (repos.length === 1 ? " repo" : " repos");
-      for (const w of document.querySelectorAll(".when")) w.textContent = ago(w.dataset.ts);
-      setTimeout(tick, document.hidden ? 8000 : 2000);
-    } catch (err) {
-      $("dot").className = "bad"; $("status").textContent = err.message;
-      if (!err.fatal) setTimeout(tick, 5000);
+
+  $("leave").addEventListener("click", async () => {
+    try { await fetch("/v1/viewer/logout", { method: "POST", headers: { ...H, "x-weft-feed": "1" }, credentials: "same-origin" }); } catch (e) {}
+    location.reload();
+  });
+
+  let alive = true;
+  function run(space) {
+    let names = {}; let cursor = null; let filter = null; const shown = new Set();
+    const short = (repo) => names[repo] ?? (space && repo.startsWith(space + "-") ? repo.slice(space.length + 1) : repo);
+    const ago = (ts) => { const s = Math.max(0, (Date.now() - Date.parse(ts)) / 1000); return s < 60 ? Math.floor(s) + "s ago" : s < 3600 ? Math.floor(s / 60) + "m ago" : new Date(ts).toLocaleString(); };
+    function render(e) {
+      const li = document.createElement("li"); li.className = "ev"; li.dataset.repo = e.repo;
+      const status = e.status || "";
+      const who = e.agent || (e.actor && e.actor.id) || "system";
+      const diags = (e.diagnostics || []).map((d) => {
+        const at = d.range && d.range.start ? ":" + (d.range.start.line + 1) : "";
+        const where = " " + esc(d.file || "") + at + (d.caused_by_agent ? " · caused by " + esc(d.caused_by_agent) + " (#" + esc(d.caused_by_seq) + ")" : "");
+        return '<div class="diag ' + esc(d.severity === "warning" ? "warning" : "") + '"><span class="code">' + esc(d.code) + "</span>" + where + "\\n" + esc(d.message) + "</div>";
+      }).join("");
+      const files = (e.files || []).slice(0, 6).join("  ") + ((e.files || []).length > 6 ? "  …" : "");
+      li.innerHTML = '<div class="seq">#' + esc(e.seq) + '</div><div class="line"><span class="agent">' + esc(who) + '</span><span class="kind">' + esc(e.kind) + "</span>" +
+        (status ? '<span class="badge ' + esc(status) + '">' + esc(status) + "</span>" : "") + '<span class="repo">' + esc(short(e.repo)) + '</span><span class="when" data-ts="' + esc(e.ts) + '">' + esc(ago(e.ts)) + "</span></div>" +
+        (e.summary ? '<div class="sum">' + esc(e.summary) + "</div>" : "") + (files ? '<div class="files">' + esc(files) + "</div>" : "") + diags;
+      li.hidden = filter !== null && filter !== e.repo;
+      return li;
     }
+    function chips(repos) {
+      const box = $("repos"); box.innerHTML = "";
+      if (repos.length < 2) return;
+      const mk = (label, val) => { const b = document.createElement("button"); b.className = "chip" + (filter === val ? " on" : ""); b.textContent = label;
+        b.onclick = () => { filter = val; chips(repos); for (const li of $("events").children) li.hidden = filter !== null && filter !== li.dataset.repo; }; box.appendChild(b); };
+      mk("all", null); for (const r of repos) mk(short(r.repo), r.repo);
+    }
+    const ended = () => Object.assign(new Error("pairing ended"), { ended: true });
+    async function loadRepos() {
+      const r = await get("/v1/repos");
+      if (r.status === 401) throw ended();
+      if (!r.ok) throw new Error("gateway " + r.status);
+      const repos = (await r.json()).repos || [];
+      chips(repos);
+      return repos;
+    }
+    async function poll() {
+      const q = cursor ? "?after=" + encodeURIComponent(cursor) + "&limit=200" : "?tail=1&limit=100";
+      const r = await get("/v1/feed" + q);
+      if (r.status === 401) throw ended();
+      if (!r.ok) throw new Error("gateway " + r.status);
+      const j = await r.json();
+      const list = $("events");
+      for (const e of j.events || []) { const k = e.repo + "#" + e.seq; if (shown.has(k)) continue; shown.add(k); list.insertBefore(render(e), list.firstChild); }
+      if (j.cursor) cursor = j.cursor;
+      $("empty").hidden = list.children.length > 0;
+      return j.has_more;
+    }
+    async function tick() {
+      if (!alive) return;
+      try {
+        const repos = await loadRepos();
+        while (await poll()) {}
+        $("dot").className = "live"; $("status").textContent = "live · " + repos.length + (repos.length === 1 ? " repo" : " repos");
+        for (const w of document.querySelectorAll(".when")) w.textContent = ago(w.dataset.ts);
+        setTimeout(tick, document.hidden ? 8000 : 2000);
+      } catch (err) {
+        if (err.ended) { alive = false; showPair("This browser's pairing ended (unpaired, expired, or the space was deleted). Pair it again to keep watching."); return; }
+        $("dot").className = "bad"; $("status").textContent = err.message;
+        setTimeout(tick, 5000);
+      }
+    }
+    tick();
   }
-  tick();
+
+  start();
 })();
 </script>
 </body>

@@ -19,6 +19,7 @@ vi.mock("../src/gateways", async (orig) => ({
 
 import { HOSTED_URL, kindOf, loadState, type CliState } from "../src/gateways";
 import { chooseGateway, KEPT_HOSTED, main, parseArgs } from "../src/main";
+import { pairingStub } from "./pairing-stub";
 
 const opts = (o: Partial<{ local: boolean; hosted: boolean; url: string }> = {}) => ({ local: false, hosted: false, ...o });
 const empty: CliState = { gateways: {} };
@@ -77,6 +78,7 @@ function fakeGateway(): { server: Server; spaces: () => number; hits: string[] }
   const spaces = new Map<string, Set<string>>();
   const tokens = new Map<string, { id: string; space: string; kind: string }>();
   const hits: string[] = [];
+  const pairing = pairingStub();
   let n = 0;
   const server = createServer(async (req, res) => {
     let body = "";
@@ -94,8 +96,11 @@ function fakeGateway(): { server: Server; spaces: () => number; hits: string[] }
       tokens.set(`weft_owner_${n}`, { id: `tok_o${n}`, space: id, kind: "owner" });
       return send(201, { type: "space", space: { id, created_at: new Date().toISOString() }, token: `weft_owner_${n}` });
     }
-    const t = tokens.get((req.headers.authorization ?? "").replace(/^Bearer /, ""));
+    const bearer = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+    if (/^\/v1\/repos\/[^/]+\/events$/.test(u.pathname) && pairing.accepts(bearer)) return send(200, { type: "events", events: [], head_seq: 0, has_more: false });
+    const t = tokens.get(bearer);
     if (!t) return send(401, { type: "error", error: { code: "unauthorized", message: "invalid token" } });
+    if (pairing.handle(req.method!, u.pathname, body, t.space, `http://${req.headers.host}`, send)) return;
     if (u.pathname === "/v1/space" && req.method === "GET") return send(200, { space: { id: t.space, repos: [], tokens: tokens.size } });
     if (u.pathname === "/v1/space/repos") {
       const name = JSON.parse(body).name as string;
@@ -175,7 +180,8 @@ describe("weft with no flags: local by default, existing hosted users keep their
     expect(hostedGw.hits).toEqual([]);
     const out = logs.join("\n");
     expect(out).toContain("local space");
-    expect(out).toContain(`${local.url}/feed#t=`);
+    expect(out).toContain(`${local.url}/feed?space=`);
+    expect(out).not.toContain("#t=");
     expect(out).not.toContain(KEPT_HOSTED);
     expect(loadState().default).toBeUndefined();
     expect(JSON.parse(readFileSync(join(repo, ".claude/settings.local.json"), "utf8")).hooks).toBeTruthy();

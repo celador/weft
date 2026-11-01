@@ -13,7 +13,7 @@ other, and stop if the first one fails:
    the user for permission first.
 2. `node "${CLAUDE_PLUGIN_ROOT}/scripts/weft-hook.mjs" adopt claude-code`
 
-Then tell the user, briefly: Weft is on in this checkout; the live feed link printed by step 1
-(private: anyone with the link can read the feed); and that each other agent should work in its
-own checkout (`npx @celador/weft add` makes another git worktree). Do not repeat the feed key
-anywhere else.
+Then tell the user, briefly: Weft is on in this checkout; the live feed address printed by step 1,
+with its one-time pairing code (the address has no key in it; the page asks for the code once and
+pairs that browser; `npx @celador/weft pair` prints a new code for another device); and that each
+other agent should work in its own checkout (`npx @celador/weft add` makes another git worktree).

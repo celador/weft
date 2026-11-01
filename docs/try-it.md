@@ -26,7 +26,7 @@ Cloudflare's `wrangler` once into `~/.config/weft/tools`) and:
    CLI, GitHub Copilot CLI, OpenCode, Gemini CLI, Antigravity) to every checkout of the repo. With a single checkout it offers a
    second `git worktree` (`../<repo>-2`), so two agents can work side by side; with no agent
    installed it sets up a file watcher instead;
-3. prints your private **live feed** link and opens it.
+3. prints your **live feed** address and a one-time **pairing code**, and opens the address (the address carries no key; the page asks for the code once).
 
 ```
 ✓ created your local space spxxxxxxxxxx (127.0.0.1:7878; your edits stay on this machine)
@@ -35,8 +35,10 @@ Cloudflare's `wrangler` once into `~/.config/weft/tools`) and:
 ✓ Codex + Claude Code hooks in ~/code/shop (agent shop)
 ✓ Codex + Claude Code hooks in ~/code/shop-2 (agent shop-2)
 
-Live feed (on this machine; anyone with the link and access to this machine can read it)
-  http://127.0.0.1:7878/feed#t=weft_…
+Live feed (the address has no key in it; a browser pairs once with the code)
+  http://127.0.0.1:7878/feed?space=spxxxxxxxxxx
+  pairing code  K7M2P-9XQ4T  one use, expires in 10 minutes
+  more devices: npx @celador/weft pair · see or revoke them: npx @celador/weft viewers
 
 Next: start one agent per checkout, each in its own terminal:
   $ cd ~/code/shop && claude
@@ -112,7 +114,9 @@ The per-harness config files are in [packages/mcp/README.md](../packages/mcp/REA
 
 | Command | What it does |
 |---|---|
-| `npx @celador/weft status` | gateway, space, checkouts, recent events, the feed link |
+| `npx @celador/weft status` | gateway, space, checkouts, recent events, the feed address and a pairing code |
+| `npx @celador/weft pair` | a one-time code to pair another browser or phone with the live feed |
+| `npx @celador/weft viewers [revoke <id>\|--all]` | list the paired devices (label, created, last seen); unpair one or all |
 | `npx @celador/weft feed` | the live feed in your terminal |
 | `npx @celador/weft demo [dir]` | a two-file sample repo with two checkouts, set up, and the prompts that make two agents collide |
 | `npx @celador/weft add [name]` | another worktree for one more parallel agent |

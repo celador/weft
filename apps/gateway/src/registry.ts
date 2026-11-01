@@ -39,6 +39,11 @@ export class Registry extends DurableObject<RegistryEnv> {
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS tokens (id TEXT PRIMARY KEY, hash TEXT NOT NULL UNIQUE, grant_json TEXT NOT NULL, label TEXT, created_at TEXT NOT NULL, revoked_at TEXT)`,
     );
+    // Device sessions (paired viewers): kind = 'device', a sliding expiry, an absolute cap, last use.
+    // Plain tokens leave these NULL, which means "no expiry". verifyRaw reads them, so they exist
+    // before any token is checked.
+    const cols = this.sql.exec<{ name: string }>(`PRAGMA table_info(tokens)`).toArray().map((c) => c.name);
+    for (const col of ["kind", "expires_at", "hard_expires_at", "last_seen_at"]) if (!cols.includes(col)) this.sql.exec(`ALTER TABLE tokens ADD COLUMN ${col} TEXT`);
   }
 
   async createRepo(init: CoordinatorInit): Promise<{ created: boolean; repo: RepoEntry } | { error: string }> {
@@ -104,8 +109,25 @@ export class Registry extends DurableObject<RegistryEnv> {
 
   private async verifyRaw(token: string): Promise<Grant | null> {
     const h = await sha256Hex(token);
-    const r = this.sql.exec<{ grant_json: string }>(`SELECT grant_json FROM tokens WHERE hash = ? AND revoked_at IS NULL`, h).toArray()[0];
-    return r ? (JSON.parse(r.grant_json) as Grant) : null;
+    const r = this.sql
+      .exec<{ id: string; grant_json: string; kind: string | null; expires_at: string | null; hard_expires_at: string | null; last_seen_at: string | null }>(
+        `SELECT id, grant_json, kind, expires_at, hard_expires_at, last_seen_at FROM tokens WHERE hash = ? AND revoked_at IS NULL`,
+        h,
+      )
+      .toArray()[0];
+    if (!r) return null;
+    const now = Date.now();
+    if (r.expires_at && Date.parse(r.expires_at) <= now) return null;
+    if (r.kind === "device") {
+      // Sliding expiry: a device that keeps using the feed stays paired, up to the absolute cap.
+      // Written at most once a minute (the feed page polls every 2 s).
+      if (!r.last_seen_at || now - Date.parse(r.last_seen_at) >= TOUCH_EVERY_MS) {
+        const hard = r.hard_expires_at ? Date.parse(r.hard_expires_at) : Infinity;
+        const exp = new Date(Math.min(now + SESSION_TTL_MS, hard)).toISOString();
+        this.sql.exec(`UPDATE tokens SET last_seen_at = ?, expires_at = ? WHERE id = ?`, new Date(now).toISOString(), exp, r.id);
+      }
+    }
+    return JSON.parse(r.grant_json) as Grant;
   }
 
   async listTokens(): Promise<TokenInfo[]> {
@@ -131,8 +153,8 @@ export class Registry extends DurableObject<RegistryEnv> {
   // POST /v1/spaces mints a space; its owner token can only create repos named
   // `<space>-<name>` and mint tokens bound to those repos. Every token minted for a space
   // carries `space` in its grant (rate limits) and in the `space` column (quota + revoke).
-  // A viewer token's repo list is expanded at verify time to the space's current repos, so
-  // a feed link keeps working as repos are added, and never sees another space's repo.
+  // A paired device's repo list is expanded at verify time to the space's current repos, so
+  // the feed keeps working as repos are added, and never sees another space's repo.
 
   private spacesReady = false;
 
@@ -150,6 +172,9 @@ export class Registry extends DurableObject<RegistryEnv> {
     }
     this.sql.exec(`DROP TABLE IF EXISTS signup_counts`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+    // One-time pairing codes for the feed page: stored as salted hashes, deleted on use or expiry.
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS pairings (id TEXT PRIMARY KEY, space TEXT NOT NULL, code_hash TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)`);
+    this.sql.exec(`CREATE INDEX IF NOT EXISTS pairings_space ON pairings(space)`);
     // Per-day signup counters keyed by a daily-rotating HMAC of the network address (spaces.ts
     // networkKey); deleted within 48 hours (pruneSignupCounters, also on the alarm).
     this.sql.exec(`CREATE TABLE IF NOT EXISTS signup_counters (day TEXT NOT NULL, net_key TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, net_key))`);
@@ -168,10 +193,24 @@ export class Registry extends DurableObject<RegistryEnv> {
     }
     this.sql.exec(`CREATE INDEX IF NOT EXISTS repos_space ON repos(space)`);
     this.sql.exec(`CREATE INDEX IF NOT EXISTS tokens_space ON tokens(space)`);
+    this.retireViewerLinks();
     this.spacesReady = true;
     // Spaces the owner deleted before real erasure existed (status 'deleted') and erasures that were
     // interrupted ('erasing') still hold data: erase them from the alarm, shortly after this wakes.
     if (this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM spaces WHERE status IN ('erasing', 'deleted')`).one().n > 0) void this.scheduleAlarmAt(Date.now() + 1_000);
+  }
+
+  /**
+   * Migration, once per Registry: the long-lived `viewer` tokens that used to ride in `/feed#t=...`
+   * are revoked. A forwarded or screenshotted link of that kind carried a bearer that never
+   * expired; from here on the feed is read by paired devices (expiring, revocable sessions).
+   */
+  private retireViewerLinks(): void {
+    const done = this.sql.exec<{ value: string }>(`SELECT value FROM settings WHERE key = 'viewer_links_retired'`).toArray()[0];
+    if (done) return;
+    const now = new Date().toISOString();
+    this.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE revoked_at IS NULL AND kind IS NULL AND json_extract(grant_json, '$.role') = 'viewer'`, now);
+    this.sql.exec(`INSERT INTO settings (key, value) VALUES ('viewer_links_retired', ?)`, now);
   }
 
   /**
@@ -264,11 +303,11 @@ export class Registry extends DurableObject<RegistryEnv> {
     return { id: r.id, status: "active", created_at: r.created_at, ...(r.label ? { label: r.label } : {}) };
   }
 
-  async spaceInfo(space: string): Promise<(SpaceInfo & { repos: Array<{ name: string; repo: string; created_at: string }>; tokens: number }) | undefined> {
+  async spaceInfo(space: string): Promise<(SpaceInfo & { repos: Array<{ name: string; repo: string; created_at: string }>; tokens: number; devices: number }) | undefined> {
     const s = this.activeSpace(space);
     if (!s) return undefined;
-    const tokens = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM tokens WHERE space = ? AND revoked_at IS NULL`, space).one().n;
-    return { ...s, repos: this.spaceRepos(space), tokens };
+    const tokens = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM tokens WHERE space = ? AND revoked_at IS NULL AND kind IS NOT 'device'`, space).one().n;
+    return { ...s, repos: this.spaceRepos(space), tokens, devices: this.deviceRows(space).length };
   }
 
   async spaceCreateRepo(space: string, name: string, maxRepos: number): Promise<{ created: boolean; name: string; repo: string } | { error: string; code: "invalid" | "quota" | "gone" }> {
@@ -295,26 +334,24 @@ export class Registry extends DurableObject<RegistryEnv> {
 
   async spaceIssueToken(
     space: string,
-    spec: { kind: "agent" | "system" | "viewer"; repo?: string; agent?: string; label?: string },
+    spec: { kind: "agent" | "system"; repo?: string; agent?: string; label?: string },
     maxTokens: number,
   ): Promise<{ token: string; info: TokenInfo } | { error: string; code: "invalid" | "quota" | "gone" | "repo" }> {
     if (!this.activeSpace(space)) return { error: "space not found", code: "gone" };
-    const n = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM tokens WHERE space = ? AND revoked_at IS NULL`, space).one().n;
+    const n = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM tokens WHERE space = ? AND revoked_at IS NULL AND kind IS NOT 'device'`, space).one().n;
     if (n >= maxTokens) return { error: `a space holds at most ${maxTokens} active tokens; run \`npx @celador/weft uninstall\` in checkouts you no longer use`, code: "quota" };
-    let grant: SpaceGrant;
     const id = `tok_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
-    if (spec.kind === "viewer") {
-      grant = { id, principal: `space:${space}:viewer`, scopes: ["observe"], repos: [], space, role: "viewer" };
-    } else {
-      const repo = spec.repo ?? "";
-      if (!this.spaceRepos(space).some((r) => r.repo === repo)) return { error: `repo ${repo} not found in this space`, code: "repo" };
-      if (spec.kind === "agent") {
-        if (!spec.agent || !AGENT_ID.test(spec.agent)) return { error: "agent must be 1-64 chars of letters, digits, '.', '_' or '-'", code: "invalid" };
-        grant = { id, principal: spec.agent, scopes: ["agent", "observe"], repos: [repo], agent: spec.agent, space, role: "agent" };
-      } else if (spec.kind === "system") {
-        grant = { id, principal: `space:${space}:lander`, scopes: ["system", "observe"], repos: [repo], space, role: "system" };
-      } else return { error: "kind must be agent, system or viewer", code: "invalid" };
-    }
+    // The copyable feed link is gone: people read the feed as paired devices (pairingCreate / deviceCreate).
+    if ((spec.kind as string) === "viewer") return { error: "viewer links were retired: pair a device instead (`npx @celador/weft pair`), or update the CLI (`npx @celador/weft@latest`)", code: "invalid" };
+    const repo = spec.repo ?? "";
+    if (!this.spaceRepos(space).some((r) => r.repo === repo)) return { error: `repo ${repo} not found in this space`, code: "repo" };
+    let grant: SpaceGrant;
+    if (spec.kind === "agent") {
+      if (!spec.agent || !AGENT_ID.test(spec.agent)) return { error: "agent must be 1-64 chars of letters, digits, '.', '_' or '-'", code: "invalid" };
+      grant = { id, principal: spec.agent, scopes: ["agent", "observe"], repos: [repo], agent: spec.agent, space, role: "agent" };
+    } else if (spec.kind === "system") {
+      grant = { id, principal: `space:${space}:lander`, scopes: ["system", "observe"], repos: [repo], space, role: "system" };
+    } else return { error: "kind must be agent or system", code: "invalid" };
     const token = randomToken();
     const created_at = new Date().toISOString();
     const label = spec.label?.slice(0, 120) ?? null;
@@ -335,6 +372,7 @@ export class Registry extends DurableObject<RegistryEnv> {
     const now = new Date().toISOString();
     const n = this.sql.exec(`UPDATE spaces SET status = 'suspended', deleted_at = ? WHERE id = ? AND status = 'active'`, now, space).rowsWritten;
     this.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE space = ? AND revoked_at IS NULL`, now, space);
+    this.sql.exec(`DELETE FROM pairings WHERE space = ?`, space);
     return n > 0;
   }
 
@@ -364,6 +402,7 @@ export class Registry extends DurableObject<RegistryEnv> {
     if (row.status === "erased") return { space, status: "erased", already_erased: true, erased: { repos: [], events: 0, tokens: 0 } };
     this.sql.exec(`UPDATE spaces SET status = 'erasing' WHERE id = ?`, space);
     this.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE space = ? AND revoked_at IS NULL`, new Date().toISOString(), space);
+    this.sql.exec(`DELETE FROM pairings WHERE space = ?`, space); // open pairing codes die with the space
     const repos = this.erasableRepos(space);
     const results = await Promise.allSettled(repos.map((repo) => this.env.WEFT_REPO.get(this.env.WEFT_REPO.idFromName(repo)).erase()));
     const failed = results.filter((r) => r.status === "rejected").length;
@@ -495,12 +534,135 @@ export class Registry extends DurableObject<RegistryEnv> {
 
   /** verify() plus space semantics: suspended/deleted spaces and `off` mode refuse; viewers see the space's current repos. */
   async verifySpace(token: string): Promise<SpaceGrant | null> {
+    this.ensureSpaces(); // runs the viewer-link migration before any token is checked
     const g = (await this.verifyRaw(token)) as SpaceGrant | null;
     if (!g || !g.space) return g;
     if (!this.activeSpace(g.space)) return null;
     if ((await this.hostedMode()) === "off") return null;
-    if (g.role === "viewer") return { ...g, repos: this.spaceRepos(g.space).map((r) => r.repo) };
+    if (g.role === "viewer" || g.role === "device") return { ...g, repos: this.spaceRepos(g.space).map((r) => r.repo) };
     return g;
+  }
+
+  // ------------------------------------------------------------------ paired devices (the feed)
+  //
+  // The feed is read by *devices* the owner paired, not by a link. `pairingCreate` (owner) mints a
+  // short one-time code; `pairingExchange` (no auth, rate limited in spaces.ts) trades it for a
+  // device session: a random token that only ever travels in an HttpOnly cookie, expires after
+  // SESSION_TTL_MS without use (sliding) and SESSION_HARD_MS in any case, and reads one space.
+
+  private hostedModeNow(): HostedMode {
+    const v = this.sql.exec<{ value: string }>(`SELECT value FROM settings WHERE key = 'hosted'`).toArray()[0]?.value;
+    return v === "off" || v === "no-signups" ? v : "open";
+  }
+
+  /** Active (unrevoked, unexpired) device sessions of a space. Also drops rows that ended a week ago. */
+  private deviceRows(space: string): DeviceInfo[] {
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - DEVICE_KEEP_MS).toISOString();
+    this.sql.exec(`DELETE FROM tokens WHERE kind = 'device' AND (revoked_at < ? OR expires_at < ?)`, cutoff, cutoff);
+    return this.sql
+      .exec<{ id: string; label: string | null; created_at: string; last_seen_at: string | null; expires_at: string; hard_expires_at: string }>(
+        `SELECT id, label, created_at, last_seen_at, expires_at, hard_expires_at FROM tokens
+         WHERE space = ? AND kind = 'device' AND revoked_at IS NULL AND expires_at > ? ORDER BY created_at`,
+        space,
+        now.toISOString(),
+      )
+      .toArray()
+      .map((r) => ({ id: r.id, label: r.label ?? "", created_at: r.created_at, last_seen_at: r.last_seen_at ?? r.created_at, expires_at: r.expires_at, hard_expires_at: r.hard_expires_at }));
+  }
+
+  async devices(space: string): Promise<DeviceInfo[]> {
+    this.ensureSpaces();
+    return this.activeSpace(space) ? this.deviceRows(space) : [];
+  }
+
+  async deviceInfo(space: string, id: string): Promise<DeviceInfo | undefined> {
+    this.ensureSpaces();
+    return this.activeSpace(space) ? this.deviceRows(space).find((d) => d.id === id) : undefined;
+  }
+
+  async deviceRevoke(space: string, id: string): Promise<boolean> {
+    this.ensureSpaces();
+    return this.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE id = ? AND space = ? AND kind = 'device' AND revoked_at IS NULL`, new Date().toISOString(), id, space).rowsWritten > 0;
+  }
+
+  async deviceRevokeAll(space: string): Promise<number> {
+    this.ensureSpaces();
+    const n = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM tokens WHERE space = ? AND kind = 'device' AND revoked_at IS NULL`, space).one().n;
+    this.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE space = ? AND kind = 'device' AND revoked_at IS NULL`, new Date().toISOString(), space);
+    return n;
+  }
+
+  /** Insert a device session. Synchronous: callers have already hashed the token. */
+  private insertDevice(space: string, tokenHash: string, label: string): DeviceInfo {
+    const id = `dev_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const now = Date.now();
+    const created_at = new Date(now).toISOString();
+    const expires_at = new Date(now + SESSION_TTL_MS).toISOString();
+    const hard_expires_at = new Date(now + SESSION_HARD_MS).toISOString();
+    const grant: SpaceGrant = { id, principal: `space:${space}:device`, scopes: ["observe"], repos: [], space, role: "device" };
+    this.sql.exec(
+      `INSERT INTO tokens (id, hash, grant_json, label, created_at, space, kind, expires_at, hard_expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, 'device', ?, ?, ?)`,
+      id,
+      tokenHash,
+      JSON.stringify(grant),
+      label,
+      created_at,
+      space,
+      expires_at,
+      hard_expires_at,
+      created_at,
+    );
+    return { id, label, created_at, last_seen_at: created_at, expires_at, hard_expires_at };
+  }
+
+  /** A device session for the owner's own machine (the CLI): no code, the owner token vouches for it. */
+  async deviceCreate(space: string, label: string, maxDevices: number): Promise<{ token: string; device: DeviceInfo } | { error: string; code: "gone" | "quota" }> {
+    const token = randomDeviceToken();
+    const hash = await sha256Hex(token);
+    this.ensureSpaces();
+    if (!this.activeSpace(space)) return { error: "space not found", code: "gone" };
+    if (this.deviceRows(space).length >= maxDevices) return { error: `a space holds at most ${maxDevices} paired devices; revoke some with \`npx @celador/weft viewers revoke --all\``, code: "quota" };
+    return { token, device: this.insertDevice(space, hash, cleanLabel(label, "device")) };
+  }
+
+  /** A fresh one-time pairing code for the feed page (10 minutes, one use). At most 3 are outstanding. */
+  async pairingCreate(space: string): Promise<{ code: string; expires_at: string; expires_in: number } | { error: string; code: "gone" }> {
+    const code = pairingCode();
+    const hash = await sha256Hex(pairingSalt(space, normalizeCode(code)));
+    this.ensureSpaces();
+    if (!this.activeSpace(space)) return { error: "space not found", code: "gone" };
+    const now = Date.now();
+    this.sql.exec(`DELETE FROM pairings WHERE expires_at <= ?`, new Date(now).toISOString());
+    const open = this.sql.exec<{ id: string }>(`SELECT id FROM pairings WHERE space = ? ORDER BY created_at DESC`, space).toArray();
+    for (const old of open.slice(MAX_OPEN_PAIRINGS - 1)) this.sql.exec(`DELETE FROM pairings WHERE id = ?`, old.id);
+    const expires_at = new Date(now + PAIRING_TTL_MS).toISOString();
+    this.sql.exec(`INSERT INTO pairings (id, space, code_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`, `pr_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`, space, hash, new Date(now).toISOString(), expires_at);
+    return { code, expires_at, expires_in: PAIRING_TTL_MS / 1000 };
+  }
+
+  /**
+   * Trade a pairing code for a device session. The code is compared in constant time against every
+   * open code of the space (no early exit), and consumed by deleting its row in the same synchronous
+   * step that found it, so two requests can never both win the same code. Every failure looks the same.
+   */
+  async pairingExchange(req: { space: string; code: string; label: string; maxDevices: number }): Promise<{ token: string; device: DeviceInfo } | { error: string; code: "invalid" | "quota" | "closed" }> {
+    const hash = await sha256Hex(pairingSalt(req.space, normalizeCode(req.code)));
+    const token = randomDeviceToken(); // minted whether or not the code matches: same work either way
+    const tokenHash = await sha256Hex(token);
+    // ---- no await below this line: select, compare, consume and insert happen in one step
+    this.ensureSpaces();
+    const nowIso = new Date().toISOString();
+    const rows = this.sql.exec<{ id: string; code_hash: string }>(`SELECT id, code_hash FROM pairings WHERE space = ? AND expires_at > ?`, req.space, nowIso).toArray();
+    let hit: string | undefined;
+    for (const r of rows.length ? rows : [{ id: "", code_hash: "0".repeat(64) }]) if (constantTimeEqual(r.code_hash, hash) && r.id) hit = r.id;
+    const space = this.activeSpace(req.space);
+    if (!hit || !space) return { error: "that pairing code is not valid or has expired", code: "invalid" };
+    if (this.hostedModeNow() === "off") return { error: "hosted spaces are switched off on this gateway", code: "closed" };
+    if (this.deviceRows(req.space).length >= req.maxDevices) return { error: `this space already has ${req.maxDevices} paired devices; revoke one with \`npx @celador/weft viewers revoke <id>\` first`, code: "quota" };
+    if (this.sql.exec(`DELETE FROM pairings WHERE id = ?`, hit).rowsWritten !== 1) return { error: "that pairing code is not valid or has expired", code: "invalid" };
+    this.sql.exec(`DELETE FROM pairings WHERE expires_at <= ?`, nowIso);
+    return { token, device: this.insertDevice(req.space, tokenHash, cleanLabel(req.label, "browser")) };
   }
 }
 
@@ -510,7 +672,60 @@ export type SpaceInfo = { id: string; status: "active" | "deleted" | "suspended"
 /** What an erasure removed. After it, the Registry keeps only the tombstone: space id, status 'erased', deleted_at, created_at (date only). */
 export type EraseReport = { space: string; status: "erased"; already_erased: boolean; erased: { repos: string[]; events: number; tokens: number } };
 /** A grant minted for a hosted space. `role` owner = the space API only (no WCP scopes). */
-export type SpaceGrant = Grant & { space?: string; role?: "owner" | "agent" | "system" | "viewer" };
+export type SpaceGrant = Grant & { space?: string; role?: "owner" | "agent" | "system" | "viewer" | "device" };
+/** A paired device (a browser, or the owner's CLI): what `weft viewers` lists. */
+export type DeviceInfo = { id: string; label: string; created_at: string; last_seen_at: string; expires_at: string; hard_expires_at: string };
+
+/** A device session lives this long after its last use (sliding)... */
+export const SESSION_TTL_MS = 7 * 86_400_000;
+/** ...and never longer than this from pairing: after that the device pairs again. */
+export const SESSION_HARD_MS = 30 * 86_400_000;
+export const PAIRING_TTL_MS = 10 * 60_000;
+const TOUCH_EVERY_MS = 60_000;
+const DEVICE_KEEP_MS = 7 * 86_400_000;
+const MAX_OPEN_PAIRINGS = 3;
+
+// 31 symbols, no 0/O/1/I/L: easy to read off a terminal and type. 10 of them = 31^10 ~ 2^49.5.
+const CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+const CODE_LEN = 10;
+
+/** `XXXXX-XXXXX`, uniform over the alphabet (rejection sampling, no modulo bias). */
+function pairingCode(): string {
+  let out = "";
+  const limit = 256 - (256 % CODE_ALPHABET.length);
+  while (out.length < CODE_LEN) {
+    for (const b of crypto.getRandomValues(new Uint8Array(16))) {
+      if (b < limit && out.length < CODE_LEN) out += CODE_ALPHABET[b % CODE_ALPHABET.length];
+    }
+  }
+  return `${out.slice(0, 5)}-${out.slice(5)}`;
+}
+
+/** What the user typed -> the canonical code: case and separators do not matter. */
+export function normalizeCode(s: string): string {
+  return String(s).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 64);
+}
+
+const pairingSalt = (space: string, normalized: string) => `weft-pairing:${space}:${normalized}`;
+
+function constantTimeEqual(a: string, b: string): boolean {
+  let d = a.length ^ b.length;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) d |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  return d === 0;
+}
+
+function randomDeviceToken(): string {
+  const b = crypto.getRandomValues(new Uint8Array(32));
+  let bin = "";
+  for (const x of b) bin += String.fromCharCode(x);
+  return `weft_dev_${btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
+}
+
+/** A device label is shown to the owner in `weft viewers`: short, printable, no control characters. */
+function cleanLabel(s: unknown, fallback: string): string {
+  const t = typeof s === "string" ? s.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60) : "";
+  return t || fallback;
+}
 
 /** Per-day activity rows are kept this many UTC days (today included), then deleted. */
 export const ACTIVITY_DAYS = 90;

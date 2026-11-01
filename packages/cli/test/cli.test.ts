@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { detectHarnesses, HARNESSES, pruneHooks, startOrder } from "../src/adapters";
 import { DEMO_FILES, DEMO_PROMPTS, main, mcpArgs, nextNotes, parseArgs } from "../src/main";
 import { slug } from "../src/util";
+import { pairingStub } from "./pairing-stub";
 
 describe("parseArgs", () => {
   it("defaults to init and reads options", () => {
@@ -18,6 +19,12 @@ describe("parseArgs", () => {
     expect(cmd).toBe("init");
     expect(o).toMatchObject({ local: true, agents: 3, harness: ["claude-code", "codex"], open: false, yes: true });
     expect(parseArgs(["status"]).cmd).toBe("status");
+    expect(parseArgs(["pair"]).cmd).toBe("pair");
+    expect(parseArgs(["viewers"]).cmd).toBe("viewers");
+    const rv = parseArgs(["viewers", "revoke", "--all"]);
+    expect(rv.cmd).toBe("viewers");
+    expect(rv.o).toMatchObject({ all: true, positional: ["revoke"] });
+    expect(parseArgs(["viewers", "revoke", "dev_12"]).o.positional).toEqual(["revoke", "dev_12"]);
     expect(parseArgs(["add", "reviewer"]).o.positional).toEqual(["reviewer"]);
     expect(parseArgs(["deploy", "--domain", "weft.example.com"]).o.domain).toBe("weft.example.com");
     expect(parseArgs(["--harness", "antigravity"]).o.harness).toEqual(["antigravity"]);
@@ -91,6 +98,7 @@ type Tok = { id: string; kind: string; repo?: string; agent?: string; revoked?: 
 function fakeGateway() {
   const spaces = new Map<string, { repos: Set<string>; erased?: boolean }>();
   const tokens = new Map<string, Tok & { space: string }>();
+  const pairing = pairingStub();
   let n = 0;
   // how DELETE /v1/space answers: the real erasure report, an older gateway's 204, or a failure
   const del = { mode: "erase" as "erase" | "old" | "fail", calls: 0 };
@@ -112,7 +120,9 @@ function fakeGateway() {
       tokens.set(tok, { id: `tok_o${n}`, kind: "owner", space: id });
       return send(201, { type: "space", space: { id, created_at: new Date().toISOString() }, token: tok });
     }
+    if (/^\/v1\/repos\/[^/]+\/events$/.test(u.pathname) && pairing.accepts(auth)) return send(200, { type: "events", events: [], head_seq: 0, has_more: false });
     if (!t || t.revoked) return send(401, { type: "error", error: { code: "unauthorized", message: "invalid token" } });
+    if (pairing.handle(req.method!, u.pathname, body, t.space, `http://${req.headers.host}`, send)) return;
     const sp = spaces.get(t.space)!;
     if (u.pathname === "/v1/space" && req.method === "GET") return send(200, { space: { id: t.space, repos: [...sp.repos].map((r) => ({ repo: r, name: r.slice(13) })), tokens: tokens.size } });
     if (u.pathname === "/v1/space" && req.method === "DELETE") {
@@ -139,6 +149,7 @@ function fakeGateway() {
     }
     if (u.pathname === "/v1/space/tokens" && req.method === "POST") {
       const spec = JSON.parse(body);
+      if (spec.kind === "viewer") return send(400, { type: "error", error: { code: "invalid_message", message: "viewer links were retired" } });
       const tok = `weft_${spec.kind}_${++n}`;
       tokens.set(tok, { id: `tok_${n}`, ...spec, space: t.space });
       return send(201, { token: tok, info: { id: `tok_${n}`, principal: spec.agent ?? spec.kind } });
@@ -151,7 +162,7 @@ function fakeGateway() {
     if (/^\/v1\/repos\/[^/]+\/events$/.test(u.pathname)) return send(200, { type: "events", events: [], head_seq: 0, has_more: false });
     return send(404, { type: "error", error: { code: "not_found", message: u.pathname } });
   });
-  return { server, tokens, spaces, del };
+  return { server, tokens, spaces, del, pairing };
 }
 
 describe("weft (init / status / add / uninstall) against a stand-in gateway", () => {
@@ -198,10 +209,16 @@ describe("weft (init / status / add / uninstall) against a stand-in gateway", ()
     const pins = JSON.parse(readFileSync(join(base, "config", "pins.json"), "utf8")).checkouts;
     for (const dir of [repo, wt]) expect(pins[realpathSync(dir)]["claude-code"]).toEqual({ url, repo: "sp0000000001-shop", mode: "enforce" });
     expect(existsSync(join(base, "config", "runtime", "0.0.0-dev", ".pinned-hook-v1"))).toBe(true);
-    // no token is printed except the viewer link
+    // the feed address has no key in it; the one-time code is printed beside it, and no token is printed at all
     const out = logs.join("\n");
-    expect(out).toContain(`${url}/feed#t=weft_viewer_`);
-    expect(out).not.toMatch(/weft_(owner|agent)_/);
+    expect(out).toContain(`${url}/feed?space=sp0000000001`);
+    expect(out).toMatch(/pairing code\s+ABCDE-F+\d*/);
+    expect(out).not.toContain("#t=");
+    expect(out).not.toMatch(/weft_(owner|agent|viewer|dev)_/);
+    // the CLI's own read access is a device session, not a long-lived viewer key
+    const saved = JSON.parse(readFileSync(join(base, "config", "cli.json"), "utf8")) as { gateways: Record<string, { viewer?: string }> };
+    expect(saved.gateways[url]!.viewer).toMatch(/^weft_dev_/);
+    expect([...gw.tokens.values()].some((t) => t.kind === "viewer")).toBe(false);
     // .weft/ is git-ignored
     expect(execFileSync("git", ["-C", repo, "status", "--porcelain"], { encoding: "utf8" })).toBe("");
   });
@@ -269,6 +286,80 @@ describe("weft (init / status / add / uninstall) against a stand-in gateway", ()
     expect(out).toContain("sp0000000001");
     expect(out).toContain("shop-reviewer");
     expect(out).not.toMatch(/weft_(owner|agent)_/);
+  });
+
+  it("status prints the feed address with no key in it, and a fresh one-time pairing code", async () => {
+    logs.length = 0;
+    const before = gw.pairing.codes.length;
+    expect(await main(["status", "--dir", repo])).toBe(0);
+    const out = logs.join("\n");
+    expect(out).toContain(`${url}/feed?space=sp0000000001`);
+    expect(out).toMatch(/pairing code\s+ABCDE-F+/);
+    expect(out).toContain("one use, expires in 10 minutes");
+    expect(out).not.toContain("#t=");
+    expect(gw.pairing.codes.length).toBe(before + 1);
+  });
+
+  it("pair prints a new code each time (and never a token); the space owner key is the only credential it uses", async () => {
+    const before = gw.pairing.codes.length;
+    logs.length = 0;
+    expect(await main(["pair", "--dir", repo])).toBe(0);
+    const first = logs.join("\n");
+    logs.length = 0;
+    expect(await main(["pair", "--dir", repo])).toBe(0);
+    const second = logs.join("\n");
+    expect(gw.pairing.codes.length).toBe(before + 2);
+    const code = (t: string) => /pairing code\s+(\S+)/.exec(t)![1];
+    expect(code(first)).not.toBe(code(second));
+    for (const t of [first, second]) {
+      expect(t).toContain(`${url}/feed?space=sp0000000001`);
+      expect(t).not.toMatch(/weft_(owner|agent|viewer|dev)_/);
+    }
+  });
+
+  it("viewers lists paired devices; revoke takes an id (or a unique prefix) or --all", async () => {
+    // a browser paired, as far as the stand-in is concerned
+    const now = new Date().toISOString();
+    gw.pairing.devices.push({ id: "dev_browser_1", label: "Chrome on macOS", created_at: now, last_seen_at: now, expires_at: new Date(Date.now() + 6 * 86_400_000).toISOString(), space: "sp0000000001" });
+    gw.pairing.devices.push({ id: "dev_browser_2", label: "Safari on iOS", created_at: now, last_seen_at: now, expires_at: new Date(Date.now() + 6 * 86_400_000).toISOString(), space: "sp0000000001" });
+    logs.length = 0;
+    expect(await main(["viewers", "--dir", repo])).toBe(0);
+    let out = logs.join("\n");
+    expect(out).toContain("dev_browser_1");
+    expect(out).toContain("Chrome on macOS");
+    expect(out).toContain("Safari on iOS");
+    expect(out).toMatch(/weft CLI on /); // this machine's own read session is a device too
+    expect(out).toMatch(/last seen/);
+
+    logs.length = 0;
+    expect(await main(["viewers", "revoke", "dev_browser_1", "--dir", repo])).toBe(0);
+    expect(logs.join("\n")).toContain("unpaired");
+    expect(gw.pairing.devices.find((d) => d.id === "dev_browser_1")!.revoked).toBe(true);
+    // unknown and ambiguous ids say what to do
+    await expect(main(["viewers", "revoke", "dev_nope", "--dir", repo])).rejects.toThrow(/no paired device dev_nope/);
+    await expect(main(["viewers", "revoke", "dev_", "--dir", repo])).rejects.toThrow(/matches \d+ devices/);
+    await expect(main(["viewers", "revoke", "--dir", repo])).rejects.toThrow(/device id or --all/);
+    await expect(main(["viewers", "frobnicate", "--dir", repo])).rejects.toThrow(/unknown viewers command/);
+
+    logs.length = 0;
+    expect(await main(["viewers", "revoke", "--all", "--dir", repo])).toBe(0);
+    expect(logs.join("\n")).toMatch(/unpaired \d+ devices?/);
+    expect(gw.pairing.devices.every((d) => d.revoked)).toBe(true);
+    logs.length = 0;
+    expect(await main(["viewers", "--dir", repo])).toBe(0);
+    expect(logs.join("\n")).toContain("none");
+  });
+
+  it("the CLI's own read session is re-paired by the next command when it was revoked or expired", async () => {
+    const saved = () => (JSON.parse(readFileSync(join(base, "config", "cli.json"), "utf8")) as { gateways: Record<string, { viewer?: string }> }).gateways[url]!.viewer;
+    const stale = saved();
+    expect(gw.pairing.accepts(stale!)).toBe(false); // revoked by the test above
+    logs.length = 0;
+    expect(await main(["status", "--dir", repo])).toBe(0);
+    expect(logs.join("\n")).toContain("recent events");
+    const fresh = saved();
+    expect(fresh).not.toBe(stale);
+    expect(gw.pairing.accepts(fresh!)).toBe(true);
   });
 
   it("uninstall removes hooks, git hooks and .weft/ from every checkout and revokes agent tokens", async () => {
