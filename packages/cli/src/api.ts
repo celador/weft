@@ -53,7 +53,7 @@ export class Api {
       });
     } catch (err) {
       const e = err as { cause?: { code?: string }; message?: string };
-      const w = new WeftError(`cannot reach the Weft gateway at ${this.url} (${e.cause?.code ?? e.message ?? String(err)})`, "Check your connection. To run without the hosted gateway: npx @celador/weft --local");
+      const w = new WeftError(`cannot reach the Weft gateway at ${this.url} (${e.cause?.code ?? e.message ?? String(err)})`, "Check your connection. To run on this machine instead: npx @celador/weft use local");
       (w as WeftError & { network?: boolean }).network = true;
       throw w;
     }

@@ -6,17 +6,17 @@ Red squiggles for teams of coding agents.
 npx @celador/weft
 ```
 
-Run it in any git repository. It needs no login and no account:
+Run it in any git repository. It needs no login and no account, and it runs locally: your code
+and diffs never leave your machine.
 
-1. It creates a **free hosted space** for you on Weft's Cloudflare gateway (Workers + Durable
-   Objects). The space's key stays on your machine (`~/.config/weft`, and `.weft/` in the repo,
-   which git ignores).
+1. It starts a **local space**: Weft's gateway (Workers + Durable Objects) running on your machine
+   with `wrangler dev`, state in `~/.config/weft/local`. The space's key stays on your machine
+   (`~/.config/weft`, and `.weft/` in the repo, which git ignores).
 2. It finds the coding agents you have installed (Claude Code, Codex, Copilot CLI, Cursor CLI,
    OpenCode, Gemini CLI, Antigravity) and adds Weft's hooks to every checkout of the repo. If the repo has only one
    checkout, it offers to add a second `git worktree` so two agents can work side by side.
    With none installed, it sets up a file watcher instead.
-3. It prints your **live feed** link and opens it. The feed is private: the link carries a
-   read-only key after the `#`.
+3. It prints your **live feed** link and opens it. The link carries a read-only key after the `#`.
 
 Then start one agent per checkout. Codex, Cursor, Copilot and Gemini ask once whether to trust
 the folder or its hooks: say yes, or the hooks do not run (the setup prints this for the agents
@@ -41,9 +41,9 @@ Website: <https://weft.mx> · Source: <https://github.com/celador/weft>
 | `npx @celador/weft watch` | report edits from tools without hooks (file watcher) |
 | `npx @celador/weft mcp` | MCP server for this checkout, for agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode): `{"command":"npx","args":["-y","@celador/weft","mcp","--dir","/path/to/checkout"]}` |
 | `npx @celador/weft uninstall [--space]` | remove Weft from this repo; `--space` also deletes the space |
-| `npx @celador/weft --local` | run the gateway on this machine (offline; nothing hosted) |
+| `npx @celador/weft --hosted` | opt in to a hosted space on Weft's Cloudflare gateway instead (usage-based pricing is coming) |
 | `npx @celador/weft deploy [--domain HOST]` | run your own gateway in your Cloudflare account |
-| `npx @celador/weft use hosted\|local\|URL` | choose the default gateway |
+| `npx @celador/weft use local\|hosted\|URL` | choose the default gateway (local unless you chose otherwise; `--local` is still accepted) |
 
 Options for the setup: `--agents N` (checkouts to coordinate), `--harness claude-code,codex`
 (only these), `--yes` (no questions), `--no-open`.
@@ -57,13 +57,14 @@ Options for the setup: `--agents N` (checkouts to coordinate), `--harness claude
   example `.claude/settings.local.json`. Both are added to `.git/info/exclude`, so nothing is
   committed.
 
-## Hosted, local, or your own
+## Local, hosted, or your own
 
-- **Hosted (default):** free, on Weft's Cloudflare account. Each space sees only its own repos.
-  Limits per space: 20 repos, 200 keys, 600 requests a minute. See
+- **Local (default):** the gateway runs on your machine with `wrangler dev` (installed once into
+  `~/.config/weft/tools`). Nothing leaves the machine.
+- **Hosted (`--hosted`, opt-in):** a hosted space on Weft's Cloudflare account; your edits are sent
+  there. Each space sees only its own repos. Usage-based pricing is coming. If you already have a
+  hosted space, `npx @celador/weft` keeps using it and tells you how to switch. See
   [docs/hosted.md](https://github.com/celador/weft/blob/main/docs/hosted.md).
-- **Local (`--local`):** the same gateway runs on your machine with `wrangler dev` (installed
-  once into `~/.config/weft/tools`). Nothing leaves the machine.
 - **Your Cloudflare (`deploy`):** logs in with wrangler (browser OAuth) and deploys the gateway
   Worker with two Durable Objects to your account. Only you can create spaces on it.
 

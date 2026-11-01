@@ -1,7 +1,7 @@
 // Which gateway the CLI talks to, and the space it holds there.
 //
-//   hosted  https://weft-hosted.elier.ai   free spaces, no account (default)
-//   local   http://127.0.0.1:8787          `weft --local`: the same gateway on this machine
+//   local   http://127.0.0.1:7878          the default: the same gateway on this machine, nothing leaves it
+//   hosted  https://weft-hosted.elier.ai   opt-in: `weft --hosted` or `weft use hosted`
 //   own     your Cloudflare account         `weft deploy`
 //
 // ~/.config/weft/cli.json (0600) keeps, per gateway URL, the space id and its owner and
@@ -136,7 +136,7 @@ export async function ensureSpace(api: Api, url: string, root: string, label: st
     } catch (e) {
       const code = (e as { code?: string }).code;
       if (code === "rate_limited" || code === "unavailable")
-        throw new WeftError(`the hosted gateway could not create a space: ${(e as Error).message}`, "Run your own instead: `npx @celador/weft --local` (this machine) or `npx @celador/weft deploy` (your Cloudflare account).");
+        throw new WeftError(`the hosted gateway could not create a space: ${(e as Error).message}`, "Run it on this machine instead: `npx @celador/weft use local` (the default for new projects), or `npx @celador/weft deploy` (your Cloudflare account).");
       throw e;
     }
     id = r.space.id;
@@ -161,7 +161,7 @@ export function feedLink(url: string, viewer: string): string {
   return `${url}/feed#t=${encodeURIComponent(viewer)}`;
 }
 
-// ------------------------------------------------------------------ local gateway (`--local`)
+// ------------------------------------------------------------------ local gateway (the default)
 
 /**
  * wrangler, installed once into ~/.config/weft/tools and run with the node running us (so a
@@ -179,7 +179,7 @@ function wranglerCmd(): { cmd: string; pre: string[] } {
     mkdirSync(tools, { recursive: true });
     if (!existsSync(join(tools, "package.json"))) writeFileSync(join(tools, "package.json"), '{ "private": true }\n');
     const npm = join(dirname(process.execPath), process.platform === "win32" ? "npm.cmd" : "npm");
-    const r = spawnSync(existsSync(npm) ? npm : "npm", ["install", "--no-audit", "--no-fund", "--loglevel=error", "--prefix", tools, WRANGLER], { stdio: ["ignore", "inherit", "inherit"], env: nodeEnv() });
+    const r = spawnSync(existsSync(npm) ? npm : "npm", ["install", "--no-audit", "--no-fund", "--update-notifier=false", "--loglevel=error", "--prefix", tools, WRANGLER], { stdio: ["ignore", "inherit", "inherit"], env: nodeEnv() });
     if (r.status !== 0 || !existsSync(js)) throw new WeftError("installing wrangler failed", `Retry, or install it yourself: npm install --prefix ${tools} ${WRANGLER}`);
   }
   return { cmd: process.execPath, pre: [js] };

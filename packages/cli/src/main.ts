@@ -1,6 +1,7 @@
 // `npx @celador/weft`: one command from a git repo to coordinated coding agents.
 //
-//   weft [--local] [--url URL] [--agents N] [--harness a,b] [--repo NAME] [--yes] [--no-open]
+//   weft [--hosted] [--url URL] [--agents N] [--harness a,b] [--repo NAME] [--yes] [--no-open]
+//        (no flags = a gateway on this machine; --local is kept as an alias for that)
 //   weft demo [DIR]         a two-file sample repo (./weft-demo), set up, with the collision to try
 //   weft add [NAME]         another worktree (one per parallel agent), Weft installed
 //   weft status             gateway, space, checkouts, recent events, feed link
@@ -10,7 +11,7 @@
 //   weft mcp                stdio MCP server for this checkout (harnesses with MCP but no hooks)
 //   weft uninstall [--space] remove Weft from this repo's checkouts (and delete the space)
 //   weft deploy [--name N] [--domain HOST]   your own gateway on your Cloudflare account
-//   weft local stop          stop the gateway started by --local
+//   weft local stop          stop the local gateway
 //   weft use hosted|local|URL   choose the default gateway
 import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -18,11 +19,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { basename, dirname, join, resolve } from "node:path";
 import { Api, statusOf, type FeedEvent } from "./api";
 import { MCP, WATCHER, adapterBin, detectHarnesses, ensureRuntime, harnessName, HARNESSES, installAdapter, installedIn, removeAdapters, startOrder, type HarnessId } from "./adapters";
-import { deploy, ensureSpace, feedLink, hermesPointer, HOSTED_URL, HUMAN_TOKEN_FILE, kindOf, loadState, readPointer, saveState, sharedHumanToken, startLocal, stopLocal, writePointer, LOCAL_PORT, type HermesPointer } from "./gateways";
+import { deploy, ensureSpace, feedLink, hermesPointer, HOSTED_URL, HUMAN_TOKEN_FILE, kindOf, loadState, readPointer, saveState, sharedHumanToken, startLocal, stopLocal, writePointer, LOCAL_PORT, type CliState, type HermesPointer } from "./gateways";
 import { ask, c, configDir, git, info, mainCheckout, ok, openUrl, readJson, readSecret, slug, tilde, tryGit, VERSION, warn, WeftError, worktrees, writeJson } from "./util";
 
 type Opts = {
   local: boolean;
+  hosted: boolean;
   url?: string;
   agents?: number;
   harness?: HarnessId[];
@@ -37,7 +39,7 @@ type Opts = {
 };
 
 export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
-  const o: Opts = { local: false, yes: false, open: true, space: false, positional: [] };
+  const o: Opts = { local: false, hosted: false, yes: false, open: true, space: false, positional: [] };
   let cmd = "init";
   const known = new Set(["init", "demo", "add", "status", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "help", "version"]);
   for (let i = 0; i < argv.length; i++) {
@@ -48,6 +50,7 @@ export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
       return v;
     };
     if (a === "--local") o.local = true;
+    else if (a === "--hosted") o.hosted = true;
     else if (a === "--url") o.url = val().replace(/\/+$/, "");
     else if (a === "--agents") o.agents = Number(val());
     else if (a === "--harness") o.harness = val().split(",").map((s) => s.trim()) as HarnessId[];
@@ -64,6 +67,7 @@ export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
     else if (cmd === "init" && !o.positional.length && known.has(a)) cmd = a;
     else o.positional.push(a);
   }
+  if (o.local && o.hosted) throw new WeftError("--local and --hosted contradict each other", "Local is the default; add --hosted only to use a hosted space.");
   if (o.agents !== undefined && (!Number.isInteger(o.agents) || o.agents < 1 || o.agents > 8)) throw new WeftError("--agents must be 1-8");
   const ids = [...HARNESSES.map((h) => h.id), WATCHER.id];
   for (const h of o.harness ?? []) if (!ids.includes(h)) throw new WeftError(`unknown harness ${h}`, `Known: ${ids.join(", ")}`);
@@ -72,10 +76,12 @@ export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
 
 const HELP = `${c.bold("weft")} — red squiggles for teams of coding agents ${c.dim(`(v${VERSION})`)}
 
-${c.bold("npx @celador/weft")}            in a git repo: free hosted space, hooks for your agents, live feed
+${c.bold("npx @celador/weft")}            in a git repo: a gateway on this machine, hooks for your agents, live feed
+                              (runs locally by default: your code never leaves this machine)
   --agents N                  checkouts to coordinate (adds git worktrees next to the repo)
   --harness claude-code,codex only these harnesses (default: every one found on PATH)
-  --local                     run the gateway on this machine instead (offline, nothing hosted)
+  --hosted                    use a hosted space instead (opt-in; your edits go to weft-hosted.elier.ai)
+  --local                     the default, accepted for old scripts and docs
   --url URL                   use another Weft gateway
   --yes / --no-open           no questions / do not open the browser
 
@@ -91,7 +97,7 @@ ${c.bold("npx @celador/weft")}            in a git repo: free hosted space, hook
   uninstall [--space]         remove Weft from this repo (--space also deletes your space)
   deploy [--name N] [--domain HOST]
                               your own gateway on your Cloudflare account (wrangler login)
-  use hosted|local|URL        choose the default gateway
+  use local|hosted|URL        choose the default gateway (local unless you chose otherwise)
   local stop                  stop the local gateway
 
 Docs: https://github.com/celador/weft/blob/main/docs/try-it.md`;
@@ -183,6 +189,27 @@ export function nextNotes(order: Array<{ id: string; name: string; run: string; 
   return lines.join("\n");
 }
 
+export const KEPT_HOSTED = "Using your hosted space. Local is now the default for new projects: npx @celador/weft use local";
+
+export type GatewayChoice = { local?: true; url?: string; keptHosted?: true };
+
+/**
+ * Which gateway `weft` talks to. Local (a wrangler dev gateway on 127.0.0.1) is the default.
+ * In order: --local; --url / WEFT_URL; --hosted; the default saved by `weft use`; a gateway this
+ * repo or this machine already holds a space on (an existing hosted user keeps their space and
+ * is told how to switch); else local. Exported for tests.
+ */
+export function chooseGateway(o: Pick<Opts, "local" | "hosted" | "url">, envUrl: string | undefined, state: CliState, repoUrls: string[]): GatewayChoice {
+  if (o.local) return { local: true };
+  const explicit = o.url ?? envUrl;
+  if (explicit) return { url: explicit };
+  if (o.hosted) return { url: HOSTED_URL };
+  if (state.default) return kindOf(state.default) === "local" ? { local: true } : { url: state.default };
+  const kept = repoUrls.find((u) => kindOf(u) !== "local") ?? (state.gateways[HOSTED_URL]?.owner ? HOSTED_URL : undefined);
+  if (kept) return { url: kept, ...(kindOf(kept) === "hosted" ? { keptHosted: true as const } : {}) };
+  return { local: true };
+}
+
 async function init(o: Opts, addName?: string | true, fresh = false): Promise<string[]> {
   const cwd = resolve(o.dir ?? process.cwd());
   const top = gitRoot(cwd);
@@ -190,33 +217,37 @@ async function init(o: Opts, addName?: string | true, fresh = false): Promise<st
   console.log(`\n${c.bold("weft")} ${c.dim("·")} red ${c.squiggle("squiggles")} for teams of coding agents ${c.dim(`v${VERSION}`)}\n`);
 
   // 0. a Hermes adapter already reports this repo to a gateway: that is its feed. Use it rather than
-  // creating a second, empty repo in a hosted space (--url / WEFT_URL / --local still choose).
-  const hp = !fresh && !addName && !o.url && !process.env.WEFT_URL && !o.local && !readPointer(top) && !readPointer(main) ? hermesPointer([top, main]) : undefined;
+  // creating a second, empty space (--url / WEFT_URL / --local / --hosted still choose).
+  const hp = !fresh && !addName && !o.url && !process.env.WEFT_URL && !o.local && !o.hosted && !readPointer(top) && !readPointer(main) ? hermesPointer([top, main]) : undefined;
   if (hp) {
     await hermesInit(hp);
     return [];
   }
 
-  // 1. gateway
+  // 1. gateway: this machine unless asked (or already set up) otherwise
   const state = loadState();
-  let url = o.local ? undefined : (o.url ?? process.env.WEFT_URL ?? state.default ?? HOSTED_URL);
-  // --local, or `weft use local` as the default: start (or reuse) the gateway on this machine.
-  const localDefault = !o.url && !process.env.WEFT_URL && url !== undefined && url === state.default && kindOf(url) === "local";
-  if (o.local || localDefault) {
+  const repoUrls = [top, main].flatMap((d) => {
+    const p = readPointer(d);
+    return p && readSecret(join(d, ".weft", "space-token")) ? [p.url] : [];
+  });
+  const choice = chooseGateway(o, process.env.WEFT_URL, state, repoUrls);
+  let url = choice.url;
+  if (choice.local) {
     const l = await startLocal();
     url = l.url;
     const s = loadState();
     s.gateways[url] = { ...(s.gateways[url] ?? { kind: "local" }), admin: l.admin };
     saveState(s);
   }
+  if (choice.keptHosted) info(KEPT_HOSTED);
   const api = new Api(url!);
   await api.health();
 
   // 2. space + repo
   const name = slug(o.repo ?? basename(main), 48);
   const { gw, created } = await ensureSpace(api, url!, top, name);
-  const where = kindOf(url!) === "hosted" ? "free hosted space on Cloudflare" : kindOf(url!) === "local" ? "local space" : "space";
-  ok(`${created ? "created your" : "using your"} ${where} ${c.bold(gw.space!)} ${c.dim(`(${new URL(url!).host}; no account needed)`)}`);
+  const where = kindOf(url!) === "hosted" ? "hosted space on Cloudflare" : kindOf(url!) === "local" ? "local space" : "space";
+  ok(`${created ? "created your" : "using your"} ${where} ${c.bold(gw.space!)} ${c.dim(`(${new URL(url!).host}${kindOf(url!) === "local" ? "; your edits stay on this machine" : ""})`)}`);
   const r = await api.createRepo(gw.owner!, name);
   ok(`repo ${c.bold(name)} ${c.dim(r.created ? "(new)" : "(already there)")}`);
 
@@ -249,7 +280,7 @@ async function init(o: Opts, addName?: string | true, fresh = false): Promise<st
 
   // 5. feed + next steps
   const link = feedLink(url!, gw.viewer!);
-  console.log(`\n${c.bold("Live feed")} ${c.dim("(private to you; anyone with the link can read it)")}\n  ${c.cyan(link)}\n`);
+  console.log(`\n${c.bold("Live feed")} ${c.dim(kindOf(url!) === "local" ? "(on this machine; anyone with the link and access to this machine can read it)" : "(private to you; anyone with the link can read it)")}\n  ${c.cyan(link)}\n`);
   const order = startOrder(harnesses);
   const first = order[0]!;
   console.log(c.bold("Next:") + (checkouts.length > 1 ? " start one agent per checkout, each in its own terminal:" : " start your agent here:"));
@@ -545,7 +576,7 @@ function use(o: Opts): void {
   const s = loadState();
   s.default = url;
   saveState(s);
-  ok(`default gateway: ${url}. Run npx @celador/weft in a repo to move it there.`);
+  ok(`default gateway: ${target === "local" ? `local (${url})` : target === "hosted" ? `hosted (${url}); your edits go there` : url}. Run npx @celador/weft in a repo to move it there.`);
 }
 
 // ------------------------------------------------------------------ entry
@@ -595,7 +626,7 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     case "deploy": {
       const { url } = await deploy({ name: o.name ?? "weft-gateway", ...(o.domain ? { domain: o.domain } : {}) });
-      console.log(`\nNext: run ${c.bold("npx @celador/weft")} in a repo; it now uses ${url}. Back to the free hosted one: npx @celador/weft use hosted`);
+      console.log(`\nNext: run ${c.bold("npx @celador/weft")} in a repo; it now uses ${url}. Back to this machine: npx @celador/weft use local`);
       return 0;
     }
     case "local":
@@ -603,7 +634,7 @@ export async function main(argv: string[]): Promise<number> {
         console.log((await stopLocal()) ? "local gateway stopped" : "no local gateway was running");
         return 0;
       }
-      throw new WeftError("usage: weft local stop   (start it with: npx @celador/weft --local)");
+      throw new WeftError("usage: weft local stop   (it starts with: npx @celador/weft)");
     case "use":
       use(o);
       return 0;

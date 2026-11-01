@@ -16,10 +16,13 @@ class FakeGateway {
   feedStream = false;
   token = "tok";
 
+  private readonly t0 = Date.now() - 3_600_000;
+
   add(repo: string, n: number) {
     const rows = this.log.get(repo) ?? [];
     for (let i = 0; i < n; i++) {
-      const r = record({ seq: rows.length + 1, repo, ts: new Date(Date.UTC(2026, 9, 22, 12, 0, rows.length)).toISOString() });
+      // recent, not a fixed date: the feed header counts repos active in the last 7 days
+      const r = record({ seq: rows.length + 1, repo, ts: new Date(this.t0 + rows.length * 1000).toISOString() });
       rows.push(r);
       for (const s of this.sockets) if (s.live && s.repo === repo && s.readyState === 1) s.push({ type: "event", event: r });
     }

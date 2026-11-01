@@ -17,8 +17,8 @@ Claude Code:
 ```
 
 (or `/plugin marketplace add celador/weft`, then `/plugin install weft@weft`). Then, in your
-repo, run `/weft:setup`. It creates a free hosted space (no account, no sign-up), sets up a second
-git worktree for a second agent, and prints the live feed link. Weft works in the running session
+repo, run `/weft:setup`. It starts a Weft gateway on your machine (no account, no sign-up; your code never leaves it),
+sets up a second git worktree for a second agent, and prints the live feed link. Weft works in the running session
 without a restart. `/weft:status` shows what is connected.
 
 GitHub Copilot CLI:
@@ -31,10 +31,12 @@ npx @celador/weft --harness copilot      # in your repo
 
 ## What it runs, sends and fetches
 
-- `/weft:setup` runs `npx -y @celador/weft@0.2.0` (the Weft CLI from npm, pinned) in your repo.
-  The CLI creates a hosted space on `weft-hosted.elier.ai` (or uses the gateway you choose with
-  `--url`, including one you deploy to your own Cloudflare account with `npx @celador/weft
-  deploy`), writes `.weft/` in each checkout (git-excluded), installs the Weft adapter runtime in
+- `/weft:setup` runs `npx -y @celador/weft@0.3.0` (the Weft CLI from npm, pinned) in your repo.
+  The CLI starts a gateway on this machine (`127.0.0.1`; it installs Cloudflare's `wrangler` into
+  `~/.config/weft/tools` once). A hosted space on `weft-hosted.elier.ai` is opt-in (`--hosted`, or
+  `npx @celador/weft use hosted`); if you already had one, the CLI keeps using it. `--url` picks
+  another gateway, including one you deploy to your own Cloudflare account with `npx @celador/weft
+  deploy`. It writes `.weft/` in each checkout (git-excluded), installs the Weft adapter runtime in
   `~/.config/weft/runtime/`, and saves the space's keys in `.weft/` and `~/.config/weft/`.
 - The plugin's hooks (`hooks/claude.json`, `hooks/copilot.json`) run
   `scripts/weft-hook.mjs` on session start, prompt submit, before and after each edit tool, and
@@ -47,9 +49,9 @@ npx @celador/weft --harness copilot      # in your repo
   leaves every other setting alone.
 
 Uninstall: `npx @celador/weft uninstall` in the repo removes `.weft/` and the hooks it wrote
-(`--space` also deletes your hosted space); `/plugin uninstall weft` removes the plugin.
+(`--space` also deletes the space); `/plugin uninstall weft` removes the plugin.
 
-Privacy: <https://weft.mx/privacy> (what the hosted space stores and for how long) · Terms:
+Privacy: <https://weft.mx/privacy> (what a hosted space stores and for how long; local mode stores nothing off your machine) · Terms:
 <https://weft.mx/terms> · Support: <https://weft.mx/support>
 
 Source, protocol and docs: <https://github.com/celador/weft> · <https://weft.mx>. License: MIT.

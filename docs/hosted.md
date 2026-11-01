@@ -1,11 +1,13 @@
-# Hosted spaces, local mode, and your own gateway
+# Local mode, hosted spaces, and your own gateway
 
-`npx @celador/weft` talks to one Weft gateway. There are three kinds:
+`npx @celador/weft` talks to one Weft gateway. **It runs locally by default: your code and diffs
+stay on your machine.** Hosted team spaces are an option you choose; usage-based pricing for them
+is coming. There are three kinds:
 
 | | Where it runs | Who can create a space | Command |
 |---|---|---|---|
-| **Hosted** (default) | Weft's Cloudflare account, `https://weft-hosted.elier.ai` | anyone, no login | `npx @celador/weft` |
-| **Local** | this machine (`wrangler dev`, port 7878) | you | `npx @celador/weft --local` |
+| **Local** (default) | this machine (`wrangler dev`, port 7878) | you | `npx @celador/weft` |
+| **Hosted** (opt-in) | Weft's Cloudflare account, `https://weft-hosted.elier.ai` | anyone, no login | `npx @celador/weft --hosted` or `npx @celador/weft use hosted` |
 | **Your own** | your Cloudflare account | you (the admin key the CLI keeps) | `npx @celador/weft deploy` |
 
 All three run the same gateway code (`apps/gateway`): a Worker, one `RepoCoordinator` Durable
@@ -13,10 +15,14 @@ Object per repo (the ordered log) and one `Registry` Durable Object (repos and k
 
 ## Hosted spaces
 
+Hosted is opt-in: nothing is sent to it unless you pass `--hosted` or run `use hosted`. If you
+already had a hosted space (in `~/.config/weft/cli.json` or a repo's `.weft/space-token`),
+`npx @celador/weft` keeps using it and prints one line: "Using your hosted space. Local is now the
+default for new projects: npx @celador/weft use local".
+
 The hosted gateway is a separate Worker, `weft-hosted` (`[env.hosted]` in
 `apps/gateway/wrangler.toml`), with its own Durable Objects. It shares no storage with any team
-gateway. Hosting is free; it is paid for by the Cloudflare credits Weft won in the Cloudflare
-Git Competition.
+gateway. Usage-based pricing for hosted team spaces is coming; there is nothing to pay yet.
 
 **No account.** `POST /v1/spaces` (no auth) creates a space and returns its *owner key*. That key
 is the only credential: there is no login and no third-party identity. The CLI keeps it in
@@ -129,13 +135,14 @@ unset CLOUDFLARE_API_TOKEN
 cd apps/gateway && pnpm deploy:hosted        # wrangler deploy --env hosted
 ```
 
-## Local mode
+## Local mode (the default)
 
-`npx @celador/weft --local` installs wrangler once into `~/.config/weft/tools`, writes the bundled
+`npx @celador/weft` installs wrangler once into `~/.config/weft/tools`, writes the bundled
 gateway Worker to `~/.config/weft/local/worker/` and starts `wrangler dev` there in the background
 (`127.0.0.1:7878`, or the next free port). Its state is in `~/.config/weft/local/state`; nothing
-leaves the machine. Stop it with `npx @celador/weft local stop`; the next `--local` run starts it
-again with the same state. `npx @celador/weft use local` makes it the default.
+leaves the machine. Stop it with `npx @celador/weft local stop`; the next run starts it
+again with the same state. `--local` is still accepted and means the same as no flag.
+`npx @celador/weft use local` switches a machine that used hosted back.
 
 ## Your own Cloudflare account
 
@@ -149,7 +156,7 @@ It logs in with `wrangler login` (browser OAuth) unless wrangler is already logg
 storage, which the Workers Free plan includes), sets a random `WEFT_ADMIN_TOKEN` secret (kept in
 `~/.config/weft/cli.json`), waits until it answers, and makes it your default gateway. Signups are
 closed on it (`WEFT_SIGNUPS = "admin"`): only the CLI holding the admin key creates spaces.
-`npx @celador/weft use hosted` switches back.
+`npx @celador/weft use local` switches back to this machine.
 
 This is the coordinator and registry only. Weft's full hosted stack (Artifacts forks, merge queue,
 evidence, workflows) needs more resources; see [runbook.md](runbook.md).

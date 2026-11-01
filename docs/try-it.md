@@ -1,6 +1,8 @@
 # Try Weft
 
-One command, in any git repository. No login, no account, no Cloudflare setup:
+One command, in any git repository. No login, no account, no Cloudflare setup. It runs on your
+machine by default: your code and diffs never leave it.
+
 
 ```sh
 npx @celador/weft
@@ -13,11 +15,13 @@ Watch it: [a first run on a clean macOS account](https://weft-media.elier.ai/wef
 the second Claude Code agent's edit, which calls `calcTotal(items)` after the first agent changed
 its signature in the other worktree, and the two agents negotiate. 43 seconds, end to end.
 
-It takes about a minute and:
+It takes under a minute (about 11 s the first time on a fast connection, most of it installing
+Cloudflare's `wrangler` once into `~/.config/weft/tools`) and:
 
-1. creates a **free hosted space** for you on Weft's Cloudflare gateway
-   (`weft-hosted.elier.ai`; Workers + Durable Objects). Its key is stored on your machine in
-   `~/.config/weft` and in the repo's `.weft/`, which git ignores. Running it again reuses it;
+1. starts a **local space**: the same gateway Weft hosts, running on your machine with
+   `wrangler dev` (`127.0.0.1:7878`). Its state is in `~/.config/weft/local`; the space's key is
+   stored in `~/.config/weft` and in the repo's `.weft/`, which git ignores. Running it again
+   reuses both. `npx @celador/weft local stop` stops the gateway;
 2. adds Weft's hooks for every coding agent it finds on your PATH (Claude Code, Codex, Cursor
    CLI, GitHub Copilot CLI, OpenCode, Gemini CLI, Antigravity) to every checkout of the repo. With a single checkout it offers a
    second `git worktree` (`../<repo>-2`), so two agents can work side by side; with no agent
@@ -25,14 +29,14 @@ It takes about a minute and:
 3. prints your private **live feed** link and opens it.
 
 ```
-✓ created your free hosted space on Cloudflare spxxxxxxxxxx (weft-hosted.elier.ai; no account needed)
+✓ created your local space spxxxxxxxxxx (127.0.0.1:7878; your edits stay on this machine)
 ✓ repo shop (new)
 ✓ worktree ~/code/shop-2 (branch shop-2)
 ✓ Codex + Claude Code hooks in ~/code/shop (agent shop)
 ✓ Codex + Claude Code hooks in ~/code/shop-2 (agent shop-2)
 
-Live feed (private to you; anyone with the link can read it)
-  https://weft-hosted.elier.ai/feed#t=weft_…
+Live feed (on this machine; anyone with the link and access to this machine can read it)
+  http://127.0.0.1:7878/feed#t=weft_…
 
 Next: start one agent per checkout, each in its own terminal:
   $ cd ~/code/shop && claude
@@ -114,12 +118,14 @@ The per-harness config files are in [packages/mcp/README.md](../packages/mcp/REA
 | `npx @celador/weft add [name]` | another worktree for one more parallel agent |
 | `npx @celador/weft mcp` | Weft's MCP server for this checkout (agents with MCP but no hooks) |
 | `npx @celador/weft uninstall [--space]` | remove Weft from the repo (`--space` also deletes the space) |
-| `npx @celador/weft --local` | the same, with the gateway running on this machine (offline) |
+| `npx @celador/weft --hosted` | opt in to a hosted space on Weft's Cloudflare gateway instead (your edits are sent there; usage-based pricing is coming) |
+| `npx @celador/weft use local\|hosted\|URL` | choose the default gateway; local is the default (`--local` is still accepted and does nothing extra) |
 | `npx @celador/weft deploy [--domain HOST]` | your own gateway in your Cloudflare account |
 
 Agents that were already running when you ran the command must be restarted: hooks load when a
-session starts. How the hosted gateway keeps spaces apart, its limits, and how to run your own
-are in [hosted.md](hosted.md).
+session starts. If you used the hosted space before, `npx @celador/weft` keeps using it and tells
+you how to switch (`npx @celador/weft use local`). How the hosted gateway keeps spaces apart, its
+limits, and how to run your own are in [hosted.md](hosted.md).
 
 ## Advanced: from a clone
 

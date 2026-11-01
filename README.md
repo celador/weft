@@ -50,12 +50,14 @@ In any git repository, with Node.js 22+:
 npx @celador/weft
 ```
 
-No login and no account: it creates a free hosted space on Weft's Cloudflare gateway, adds
-Weft's hooks for the coding agents you have (Claude Code, Codex, Cursor, Copilot CLI, OpenCode,
-Gemini, Antigravity) to every checkout, offers a second worktree so two agents can work side by side, and opens your
-private live feed. Agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode) use
-`npx @celador/weft mcp`. `--local` runs the gateway on your machine instead; `deploy` puts it in your
-own Cloudflare account. The npm package is [`@celador/weft`](https://www.npmjs.com/package/@celador/weft)
+No login and no account. It runs locally by default: it starts a Weft gateway on your machine
+(`127.0.0.1`), so your code and diffs never leave it. It adds Weft's hooks for the coding agents
+you have (Claude Code, Codex, Cursor, Copilot CLI, OpenCode, Gemini, Antigravity) to every
+checkout, offers a second worktree so two agents can work side by side, and opens your live feed.
+Agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode) use `npx @celador/weft mcp`. Local is
+free and open source. A hosted team space on Weft's Cloudflare gateway is an option
+(`--hosted`; usage-based pricing is coming); `deploy` puts the gateway in your own Cloudflare
+account. The npm package is [`@celador/weft`](https://www.npmjs.com/package/@celador/weft)
 (the name `weft` is taken on npm). No repo handy? `npx @celador/weft demo` makes a two-file
 sample repo and prints the two prompts that make your agents collide. Details:
 [docs/try-it.md](docs/try-it.md) and [docs/hosted.md](docs/hosted.md).
