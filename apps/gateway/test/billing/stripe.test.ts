@@ -77,6 +77,8 @@ describe("intentOf: which Stripe events change a plan", () => {
   it("a completed subscription checkout we created makes the space paid", () => {
     expect(intentOf(checkout({}))).toEqual({ space: "spabcdefghij", customer: "cus_1", plan: "paid", checkout: true });
     expect(intentOf(checkout({ payment_status: "no_payment_required" }))?.plan).toBe("paid");
+    // seen in Stripe test mode: a $0 metered subscription's session is `unpaid` with amount_total 0, and is the paid plan
+    expect(intentOf(checkout({ payment_status: "unpaid", amount_total: 0 }))?.plan).toBe("paid");
     expect(intentOf(checkout({ customer: { id: "cus_2" } }))?.customer).toBe("cus_2");
   });
 
@@ -86,7 +88,7 @@ describe("intentOf: which Stripe events change a plan", () => {
     expect(intentOf(checkout({ client_reference_id: "user_123", metadata: { weft_space: "user_123" } }))).toBeNull(); // not a space id
     expect(intentOf(checkout({ client_reference_id: undefined }))).toBeNull();
     expect(intentOf(checkout({ mode: "payment" }))).toBeNull();
-    expect(intentOf(checkout({ payment_status: "unpaid" }))).toBeNull();
+    expect(intentOf(checkout({ payment_status: "unpaid", amount_total: 500 }))).toBeNull(); // still owes money: wait for the subscription to turn active
     expect(intentOf(checkout({ customer: null }))).toBeNull();
   });
 

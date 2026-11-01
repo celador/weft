@@ -5,7 +5,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { claimsPolicyError, type Scope } from "@weft/protocol";
 import type { CoordinatorConfig, CoordinatorInit, Grant, RepoCoordinator, Result } from "@weft/sequencer";
-import { cancelCustomerSubscriptions, stripeConfig, stripeRequest, type StripeEnv } from "./stripe";
+import { cancelCustomerSubscriptions, StripeError, stripeConfig, stripeRequest, type StripeEnv } from "./stripe";
 import { freeEvents, monthKey, type Plan, type UsageState } from "./usage";
 
 export interface RegistryEnv extends StripeEnv {
@@ -738,6 +738,14 @@ export class Registry extends DurableObject<RegistryEnv> {
         res.sent++;
         res.events += to - from;
       } catch (e) {
+        // Stripe answers a repeated identifier with 400 "An event already exists with identifier ..." (seen in test mode): an
+        // earlier attempt got through and only its answer was lost. That window is reported, so move on instead of retrying forever.
+        if (e instanceof StripeError && e.status === 400 && /already exists with identifier/i.test(e.message)) {
+          this.sql.exec(`UPDATE usage SET reported = ?, pending_from = NULL, pending_to = NULL WHERE space = ? AND month = ?`, to, r.space, r.month);
+          res.sent++;
+          res.events += to - from;
+          continue;
+        }
         res.failed++;
         console.error("billing: meter event failed", r.space, r.month, e instanceof Error ? e.message : String(e));
       }

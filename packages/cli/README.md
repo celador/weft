@@ -48,6 +48,9 @@ Website: <https://weft.mx> · Source: <https://github.com/celador/weft>
 | `npx @celador/weft mcp` | MCP server for this checkout, for agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode): `{"command":"npx","args":["-y","@celador/weft","mcp","--dir","/path/to/checkout"]}` |
 | `npx @celador/weft uninstall [--space]` | remove Weft from this repo; `--space` also erases the space on the gateway: every stored event, diff and key, for good (asks first; `--yes` skips) |
 | `npx @celador/weft --hosted` | opt in to a hosted space on Weft's Cloudflare gateway instead (usage-based pricing is coming) |
+| `npx @celador/weft usage` | agent events this month against your hosted space's free allowance (hosted only; billing is usage-based, never per seat) |
+| `npx @celador/weft upgrade` | the hosted usage-based plan: prints a Stripe Checkout link (only where the gateway sells one) |
+| `npx @celador/weft billing` | your plan, payment method and invoices (Stripe's customer portal) |
 | `npx @celador/weft deploy [--domain HOST]` | run your own gateway in your Cloudflare account |
 | `npx @celador/weft use local\|hosted\|URL` | choose the default gateway (local unless you chose otherwise; `--local` is still accepted) |
 

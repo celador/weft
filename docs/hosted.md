@@ -167,6 +167,29 @@ Set as vars in `[env.hosted.vars]`; the per-minute ones also use Workers Rate Li
 Over a limit, the gateway answers `429 rate_limited` with a message; the adapters fail open, so
 an agent keeps working (uncoordinated) and is told so.
 
+### Usage-based billing (built, not switched on)
+
+Hosted pricing is usage-based, never per seat, per developer or per agent: a free monthly allowance of agent
+events per space, then a price per 1,000 events. The numbers are a proposal in [pricing.md](pricing.md); until the
+operator sets the three Stripe secrets on the hosted Worker nothing is limited or charged, the billing routes answer
+`503`, and usage is only counted.
+
+| | |
+|---|---|
+| `GET /v1/space` | adds `usage` (this month's events, the allowance, `plan` = `free` or `paid`) and `billing.enabled`; `npx @celador/weft usage` prints it |
+| over the allowance (free plan, billing enabled) | submits answer `429 over_allowance` with a one-line upgrade message; the adapters fail open and tell the agent its edit was not coordinated. Hello, heartbeat, inbox, gate and every read keep working. The paid plan is never cut off by the allowance |
+| `POST /v1/space/billing/checkout` | owner key: a Stripe Checkout Session (a subscription on a metered price, `client_reference_id` = the space id); `npx @celador/weft upgrade` prints the URL |
+| `POST /v1/space/billing/portal` | owner key: a Stripe Customer Portal session (plan, card, invoices, cancel); `npx @celador/weft billing` |
+| `POST /v1/billing/stripe/webhook` | Stripe only: signature verified (constant-time, 5-minute tolerance), idempotent on event id, ignores events about other products |
+
+The Registry stores per space only the plan, an optional allowance override, the Stripe customer id and a monthly
+event count; Stripe Checkout collects and keeps the email and card. Overage goes to Stripe as meter events from the
+Registry's hourly alarm (no cron trigger), one event per window with a fixed identifier, so a retry is never billed
+twice. Erasing a space reports its last usage and cancels its subscription first. While billing is enabled, agents on
+a hosted space submit over HTTP (the adapters do); the agent WebSocket is not offered, because its submits would not be
+metered. An allowance is enforced from a cache that lasts up to 10 seconds per Worker isolate, so a space can overshoot
+it by the few events sent in that window.
+
 ### Operator controls (kill switch)
 
 With the hosted admin key (`wrangler secret put WEFT_ADMIN_TOKEN --env hosted` on the gateway; on the
@@ -216,6 +239,11 @@ The hard stop, without the Registry: set `WEFT_HOSTED_OFF = "1"` in `[env.hosted
 
 `GET /v1/admin/stats` is the last step of the launch funnel (views → site visits → command
 copies → first runs): one new space = one first run of `npx @celador/weft`.
+
+Billing (with the admin key): `GET /v1/admin/billing` (enabled, plan counts, events this month, spaces over their
+allowance), `POST /v1/admin/billing/report` (send overage to Stripe now; `{"space": "<id>"}` for one space),
+`POST /v1/admin/billing/reset-usage {"month": "YYYY-MM"}` (zero a month's counters, for go-live) and
+`POST /v1/admin/spaces/<id>/allowance {"events": 20000}` (a different allowance for one space; `null` restores the default).
 
 ### Deploying the hosted gateway
 

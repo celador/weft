@@ -6,6 +6,7 @@
 import { SELF, env, fetchMock, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Welcome } from "@weft/protocol";
+import type { Registry } from "../../src/registry";
 import { signStripePayload } from "../../src/stripe";
 import { ADMIN, BASE, call, hello, wcp } from "../helpers";
 
@@ -83,6 +84,20 @@ async function makePaid(s: { id: string; owner: string }, customer = `cus_${s.id
 }
 
 const stripe = () => fetchMock.get("https://api.stripe.com");
+/**
+ * The Registry alarm reports EVERY space with unreported overage, so a test that runs it needs a Stripe that accepts
+ * any meter event. Registered once (interceptors cannot be removed); it records the identifiers it saw.
+ */
+const alarmSeen: string[] = [];
+let sink = false;
+function meterSink() {
+  if (sink) return;
+  sink = true;
+  stripe()
+    .intercept({ path: "/v1/billing/meter_events", method: "POST" })
+    .reply(200, (o) => (alarmSeen.push(form(String(o.body)).identifier!), { object: "billing.meter_event" }))
+    .persist();
+}
 const form = (b: string) => Object.fromEntries(new URLSearchParams(b));
 
 // ------------------------------------------------------------------ metering and the allowance
@@ -185,6 +200,7 @@ describe("checkout and portal", () => {
     expect(f.cancel_url).toBe(`${BASE}/billing/cancelled`);
     expect(f.customer).toBeUndefined(); // Stripe creates the customer; we store only its id, later
     expect(f["line_items[0][quantity]"]).toBeUndefined(); // metered: no quantity
+    expect(f["adaptive_pricing[enabled]"]).toBe("false"); // USD, like the price
     fetchMock.assertNoPendingInterceptors();
   });
 
@@ -371,6 +387,21 @@ describe("usage reporting", () => {
     fetchMock.assertNoPendingInterceptors();
   });
 
+  it("when Stripe says the identifier already exists (the first answer was lost), the window counts as reported", async () => {
+    const a = await agentSpace();
+    await makePaid(a);
+    for (let i = 0; i < ALLOWANCE + 3; i++) await submit(a);
+    await untilEvents(a.owner, ALLOWANCE + 3);
+    // what Stripe really answers for a repeated identifier (observed in test mode): 400, not a silent accept
+    stripe()
+      .intercept({ path: "/v1/billing/meter_events", method: "POST" })
+      .reply(400, { error: { type: "invalid_request_error", message: `An event already exists with identifier weft:${a.id}:${month}:0-3.` } });
+    expect(await (await report(a.id)).json()).toMatchObject({ sent: 1, events: 3, failed: 0 });
+    // and the cursor moved: nothing is pending, so nothing is sent again
+    expect(await (await report(a.id)).json()).toMatchObject({ sent: 0, failed: 0 });
+    fetchMock.assertNoPendingInterceptors();
+  });
+
   it("a space with no Stripe customer, or with usage inside its allowance, reports nothing", async () => {
     const a = await agentSpace();
     for (let i = 0; i < 3; i++) await submit(a);
@@ -393,7 +424,7 @@ describe("usage reporting", () => {
 // ------------------------------------------------------------------ erase
 
 describe("erasing a space cancels its subscription first", () => {
-  it("reports what is owed, cancels the subscription, then deletes", async () => {
+  it("reports what is owed, cancels the subscription, then erases", async () => {
     const a = await agentSpace();
     const cus = await makePaid(a);
     for (let i = 0; i < ALLOWANCE + 2; i++) await submit(a);
@@ -403,30 +434,37 @@ describe("erasing a space cancels its subscription first", () => {
     stripe().intercept({ path: "/v1/subscriptions", method: "GET", query: { customer: cus, status: "all", limit: "100" } }).reply(200, { data: [{ id: "sub_live", status: "active" }, { id: "sub_old", status: "canceled" }] });
     stripe().intercept({ path: "/v1/subscriptions/sub_live", method: "DELETE", query: { invoice_now: "true", prorate: "false" } }).reply(200, () => (calls.push("cancel sub_live"), { id: "sub_live", status: "canceled" }));
     const r = await call("DELETE", "/v1/space", a.owner);
-    expect(r.status).toBe(204);
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ type: "space.erased", status: "erased" });
     expect(calls).toEqual([`meter weft:${a.id}:${month}:0-2`, "cancel sub_live"]);
     fetchMock.assertNoPendingInterceptors();
     expect((await call("GET", "/v1/space", a.owner)).status).toBe(401);
     // nothing about the space is left in the billing tables
     const stub = env.WEFT_REGISTRY.get(env.WEFT_REGISTRY.idFromName("registry"));
-    expect(await stub.stripeCustomer(a.id)).toBeNull();
+    expect(await runInDurableObject(stub, (i: Registry) => [...(i as any).sql.exec("SELECT space FROM space_billing WHERE space = ?", a.id)].length + [...(i as any).sql.exec("SELECT space FROM usage WHERE space = ?", a.id)].length)).toBe(0);
   });
 
-  it("if Stripe cannot cancel, nothing is deleted and the owner is told to retry", async () => {
+  it("if Stripe cannot cancel, the space is already unreachable and the erase finishes when Stripe is back", async () => {
     const a = await agentSpace();
     const cus = await makePaid(a);
     stripe().intercept({ path: "/v1/subscriptions", method: "GET", query: { customer: cus, status: "all", limit: "100" } }).reply(503, { error: { message: "down" } });
     const r = await call("DELETE", "/v1/space", a.owner);
     expect(r.status).toBe(503);
-    expect(((await r.json()) as { error: { message: string } }).error.message).toContain("nothing was deleted");
-    expect((await call("GET", "/v1/space", a.owner)).status).toBe(200); // still there
-    stripe().intercept({ path: "/v1/subscriptions", method: "GET", query: { customer: cus, status: "all", limit: "100" } }).reply(200, { data: [] });
-    expect((await call("DELETE", "/v1/space", a.owner)).status).toBe(204);
+    expect(((await r.json()) as { error: { message: string } }).error.message).toContain("retried automatically");
+    expect((await call("GET", "/v1/space", a.owner)).status).toBe(401); // unreachable at once
+    // Stripe recovers; the Registry alarm retries and the erase completes (the alarm also reports every other space's leftover overage)
+    meterSink();
+    stripe().intercept({ path: "/v1/subscriptions", method: "GET", query: { customer: cus, status: "all", limit: "100" } }).reply(200, { data: [{ id: "sub_x", status: "active" }] });
+    stripe().intercept({ path: "/v1/subscriptions/sub_x", method: "DELETE", query: { invoice_now: "true", prorate: "false" } }).reply(200, { id: "sub_x", status: "canceled" });
+    const stub = env.WEFT_REGISTRY.get(env.WEFT_REGISTRY.idFromName("registry"));
+    await runDurableObjectAlarm(stub);
+    const status = await runInDurableObject(stub, (i: Registry) => [...(i as any).sql.exec("SELECT status FROM spaces WHERE id = ?", a.id)][0]?.status);
+    expect(status).toBe("erased");
   });
 
-  it("a space that never subscribed is deleted without any Stripe call", async () => {
+  it("a space that never subscribed is erased without any Stripe call", async () => {
     const a = await signup();
-    expect((await call("DELETE", "/v1/space", a.owner)).status).toBe(204);
+    expect((await call("DELETE", "/v1/space", a.owner)).status).toBe(200);
   });
 });
 
@@ -440,14 +478,10 @@ describe("the Registry alarm reports usage", () => {
     await untilEvents(a.owner, ALLOWANCE + 1);
     const stub = env.WEFT_REGISTRY.get(env.WEFT_REGISTRY.idFromName("registry"));
     expect(await runInDurableObject(stub, (_i, state) => state.storage.getAlarm())).not.toBeNull(); // recordUsage armed it for a space with a Stripe customer
-    const ids: string[] = [];
-    stripe()
-      .intercept({ path: "/v1/billing/meter_events", method: "POST" })
-      .reply(200, (o) => (ids.push(form(String(o.body)).identifier!), { object: "billing.meter_event" }))
-      .persist();
+    meterSink();
     const ran = await runDurableObjectAlarm(stub);
     expect(ran).toBe(true);
-    expect(ids).toContain(`weft:${a.id}:${month}:0-1`);
+    expect(alarmSeen).toContain(`weft:${a.id}:${month}:0-1`);
     void cus;
   });
 });

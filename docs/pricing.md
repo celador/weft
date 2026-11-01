@@ -198,7 +198,7 @@ is inert.
    prints the price id. The script refuses a live key unless `--live` is passed.
 4. **Register the webhook** in the Stripe dashboard (or `node scripts/stripe-setup.mjs --live --webhook https://weft-hosted.elier.ai/v1/billing/stripe/webhook`):
    events `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`,
-   `invoice.payment_failed`, `invoice.paid`.
+   `invoice.payment_failed` (the script registers exactly these four).
 5. **Set the secrets on the hosted Worker**, then deploy: `cd apps/gateway && for s in STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET STRIPE_PRICE_ID; do npx wrangler secret put $s --env hosted; done && pnpm deploy:hosted`.
 6. **Configure the Customer Portal** once in Stripe (cancel subscription, update payment method): Settings,
    Billing, Customer portal. (Or `node scripts/stripe-setup.mjs --live` sets a default configuration.)

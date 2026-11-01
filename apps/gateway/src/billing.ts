@@ -133,6 +133,8 @@ export async function spaceBilling(req: Request, env: BillingEnv, k: Kit, space:
         client_reference_id: space,
         metadata: { weft_space: space },
         subscription_data: { metadata: { weft_space: space } },
+        // Bill in USD like the price (Adaptive Pricing would show and charge a converted amount per unit).
+        adaptive_pricing: { enabled: false },
         success_url: `${base}/billing/done`,
         cancel_url: `${base}/billing/cancelled`,
         ...(customer ? { customer } : {}),
@@ -181,8 +183,10 @@ export function intentOf(ev: StripeEvent): Intent | null {
       const space = typeof o.client_reference_id === "string" ? o.client_reference_id : undefined;
       const meta = (o.metadata ?? {}) as Record<string, unknown>;
       if (o.mode !== "subscription" || !space || !SPACE_ID.test(space) || meta.weft_space !== space || !customer) return null;
-      // A delayed payment method is not paid yet; customer.subscription.updated says when it is.
-      if (o.payment_status !== "paid" && o.payment_status !== "no_payment_required") return null;
+      // The first invoice of a metered subscription is $0, so Stripe may call the session `unpaid` (seen in test mode): the card
+      // was collected and the subscription exists. Only a session that still owes money (a delayed payment method) waits;
+      // customer.subscription.updated says when that subscription turns active.
+      if (o.payment_status === "unpaid" && Number(o.amount_total ?? 0) > 0) return null;
       return { space, customer, plan: "paid", checkout: true };
     }
     case "customer.subscription.updated":
