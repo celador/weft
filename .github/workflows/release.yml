@@ -9,9 +9,9 @@ name: Release @celador/weft
 # Manual only. Bump packages/cli/package.json "version" (and the pins that must equal it, see
 # packages/cli/test/plugin-hook.test.ts) in a commit on main first, then run this workflow from main
 # with dry_run=false. Auth, either of:
-#   - npm trusted publishing: add this repo + workflow file (release.yml) as a trusted publisher in the
-#     package's settings on npmjs.com (no token stored anywhere); or
-#   - a repository secret NPM_TOKEN (npm automation token with publish rights to @celador/weft).
+#   - npm trusted publishing (what is configured): this repo + workflow file (release.yml) is a trusted
+#     publisher of @celador/weft (`npm trust github @celador/weft --repo celador/weft --file release.yml`).
+#     No token is stored anywhere; npm exchanges the job's OIDC token for a short-lived publish credential.
 on:
   workflow_dispatch:
     inputs:
@@ -49,9 +49,9 @@ jobs:
         working-directory: packages/cli
         env:
           DRY_RUN: ${{ inputs.dry_run }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
+          npm --version   # trusted publishing needs npm >= 11.5.1
           if [ "$DRY_RUN" = "true" ]; then
             npm publish --provenance --access public --dry-run
           else
