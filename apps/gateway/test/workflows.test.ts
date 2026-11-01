@@ -31,7 +31,7 @@ async function setup() {
   const e: Env = { ...env, ARTIFACTS: art, WEFT_EVENT_SUBSCRIBER: new MemorySubscriber(), WEFT_ARTIFACTS_NAMESPACE: "weft-test", WEFT_PROCESS_REVISION: wf.process, WEFT_LAND_CHANGE: wf.land, WEFT_REVERT_OPERATION: wf.revert, WEFT_BEST_OF_N: wf.best };
   const j = async <T = Record<string, unknown>>(method: string, path: string, token?: string, body?: unknown, status?: number): Promise<T> => {
     const ctx = createExecutionContext();
-    const r = await worker.fetch(new Request(`${BASE}${path}`, { method, headers: { "wcp-version": "0.1", ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body !== undefined ? { "content-type": "application/json" } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) }), e);
+    const r = await worker.fetch(new Request(`${BASE}${path}`, { method, headers: { "wcp-version": "0.1", ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body !== undefined ? { "content-type": "application/json" } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) }), e, ctx);
     await waitOnExecutionContext(ctx);
     const t = await r.text();
     if (status !== undefined && r.status !== status) throw new Error(`${method} ${path}: ${r.status} ${t}`);

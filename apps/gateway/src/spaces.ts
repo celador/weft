@@ -27,8 +27,12 @@
 
 import type { DeviceInfo, EraseReport, Registry, SpaceGrant } from "./registry";
 import { FEED_HTML } from "./feed-page";
+import { spaceBilling } from "./billing";
+import { stripeConfig, type StripeEnv } from "./stripe";
 
-export interface SpacesEnv {
+export interface SpacesEnv extends StripeEnv {
+  /** Free agent events per space per month (default 5000, docs/pricing.md). */
+  WEFT_FREE_EVENTS?: string;
   WEFT_REGISTRY: DurableObjectNamespace<Registry>;
   WEFT_ADMIN_TOKEN?: string;
   /** "open" = anyone may create a space (the hosted gateway). Anything else: admin token only. */
@@ -248,8 +252,18 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
   if (path === "/v1/space" && m === "GET") {
     const info = await reg.spaceInfo(space);
     if (!info) k.fail("unauthorized", "space not found");
-    return k.json({ type: "space", space: info, limits: { repos: L.maxRepos, tokens: L.maxTokens, requests_per_minute: L.rpm } });
+    // Usage this month against the free allowance. `billing.enabled` is whether this gateway sells anything: when
+    // false nothing is ever refused for being over the allowance.
+    return k.json({
+      type: "space",
+      space: info,
+      limits: { repos: L.maxRepos, tokens: L.maxTokens, requests_per_minute: L.rpm },
+      usage: await reg.spaceUsage(space),
+      billing: { enabled: stripeConfig(env) !== null },
+    });
   }
+  const bm = /^\/v1\/space\/billing\/(checkout|portal)$/.exec(path);
+  if (bm && m === "POST") return spaceBilling(req, env, k, space, bm[1] as "checkout" | "portal");
   if (path === "/v1/space" && m === "DELETE") {
     // Real erasure: every repo Durable Object of the space is emptied and its Registry rows are deleted.
     const r = await reg.eraseSpace(space);

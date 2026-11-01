@@ -300,7 +300,11 @@ export class CodexAdapter {
     const event = input.hook_event_name;
     if (event !== "PreToolUse" && event !== "PostToolUse") return undefined;
     if (event === "PreToolUse" && !EDIT_TOOLS.has(input.tool_name ?? "")) return undefined;
-    const msg = `[weft] coordinator unavailable (${err instanceof WcpError ? err.code : "error"}); this edit was not coordinated.`;
+    // Hosted usage billing: a free space that used its monthly allowance answers 429 over_allowance. Say so, not "unavailable".
+    const msg =
+      err instanceof WcpError && err.code === "over_allowance"
+        ? "[weft] This space used its free monthly allowance, so this edit was not coordinated. Run `npx @celador/weft upgrade` to keep coordinating (usage-based, no seats)."
+        : `[weft] coordinator unavailable (${err instanceof WcpError ? err.code : "error"}); this edit was not coordinated.`;
     return { hookSpecificOutput: { hookEventName: event, additionalContext: msg } };
   }
 

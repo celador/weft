@@ -19,6 +19,8 @@ import {
 import { REPO_NAME, Registry, sha256Hex, type SpaceGrant, type TokenSpec } from "./registry";
 import { readSessionCookie, spacesAdmin, spacesRoute, throttleSpace, type SpacesEnv, type SpacesKit } from "./spaces";
 import { artifactsAdmin, artifactsRoute, forwardApproval, handleArtifactsBatch, startRevert, type ArtifactsEnv, type Kit } from "./artifacts";
+import { billingAdmin, billingRoute, meterEvent, overAllowance, type BillingKit } from "./billing";
+import { stripeConfig } from "./stripe";
 
 export { RepoCoordinator } from "@weft/sequencer";
 export { Registry };
@@ -143,6 +145,15 @@ function spacesKit(env: Env): SpacesKit {
   };
 }
 
+/** What the billing module needs (docs/pricing.md): the same error mapping and JSON helpers as everything else. */
+const billingKit: BillingKit = {
+  fail(code, message, details) {
+    throw new HttpError(code, message, details);
+  },
+  json,
+  readJson,
+};
+
 /** Scope + repo check. A repo outside the token's list is 404 (do not leak existence). */
 function authorize(g: Grant, scope: "agent" | "observe" | "human" | "system", repo?: string): void {
   if (repo !== undefined && !canAccessRepo(g, repo)) throw new HttpError("repo_not_found", `repo ${repo} not found`);
@@ -230,7 +241,7 @@ function forwardSocket(req: Request, env: Env, repo: string, headers: Record<str
 
 // ---------------------------------------------------------------------------- routes
 
-async function route(req: Request, env: Env): Promise<Response> {
+async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const u = new URL(req.url);
   const path = u.pathname.replace(/\/+$/, "") || "/";
   const m = req.method;
@@ -240,6 +251,10 @@ async function route(req: Request, env: Env): Promise<Response> {
     return json({ type: "health", service: "weft-gateway", protocol: `wcp/${WCP_VERSION}`, ok: true });
 
   if (path.startsWith("/v1/admin")) return admin(req, env, path, m);
+
+  // ----- hosted usage billing: Stripe webhook and Checkout return pages (off without Stripe secrets)
+  const bl = await billingRoute(req, env, billingKit, path);
+  if (bl) return bl;
 
   // ----- hosted spaces (`npx weft`): signup, space API, private feed page
   const sp = await spacesRoute(req, env, spacesKit(env), path);
@@ -283,6 +298,8 @@ async function route(req: Request, env: Env): Promise<Response> {
     const wm = /^\/sessions\/([^/]+)\/ws$/.exec(rest);
     if (wm) {
       if (g) authorize(g, "agent", repo);
+      // Submits over a socket are not metered, so a hosted space that is billed uses the HTTP API for them.
+      if (g?.space && stripeConfig(env)) throw new HttpError("forbidden", "hosted spaces submit events over HTTP (POST /v1/repos/{repo}/sessions/{id}/events); agent WebSockets are not offered here");
       return forwardSocket(req, env, repo, {
         [SOCKET_HEADERS.role]: "agent",
         [SOCKET_HEADERS.session]: decodeURIComponent(wm[1]!),
@@ -324,9 +341,14 @@ async function route(req: Request, env: Env): Promise<Response> {
         const key = req.headers.get("idempotency-key") ?? undefined;
         if (key !== undefined && (key.length === 0 || key.length > 128))
           throw new HttpError("invalid_message", "Idempotency-Key must be 1..128 chars", { issues: [{ path: "", message: "Idempotency-Key" }] });
+        // Hosted usage billing: a free space that used its monthly allowance is refused (adapters fail open and say so).
+        const refused = overAllowance(env, g, json);
+        if (refused) return refused;
         const body = await readJson(req);
-        const res = unwrap(await stub.op("submit", [sid, body, { owner, ...(key ? { idempotencyKey: key } : {}) }]));
+        const res = unwrap(await stub.op("submit", [sid, body, { owner, ...(key ? { idempotencyKey: key } : {}) }])) as { seq?: number | null };
         if (g.space) await countSpaceEvent(env, g.space);
+        // Hosted usage billing: one unit per event that entered the log (accepting `check`s have seq null and are free).
+        if (typeof res.seq === "number") meterEvent(env, ctx, g);
         return json(res);
       }
       case "/inbox": {
@@ -463,6 +485,8 @@ async function admin(req: Request, env: Env, path: string, m: string): Promise<R
     if (!ok) throw new HttpError("not_found", "no such active token");
     return new Response(null, { status: 204 });
   }
+  const ba = await billingAdmin(req, env, billingKit, path);
+  if (ba) return ba;
   const sa = await spacesAdmin(req, env, spacesKit(env), path);
   if (sa) return sa;
   const aa = await artifactsAdmin(req, env, kit(env), path);
@@ -471,9 +495,9 @@ async function admin(req: Request, env: Env, path: string, m: string): Promise<R
 }
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
-      return await route(req, env);
+      return await route(req, env, ctx);
     } catch (e) {
       if (e instanceof HttpError || e instanceof WcpProtocolError) return errorResponse(e.code, e.message, e.details);
       console.error("gateway internal error", e instanceof Error ? e.stack : String(e));

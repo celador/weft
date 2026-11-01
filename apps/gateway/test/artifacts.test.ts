@@ -34,6 +34,7 @@ function world() {
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       }),
       e,
+      ctx,
     );
     await waitOnExecutionContext(ctx);
     return res;

@@ -13,7 +13,7 @@ import { locateUse, locateDeclaration, quoteDiff } from "../src/render";
 import { mergeSettings, weftAllowRules } from "../src/cli";
 import type { Loaded } from "../src/config";
 import { CART_V1, PRICING_V1, PRICING_V2, checkout, refTransport, serve } from "./helpers";
-import type { Transport } from "../src/client";
+import { WcpError, type Transport } from "../src/client";
 
 const BUNDLE = join(dirname(dirname(fileURLToPath(import.meta.url))), "dist", "weft-claude.mjs");
 
@@ -271,6 +271,17 @@ describe("Claude Code hooks against the reference coordinator", () => {
     expect(pre.hookSpecificOutput.permissionDecision).toBeUndefined();
     expect(pre.hookSpecificOutput.additionalContext).toContain("coordinator unavailable");
     expect(await A.handle(hook("s", root, { hook_event_name: "Stop" }))).toBeUndefined();
+  });
+
+  it("an over_allowance answer fails open and tells the agent why, with the upgrade command", async () => {
+    const root = checkout("oa");
+    const full: Transport = new Proxy({} as Transport, { get: () => () => Promise.reject(new WcpError("over_allowance", "used its free events", 429, {})) });
+    const A = adapter(root, "claude-a", "T-1", full);
+    const pre = (await A.handle(hook("s", root, { tool_name: "Write", tool_input: { file_path: join(root, "src/x.ts"), content: "export const x = 1;\n" }, tool_use_id: "t1" }))) as any;
+    expect(pre.hookSpecificOutput.permissionDecision).toBeUndefined();
+    expect(pre.hookSpecificOutput.additionalContext).toContain("free monthly allowance");
+    expect(pre.hookSpecificOutput.additionalContext).toContain("npx @celador/weft upgrade");
+    expect(pre.hookSpecificOutput.additionalContext).toContain("not coordinated");
   });
 
   it("declares L1, not L3, in hello when configured advisory (Agent Hooks Core §3.3)", async () => {

@@ -15,6 +15,8 @@
 //   weft deploy [--name N] [--domain HOST]   your own gateway on your Cloudflare account
 //   weft local stop          stop the local gateway
 //   weft use hosted|local|URL   choose the default gateway
+//   weft usage                  agent events this month against the hosted space's free allowance
+//   weft upgrade                the usage-based plan (Stripe Checkout); `weft billing` manages it (Stripe portal)
 import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -22,6 +24,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { Api, statusOf, type FeedEvent, type Viewer } from "./api";
 import { MCP, WATCHER, adapterBin, detectHarnesses, ensureRuntime, harnessName, HARNESSES, installAdapter, installedIn, removeAdapters, startOrder, type HarnessId } from "./adapters";
 import { deploy, ensureSpace, feedUrl, hermesPointer, HOSTED_URL, HUMAN_TOKEN_FILE, kindOf, loadState, readPointer, saveState, sharedHumanToken, startLocal, stopLocal, withViewer, writePointer, LOCAL_PORT, type CliState, type HermesPointer, type RepoPointer } from "./gateways";
+import { billing as billingPage, upgrade as upgradePage, usage as showUsage } from "./billing";
 import { ask, c, configDir, git, info, mainCheckout, ok, openUrl, readJson, readSecret, slug, tilde, tryGit, VERSION, warn, WeftError, worktrees, writeJson } from "./util";
 
 type Opts = {
@@ -44,7 +47,7 @@ type Opts = {
 export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
   const o: Opts = { local: false, hosted: false, yes: false, open: true, space: false, all: false, positional: [] };
   let cmd = "init";
-  const known = new Set(["init", "demo", "add", "status", "pair", "viewers", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "help", "version"]);
+  const known = new Set(["init", "demo", "add", "status", "pair", "viewers", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "usage", "upgrade", "billing", "help", "version"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     const val = () => {
@@ -108,6 +111,9 @@ ${c.bold("npx @celador/weft")}            in a git repo: a gateway on this machi
                               your own gateway on your Cloudflare account (wrangler login)
   use local|hosted|URL        choose the default gateway (local unless you chose otherwise)
   local stop                  stop the local gateway
+  usage                       agent events this month against your hosted space's free allowance
+  upgrade                     the hosted usage-based plan (Stripe Checkout; no seats, you pay only above the allowance)
+  billing                     your plan, payment method and invoices (Stripe portal)
 
 Docs: https://github.com/celador/weft/blob/main/docs/try-it.md`;
 
@@ -784,6 +790,21 @@ export async function main(argv: string[]): Promise<number> {
     case "use":
       use(o);
       return 0;
+    case "usage": {
+      const s = spaceHere(o);
+      await showUsage(s.ptr.url, s.owner, s.ptr.space);
+      return 0;
+    }
+    case "upgrade": {
+      const s = spaceHere(o);
+      await upgradePage(s.ptr.url, s.owner, o.open);
+      return 0;
+    }
+    case "billing": {
+      const s = spaceHere(o);
+      await billingPage(s.ptr.url, s.owner, o.open);
+      return 0;
+    }
   }
   console.log(HELP);
   return 2;

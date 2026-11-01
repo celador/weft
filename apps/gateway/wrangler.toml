@@ -174,7 +174,8 @@ WEFT_ARTIFACTS_NAMESPACE = "weft-test"
 # (no D1, Artifacts, Queues or Workflows). Kill switch: POST /v1/admin/hosted {"mode":"off"},
 # or set WEFT_HOSTED_OFF = "1" and redeploy. Secrets (--env hosted): WEFT_ADMIN_TOKEN, and
 # WEFT_SIGNUP_SECRET (random; keys the daily-rotating HMAC of the network address behind the
-# signup counters, see src/spaces.ts networkKey).
+# signup counters, see src/spaces.ts networkKey). Usage billing (docs/pricing.md) switches on only when all of
+# STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET and STRIPE_PRICE_ID are set as secrets here (never in this file).
 [env.hosted]
 name = "weft-hosted"
 workers_dev = false   # never expose *.workers.dev: that subdomain isn't ours to show (see AGENTS.md)
@@ -219,6 +220,9 @@ WEFT_SIGNUPS_PER_DAY = "2000"
 WEFT_MAX_SPACES = "20000"
 WEFT_SPACE_MAX_REPOS = "20"
 WEFT_SPACE_MAX_TOKENS = "200"
+# Usage billing (docs/pricing.md, PROPOSAL until John approves): free agent events per space per month. Billing is
+# inert until the Stripe secrets below are set; usage is counted either way.
+WEFT_FREE_EVENTS = "5000"
 
 [env.hosted.observability]
 enabled = true

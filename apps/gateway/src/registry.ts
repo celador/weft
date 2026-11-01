@@ -5,9 +5,13 @@
 import { DurableObject } from "cloudflare:workers";
 import { claimsPolicyError, type Scope } from "@weft/protocol";
 import type { CoordinatorConfig, CoordinatorInit, Grant, RepoCoordinator, Result } from "@weft/sequencer";
+import { cancelCustomerSubscriptions, stripeConfig, stripeRequest, type StripeEnv } from "./stripe";
+import { freeEvents, monthKey, type Plan, type UsageState } from "./usage";
 
-export interface RegistryEnv {
+export interface RegistryEnv extends StripeEnv {
   WEFT_REPO: DurableObjectNamespace<RepoCoordinator>;
+  /** Free events per space per month (default 5000, docs/pricing.md). */
+  WEFT_FREE_EVENTS?: string;
 }
 
 export type RepoEntry = { repo: string; config: CoordinatorInit; created_at: string };
@@ -193,6 +197,18 @@ export class Registry extends DurableObject<RegistryEnv> {
     }
     this.sql.exec(`CREATE INDEX IF NOT EXISTS repos_space ON repos(space)`);
     this.sql.exec(`CREATE INDEX IF NOT EXISTS tokens_space ON tokens(space)`);
+    // Usage-based billing (docs/pricing.md). A space's plan, allowance override and Stripe customer id: no email,
+    // no card data (Stripe Checkout collects and keeps those). One usage row per space per UTC month.
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS space_billing (space TEXT PRIMARY KEY, plan TEXT NOT NULL DEFAULT 'free', allowance INTEGER, stripe_customer_id TEXT, billing_event_at INTEGER NOT NULL DEFAULT 0)`,
+    );
+    this.sql.exec(`CREATE INDEX IF NOT EXISTS space_billing_customer ON space_billing(stripe_customer_id)`);
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS usage (space TEXT NOT NULL, month TEXT NOT NULL, events INTEGER NOT NULL DEFAULT 0, reported INTEGER NOT NULL DEFAULT 0, pending_from INTEGER, pending_to INTEGER, PRIMARY KEY (space, month))`,
+    );
+    // Stripe event ids already applied (idempotency); nothing else from the event is kept.
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS stripe_events (id TEXT PRIMARY KEY, at INTEGER NOT NULL)`);
+
     this.retireViewerLinks();
     this.spacesReady = true;
     // Spaces the owner deleted before real erasure existed (status 'deleted') and erasures that were
@@ -240,6 +256,7 @@ export class Registry extends DurableObject<RegistryEnv> {
     await this.scheduleCounterPrune(this.pruneSignupCounters());
     this.pruneActivity();
     await this.resumeErasures();
+    await this.maintainBilling();
   }
 
   /** Operator kill switch: `open` (default), `no-signups` (existing spaces keep working), `off` (every space token refused). */
@@ -403,6 +420,12 @@ export class Registry extends DurableObject<RegistryEnv> {
     this.sql.exec(`UPDATE spaces SET status = 'erasing' WHERE id = ?`, space);
     this.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE space = ? AND revoked_at IS NULL`, new Date().toISOString(), space);
     this.sql.exec(`DELETE FROM pairings WHERE space = ?`, space); // open pairing codes die with the space
+    // A paying space settles with Stripe BEFORE anything is deleted: its last usage is reported and its subscription cancelled.
+    const billingError = await this.settleBilling(space);
+    if (billingError) {
+      await this.scheduleAlarmAt(Date.now() + 60_000);
+      return { error: `${billingError}; the space is already unreachable and the erase is retried automatically`, code: "incomplete" };
+    }
     const repos = this.erasableRepos(space);
     const results = await Promise.allSettled(repos.map((repo) => this.env.WEFT_REPO.get(this.env.WEFT_REPO.idFromName(repo)).erase()));
     const failed = results.filter((r) => r.status === "rejected").length;
@@ -417,6 +440,9 @@ export class Registry extends DurableObject<RegistryEnv> {
     // Retention counts (last event time, events per day) go with the space; the operator's internal tag stays so the first-run counts keep leaving it out.
     this.sql.exec(`DELETE FROM space_activity WHERE space = ?`, space);
     this.sql.exec(`DELETE FROM space_days WHERE space = ?`, space);
+    // Billing rows (plan, Stripe customer id, monthly usage) go too. The Stripe customer record itself stays with Stripe (it holds invoices).
+    this.sql.exec(`DELETE FROM usage WHERE space = ?`, space);
+    this.sql.exec(`DELETE FROM space_billing WHERE space = ?`, space);
     this.sql.exec(`UPDATE spaces SET status = 'erased', label = NULL, created_at = substr(created_at, 1, 10), deleted_at = ? WHERE id = ?`, new Date().toISOString(), space);
     return { space, status: "erased", already_erased: false, erased: { repos: repos.map((r) => r.slice(space.length + 1)), events, tokens } };
   }
@@ -539,8 +565,213 @@ export class Registry extends DurableObject<RegistryEnv> {
     if (!g || !g.space) return g;
     if (!this.activeSpace(g.space)) return null;
     if ((await this.hostedMode()) === "off") return null;
-    if (g.role === "viewer" || g.role === "device") return { ...g, repos: this.spaceRepos(g.space).map((r) => r.repo) };
-    return g;
+    // Free space at its allowance: the gateway refuses its submits (only while billing is enabled there).
+    const over = stripeConfig(this.env) ? this.usageState(g.space).over : false;
+    const out: SpaceGrant = over ? { ...g, over_allowance: true } : g;
+    if (g.role === "viewer" || g.role === "device") return { ...out, repos: this.spaceRepos(g.space).map((r) => r.repo) };
+    return out;
+  }
+
+  // ------------------------------------------------------------------ usage-based billing
+  //
+  // docs/pricing.md. The meter is agent events per space per UTC month. A `free` space is held at
+  // its allowance (the gateway answers 429 over_allowance); a `paid` one is not, and the overage
+  // above its allowance goes to Stripe as meter events. The Registry stores a Stripe customer id
+  // and nothing else about the customer.
+
+  private billingRow(space: string): { plan: Plan; allowance: number | null; customer: string | null } {
+    this.ensureSpaces();
+    const r = this.sql.exec<{ plan: string; allowance: number | null; stripe_customer_id: string | null }>(`SELECT plan, allowance, stripe_customer_id FROM space_billing WHERE space = ?`, space).toArray()[0];
+    return { plan: r?.plan === "paid" ? "paid" : "free", allowance: r?.allowance ?? null, customer: r?.stripe_customer_id ?? null };
+  }
+
+  /** The space's usage this month against its allowance. `over` is only acted on while billing is enabled. */
+  usageState(space: string, now = Date.now()): UsageState {
+    const month = monthKey(now);
+    const b = this.billingRow(space);
+    const events = this.sql.exec<{ events: number }>(`SELECT events FROM usage WHERE space = ? AND month = ?`, space, month).toArray()[0]?.events ?? 0;
+    const allowance = b.allowance ?? freeEvents(this.env);
+    return { month, events, allowance, plan: b.plan, over: b.plan === "free" && events >= allowance, has_billing_account: b.customer !== null };
+  }
+
+  /** `GET /v1/space`: usage for an active space. */
+  async spaceUsage(space: string): Promise<UsageState | undefined> {
+    return this.activeSpace(space) ? this.usageState(space) : undefined;
+  }
+
+  /**
+   * Add metered events (the gateway coalesces them). Unknown or deleted spaces are ignored. Returns each
+   * space's state so the gateway can start refusing at once instead of when its grant cache expires.
+   */
+  async recordUsage(items: Array<[string, number]>, now = Date.now()): Promise<Record<string, UsageState>> {
+    this.ensureSpaces();
+    const month = monthKey(now);
+    const out: Record<string, UsageState> = {};
+    let wantReport = false;
+    for (const [space, n] of items) {
+      if (!Number.isInteger(n) || n <= 0 || !this.activeSpace(space)) continue;
+      this.sql.exec(`INSERT INTO usage (space, month, events) VALUES (?, ?, ?) ON CONFLICT(space, month) DO UPDATE SET events = events + excluded.events`, space, month, n);
+      out[space] = this.usageState(space, now);
+      if (out[space]!.has_billing_account) wantReport = true;
+    }
+    if (this.prunedMonth !== month) {
+      this.prunedMonth = month;
+      this.pruneUsage(now);
+    }
+    if (wantReport && stripeConfig(this.env)) await this.scheduleAlarmAt(now + REPORT_EVERY_MS);
+    return out;
+  }
+
+  /** Operator: give one space a different monthly allowance (null = the default). */
+  setAllowance(space: string, allowance: number | null): boolean {
+    if (!this.activeSpace(space)) return false;
+    this.sql.exec(`INSERT INTO space_billing (space, allowance) VALUES (?, ?) ON CONFLICT(space) DO UPDATE SET allowance = excluded.allowance`, space, allowance);
+    return true;
+  }
+
+  /** Operator: zero everyone's counters for a month (go-live: forget usage from before billing existed). */
+  resetUsage(month: string): number {
+    this.ensureSpaces();
+    return this.sql.exec(`DELETE FROM usage WHERE month = ? AND reported = 0 AND pending_to IS NULL`, month).rowsWritten;
+  }
+
+  /**
+   * Before an erase: report what the space owes and cancel its subscription (invoicing what is metered). Returns an
+   * error text if Stripe could not do it (the erase then retries from the alarm), undefined when done or when there is
+   * nothing to settle. A subscription is usage-only (no flat fee), so one left running by a gateway that has no Stripe
+   * secrets bills nothing; that case is logged and the erase goes on, because erasure must not wait for billing.
+   */
+  private async settleBilling(space: string): Promise<string | undefined> {
+    const customer = this.billingRow(space).customer;
+    if (!customer) return undefined;
+    const cfg = stripeConfig(this.env);
+    if (!cfg) {
+      console.error("billing: erasing a space that has a Stripe customer, but Stripe is not configured here; its subscription was not cancelled");
+      return undefined;
+    }
+    try {
+      if ((await this.reportUsage(space)).failed) return "could not report the space's last usage to Stripe";
+      await cancelCustomerSubscriptions(cfg, customer);
+      return undefined;
+    } catch (e) {
+      console.error("billing: cancel before erase failed", e instanceof Error ? e.message : String(e));
+      return "could not cancel the subscription with Stripe";
+    }
+  }
+
+  /** Operator: where billing stands. */
+  billingSummary(): { month: string; plans: { free: number; paid: number }; with_billing_account: number; events_this_month: number; active_this_month: number; over_allowance: number } {
+    this.ensureSpaces();
+    const month = monthKey();
+    const active = this.sql.exec<{ id: string }>(`SELECT id FROM spaces WHERE status = 'active'`).toArray();
+    const paid = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM space_billing b JOIN spaces s ON s.id = b.space WHERE b.plan = 'paid' AND s.status = 'active'`).one().n;
+    const withAccount = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM space_billing b JOIN spaces s ON s.id = b.space WHERE b.stripe_customer_id IS NOT NULL AND s.status = 'active'`).one().n;
+    const u = this.sql.exec<{ n: number; e: number }>(`SELECT COUNT(*) AS n, COALESCE(SUM(events), 0) AS e FROM usage WHERE month = ?`, month).one();
+    const over = active.filter((s) => this.usageState(s.id).over).length;
+    return { month, plans: { free: active.length - paid, paid }, with_billing_account: withAccount, events_this_month: u.e, active_this_month: u.n, over_allowance: over };
+  }
+
+  /** The Stripe customer attached to a space, if any (for the portal and for cancelling). */
+  stripeCustomer(space: string): string | null {
+    return this.activeSpace(space) ? this.billingRow(space).customer : null;
+  }
+
+  /**
+   * Apply one verified Stripe event to the plan table, once. `space` is set for checkout sessions (the
+   * client_reference_id we put on them); other events carry only a customer, which must be one we attached to a
+   * space. Idempotent on the event id; an event older than the last applied one changes nothing (Stripe does not
+   * promise ordering). Runs in one synchronous step, so the id and the change cannot be separated.
+   */
+  applyBillingEvent(e: { id: string; created: number; space?: string; customer?: string; plan: Plan }): { result: "applied" | "duplicate" | "ignored" | "stale"; space?: string } {
+    this.ensureSpaces();
+    let space = e.space;
+    if (space !== undefined) {
+      if (!this.activeSpace(space)) return { result: "ignored" };
+    } else if (e.customer) {
+      space = this.sql.exec<{ space: string }>(`SELECT space FROM space_billing WHERE stripe_customer_id = ?`, e.customer).toArray()[0]?.space;
+      if (!space || !this.activeSpace(space)) return { result: "ignored" };
+    } else return { result: "ignored" };
+    if (this.sql.exec(`INSERT OR IGNORE INTO stripe_events (id, at) VALUES (?, ?)`, e.id, Math.floor(Date.now() / 1000)).rowsWritten === 0) return { result: "duplicate", space };
+    this.sql.exec(`INSERT OR IGNORE INTO space_billing (space) VALUES (?)`, space);
+    if (e.space !== undefined && e.customer) this.sql.exec(`UPDATE space_billing SET stripe_customer_id = ? WHERE space = ?`, e.customer, space);
+    const moved = this.sql.exec(`UPDATE space_billing SET plan = ?, billing_event_at = ? WHERE space = ? AND billing_event_at <= ?`, e.plan, e.created, space, e.created).rowsWritten;
+    return { result: moved > 0 ? "applied" : "stale", space };
+  }
+
+  /**
+   * Send the overage of every space with a Stripe customer to its meter (all of them, or just `only`). Each
+   * space's window (from, to] is written down BEFORE the call and reused until Stripe accepts it, and the meter
+   * event's identifier is built from the window, so a retry after a lost answer is the same event to Stripe
+   * (it drops duplicates of an identifier for 24 hours) and the cursor only moves on success.
+   */
+  async reportUsage(only?: string): Promise<{ sent: number; events: number; failed: number }> {
+    const cfg = stripeConfig(this.env);
+    const res = { sent: 0, events: 0, failed: 0 };
+    if (!cfg) return res;
+    this.ensureSpaces();
+    const rows = this.sql
+      .exec<{ space: string; month: string; events: number; reported: number; pending_from: number | null; pending_to: number | null; customer: string; allowance: number | null }>(
+        `SELECT u.space, u.month, u.events, u.reported, u.pending_from, u.pending_to, b.stripe_customer_id AS customer, b.allowance
+         FROM usage u JOIN space_billing b ON b.space = u.space
+         WHERE b.stripe_customer_id IS NOT NULL ${only ? "AND u.space = ?" : ""} ORDER BY u.space, u.month`,
+        ...(only ? [only] : []),
+      )
+      .toArray();
+    for (const r of rows) {
+      let from = r.pending_from;
+      let to = r.pending_to;
+      if (from === null || to === null) {
+        const overage = Math.max(0, r.events - (r.allowance ?? freeEvents(this.env)));
+        if (overage <= r.reported) continue;
+        from = r.reported;
+        to = overage;
+        this.sql.exec(`UPDATE usage SET pending_from = ?, pending_to = ? WHERE space = ? AND month = ?`, from, to, r.space, r.month);
+      }
+      try {
+        await stripeRequest(cfg.key, "POST", "/v1/billing/meter_events", {
+          event_name: cfg.meterEvent,
+          identifier: `weft:${r.space}:${r.month}:${from}-${to}`,
+          timestamp: Math.floor(Date.now() / 1000),
+          payload: { stripe_customer_id: r.customer, value: to - from },
+        });
+        this.sql.exec(`UPDATE usage SET reported = ?, pending_from = NULL, pending_to = NULL WHERE space = ? AND month = ?`, to, r.space, r.month);
+        res.sent++;
+        res.events += to - from;
+      } catch (e) {
+        res.failed++;
+        console.error("billing: meter event failed", r.space, r.month, e instanceof Error ? e.message : String(e));
+      }
+    }
+    return res;
+  }
+
+  /** Counters of months more than ~2 months old that carry nothing left to bill. */
+  private pruneUsage(now = Date.now()): void {
+    this.sql.exec(
+      `DELETE FROM usage WHERE month < ? AND pending_to IS NULL AND reported >= events - COALESCE((SELECT allowance FROM space_billing b WHERE b.space = usage.space), ?)`,
+      monthKey(now - 62 * 86_400_000),
+      freeEvents(this.env),
+    );
+  }
+
+  private prunedMonth = "";
+
+  /** Alarm work: report usage, drop old Stripe event ids and fully reported months, and arm the next run. */
+  private async maintainBilling(): Promise<void> {
+    this.sql.exec(`DELETE FROM stripe_events WHERE at < ?`, Math.floor(Date.now() / 1000) - 45 * 86_400);
+    this.pruneUsage();
+    if (!stripeConfig(this.env)) return;
+    try {
+      await this.reportUsage();
+    } catch (e) {
+      console.error("billing: report failed", e instanceof Error ? e.message : String(e));
+    }
+    const left = this.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM usage u JOIN space_billing b ON b.space = u.space
+       WHERE b.stripe_customer_id IS NOT NULL AND (u.pending_to IS NOT NULL OR u.events - COALESCE(b.allowance, ?) > u.reported)`,
+      freeEvents(this.env),
+    ).one().n;
+    if (left > 0) await this.scheduleAlarmAt(Date.now() + REPORT_EVERY_MS);
   }
 
   // ------------------------------------------------------------------ paired devices (the feed)
@@ -666,13 +897,16 @@ export class Registry extends DurableObject<RegistryEnv> {
   }
 }
 
+/** How often a space with a Stripe customer and unreported overage is reported. */
+export const REPORT_EVERY_MS = 3_600_000;
+
 export type HostedMode = "open" | "no-signups" | "off";
 export type SignupLimits = { perIpDay: number; perDay: number; maxSpaces: number };
 export type SpaceInfo = { id: string; status: "active" | "deleted" | "suspended" | "erasing" | "erased"; label?: string; created_at: string };
 /** What an erasure removed. After it, the Registry keeps only the tombstone: space id, status 'erased', deleted_at, created_at (date only). */
 export type EraseReport = { space: string; status: "erased"; already_erased: boolean; erased: { repos: string[]; events: number; tokens: number } };
 /** A grant minted for a hosted space. `role` owner = the space API only (no WCP scopes). */
-export type SpaceGrant = Grant & { space?: string; role?: "owner" | "agent" | "system" | "viewer" | "device" };
+export type SpaceGrant = Grant & { space?: string; role?: "owner" | "agent" | "system" | "viewer" | "device"; over_allowance?: boolean };
 /** A paired device (a browser, or the owner's CLI): what `weft viewers` lists. */
 export type DeviceInfo = { id: string; label: string; created_at: string; last_seen_at: string; expires_at: string; hard_expires_at: string };
 
@@ -744,7 +978,6 @@ export type RetentionStats = {
   /** Non-deleted spaces, most recently active first (internal ones flagged); at most MAX_LISTED_SPACES. */
   spaces: Array<{ id: string; label?: string; status: SpaceInfo["status"]; created: string; last_event_at: string | null; active_days_30: number; internal?: true }>;
 };
-
 export const SPACE_REPO_NAME = /^[a-z0-9][a-z0-9._-]{0,47}$/;
 const AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 

@@ -21,6 +21,9 @@ export type FeedEvent = {
   diagnostics?: Array<{ severity: string; code: string; file?: string; message: string; caused_by_agent?: string; range?: { start: { line: number } } }>;
 };
 
+/** `GET /v1/space` -> usage: agent events this month against the free allowance (docs/pricing.md). */
+export type SpaceUsage = { month: string; events: number; allowance: number; plan: "free" | "paid"; has_billing_account: boolean };
+
 export class Api {
   constructor(
     readonly url: string,
@@ -87,7 +90,14 @@ export class Api {
     return this.call<SpaceCreated>("POST", "/v1/spaces", admin, label ? { label } : {});
   }
   space(owner: string) {
-    return this.call<{ space: { id: string; repos: Array<{ name: string; repo: string }>; tokens: number } }>("GET", "/v1/space", owner);
+    return this.call<{ space: { id: string; repos: Array<{ name: string; repo: string }>; tokens: number }; usage?: SpaceUsage; billing?: { enabled: boolean } }>("GET", "/v1/space", owner);
+  }
+  // Billing calls are not retried: a 503 here means "billing is off" or "Stripe is down", and the person is waiting.
+  checkout(owner: string) {
+    return this.once<{ url: string }>("POST", "/v1/space/billing/checkout", owner, {});
+  }
+  portal(owner: string) {
+    return this.once<{ url: string }>("POST", "/v1/space/billing/portal", owner, {});
   }
   createRepo(owner: string, name: string) {
     return this.call<SpaceRepo>("POST", "/v1/space/repos", owner, { name });

@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run",
+    "test": "vitest run && vitest run --config vitest.billing.config.ts",
     "dev": "wrangler dev",
     "dev:local": "wrangler dev --env test",
     "deploy:preview": "wrangler deploy --env preview",
-    "deploy:hosted": "wrangler deploy --env hosted"
+    "deploy:hosted": "wrangler deploy --env hosted",
+    "test:billing": "vitest run --config vitest.billing.config.ts"
   },
   "dependencies": {
     "@weft/artifacts": "workspace:*",

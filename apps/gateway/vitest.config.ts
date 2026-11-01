@@ -1,11 +1,14 @@
 import path from "node:path";
 import { defineWorkersConfig, readD1Migrations } from "@cloudflare/vitest-pool-workers/config";
+import { configDefaults } from "vitest/config";
 
 export default defineWorkersConfig(async () => {
   const migrations = await readD1Migrations(path.join(__dirname, "migrations"));
   return {
     test: {
       include: ["test/**/*.test.ts"],
+      // test/billing runs with Stripe configured (vitest.billing.config.ts); everything else runs with billing off.
+      exclude: [...configDefaults.exclude, "test/billing/**"],
       // Six files share one workerd; conformance/WS tests exceed 5 s under full-gate load.
       testTimeout: 20_000,
       setupFiles: ["./test/apply-migrations.ts"],
