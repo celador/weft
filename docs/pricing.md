@@ -1,8 +1,8 @@
 # Hosted Weft: cost model and usage-based pricing
 
-**Status: PROPOSAL.** Nothing here is live. Every price and allowance below is a proposal for John to
-approve; the code reads them from configuration and stays inert until Stripe secrets are set on the
-hosted gateway (see [Go-live checklist](#go-live-checklist-for-john)). Local and self-hosted Weft stay
+**Status: section 3 (allowance and price) APPROVED by John 2026-11-01.** The cost model below is kept as the
+basis. The code reads the numbers from configuration and stays inert until Stripe secrets are set on the hosted
+gateway (see [Go-live checklist](#go-live-checklist-for-john)). Local and self-hosted Weft stay
 free and open source. Pricing is **usage-based only: there is no per-developer, per-seat or
 per-agent fee**, and nothing here depends on how many people or agents a team has.
 
