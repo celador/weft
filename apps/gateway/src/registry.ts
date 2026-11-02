@@ -3,7 +3,7 @@
 // are stored as SHA-256 hashes; the plaintext is returned exactly once at issuance.
 
 import { DurableObject } from "cloudflare:workers";
-import { claimsPolicyError, type Scope } from "@weft/protocol";
+import { claimsPolicyError, type RepoSummary, type Scope } from "@weft/protocol";
 import type { CoordinatorConfig, CoordinatorInit, Grant, RepoCoordinator, Result } from "@weft/sequencer";
 import { cancelCustomerSubscriptions, StripeError, stripeConfig, stripeRequest, type StripeEnv } from "./stripe";
 import { freeEvents, monthKey, type Plan, type UsageState } from "./usage";
@@ -48,6 +48,60 @@ export class Registry extends DurableObject<RegistryEnv> {
     // before any token is checked.
     const cols = this.sql.exec<{ name: string }>(`PRAGMA table_info(tokens)`).toArray().map((c) => c.name);
     for (const col of ["kind", "expires_at", "hard_expires_at", "last_seen_at"]) if (!cols.includes(col)) this.sql.exec(`ALTER TABLE tokens ADD COLUMN ${col} TEXT`);
+    // One row per repo: its summary (counts, head_seq, last event time, policy; never content). RepoCoordinator
+    // pushes it on every change, and /v1/repos + /v1/feed read it instead of waking every repo object.
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS repo_summaries (repo TEXT PRIMARY KEY, head_seq INTEGER NOT NULL, last_event_at TEXT, json TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+  }
+
+  /** Called by a RepoCoordinator after any change to its summary. */
+  async putSummary(s: RepoSummary): Promise<void> {
+    if (!REPO_NAME.test(s.repo)) return;
+    this.sql.exec(
+      `INSERT OR REPLACE INTO repo_summaries (repo, head_seq, last_event_at, json, updated_at) VALUES (?, ?, ?, ?, ?)`,
+      s.repo,
+      s.head_seq,
+      s.last_event_at ?? null,
+      JSON.stringify(s),
+      new Date().toISOString(),
+    );
+  }
+
+  /** Every registered repo with its stored summary (null until the repo has pushed one). One call, no repo objects woken. */
+  async repoSummaries(): Promise<Array<{ repo: string; summary: RepoSummary | null }>> {
+    return this.sql
+      .exec<{ repo: string; json: string | null }>(`SELECT r.repo AS repo, s.json AS json FROM repos r LEFT JOIN repo_summaries s ON s.repo = r.repo ORDER BY r.repo`)
+      .toArray()
+      .map((r) => ({ repo: r.repo, summary: r.json ? (JSON.parse(r.json) as RepoSummary) : null }));
+  }
+
+  /**
+   * Erase one repo that belongs to no hosted space (a test/demo repo the operator no longer wants): refuse its
+   * tokens' reach by revoking tokens scoped to it alone, erase its Durable Object (log, diffs, journal), and drop
+   * its rows. Space repos go through eraseSpace instead. Irreversible; idempotent.
+   */
+  async eraseRepo(repo: string): Promise<{ repo: string; erased: boolean; events: number; tokens_revoked: number } | { error: string; code: "space" | "unknown" }> {
+    if (!REPO_NAME.test(repo)) return { error: "bad repo name", code: "unknown" };
+    const cols = this.sql.exec<{ name: string }>(`PRAGMA table_info(repos)`).toArray().map((c) => c.name);
+    if (cols.includes("space")) {
+      const row = this.sql.exec<{ space: string | null }>(`SELECT space FROM repos WHERE repo = ?`, repo).toArray()[0];
+      if (row?.space) return { error: `repo ${repo} belongs to hosted space ${row.space}; erase the space instead`, code: "space" };
+    }
+    const known = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM repos WHERE repo = ?`, repo).one().n > 0;
+    if (!known) return { error: `unknown repo ${repo}`, code: "unknown" };
+    // Tokens that reach only this repo die with it (a wildcard or multi-repo token stays).
+    const now = new Date().toISOString();
+    let revoked = 0;
+    for (const t of this.sql.exec<{ id: string; grant_json: string }>(`SELECT id, grant_json FROM tokens WHERE revoked_at IS NULL`).toArray()) {
+      const g = JSON.parse(t.grant_json) as Grant;
+      if (Array.isArray(g.repos) && g.repos.length === 1 && g.repos[0] === repo) {
+        this.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE id = ?`, now, t.id);
+        revoked++;
+      }
+    }
+    const { events } = await this.env.WEFT_REPO.get(this.env.WEFT_REPO.idFromName(repo)).erase();
+    this.sql.exec(`DELETE FROM repos WHERE repo = ?`, repo);
+    this.sql.exec(`DELETE FROM repo_summaries WHERE repo = ?`, repo);
+    return { repo, erased: true, events, tokens_revoked: revoked };
   }
 
   async createRepo(init: CoordinatorInit): Promise<{ created: boolean; repo: RepoEntry } | { error: string }> {
@@ -70,6 +124,9 @@ export class Registry extends DurableObject<RegistryEnv> {
     }
     const now = new Date().toISOString();
     this.sql.exec(`INSERT OR IGNORE INTO repos (repo, config, created_at) VALUES (?, ?, ?)`, init.repo, JSON.stringify(init), now);
+    // Seed the summary row so the new repo shows up in lists without anyone waking its object.
+    const sum = (await stub.summary()) as unknown as Result<RepoSummary>;
+    if (sum.ok) await this.putSummary(sum.value);
     return { created: r.value.created, repo: (await this.listRepos()).find((x) => x.repo === init.repo)! };
   }
 
@@ -343,6 +400,7 @@ export class Registry extends DurableObject<RegistryEnv> {
       // The space was erased or suspended while this repo was being created: do not leave a repo behind.
       await this.env.WEFT_REPO.get(this.env.WEFT_REPO.idFromName(repo)).erase();
       this.sql.exec(`DELETE FROM repos WHERE repo = ? AND space IS NULL`, repo);
+      this.sql.exec(`DELETE FROM repo_summaries WHERE repo = ?`, repo);
       return { error: "space not found", code: "gone" };
     }
     this.sql.exec(`UPDATE repos SET space = ? WHERE repo = ?`, space, repo);
@@ -435,6 +493,7 @@ export class Registry extends DurableObject<RegistryEnv> {
     }
     const events = results.reduce((n, r) => n + (r.status === "fulfilled" ? r.value.events : 0), 0);
     const tokens = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM tokens WHERE space = ?`, space).one().n;
+    for (const repo of repos) this.sql.exec(`DELETE FROM repo_summaries WHERE repo = ?`, repo);
     this.sql.exec(`DELETE FROM repos WHERE space = ? OR (space IS NULL AND substr(repo, 1, ?) = ?)`, space, space.length + 1, `${space}-`);
     this.sql.exec(`DELETE FROM tokens WHERE space = ?`, space);
     // Retention counts (last event time, events per day) go with the space; the operator's internal tag stays so the first-run counts keep leaving it out.

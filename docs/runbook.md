@@ -226,6 +226,16 @@ rejected alternatives: docs/design.md "Auto-land".
   result=landed|skip|deferred …`) and JSON in `~/.cache/weft-hermes/land.log`.
 - Off switch: `"auto_land": false` in the config.
 
+## Gateway polling cost (t_07ba7d4b)
+
+`GET /v1/repos` and `GET /v1/feed` must never wake a repo's Durable Object just to look. Before 2026-11-02 they called every repo's object on every poll (118 repos x a poll every 10 s from the VS Code extension = ~0.8M DO calls a day, and the objects never slept).
+- Each RepoCoordinator pushes its summary (head_seq, active counts, open conflicts, last event time, policy: counts only, no content) to the Registry's `repo_summaries` table after every change (`publishSummary` in `packages/sequencer/src/do.ts`). `/v1/repos` reads that table in one call. A repo with no row yet is asked once and its row stored.
+- `/v1/feed` skips repos whose head_seq is not past the cursor; a `tail=1` request walks repos newest-first and stops when no unasked repo can have a newer event. Both endpoints send an `ETag`; `If-None-Match` gets a 304 with no repo call. The client (`ObserverClient.repos()`) revalidates.
+- Test: `apps/gateway/test/fanout.test.ts` records every call made to a repo stub and requires none on an unchanged poll.
+- VS Code: no connection and no timer unless a repo is mapped (`.weft/`, the Hermes `projects.repos` map, `weft.repo`/`weft.url`, `WEFT_REPO`) or the user runs "Weft: Reconnect". The repo list is re-read every 60 s (backing off to 5 min) only while the Weft view is visible and the window focused (`apps/vscode/src/refresh.ts`).
+- Erase a dead operator repo (irreversible, not for hosted-space repos): `DELETE /v1/admin/repos/<repo>?confirm=<repo>` with the admin token.
+- To check the effect: Cloudflare GraphQL `durableObjectsInvocationsAdaptiveGroups` for the RepoCoordinator namespace (see cloudflare-static-sites `references/usage-and-billing.md`).
+
 ## Hermes adapter: which process reports (operator pitfalls)
 
 - `hermes chat` turns (interactive, `-q`, `-Q`) do not run in the CLI process: the CLI is a

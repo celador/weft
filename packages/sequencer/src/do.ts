@@ -14,6 +14,7 @@ import {
   type EventRecord,
   type Gate,
   type InboxBatch,
+  type RepoSummary,
   type StreamFrame,
   type Submit,
   type WcpError,
@@ -27,8 +28,13 @@ import type { Sql } from "./sql";
 export type Result<T> = { ok: true; value: T } | { ok: false; error: WcpError };
 
 export interface SequencerEnv {
-  /** Registry Durable Object (token verification for WebSocket auth frames). */
+  /** Registry Durable Object (token verification for WebSocket auth frames; the repo summary table). */
   WEFT_REGISTRY?: DurableObjectNamespace;
+}
+
+/** The slice of the Registry this object calls: it pushes its summary row (counts + head_seq, never content). */
+interface SummarySink {
+  putSummary(s: RepoSummary): Promise<void>;
 }
 
 /** Observer replay cap per stream connect (spec §9.4: MAY close with 4413 beyond it). */
@@ -61,6 +67,9 @@ export class RepoCoordinator extends DurableObject<SequencerEnv> {
   clock: () => number = () => Date.now();
   /** Alarms are disabled while a test drives a synthetic clock. */
   private manualClock = false;
+  /** Last summary pushed to the Registry (JSON), so an unchanged state costs no call. */
+  private published?: string;
+  private inflight = new Set<Promise<unknown>>();
 
   constructor(ctx: DurableObjectState, env: SequencerEnv) {
     super(ctx, env);
@@ -111,6 +120,7 @@ export class RepoCoordinator extends DurableObject<SequencerEnv> {
       }
     }
     this.engine = undefined;
+    this.published = undefined;
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
     return { events };
@@ -118,7 +128,9 @@ export class RepoCoordinator extends DurableObject<SequencerEnv> {
 
   /** Every state change goes through here: journaled, applied, then broadcast. */
   async op<T = unknown>(op: JournalOp, args: unknown[]): Promise<Result<T>> {
-    return this.mutate(() => this.j.call<T>(op, ...args));
+    const r = this.mutate(() => this.j.call<T>(op, ...args));
+    await this.flushSummary();
+    return r;
   }
 
   private mutate<T>(fn: () => T): Result<T> {
@@ -146,6 +158,33 @@ export class RepoCoordinator extends DurableObject<SequencerEnv> {
   }
   async summary(): Promise<Result<ReturnType<SqlCoordinator["summary"]>>> {
     return this.read(() => this.j.coord.summary());
+  }
+
+  /**
+   * Keep the Registry's per-repo summary row current. The gateway lists repos and skips quiet repos in the
+   * combined feed from that row alone, so polling clients never wake this object. Only counts, head_seq,
+   * last-event time and the policy are sent; no event content. Skipped when nothing changed.
+   */
+  private publishSummary(): void {
+    const reg = this.env.WEFT_REGISTRY;
+    if (!reg || !SqlCoordinator.initialized(this.sql)) return;
+    const summary = this.j.coord.summary();
+    const key = JSON.stringify(summary);
+    if (key === this.published) return;
+    this.published = key;
+    const sink = reg.get(reg.idFromName("registry")) as unknown as SummarySink;
+    const p = sink.putSummary(summary).catch(() => {
+      // Retry on the next change; the gateway falls back to asking this object when a row is missing.
+      if (this.published === key) this.published = undefined;
+    });
+    this.inflight.add(p);
+    void p.finally(() => this.inflight.delete(p));
+    this.ctx.waitUntil(p);
+  }
+
+  /** HTTP-path callers wait for the push, so a repo list read right after a write sees it. */
+  private async flushSummary(): Promise<void> {
+    if (this.inflight.size) await Promise.all([...this.inflight]);
   }
   async queue(statuses?: string[]): Promise<Result<ReturnType<SqlCoordinator["queue"]>>> {
     return this.read(() => this.j.coord.queue(statuses));
@@ -202,6 +241,7 @@ export class RepoCoordinator extends DurableObject<SequencerEnv> {
       }
     }
     c.takeDirty();
+    this.publishSummary();
     this.reschedule();
   }
 
@@ -234,6 +274,7 @@ export class RepoCoordinator extends DurableObject<SequencerEnv> {
   /** Claim/session expiry (spec §7.5, §8.2), observer pings, auth-frame deadlines. */
   async alarm(): Promise<void> {
     await this.runAlarm();
+    await this.flushSummary();
   }
 
   /** The alarm body; returns records appended by expiry. */
@@ -272,7 +313,9 @@ export class RepoCoordinator extends DurableObject<SequencerEnv> {
 
   /** Test hook mirroring the conformance `tick` op: expire now and broadcast. */
   async tick(): Promise<Result<EventRecord[]>> {
-    return this.mutate(() => this.j.call<EventRecord[]>("tick"));
+    const r = this.mutate(() => this.j.call<EventRecord[]>("tick"));
+    await this.flushSummary();
+    return r;
   }
 
   // ------------------------------------------------------------------ WebSockets

@@ -35,8 +35,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as vscode from "vscode";
 import type { RpcError, ToHost, ToView } from "./bridge";
-import { type Checkout, localPath, readCheckout, type Resolved, resolveTarget, type TokenCandidate, tokenCandidates } from "./config";
+import { type Checkout, isWeftWorkspace, localPath, readCheckout, type Resolved, resolveTarget, type TokenCandidate, tokenCandidates } from "./config";
 import { diagnosticMessage, placeSymbol, severityOf } from "./place";
+import { RepoRefresher } from "./refresh";
 
 const SECRET_KEY = "weft.token";
 const SCHEME = "weft-event";
@@ -46,7 +47,7 @@ type Folder = { folder: vscode.WorkspaceFolder; checkout: Checkout; target: Reso
 
 export type WeftApi = {
   /** For tests and the demo rig: current state, no tokens. */
-  state(): { url?: string; status: StreamStatus | "no-token"; tokenWhere?: string; repos: string[]; records: number; views: number; canAct: boolean; squiggles: { file: string; message: string; line: number }[]; editing: { agent: string; title?: string }[] };
+  state(): { url?: string; status: StreamStatus | "no-token" | "idle"; tokenWhere?: string; repos: string[]; records: number; views: number; canAct: boolean; squiggles: { file: string; message: string; line: number }[]; editing: { agent: string; title?: string }[] };
   session(): FeedSession | undefined;
   reconnect(): Promise<void>;
 };
@@ -57,7 +58,7 @@ export function activate(ctx: vscode.ExtensionContext): WeftApi {
   return {
     state: () => ext.publicState(),
     session: () => ext.session,
-    reconnect: () => ext.connect(),
+    reconnect: () => ext.connect(true),
   };
 }
 
@@ -71,12 +72,15 @@ class WeftExtension {
   private canAct = true;
   private url?: string;
   private folders: Folder[] = [];
-  private status: StreamStatus | "no-token" = "connecting";
+  private status: StreamStatus | "no-token" | "idle" = "connecting";
   private lastSquiggles: Squiggle[] = [];
   private views = new Set<vscode.WebviewView>();
   private selected?: string;
   private off?: () => void;
-  private repoTimer?: ReturnType<typeof setInterval>;
+  /** Re-reads /v1/repos only while the Weft view is visible and the window focused (see refresh.ts). */
+  private readonly refresher = new RepoRefresher({ run: () => this.refreshRepos() });
+  /** The user ran "Weft: Reconnect" / set a token here: connect even though no repo is mapped. */
+  private forced = false;
   private diagTimer?: ReturnType<typeof setTimeout>;
   private streamed = new Set<string>();
   private perRepo = false;
@@ -87,7 +91,8 @@ class WeftExtension {
 
   constructor(private readonly ctx: vscode.ExtensionContext) {
     const c = ctx.subscriptions;
-    c.push(this.out, this.diagnostics, this.statusItem);
+    c.push(this.out, this.diagnostics, this.statusItem, { dispose: () => this.refresher.dispose() });
+    this.refresher.setFocused(vscode.window.state.focused);
     c.push(vscode.workspace.registerTextDocumentContentProvider(SCHEME, this.docs));
     c.push(vscode.window.registerWebviewViewProvider(VIEW_ID, { resolveWebviewView: (v) => this.resolveView(v) }, { webviewOptions: { retainContextWhenHidden: true } }));
     // The provider reads this collection (VS Code hands providers copies of diagnostics without
@@ -106,7 +111,7 @@ class WeftExtension {
     cmd("weft.message", (arg?: unknown) => this.action("message", arg));
     cmd("weft.setToken", () => this.setToken());
     cmd("weft.clearToken", () => this.clearToken());
-    cmd("weft.reconnect", () => this.connect());
+    cmd("weft.reconnect", () => this.connect(true));
     cmd("weft.showLog", () => this.out.show());
     c.push(
       vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration("weft") && void this.connect()),
@@ -116,6 +121,7 @@ class WeftExtension {
       vscode.workspace.onDidCreateFiles(() => this.scheduleDiagnostics()),
       ctx.secrets.onDidChange((e) => e.key === SECRET_KEY && void this.connect()),
       vscode.workspace.onDidGrantWorkspaceTrust(() => void this.connect()),
+      vscode.window.onDidChangeWindowState((e) => this.refresher.setFocused(e.focused)),
       { dispose: () => this.disconnect() },
     );
     this.statusItem.command = "weft.showFeed";
@@ -148,13 +154,26 @@ class WeftExtension {
     this.off = undefined;
     this.session?.stop();
     this.session = undefined;
-    clearInterval(this.repoTimer);
+    this.refresher.setMapped(false);
     this.streamed.clear();
   }
 
-  async connect(): Promise<void> {
+  async connect(force = false): Promise<void> {
     this.disconnect();
+    if (force) this.forced = true;
     this.folders = this.readFolders();
+    // Not a Weft workspace (no .weft/, no Hermes mapping, no weft.repo/weft.url setting, no WEFT_REPO): stay idle,
+    // with no connection, no sockets and no timers, until the user runs "Weft: Reconnect".
+    const cfg0 = vscode.workspace.getConfiguration("weft");
+    if (!this.forced && !isWeftWorkspace({ settingUrl: cfg0.get<string>("url"), settingRepo: cfg0.get<string>("repo"), checkouts: this.folders.map((f) => f.checkout) })) {
+      this.status = "idle";
+      this.url = undefined;
+      this.tokens = [];
+      this.log("no Weft repo is mapped to this workspace; idle (no connection). Run “Weft: Reconnect” to connect anyway.");
+      this.renderStatus();
+      this.broadcastInit();
+      return;
+    }
     const main = this.folders.find((f) => f.checkout.url) ?? this.folders[0];
     const cfg = vscode.workspace.getConfiguration("weft");
     const target = main?.target ?? resolveTarget({ settingUrl: cfg.get<string>("url"), settingRepo: cfg.get<string>("repo") });
@@ -171,12 +190,19 @@ class WeftExtension {
       return;
     }
     const WS = (globalThis as { WebSocket?: unknown }).WebSocket;
-    this.client = new ObserverClient({ baseUrl: target.url, token: this.tokens[0]!.token });
-    // Per-repo sockets when this extension host has WebSocket (Node >= 22); else poll /v1/feed.
-    this.perRepo = !!WS;
-    // Folders whose repo is configured (.weft/, settings) scope the streams from the start; a
-    // repo guessed from a folder name narrows them once /v1/repos has been read (rescope()).
+    const client = new ObserverClient({ baseUrl: target.url, token: this.tokens[0]!.token });
+    this.client = client;
+    // Folders whose repo is configured (.weft/, settings) scope the streams from the start. Otherwise a repo
+    // guessed from a folder name does, so read /v1/repos once first: the streams must never open for every repo.
+    if (!this.workspaceRepos().length) {
+      const list = await client.repos().catch(() => [] as RepoSummary[]);
+      if (this.client !== client) return;
+      this.resolveRepoGuesses(list);
+    }
     const configured = this.workspaceRepos();
+    // Per-repo sockets (one per scoped repo) when this extension host has WebSocket (Node >= 22) and the
+    // workspace names its repos; else the combined feed, whose polls cost the gateway nothing when idle.
+    this.perRepo = !!WS && configured.length > 0;
     const session = new FeedSession(this.client, { perRepoStreams: this.perRepo, ...(configured.length ? { repos: configured } : {}) });
     this.session = session;
     this.status = "connecting";
@@ -206,12 +232,12 @@ class WeftExtension {
     this.broadcastInit();
     this.scheduleDiagnostics(0);
     this.renderStatus();
-    this.repoTimer = setInterval(() => void this.refreshRepos(), 10_000);
+    this.refresher.setMapped(true);
   }
 
   /** A folder with no .weft/ config maps to a visible repo named like the folder. */
-  private resolveRepoGuesses(): void {
-    const visible = new Set(this.session?.repoList.map((r) => r.repo) ?? []);
+  private resolveRepoGuesses(list: RepoSummary[] | undefined = this.session?.repoList): void {
+    const visible = new Set(list?.map((r) => r.repo) ?? []);
     for (const f of this.folders) {
       if (f.repo) continue;
       const guess = repoForFolder(f.folder.uri.fsPath);
@@ -219,18 +245,21 @@ class WeftExtension {
     }
   }
 
-  private async refreshRepos(): Promise<void> {
+  /** Re-reads the repo list; true when it changed (the refresher backs off while it does not). */
+  private async refreshRepos(): Promise<boolean> {
     const s = this.session;
-    if (!s) return;
+    if (!s) return false;
+    const listed = JSON.stringify(s.repoList);
     try {
       await s.refreshRepos();
     } catch {
-      return;
+      return false;
     }
+    const changed = JSON.stringify(s.repoList) !== listed;
     const before = this.workspaceRepos().join("\n");
     this.resolveRepoGuesses();
     if (await this.rescope()) {
-      if (this.session !== s) return;
+      if (this.session !== s) return changed;
       for (const r of this.wanted()) this.streamed.add(r);
     } else if (this.perRepo && this.wanted().some((r) => !this.streamed.has(r))) {
       // Per-repo streams cover the repos known at start; a new repo needs a restart (the log is kept).
@@ -241,6 +270,7 @@ class WeftExtension {
     if (this.workspaceRepos().join("\n") !== before) this.broadcastInit();
     else this.post({ t: "repos", repos: this.viewRepos() });
     this.renderStatus();
+    return changed;
   }
 
   /** Repos the streams should cover: the workspace's, else every visible one. */
@@ -298,6 +328,11 @@ class WeftExtension {
 
   renderStatus(): void {
     const it = this.statusItem;
+    if (this.status === "idle") {
+      it.hide(); // not a Weft workspace: nothing to show
+      return;
+    }
+    it.show();
     if (this.status === "no-token") {
       it.text = "$(circle-slash) Weft: no token";
       it.tooltip = "Weft found no token. Run “Weft: Set token”, set WEFT_TOKEN, or run npx @celador/weft in this repo.";
@@ -386,8 +421,18 @@ class WeftExtension {
     view.webview.options = { enableScripts: true, localResourceRoots: [media] };
     view.webview.html = webviewHtml(view.webview, media);
     this.views.add(view);
-    view.onDidDispose(() => this.views.delete(view));
+    this.syncVisible();
+    view.onDidChangeVisibility(() => this.syncVisible());
+    view.onDidDispose(() => {
+      this.views.delete(view);
+      this.syncVisible();
+    });
     view.webview.onDidReceiveMessage((m: ToHost) => void this.onViewMessage(view, m));
+  }
+
+  /** The repo list is re-read only while a Weft view is on screen. */
+  private syncVisible(): void {
+    this.refresher.setVisible([...this.views].some((v) => v.visible));
   }
 
   private post(m: ToView): void {
@@ -400,8 +445,14 @@ class WeftExtension {
       t: "init",
       events: (s?.log.combined ?? []).filter((e) => this.inScope(e.repo)),
       repos: this.viewRepos(),
-      status: this.status === "no-token" ? "error" : (s?.status ?? "connecting"),
-      ...(this.status === "no-token" ? { error: "No Weft token. Run “Weft: Set token”, set WEFT_TOKEN, or run npx @celador/weft in this repo." } : s?.error ? { error: s.error } : {}),
+      status: this.status === "no-token" || this.status === "idle" ? "error" : (s?.status ?? "connecting"),
+      ...(this.status === "no-token"
+        ? { error: "No Weft token. Run “Weft: Set token”, set WEFT_TOKEN, or run npx @celador/weft in this repo." }
+        : this.status === "idle"
+          ? { error: "No Weft repo is mapped to this workspace, so Weft is not connected. Run npx @celador/weft in this repo, or run “Weft: Reconnect” to watch every repo your token can see." }
+          : s?.error
+            ? { error: s.error }
+            : {}),
       title: "Weft",
       ...(this.selected ? { selected: this.selected } : {}),
       canAct: this.canAct,
@@ -693,6 +744,7 @@ class WeftExtension {
     if (!token) return;
     await this.ctx.secrets.store(SECRET_KEY, token.trim());
     vscode.window.setStatusBarMessage("Weft: token saved in secret storage", 4000);
+    void this.connect(true); // setting a token here is an explicit request to connect this window
   }
 
   async clearToken(): Promise<void> {

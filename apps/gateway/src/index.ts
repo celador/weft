@@ -3,7 +3,7 @@
 // traffic to its RepoCoordinator Durable Object (THE ordered log). Repos and tokens live
 // in the Registry Durable Object, managed through /v1/admin with WEFT_ADMIN_TOKEN.
 
-import { decodeCursor, mergeFeed, validate, WCP_VERSION, WcpProtocolError, type ErrorCode, type EventPage, type RepoSummary } from "@weft/protocol";
+import { decodeCursor, mergeFeed, validate, WCP_VERSION, WcpProtocolError, type ErrorCode, type EventPage, type EventRecord, type RepoSummary } from "@weft/protocol";
 import {
   canAccessRepo,
   hasScope,
@@ -266,14 +266,13 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   if (path === "/v1/repos" && m === "GET") {
     const g = await authenticate(req, env);
     authorize(g, "observe");
-    const repos = visibleRepos(g, (await registry(env).listRepos()).map((r) => r.repo));
-    const summaries = await Promise.all(repos.map(async (r) => unwrap(await repoStub(env, r).summary()) as RepoSummary));
-    return json({ type: "repos", repos: summaries });
+    const summaries = [...(await summariesFor(env, g)).values()];
+    return conditional(req, { type: "repos", repos: summaries });
   }
   if (path === "/v1/feed" && m === "GET") {
     const g = await authenticate(req, env);
     authorize(g, "observe");
-    return feed(u, env, g);
+    return feed(req, u, env, g);
   }
 
   const rm = /^\/v1\/repos\/([^/]+)(\/.*)?$/.exec(path);
@@ -430,11 +429,52 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   throw new HttpError("not_found", `no route ${m} ${path}`);
 }
 
+/**
+ * Summaries of the repos a grant can see, in repo order. They come from the Registry's summary table (one call):
+ * a poll must not wake every repo's Durable Object. A repo with no row yet (created before summaries existed, or
+ * never mutated since) is asked once and its row stored, so the fallback runs once per repo.
+ */
+async function summariesFor(env: Env, g: Grant, only?: string[]): Promise<Map<string, RepoSummary>> {
+  const reg = registry(env);
+  const rows = await reg.repoSummaries();
+  const visible = new Set(visibleRepos(g, rows.map((r) => r.repo)));
+  const out = new Map<string, RepoSummary>();
+  const missing: string[] = [];
+  for (const r of rows) {
+    if (!visible.has(r.repo) || (only && !only.includes(r.repo))) continue;
+    if (r.summary) out.set(r.repo, r.summary);
+    else missing.push(r.repo);
+  }
+  const filled = await Promise.all(
+    missing.map(async (repo) => {
+      const res = await repoStub(env, repo).summary();
+      if (!res.ok) return undefined;
+      await reg.putSummary(res.value);
+      return res.value as RepoSummary;
+    }),
+  );
+  for (const s of filled) if (s) out.set(s.repo, s);
+  return new Map([...out.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
+/** A JSON body with a strong ETag; a matching If-None-Match gets 304 and an empty body. */
+async function conditional(req: Request, body: unknown): Promise<Response> {
+  const text = JSON.stringify(body);
+  const etag = `"${(await sha256Hex(text)).slice(0, 32)}"`;
+  const inm = req.headers.get("if-none-match");
+  const hit = inm !== null && inm.split(",").some((t) => t.trim().replace(/^W\//, "") === etag || t.trim() === "*");
+  if (hit) return new Response(null, { status: 304, headers: { ...baseHeaders, etag, "content-type": "application/json; charset=utf-8" } });
+  return new Response(text, { status: 200, headers: { ...baseHeaders, etag } });
+}
+
+/** How many repos the tail path asks per round (parallel). */
+const TAIL_BATCH = 6;
+
 /** Combined change log across visible repos (spec §9.5). */
-async function feed(u: URL, env: Env, g: Grant): Promise<Response> {
-  const all = visibleRepos(g, (await registry(env).listRepos()).map((r) => r.repo));
+async function feed(req: Request, u: URL, env: Env, g: Grant): Promise<Response> {
   const wanted = list(u.searchParams.get("repos"));
-  const repos = wanted ? all.filter((r) => wanted.includes(r)) : all;
+  const sums = await summariesFor(env, g, wanted);
+  const repos = [...sums.keys()];
   const limit = Math.min(Math.max(1, int(u.searchParams.get("limit"), "limit") ?? 100), 500);
   const tail = ["1", "true"].includes(u.searchParams.get("tail") ?? "");
   let cursor: Record<string, number>;
@@ -443,13 +483,51 @@ async function feed(u: URL, env: Env, g: Grant): Promise<Response> {
   } catch (e) {
     throw new HttpError("invalid_message", `bad cursor: ${(e as Error).message}`, { issues: [{ path: "/after", message: "cursor" }] });
   }
-  const pages = await Promise.all(
-    repos.map(async (r) => {
-      const p = unwrap(await repoStub(env, r).events(tail ? { tail: true, limit } : { after: cursor[r] ?? 0, limit })) as EventPage;
-      return [r, { events: p.events, has_more: p.has_more, head_seq: p.head_seq }] as const;
-    }),
-  );
-  return json(mergeFeed(Object.fromEntries(pages), cursor, limit, tail ? { tail: true } : {}));
+  // Nothing moved since the client's last poll: same answer, no repo object woken. (The ETag is the heads + the query.)
+  const state = JSON.stringify([u.search, repos.map((r) => [r, sums.get(r)!.head_seq])]);
+  const inm = req.headers.get("if-none-match");
+  const etag = `"${(await sha256Hex(state)).slice(0, 32)}"`;
+  if (inm !== null && inm.split(",").some((t) => t.trim().replace(/^W\//, "") === etag || t.trim() === "*"))
+    return new Response(null, { status: 304, headers: { ...baseHeaders, etag } });
+
+  const fetchPage = async (r: string): Promise<readonly [string, { events: EventRecord[]; has_more: boolean; head_seq: number }]> => {
+    const p = unwrap(await repoStub(env, r).events(tail ? { tail: true, limit } : { after: cursor[r] ?? 0, limit })) as EventPage;
+    return [r, { events: p.events, has_more: p.has_more, head_seq: p.head_seq }] as const;
+  };
+  const pages: Array<readonly [string, { events: EventRecord[]; has_more: boolean; head_seq: number }]> = [];
+  if (!tail) {
+    // Only repos that advanced past the cursor can have anything new.
+    for (const p of await Promise.all(repos.filter((r) => sums.get(r)!.head_seq > (cursor[r] ?? 0)).map(fetchPage))) pages.push(p);
+  } else {
+    // Newest `limit` events overall: walk repos from the most recently active, a few at a time, and stop once the
+    // limit-th newest event found is newer than the latest event of every repo not yet asked.
+    const order = repos
+      .filter((r) => sums.get(r)!.head_seq > 0)
+      .sort((a, b) => {
+        const ta = sums.get(a)!.last_event_at ?? "\uffff";
+        const tb = sums.get(b)!.last_event_at ?? "\uffff";
+        return ta < tb ? 1 : ta > tb ? -1 : a < b ? -1 : 1;
+      });
+    const stamps: string[] = [];
+    let at = 0;
+    while (at < order.length) {
+      for (const p of await Promise.all(order.slice(at, at + TAIL_BATCH).map(fetchPage))) {
+        pages.push(p);
+        for (const e of p[1].events) stamps.push(e.ts);
+      }
+      at += TAIL_BATCH;
+      if (at >= order.length) break;
+      stamps.sort();
+      const nth = stamps.length >= limit ? stamps[stamps.length - limit]! : undefined;
+      if (nth !== undefined && nth > (sums.get(order[at]!)!.last_event_at ?? "\uffff")) break;
+    }
+    // Repos not asked still get a cursor entry at their head, so the next poll does not replay their history.
+    const asked = new Set(pages.map(([r]) => r));
+    for (const r of repos) if (!asked.has(r)) pages.push([r, { events: [], has_more: false, head_seq: sums.get(r)!.head_seq }]);
+  }
+  const res = json(mergeFeed(Object.fromEntries(pages), cursor, limit, tail ? { tail: true } : {}));
+  res.headers.set("etag", etag);
+  return res;
 }
 
 async function admin(req: Request, env: Env, path: string, m: string): Promise<Response> {
@@ -462,6 +540,16 @@ async function admin(req: Request, env: Env, path: string, m: string): Promise<R
     const r = await reg.createRepo((await readJson(req)) as CoordinatorInit);
     if ("error" in r) throw new HttpError("invalid_message", r.error, { issues: [{ path: "", message: r.error }] });
     return json(r, r.created ? 201 : 200);
+  }
+  // Operator: erase one repo that belongs to no hosted space (irreversible). The repo name must be repeated in ?confirm=.
+  const dm = /^\/v1\/admin\/repos\/([^/]+)$/.exec(path);
+  if (dm && m === "DELETE") {
+    const repo = decodeURIComponent(dm[1]!);
+    if (new URL(req.url).searchParams.get("confirm") !== repo) throw new HttpError("invalid_message", "repeat the repo name as ?confirm=<repo> to erase it", { issues: [{ path: "/confirm", message: "must equal the repo" }] });
+    const r = await reg.eraseRepo(repo);
+    if ("error" in r) throw new HttpError(r.code === "space" ? "forbidden" : "repo_not_found", r.error);
+    grantCache.clear();
+    return json(r);
   }
   // Operator: apply the claims policy (spec §7.5) — the one journaled step that moves a repo
   // created before the policy onto claim leases. Body: {"claims": {"lease_ms", "firm_max_ms"}}.
