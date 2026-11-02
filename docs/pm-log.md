@@ -248,3 +248,10 @@ Append-only. One dated entry per heartbeat that changed something.
 - Landed f5f3a5e (docs/pricing.md section 3 marked approved) on main; docs only. wt/billing-live keeps the worktree for t_c1c96c5f.
 - t_c1c96c5f blocked: Stripe sign-in in John's Chrome needs Touch ID, and keychain `weft-stripe-live-key` is absent. Needs John (Touch ID or create the restricted key himself), then unblock.
 - Security impact: none (docs/log). Publish freeze holds.
+
+## 2026-11-02 — Cloudflare cost: gateway polling fan-out removed (t_07ba7d4b)
+- Cause: `GET /v1/repos` and `/v1/feed` woke every repo's Durable Object per poll (115 repos x a poll every 10 s from the VS Code extension = ~0.8-1.1M DO calls/day, objects never slept; ~20-30K GB-s/day).
+- Fix landed 576be43 (gate green: typecheck + all tests, VS Code smoke 10/10 in a real VS Code). RepoCoordinator pushes a counts-only summary row to the Registry after each change; `/v1/repos` reads it; `/v1/feed` skips repos at or behind the cursor, `tail=1` asks only the newest repos; both send ETag and answer If-None-Match with 304. VS Code extension: idle (no connection, no timer) unless a repo is mapped; repo list refresh only while the Weft view is visible and the window focused, 60 s with backoff to 5 min; no sockets for "all repos".
+- Deployed `weft-gateway-preview` version 8f7f52a1 (first deploy since 2026-10-23; D1 migrations: none pending; signups stay closed there). New admin route `DELETE /v1/admin/repos/{repo}?confirm={repo}`.
+- Erased 46 dead repos (list in the card result); kept 8 candidates (mapped in hermes-adapter.json, used by the demo video rig, or active within 7 days).
+- Security impact: reads narrow (fewer object wakes); the new table holds counts, head_seq, last-event time and policy only; erasure is real deletion of the repo's log and repo-only tokens. Publish freeze holds: the fixed extension is installed locally only (celador.weft-agents 0.1.2 build), no store release.
