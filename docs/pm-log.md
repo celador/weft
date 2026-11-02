@@ -243,3 +243,8 @@ Append-only. One dated entry per heartbeat that changed something.
 - Live check with the published 0.3.0: `--hosted` created a space; /feed has frame-ancestors 'none', X-Frame-Options DENY, no-referrer; pairing code 200 then 401; `uninstall --space --yes` erased it (owner key 401 afterwards, admin re-erase says already_erased with 0 repos/tokens). Throwaway spaces tagged internal; funnel shows the retention lines.
 - Note: reads of an erased space return 401 (keys revoked), not 404.
 - Security impact: closes audit findings 1 (copyable feed link), 3 (soft delete), 4 (repo-controlled hook config), 8 (admin key file) plus CI hardening; users must re-run `npx @celador/weft` per repo to get the plugin pin.
+
+## 2026-11-01 — pricing approval landed; billing go-live needs John
+- Landed f5f3a5e (docs/pricing.md section 3 marked approved) on main; docs only. wt/billing-live keeps the worktree for t_c1c96c5f.
+- t_c1c96c5f blocked: Stripe sign-in in John's Chrome needs Touch ID, and keychain `weft-stripe-live-key` is absent. Needs John (Touch ID or create the restricted key himself), then unblock.
+- Security impact: none (docs/log). Publish freeze holds.
