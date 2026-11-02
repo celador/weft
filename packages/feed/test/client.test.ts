@@ -172,6 +172,25 @@ describe("ObserverClient", () => {
     h.close();
   });
 
+  it("revalidates /v1/repos with the gateway's ETag and keeps its copy on a 304", async () => {
+    const seen: Array<string | undefined> = [];
+    let body = { type: "repos", repos: [{ repo: "r", head_seq: 1, active_agents: 0, active_changes: 0, open_conflicts: 0, policy: {} }] };
+    let etag = '"v1"';
+    const fetch = async (_u: string, init?: { headers?: Record<string, string> }) => {
+      const inm = init?.headers?.["if-none-match"];
+      seen.push(inm);
+      if (inm === etag) return { ok: false, status: 304, headers: { get: () => etag }, text: async () => "" };
+      return { ok: true, status: 200, headers: { get: (n: string) => (n.toLowerCase() === "etag" ? etag : null) }, text: async () => JSON.stringify(body) };
+    };
+    const c = new ObserverClient({ baseUrl: "http://gw.test", token: "tok", fetch });
+    expect((await c.repos())[0]!.head_seq).toBe(1);
+    expect((await c.repos())[0]!.head_seq).toBe(1); // 304: the held copy
+    body = { ...body, repos: [{ ...body.repos[0]!, head_seq: 2 }] };
+    etag = '"v2"';
+    expect((await c.repos())[0]!.head_seq).toBe(2);
+    expect(seen).toEqual([undefined, '"v1"', '"v1"']);
+  });
+
   it("maps errors: 401 unauthorized, 403 on an action is read-only", async () => {
     const gw = new FakeGateway();
     const c = new ObserverClient({ baseUrl: "http://gw.test", token: "bad", fetch: gw.fetch });

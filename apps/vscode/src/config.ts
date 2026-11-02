@@ -215,6 +215,17 @@ export function resolveTarget(o: { settingUrl?: string; settingRepo?: string; en
   return { url: url.replace(/\/+$/, ""), urlFrom, ...(repo ? { repo, repoFrom } : {}), ...(c ? { checkout: c } : {}) };
 }
 
+/**
+ * Does this window have a Weft repo to watch? True when a setting, WEFT_REPO, or any folder's checkout (.weft/ or the
+ * Hermes adapter mapping) names a repo or gateway. Anything else is not a Weft workspace: the extension stays idle,
+ * with no network and no timer, until the user runs "Weft: Reconnect".
+ */
+export function isWeftWorkspace(o: { settingUrl?: string; settingRepo?: string; env?: NodeJS.ProcessEnv; checkouts: Checkout[] }): boolean {
+  const env = o.env ?? process.env;
+  if (str(o.settingRepo) || str(o.settingUrl) || str(env.WEFT_REPO)) return true;
+  return o.checkouts.some((c) => Boolean(c.repo || c.url));
+}
+
 /** Every token we can find, in lookup order (de-duplicated). Never logs a token. */
 export function tokenCandidates(o: { env?: NodeJS.ProcessEnv; checkout?: Checkout; url: string; repo?: string; secret?: string; home?: string }): TokenCandidate[] {
   const env = o.env ?? process.env;

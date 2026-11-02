@@ -24,6 +24,8 @@ export type WebSocketCtor = new (url: string) => WebSocketLike;
 type FetchLike = (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal }) => Promise<{
   ok: boolean;
   status: number;
+  /** Present on real fetch responses; stubs may omit it (no ETag is then remembered). */
+  headers?: { get(name: string): string | null };
   text(): Promise<string>;
 }>;
 
@@ -117,11 +119,16 @@ export type StreamHandle = {
 
 const FATAL_CLOSE = new Set([4401, 4403, 4404]);
 
+/** Sentinel `request()` returns for a 304. */
+const NOT_MODIFIED = Symbol("not-modified") as unknown as string;
+
 export class ObserverClient {
   readonly baseUrl: string;
   private readonly token: string;
   private readonly fetchImpl: FetchLike;
   private readonly WS: WebSocketCtor | undefined;
+  private reposHeld?: { etag: string; repos: RepoSummary[] };
+  private pendingEtag?: string;
 
   constructor(opts: ClientOptions) {
     this.baseUrl = normalizeBaseUrl(opts.baseUrl);
@@ -134,8 +141,20 @@ export class ObserverClient {
 
   // ------------------------------------------------------------ observer (spec §9.2–9.5)
 
+  /**
+   * The repo list. Revalidates with the gateway's ETag, so a poll of an unchanged list is a 304 the gateway
+   * answers without touching any repo (and this client keeps its copy).
+   */
   async repos(): Promise<RepoSummary[]> {
-    return (await this.get<{ repos: RepoSummary[] }>("/v1/repos")).repos;
+    const held = this.reposHeld;
+    const text = await this.request("GET", "/v1/repos", {}, undefined, false, held ? { "if-none-match": held.etag } : undefined, (etag) => {
+      if (etag) this.pendingEtag = etag;
+    });
+    if (text === NOT_MODIFIED && held) return held.repos;
+    const repos = (JSON.parse(text) as { repos: RepoSummary[] }).repos;
+    if (this.pendingEtag) this.reposHeld = { etag: this.pendingEtag, repos };
+    this.pendingEtag = undefined;
+    return repos;
   }
 
   /** `after` mode (ascending, resume), `tail` (newest `limit`), or `before` (scroll-back). */
@@ -404,17 +423,27 @@ export class ObserverClient {
     return JSON.parse(await this.request("GET", path, query)) as T;
   }
 
-  private async request(method: string, path: string, query: Record<string, string> = {}, body?: string, isAction = false): Promise<string> {
+  private async request(
+    method: string,
+    path: string,
+    query: Record<string, string> = {},
+    body?: string,
+    isAction = false,
+    extraHeaders?: Record<string, string>,
+    onEtag?: (etag: string | null) => void,
+  ): Promise<string> {
     const qs = Object.keys(query)
       .sort()
       .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(query[k]!)}`)
       .join("&");
-    const headers: Record<string, string> = { authorization: `Bearer ${this.token}`, "wcp-version": WCP_VERSION };
+    const headers: Record<string, string> = { authorization: `Bearer ${this.token}`, "wcp-version": WCP_VERSION, ...extraHeaders };
     if (body !== undefined) {
       headers["content-type"] = "application/json";
       headers["idempotency-key"] = randomKey();
     }
     const res = await this.fetchImpl(`${this.baseUrl}${path}${qs ? `?${qs}` : ""}`, { method, headers, ...(body !== undefined ? { body } : {}) });
+    if (res.status === 304) return NOT_MODIFIED;
+    onEtag?.(res.headers?.get("etag") ?? null);
     const text = await res.text();
     if (!res.ok) {
       let code = `http_${res.status}`;
