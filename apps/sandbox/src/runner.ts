@@ -270,7 +270,7 @@ export class RunController {
     const r = await this.exec(["sh", "-c", 'cat "$1/result.json" 2>/dev/null || true', "_", dir]);
     const text = dec.decode(r.stdout).trim();
     if (text) {
-      await this.shipLogs(p, dir); // flush the tail written just before result.json
+      await this.shipLogs(p, dir, true); // drain the tail written just before result.json
       let result: Record<string, unknown>;
       try {
         result = JSON.parse(text) as Record<string, unknown>;
@@ -291,9 +291,10 @@ export class RunController {
     return 5000;
   }
 
-  private async shipLogs(p: Persisted, dir: string) {
+  /** Ship new bytes per stream. Normal ticks cap at 8 chunks per stream; `drain` (final flush) reads to EOF. */
+  private async shipLogs(p: Persisted, dir: string, drain = false) {
     for (const stream of STREAMS) {
-      for (let guard = 0; guard < 8; guard++) {
+      for (let guard = 0; drain || guard < 8; guard++) {
         const off = p.offsets[stream] ?? 0;
         const o = await this.exec(["sh", "-c", READ_FROM, "_", `${dir}/${stream}`, String(off), String(this.d.maxChunkBytes)]);
         const n = o.stdout.byteLength;
@@ -326,7 +327,7 @@ export class RunController {
     if (!p) return undefined;
     if (p.status.state === "running" && this.d.container.running) {
       await this.exec(["sh", "-c", 'pid=$(cat "$1/pid" 2>/dev/null) && kill -TERM -"$pid" 2>/dev/null; true', "_", this.runDir(p.status.run)]);
-      await this.shipLogs(p, this.runDir(p.status.run));
+      await this.shipLogs(p, this.runDir(p.status.run), true);
       p.status.state = "killed";
       p.status.timings.finished_at = this.d.now();
       await this.save(p);

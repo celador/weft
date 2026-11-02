@@ -199,9 +199,11 @@ export async function agentRun(runDir, opts = {}) {
   const log = async (step, extra = {}) => appendFile(runnerLog, redact(JSON.stringify({ t: now(), step, ...extra }), secrets) + "\n");
   const finish = async (result) => {
     result.timings = { ...timings, total_ms: now() - t0 };
+    // Log "finished" BEFORE result.json appears: the controller treats result.json as the end of
+    // every stream and does one final drain, so anything appended after it can be lost or torn.
+    await log("finished", { state: result.state, harness_exit: result.harness_exit ?? null });
     await writeFile(join(runDir, "result.json.tmp"), JSON.stringify(result, null, 2));
     await rename(join(runDir, "result.json.tmp"), join(runDir, "result.json"));
-    await log("finished", { state: result.state, harness_exit: result.harness_exit ?? null });
     return result;
   };
   const timed = async (name, fn) => {
