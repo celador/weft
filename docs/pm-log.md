@@ -255,3 +255,9 @@ Append-only. One dated entry per heartbeat that changed something.
 - Deployed `weft-gateway-preview` version 8f7f52a1 (first deploy since 2026-10-23; D1 migrations: none pending; signups stay closed there). New admin route `DELETE /v1/admin/repos/{repo}?confirm={repo}`.
 - Erased 46 dead repos (list in the card result); kept 8 candidates (mapped in hermes-adapter.json, used by the demo video rig, or active within 7 days).
 - Security impact: reads narrow (fewer object wakes); the new table holds counts, head_seq, last-event time and policy only; erasure is real deletion of the repo's log and repo-only tokens. Publish freeze holds: the fixed extension is installed locally only (celador.weft-agents 0.1.2 build), no store release.
+
+## 2026-11-03 — Main tree cleanup (t_8d27d670)
+- Committed: VS Code Marketplace rename (celador.weft-agents / "Weft for Coding Agents", 10 files under apps/vscode; 1069094) and scripts/sync-plugin.sh (2955952). README/CHANGELOG corrected so Open VSX installs still say `celador.weft` (each store keeps its id). vscode unit tests 21/21, `pnpm -r --no-bail typecheck` exit 0.
+- Moved, not committed: docs/launch/connect-2026/review/talk-read-aloud.mp3 (2.2 MB talk audio) to ~/Documents/Weft/connect-2026/review/. Backup of all changed files: ~/.hermes/cache/scratch/weft-tree-backup-2026-11-03/.
+- Archive (`git archive main | gzip`): 26,878,175 B before, 26,878,952 B after.
+- Security impact: public repo gains only the rename edits and a mirror script with no secrets/personal paths. No private material committed. Publish freeze holds (no store, registry or directory action).
