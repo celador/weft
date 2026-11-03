@@ -1,4 +1,4 @@
-// The live run's driver, inside the editor's extension host (VS Code or a fork). celador.weft is
+// The live run's driver, inside the editor's extension host (VS Code or a fork). celador.weft-agents is
 // installed from the .vsix; this suite only uses its public commands and api.state(), the way a
 // person would, and takes window screenshots at each beat:
 //   1. the feed live while the two Claude Code agents work;
@@ -67,9 +67,9 @@ function windowIds(pid) {
 const weftDiags = (uri) => vscode.languages.getDiagnostics(uri).filter((d) => d.source === "Weft");
 
 exports.run = async function run() {
-  const ext = vscode.extensions.getExtension("celador.weft");
-  if (!ext) throw new Error("celador.weft is not installed");
-  note(`celador.weft ${ext.packageJSON.version} from ${ext.extensionPath} in ${vscode.env.appName} ${vscode.version}`);
+  const ext = vscode.extensions.getExtension("celador.weft-agents");
+  if (!ext) throw new Error("celador.weft-agents is not installed");
+  note(`celador.weft-agents ${ext.packageJSON.version} from ${ext.extensionPath} in ${vscode.env.appName} ${vscode.version}`);
   const api = await ext.activate();
   const pricing = vscode.Uri.file(path.join(WS, "src", "pricing.ts"));
   const cart = vscode.Uri.file(path.join(WS, "src", "cart.ts"));

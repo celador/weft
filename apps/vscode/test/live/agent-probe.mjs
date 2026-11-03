@@ -5,7 +5,7 @@
 //
 // 1. A real conflict on the local gateway: live-run.mjs setup + agents (two Claude Code agents);
 //    as soon as claude-b's edit is refused, john pauses claude-b, so the squiggle stays open.
-// 2. The editor starts on claude-b's checkout with celador.weft from the .vsix, in a clean
+// 2. The editor starts on claude-b's checkout with celador.weft-agents from the .vsix, in a clean
 //    profile seeded with this machine's signed-in editor session (Copilot for VS Code, Cursor's
 //    own for Cursor; the profile is deleted at the end), with a DevTools port for the driver.
 // 3. With src/pricing.ts open (the squiggle is on calcTotal), the driver asks the editor's agent

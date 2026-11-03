@@ -32,8 +32,8 @@ async function check(name, fn) {
 }
 
 exports.run = async function run() {
-  const ext = vscode.extensions.getExtension("celador.weft");
-  assert.ok(ext, "celador.weft is installed");
+  const ext = vscode.extensions.getExtension("celador.weft-agents");
+  assert.ok(ext, "celador.weft-agents is installed");
   const api = await ext.activate();
   const pricing = vscode.Uri.file(path.join(WS, "src", "pricing.ts"));
 

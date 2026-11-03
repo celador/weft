@@ -24,8 +24,8 @@
     "ovsx": "^0.10.6"
   },
   "weftExtension": {
-    "name": "weft",
-    "displayName": "Weft",
+    "name": "weft-agents",
+    "displayName": "Weft for Coding Agents",
     "publisher": "celador",
     "description": "Red squiggles for teams of coding agents: the live Weft feed, Editing now, diffs per event, squiggles linked to the edit that caused them, and Approve/Undo/Pause/Resume/Message.",
     "icon": "media/icon.png",

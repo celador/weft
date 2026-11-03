@@ -1,6 +1,6 @@
 // Stages the extension into out/stage (the manifest from package.json "weftExtension", the
 // built files, README, CHANGELOG, LICENSE) and packs it with vsce into out/weft-<version>.vsix.
-// The workspace package is "@weft/vscode"; the shipped extension is "celador.weft".
+// The workspace package is "@weft/vscode"; the shipped extension is "celador.weft-agents".
 // Publishing (Marketplace, Open VSX) is NOT done here: it needs John's OK.
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";

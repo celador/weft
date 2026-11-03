@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // A REAL run of the packaged extension: two Claude Code agents (the Weft adapter, `claude -p`)
-// collide on a local gateway while celador.weft, installed from out/weft-<v>.vsix into a clean
+// collide on a local gateway while celador.weft-agents, installed from out/weft-<v>.vsix into a clean
 // profile, runs in VS Code or Cursor. Screenshots and the driver log go to
 // demo/evidence/vscode/<app>/.
 //

@@ -26,8 +26,8 @@ it from Open VSX, Trae from the `.vsix`.
 
 ```sh
 npx @celador/weft                          # in your repo: free hosted space + agent hooks
-code --install-extension celador.weft      # VS Code (Visual Studio Marketplace)
-cursor --install-extension celador.weft    # Cursor, Windsurf, VSCodium, Kiro, Antigravity (Open VSX)
+code --install-extension celador.weft-agents      # VS Code (Visual Studio Marketplace)
+cursor --install-extension celador.weft           # Cursor, Windsurf, VSCodium, Kiro, Antigravity (Open VSX)
 ```
 
 Or search **Weft** in the Extensions view. Open the repo's folder: the extension finds the space

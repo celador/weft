@@ -1,4 +1,4 @@
-// Runs in the editor's extension host (see run.mjs). Reads the installed celador.weft's API.
+// Runs in the editor's extension host (see run.mjs). Reads the installed celador.weft-agents's API.
 const { writeFileSync } = require("node:fs");
 const vscode = require("vscode");
 
@@ -8,8 +8,8 @@ exports.run = async function run() {
   const out = { pass: false, checks: [] };
   const done = () => writeFileSync(process.env.WEFT_INSTALL_OUT, JSON.stringify(out, null, 2));
   try {
-    const ext = vscode.extensions.getExtension("celador.weft");
-    if (!ext) throw new Error("celador.weft is not installed");
+    const ext = vscode.extensions.getExtension("celador.weft-agents");
+    if (!ext) throw new Error("celador.weft-agents is not installed");
     out.version = ext.packageJSON.version;
     const api = await ext.activate();
     out.checks.push("installed and activated");

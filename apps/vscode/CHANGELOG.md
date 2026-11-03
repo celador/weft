@@ -10,7 +10,7 @@
 
 ## 0.1.1
 
-- First Marketplace and Open VSX release (`celador.weft`).
+- First Marketplace (`celador.weft-agents`) and Open VSX (`celador.weft`) release.
 - Install section and screenshots in the README; homepage is weft.mx.
 - Verified: a fresh install in a clean VS Code 1.143 and Cursor 3.27 profile connects to a space
   made by `npx @celador/weft` with no settings (`test/install/run.mjs`).

@@ -8,7 +8,7 @@
 //
 // --from vsix (default): installs out/weft-<version>.vsix (run `pnpm --filter @weft/vscode package`),
 //   or the file given with --vsix PATH (e.g. the GitHub release asset).
-// --from marketplace: `<editor> --install-extension celador.weft` (VS Code: Visual Studio
+// --from marketplace: `<editor> --install-extension celador.weft-agents` (VS Code: Visual Studio
 //   Marketplace; Cursor/VSCodium/Windsurf: Open VSX). Use after publishing.
 // --checkout DIR: an existing checkout set up by `npx @celador/weft`; default: a new repo in
 //   $TMPDIR, set up with `npx -y @celador/weft --yes --no-open --harness claude-code --agents 1`.
@@ -64,12 +64,12 @@ if (from === "vsix" && opt("vsix")) {
   const version = JSON.parse(readFileSync(join(ext, "package.json"), "utf8")).version;
   source = join(ext, "out", `weft-${version}.vsix`);
   if (!existsSync(source)) throw new Error(`build the .vsix first: ${source}`);
-} else source = "celador.weft";
+} else source = "celador.weft-agents";
 const inst = spawnSync(a.cli, [`--user-data-dir=${userData}`, `--extensions-dir=${extDir}`, "--install-extension", source, "--force"], { encoding: "utf8" });
 log((inst.stdout + inst.stderr).trim().split("\n").slice(-1)[0] ?? "");
 if (inst.status !== 0) throw new Error(`install failed: ${inst.stderr || inst.stdout}`);
 
-// 3. Open the checkout; the probe (a throwaway development extension) reads celador.weft's API.
+// 3. Open the checkout; the probe (a throwaway development extension) reads celador.weft-agents's API.
 const probe = join(run, "probe");
 mkdirSync(probe, { recursive: true });
 writeFileSync(join(probe, "package.json"), JSON.stringify({ name: "weft-install-probe", publisher: "weft-test", version: "0.0.0", engines: { vscode: "^1.88.0" }, main: "./noop.js", activationEvents: [] }));
