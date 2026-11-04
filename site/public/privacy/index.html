@@ -22,6 +22,7 @@
       <nav class="nav-links" aria-label="Primary">
         <a href="/#how">How it works</a>
         <a href="/#protocol">Protocol</a>
+        <a href="/pricing/">Pricing</a>
         <a href="https://github.com/celador/weft#readme">Docs</a>
         <a href="https://github.com/celador/weft?utm_source=weft-site&amp;utm_medium=web&amp;utm_campaign=launch&amp;utm_content=repo">GitHub</a>
       </nav>
@@ -31,7 +32,7 @@
 
   <main class="wrap doc">
     <h1>Privacy policy</h1>
-    <p class="meta">Effective November 1, 2026. Operator: Weft (celador), John Nelson. Contact: <a href="mailto:john@elier.ai">john@elier.ai</a>.</p>
+    <p class="meta">Effective November 3, 2026. Operator: Weft (celador), John Nelson. Contact: <a href="mailto:john@elier.ai">john@elier.ai</a>.</p>
 
     <p>Weft is open-source software (the <code>@celador/weft</code> CLI, its agent adapters, the Claude Code and Copilot CLI plugin, the VS Code extension and the gateway) plus an optional hosted gateway. By default Weft runs on your machine and sends nothing to us. This page says what each part sends, what the hosted gateway stores, for how long, and how to delete it. In short: Weft handles code-coordination data, not personal data. We don&#39;t sell it, show ads, or use it to train models.</p>
 
@@ -55,6 +56,7 @@
       <li><strong>each repo&#39;s event log:</strong> the edits, diffs, symbol names and messages listed above, in order.</li>
     </ul>
     <p>There is no account, login or email address. Only someone holding one of your space&#39;s keys, or a browser or phone you paired with a one-time code, can read the space. The feed address has no key in it; a paired device holds a session that expires after a week of not being used, and you can unpair it at any time with <code>npx @celador/weft viewers</code>.</p>
+    <p><strong>Billing (only if you subscribe).</strong> A hosted space is free up to 5,000 agent events a month. If you subscribe, Stripe Checkout collects your email and card; Stripe stores them and is our payment processor, and Weft never sees the card. The gateway stores only the plan, the Stripe customer id and a monthly event count for the space. Once an hour it reports to Stripe, for a subscribed space, the number of events above the allowance, together with the Stripe customer id and the space id; it sends no code, path or repo name. Erasing a space cancels its subscription first and keeps nothing but the tombstone described below. Stripe keeps its own records of past invoices as the law requires.</p>
     <p><strong>How long:</strong> the event log and the space are kept until you erase the space. They don&#39;t expire on their own, so expect them to be kept for more than 30 days unless you erase them. Signup rate-limit counters use a daily-rotating keyed hash of the network address and are deleted after 48 hours. Activity counts are deleted after 90 days. Cloudflare keeps the gateway&#39;s operational request logs for a few days for debugging.</p>
     <p><strong>Deleting your space:</strong> run <code>npx @celador/weft uninstall --space</code> in the repo (it asks first; <code>--yes</code> skips the question). This erases the space immediately and for good:</p>
     <ul>
@@ -84,6 +86,7 @@
       <nav aria-label="Footer">
         <a href="https://github.com/celador/weft?utm_source=weft-site&amp;utm_medium=web&amp;utm_campaign=launch&amp;utm_content=repo">GitHub</a>
         <a href="https://github.com/celador/weft#readme">Docs</a>
+        <a href="/pricing/">Pricing</a>
         <a href="/privacy/">Privacy</a>
         <a href="/terms/">Terms</a>
         <a href="/support/">Support</a>

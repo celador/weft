@@ -56,7 +56,7 @@ you have (Claude Code, Codex, Cursor, Copilot CLI, OpenCode, Gemini, Antigravity
 checkout, offers a second worktree so two agents can work side by side, and opens your live feed.
 Agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode) use `npx @celador/weft mcp`. Local is
 free and open source. A hosted team space on Weft's Cloudflare gateway is an option
-(`--hosted`; usage-based pricing is coming); `deploy` puts the gateway in your own Cloudflare
+(`--hosted`; 5,000 events a month free, then $1 per 1,000, never per seat); `deploy` puts the gateway in your own Cloudflare
 account. The npm package is [`@celador/weft`](https://www.npmjs.com/package/@celador/weft)
 (the name `weft` is taken on npm). No repo handy? `npx @celador/weft demo` makes a two-file
 sample repo and prints the two prompts that make your agents collide. Details:

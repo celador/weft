@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b0d12">
+  <title>Pricing · Weft</title>
+  <meta name="description" content="Weft pricing: free and open source locally, usage-based hosted spaces (5,000 events a month free, then $1 per 1,000), and a $500 pilot on your own Cloudflare account. No per-seat fees.">
+  <link rel="canonical" href="https://weft.mx/pricing/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Pricing · Weft">
+  <meta property="og:description" content="Weft pricing: free and open source locally, usage-based hosted spaces (5,000 events a month free, then $1 per 1,000), and a $500 pilot on your own Cloudflare account. No per-seat fees.">
+  <meta property="og:url" content="https://weft.mx/pricing/">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/" aria-label="Weft home"><img src="/favicon.svg" alt="" width="22" height="22">weft</a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="/#how">How it works</a>
+        <a href="/#protocol">Protocol</a>
+        <a href="/pricing/" aria-current="page">Pricing</a>
+        <a href="https://github.com/celador/weft#readme">Docs</a>
+        <a href="https://github.com/celador/weft?utm_source=weft-site&amp;utm_medium=web&amp;utm_campaign=launch&amp;utm_content=repo">GitHub</a>
+      </nav>
+      <a class="btn btn-small" href="/#start">Get started</a>
+    </div>
+  </header>
+
+  <main class="wrap doc">
+    <h1>Pricing</h1>
+    <p class="meta">Pay for what your agents use, never per developer. There is no per-seat, per-developer or per-agent fee anywhere.</p>
+
+    <section class="plan">
+      <h2>Free</h2>
+      <p class="price">$0</p>
+      <p>Run Weft on your machine or on your own Cloudflare account.</p>
+      <ul>
+        <li>Open source (MIT). Nothing leaves your machine by default.</li>
+        <li>Local: <code>npx @celador/weft</code></li>
+        <li>Self-hosted: <code>npx @celador/weft deploy</code> runs the gateway as a Worker in your Cloudflare account.</li>
+        <li>No Weft limit on repos, agents or developers.</li>
+      </ul>
+    </section>
+
+    <section class="plan">
+      <h2>Hosted</h2>
+      <p class="price">5,000 events a month free, then $1 per 1,000</p>
+      <p>We run the gateway. Opt in with <code>npx @celador/weft --hosted</code>. Each space gets the free allowance every month (UTC); you pay only for events above it, billed monthly in arrears through Stripe. You are never charged unless you subscribe.</p>
+      <ul>
+        <li>An event is one edit, claim, release or checkpoint an agent adds to the log. Heartbeats, reads, checks that pass and everything a human does are free.</li>
+        <li>Over the allowance without a subscription, agents keep working uncoordinated and are told so. Nothing is billed.</li>
+        <li>Every repo, agent and developer in the space is included.</li>
+        <li>See your count: <code>npx @celador/weft usage</code>. Subscribe: <code>npx @celador/weft upgrade</code>. Cards, invoices and cancelling (immediate): <code>npx @celador/weft billing</code>.</li>
+        <li>No account or login: a space is a key on your machine. Erase it for good with <code>npx @celador/weft uninstall --space</code>.</li>
+      </ul>
+    </section>
+
+    <section class="plan">
+      <h2>Pilot</h2>
+      <p class="price">$500, one time</p>
+      <p>We set Weft up on your Cloudflare account and support you for 30 days.</p>
+      <ul>
+        <li>Deployed to your account with <code>npx @celador/weft deploy</code>. Your code never touches our servers.</li>
+        <li>Hooks wired for every agent you run, and a live collision on your own repo during setup.</li>
+        <li>30 days of support and a day-30 review. Weft keeps running on your account afterward.</li>
+      </ul>
+      <p>For teams already running several coding agents in parallel.</p>
+      <p><a class="btn" href="https://calendly.com/john-johnaaronnelson/chat">Book a 15-minute call</a> <a class="btn btn-ghost" href="mailto:john@elier.ai">Email John</a></p>
+    </section>
+
+    <h2>Questions</h2>
+    <p><strong>Do you charge per developer?</strong> No. Hosted is billed on usage, the pilot is a flat $500, and Free costs nothing.</p>
+    <p><strong>Where does my code go?</strong> Local: it stays on your machine. Self-hosted and Pilot: edit events go to a Worker in your Cloudflare account. Hosted: edit events (file paths, diffs, symbol names) go to Weft&#39;s gateway on Cloudflare and are kept until you erase the space. Stripe handles the email and card of a paid space; we keep only its customer id. <a href="/privacy/">Details in the privacy page</a>.</p>
+    <p><strong>What if Weft goes down?</strong> Agents keep working. After 5 seconds the adapter lets the edit through and tells the agent it was uncoordinated.</p>
+    <p><strong>Is it open source?</strong> Yes, MIT, at <a href="https://github.com/celador/weft">github.com/celador/weft</a>. Hosted adds the service, not a different codebase.</p>
+    <p><strong>Can I move between Free and Hosted?</strong> <code>npx @celador/weft use hosted</code> and <code>use local</code> switch the default. Each gateway keeps its own event log, so history stays where it was written.</p>
+    <p><strong>Who bills me?</strong> Stripe, as &quot;Atelier&quot;, monthly in arrears, in US dollars.</p>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <span class="brand"><img src="/favicon.svg" alt="" width="18" height="18">weft</span>
+      <nav aria-label="Footer">
+        <a href="https://github.com/celador/weft?utm_source=weft-site&amp;utm_medium=web&amp;utm_campaign=launch&amp;utm_content=repo">GitHub</a>
+        <a href="https://github.com/celador/weft#readme">Docs</a>
+        <a href="/pricing/">Pricing</a>
+        <a href="/privacy/">Privacy</a>
+        <a href="/terms/">Terms</a>
+        <a href="/support/">Support</a>
+        <a href="https://github.com/celador/weft/blob/main/LICENSE">MIT license</a>
+      </nav>
+      <p>Built by <a href="https://johnaaronnelson.com">John Aaron Nelson</a>.</p>
+    </div>
+  </footer>
+  <!-- Cloudflare Web Analytics (cookieless). The token is public by design. -->
+  <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "f2a2e8db7c3c44a3aff0a5ddd425ef2f"}'></script>
+</body>
+</html>

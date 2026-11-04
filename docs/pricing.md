@@ -2,7 +2,7 @@
 
 **Status: section 3 (allowance and price) APPROVED by John 2026-11-01.** The cost model below is kept as the
 basis. The code reads the numbers from configuration and stays inert until Stripe secrets are set on the hosted
-gateway (see [Go-live checklist](#go-live-checklist-for-john)). Local and self-hosted Weft stay
+gateway (see the [go-live record](#go-live-record-2026-11-03)). Local and self-hosted Weft stay
 free and open source. Pricing is **usage-based only: there is no per-developer, per-seat or
 per-agent fee**, and nothing here depends on how many people or agents a team has.
 
@@ -105,7 +105,7 @@ Counting rules (implemented in `apps/gateway/src/billing.ts` and the gateway's s
   free;
 - the calendar month is UTC; the counter is per space; nothing in it identifies a person or a repo.
 
-## 3. PROPOSAL: allowance, price, example bills
+## 3. Allowance, price, example bills (approved 2026-11-01)
 
 | | Proposal |
 |---|---|
@@ -184,27 +184,22 @@ is enforced, no Stripe call is made. Usage is still counted so `GET /v1/space` a
 A usage retry with the same `Idempotency-Key` can count one event twice (the coordinator replays the old verdict, the
 gateway cannot tell). At $0.001 an event this is noise and is not engineered away.
 
-## Go-live checklist for John
+## Go-live record (2026-11-03)
 
-Nothing below has been done. The hosted gateway deployed by `wt/sec-release` carries the code but no secrets, so it
-is inert.
+Billing is on for the production hosted gateway (`weft-hosted.elier.ai`), in Stripe account elier.ai (customers see
+"Atelier" on Checkout and statements).
 
-1. **Approve the numbers** in section 3 (allowance, price, whether to keep $1.00). To change them edit the
-   `pricing-config` block above, `WEFT_FREE_EVENTS` in `[env.hosted.vars]`, and rerun step 3.
-2. **Give me a live key** (restricted key, not the secret key, is enough): Products, Prices, Meters and Meter Events
-   write; Checkout Sessions, Customers and Subscriptions write; Customer Portal Sessions write; Webhook Endpoints
-   write. Store it in the macOS keychain: `security add-generic-password -U -a weft -s weft-stripe-live-key -w`.
-3. **Create the live objects** (once, idempotent): `STRIPE_KEY=$(security find-generic-password -s weft-stripe-live-key -w) node scripts/stripe-setup.mjs --live`
-   prints the price id. The script refuses a live key unless `--live` is passed.
-4. **Register the webhook** in the Stripe dashboard (or `node scripts/stripe-setup.mjs --live --webhook https://weft-hosted.elier.ai/v1/billing/stripe/webhook`):
-   events `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`,
-   `invoice.payment_failed` (the script registers exactly these four).
-5. **Set the secrets on the hosted Worker**, then deploy: `cd apps/gateway && for s in STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET STRIPE_PRICE_ID; do npx wrangler secret put $s --env hosted; done && pnpm deploy:hosted`.
-6. **Configure the Customer Portal** once in Stripe (cancel subscription, update payment method): Settings,
-   Billing, Customer portal. (Or `node scripts/stripe-setup.mjs --live` sets a default configuration.)
-7. **Before the first month**: counters already hold this month's usage from before go-live, so a space that used
-   more than 5,000 events will hit the allowance on day one. Reset with `POST /v1/admin/billing/reset-usage {"month":"YYYY-MM"}`
-   if that is not wanted.
-8. **Site and docs**: add the real prices to the site only after step 5; `docs/hosted.md` says "Hosting is free" until
-   then.
-9. **Test with a real card once** on a throwaway space and refund it.
+1. Numbers approved by John, 2026-11-01 (section 3).
+2. A restricted live key `weft-hosted` (write on Products, Prices, Billing Meters, Meter Events, Checkout Sessions,
+   Customers, Subscriptions, Customer Portal, Webhook Endpoints; no balance, charges or payouts) is in the operator's
+   keychain (`weft-stripe-live-key`) and is the Worker's `STRIPE_SECRET_KEY`. The account's full secret key is not on the Worker.
+3. Live objects (`node scripts/stripe-setup.mjs --live`, idempotent): meter `weft_agent_events`, product `weft_hosted`,
+   price with lookup key `weft_hosted_agent_events` (0.1 cent per event), Customer Portal configuration (metadata
+   `weft=hosted`). The account already has a default portal configuration that belongs to another product, so the
+   Worker pins ours with the `STRIPE_PORTAL_CONFIG_ID` secret.
+4. Webhook: `node scripts/stripe-setup.mjs --live --webhook https://weft-hosted.elier.ai/v1/billing/stripe/webhook`
+   (the four events). Secrets on the Worker: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`,
+   `STRIPE_PORTAL_CONFIG_ID`.
+5. This month's counters were reset (`POST /v1/admin/billing/reset-usage`) so no existing space hit the allowance on day one.
+6. To change a number: edit the `pricing-config` block above, `WEFT_FREE_EVENTS` in `[env.hosted.vars]`, rerun step 3
+   and set the new `STRIPE_PRICE_ID`.

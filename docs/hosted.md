@@ -1,8 +1,8 @@
 # Local mode, hosted spaces, and your own gateway
 
 `npx @celador/weft` talks to one Weft gateway. **It runs locally by default: your code and diffs
-stay on your machine.** Hosted team spaces are an option you choose; usage-based pricing for them
-is coming. There are three kinds:
+stay on your machine.** Hosted team spaces are an option you choose; they are free up to 5,000 agent events a
+month, then $1.00 per 1,000 events (usage-based, never per seat). There are three kinds:
 
 | | Where it runs | Who can create a space | Command |
 |---|---|---|---|
@@ -22,7 +22,9 @@ default for new projects: npx @celador/weft use local".
 
 The hosted gateway is a separate Worker, `weft-hosted` (`[env.hosted]` in
 `apps/gateway/wrangler.toml`), with its own Durable Objects. It shares no storage with any team
-gateway. Usage-based pricing for hosted team spaces is coming; there is nothing to pay yet.
+gateway. Each space gets 5,000 agent events a month free (UTC); above that, a subscribed space pays $1.00 per 1,000
+events, billed monthly in arrears through Stripe (see [pricing.md](pricing.md) and weft.mx/pricing). Nothing is charged
+unless you run `npx @celador/weft upgrade` and subscribe.
 
 **No account.** `POST /v1/spaces` (no auth) creates a space and returns its *owner key*. That key
 is the only credential: there is no login and no third-party identity. The CLI keeps it in
@@ -167,12 +169,12 @@ Set as vars in `[env.hosted.vars]`; the per-minute ones also use Workers Rate Li
 Over a limit, the gateway answers `429 rate_limited` with a message; the adapters fail open, so
 an agent keeps working (uncoordinated) and is told so.
 
-### Usage-based billing (built, not switched on)
+### Usage-based billing (live since 2026-11-03)
 
 Hosted pricing is usage-based, never per seat, per developer or per agent: a free monthly allowance of agent
-events per space, then a price per 1,000 events. The numbers are a proposal in [pricing.md](pricing.md); until the
-operator sets the three Stripe secrets on the hosted Worker nothing is limited or charged, the billing routes answer
-`503`, and usage is only counted.
+events per space, then a price per 1,000 events. The numbers (approved 2026-11-01) are in [pricing.md](pricing.md). Billing is on for `weft-hosted`: the Stripe
+secrets are set. A gateway without them (local, your own) never limits or charges, its billing routes answer `503`, and
+usage is only counted.
 
 | | |
 |---|---|

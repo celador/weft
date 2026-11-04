@@ -269,3 +269,10 @@ section { padding-block: 96px; }
   .terminal pre { font-size: 12px; }
   .footer p { margin-left: 0; width: 100%; }
 }
+
+/* pricing page */
+.doc .plan { border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-2); padding: 8px 24px 24px; margin-top: 24px; }
+.doc .plan h2 { margin-top: 16px; }
+.doc .plan .price { font-size: 26px; font-weight: 600; color: var(--text); letter-spacing: -0.02em; margin-top: 4px; }
+.doc .plan .btn { color: var(--accent-ink); text-decoration: none; margin: 8px 8px 0 0; }
+.doc .plan .btn-ghost { color: var(--text); }
