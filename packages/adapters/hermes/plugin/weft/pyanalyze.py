@@ -133,10 +133,18 @@ class _Imports:
             base = ""
         if not parts and not allow_empty:
             return None
-        rel = os.path.join(base, *parts) if (base or parts) else ""
-        for candidate in (rel + ".py", os.path.join(rel, "__init__.py")):
-            if candidate and os.path.isfile(os.path.join(root, candidate)):
-                return candidate.replace(os.sep, "/")
+        bases = [base] if level else ["", "src", here]
+        if not level:
+            parent = here
+            while parent:
+                parent = os.path.dirname(parent)
+                bases.append(parent)
+        for base in dict.fromkeys(bases):
+            rel = os.path.join(base, *parts) if (base or parts) else ""
+            for candidate in (rel + ".py", rel + ".pyi", os.path.join(rel, "__init__.py")):
+                full = os.path.realpath(os.path.join(root, candidate))
+                if full.startswith(os.path.realpath(root) + os.sep) and os.path.isfile(full):
+                    return candidate.replace(os.sep, "/")
         return None
 
 
@@ -159,12 +167,14 @@ def _used_reads(node: ast.AST, imports: _Imports, prefix: str) -> Set[str]:
         elif isinstance(n, ast.Attribute):
             parts = chain(n)
             if parts and len(parts) >= 2:
+                if parts[0] in imports.symbols:
+                    reads.add(imports.symbols[parts[0]] + "." + ".".join(parts[1:]))
                 # longest module prefix: a.b.c.f -> module a.b.c, name f
                 for cut in range(len(parts) - 1, 0, -1):
                     dotted = ".".join(parts[:cut])
                     mod = imports.modules.get(dotted)
                     if mod:
-                        reads.add(f"{prefix}{mod}#{parts[cut]}")
+                        reads.add(f"{prefix}{mod}#{'.'.join(parts[cut:])}")
                         break
     return reads
 

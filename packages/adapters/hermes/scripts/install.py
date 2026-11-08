@@ -55,13 +55,15 @@ from pathlib import Path
 
 PKG = Path(__file__).resolve().parent.parent
 PLUGIN_SRC = PKG / "plugin" / "weft"
-PLUGIN_FILES = ["plugin.yaml", "__init__.py", "adapter.py", "wcp.py", "land.py"]
+PLUGIN_FILES = ["plugin.yaml", "__init__.py", "adapter.py", "wcp.py", "land.py",
+                "surface.py", "cli.py", "standalone.py", "status.py", "pyanalyze.py"]
 DEFAULT_URL = "https://weft-gateway-preview.elier.ai"
 DEFAULT_ADMIN = "~/.config/weft/preview-admin-token"
 DEFAULT_PROJECT_DIRS = "~/github,~/code"
 CONFIG = Path(os.environ.get("WEFT_HERMES_CONFIG", "~/.config/weft/hermes-adapter.json")).expanduser()
 
 sys.path.insert(0, str(PLUGIN_SRC.parent))
+sys.path.insert(0, str(PKG / "installer"))
 from weft.adapter import discover_projects  # noqa: E402
 
 
@@ -174,7 +176,8 @@ def hermes(profile: str, *args: str) -> subprocess.CompletedProcess:
 
 def code_changed(dest: Path, bundle: Path) -> bool:
     """True when the installed plugin code differs from what install is about to copy."""
-    pairs = [(PLUGIN_SRC / n, dest / n) for n in PLUGIN_FILES] + [(bundle, dest / "analyze.mjs")]
+    pairs = [(PLUGIN_SRC / n, dest / n) for n in PLUGIN_FILES] + [(bundle, dest / "analyze.mjs"),
+            (PKG / "installer/legacy_config.py", dest / "legacy_config.py")]
     try:
         return any(not d.exists() or s.read_bytes() != d.read_bytes() for s, d in pairs)
     except OSError:
@@ -367,6 +370,7 @@ def install(args) -> None:
         changed = code_changed(dest, bundle)
         for name in PLUGIN_FILES:
             shutil.copy2(PLUGIN_SRC / name, dest / name)
+        shutil.copy2(PKG / "installer/legacy_config.py", dest / "legacy_config.py")
         shutil.copy2(bundle, dest / "analyze.mjs")
         # tree-sitter runtime + grammars: the bundle looks for ./grammars/*.wasm next to itself.
         if (dest / "grammars").exists():
@@ -378,7 +382,7 @@ def install(args) -> None:
             "source": str(PKG), "profile": profile, "agent": agent, "gateway": args.url,
             "repos": len(cfg["agents"][profile]["tokens"]), "config": str(CONFIG),
             "config_backup": str(backups / f"{profile}.config.yaml"),
-            "files": PLUGIN_FILES + ["analyze.mjs"] + grammars,
+            "files": PLUGIN_FILES + ["legacy_config.py", "analyze.mjs"] + grammars,
             "sync": f"python3 {PKG / 'scripts' / 'install.py'} --sync",
             "uninstall": f"python3 {PKG / 'scripts' / 'install.py'} --uninstall --profiles {profile}",
         }

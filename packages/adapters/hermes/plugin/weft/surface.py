@@ -131,7 +131,7 @@ def status_data(router: Any, directory: str, refresh: bool = True) -> Dict[str, 
             adapter.ensure_session()   # proves the gateway is reachable (a status query is not an edit)
             adapter.refresh_open()
         except Exception:
-            pass  # the snapshot still has what we last saw (and says unreachable if it is)
+            adapter.rec.set_reachable(False)
     snap = adapter.rec.snapshot()
     snap["live"] = True
     others = others_for(snap, status.read_all())
@@ -201,7 +201,7 @@ def make_tools(get_router: Callable[[], Any]) -> List[Dict[str, Any]]:
         try:
             data = status_data(get_router(), _adapter.base_dir(kw.get("task_id") or ""))
             data["summary"] = status_text(data)
-            return _clip(json.dumps(data, ensure_ascii=False, default=str))
+            return json.dumps(data, ensure_ascii=False, default=str)
         except Exception as err:
             return json.dumps({"error": f"weft_status failed: {err}"})
 
@@ -212,7 +212,7 @@ def make_tools(get_router: Callable[[], Any]) -> List[Dict[str, Any]]:
             if adapter is None:
                 return json.dumps({"linked": False, "message": "Weft is not set up for this checkout (the user can run /weft setup)."})
             text = adapter.inbox_now()
-            return _clip(json.dumps({"linked": True, "messages": text or "", "empty": not text}))
+            return json.dumps({"linked": True, "messages": text or "", "empty": not text})
         except Exception as err:
             return json.dumps({"error": f"weft_inbox failed: {err}"})
 
@@ -260,6 +260,9 @@ def make_command(get_router: Callable[[], Any], set_config: Callable[[str, Any],
             have = list(get_config("trusted_gateways", []) or [])
             if url not in have:
                 set_config("trusted_gateways", have + [url])
+            if router:
+                router._loaded_at = float("-inf")
+                router._reload()
             return f"Trusted {url}: checkouts that name it may report there."
         return HELP
 
@@ -267,16 +270,18 @@ def make_command(get_router: Callable[[], Any], set_config: Callable[[str, Any],
 
 
 def _setup(directory: str, hosted: bool) -> str:
-    rc, out = cli.run(["--yes", "--no-open", "--harness", "watcher", *(["--hosted"] if hosted else [])], directory,
+    rc, out = cli.run(["--yes", "--no-open", "--harness", "watcher", *(["--hosted"] if hosted else ["--local"])], directory,
                       timeout=cli.SETUP_TIMEOUT_S)
     lines = [ln for ln in out.splitlines() if ln.strip()]
     keep = [ln for ln in lines if ln.lstrip().startswith(("✓", "·", "Live feed", "http", "pairing code", "more devices"))
             or "error" in ln.lower() or "not a git" in ln.lower()]
     if rc != 0:
         return "Weft setup failed (exit %s):\n%s" % (rc, "\n".join((keep or lines)[-12:]))
-    return ("Weft is set up. Hermes sessions in these checkouts report from now on (a few seconds).\n"
+    return ("Weft gateway is set up. Configure the agent token in Hermes before reporting begins.\n"
             + "\n".join(keep[-14:])
-            + "\nThe plugin links each checkout itself: nothing else to configure. /weft mode enforce blocks conflicting edits.")
+            + "\nIn Hermes Settings → Plugins → Weft, set Agent token from this checkout’s .weft/token. "
+            "The plugin never reads that credential file. For paired checkouts using the same token, set Agent id "
+            "to the agent in the first checkout’s .weft/space.json. /weft mode enforce blocks conflicting edits.")
 
 
 def _feed(directory: str) -> str:

@@ -81,6 +81,12 @@ def breaker_for(base_url: str, cooldown: float = 300.0) -> CircuitBreaker:
         return b
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never forward a repo-scoped credential or edit diff through a gateway redirect."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class WcpClient:
     def __init__(self, base_url: str, token: str, repo: str, timeout: float = 4.0,
                  breaker: Optional[CircuitBreaker] = None, breaker_cooldown: float = 300.0):
@@ -120,7 +126,7 @@ class WcpClient:
         for key, value in (headers or {}).items():
             req.add_header(key, value)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.build_opener(NoRedirect()).open(req, timeout=self.timeout) as resp:
                 raw = resp.read()
                 return json.loads(raw) if raw else None
         except urllib.error.HTTPError as err:
@@ -128,6 +134,8 @@ class WcpClient:
                 payload = json.loads(err.read() or b"{}")
             except Exception:
                 payload = {}
+            finally:
+                err.close()
             e = payload.get("error") if isinstance(payload, dict) else None
             if isinstance(e, dict):
                 raise WcpError(str(e.get("code", "http")), str(e.get("message", "")), err.code,

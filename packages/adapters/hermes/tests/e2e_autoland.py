@@ -17,7 +17,9 @@ from pathlib import Path
 
 URL, TMP = sys.argv[1], Path(sys.argv[2]).resolve()
 PLUGIN = Path(__file__).resolve().parent.parent / "plugin" / "weft"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "installer"))
 sys.path.insert(0, str(PLUGIN))
+os.environ["PYTHONPATH"] = str(PLUGIN.parents[1] / "installer") + os.pathsep + os.environ.get("PYTHONPATH", "")
 
 
 def g(cwd, *args) -> str:

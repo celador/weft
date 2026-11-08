@@ -5,7 +5,7 @@ Hooks report every edit to a Weft gateway and put Weft's diagnostics back into t
 let the agent and the person ask where things stand; the Desktop pane (``desktop/plugin.js``, fed
 by ``dashboard/plugin_api.py``) shows the live feed.
 
-Nothing is reported until a checkout is linked to a gateway: ``/weft setup`` (or
+Nothing is reported until a checkout is linked and its agent token is saved in Hermes: ``/weft setup`` (or
 ``npx @celador/weft``) writes ``.weft/`` into it; see README.md for exactly what is read, sent and run.
 Dev installs made by ``scripts/install.py`` use the multi-project config that script manages.
 """
@@ -39,6 +39,12 @@ def _pre_verify(**kwargs: Any) -> Optional[dict]:
     return adapter.pre_verify(**kwargs) if adapter else None
 
 
+def _session_start(**kwargs: Any) -> None:
+    adapter = get_adapter()
+    if adapter:
+        adapter.session_started(**kwargs)
+
+
 def _flush(**_: Any) -> None:
     """End of a turn / session: give deferred (advise) submissions a bounded chance to land.
     Kanban workers may leave via ``os._exit``, which skips atexit. (``hermes chat`` turns,
@@ -54,6 +60,7 @@ def register(ctx: Any) -> None:
     ctx.register_hook("post_tool_call", _post_tool_call)
     ctx.register_hook("transform_tool_result", _transform_tool_result)
     ctx.register_hook("pre_verify", _pre_verify)
+    ctx.register_hook("on_session_start", _session_start)
     ctx.register_hook("on_session_end", _flush)
     ctx.register_hook("on_session_finalize", _flush)
     for tool in surface.make_tools(get_adapter):

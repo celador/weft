@@ -74,7 +74,7 @@ TRUNK_TTL_S = 600.0     # re-detect a repo's trunk branch at most this often
 LAND_RETRY_S = 60.0     # a pending (failed) auto-land is retried at most this often
 # Never reported: VCS internals, dependencies, caches and build outputs.
 SKIP_PARTS = {
-    ".git", "node_modules", ".wrangler", ".turbo", "__pycache__", ".pnpm-store",
+    ".git", ".weft", ".hermes", ".ssh", "node_modules", ".wrangler", ".turbo", "__pycache__", ".pnpm-store",
     "dist", "build", ".build", ".next", ".nuxt", ".svelte-kit", ".output", ".vercel", ".expo",
     "DerivedData", "Pods", "target", "coverage", ".venv", "venv", ".cache", ".parcel-cache",
     ".pytest_cache", ".mypy_cache", ".gradle",
@@ -288,68 +288,14 @@ class Config:
     @staticmethod
     def load(path: Optional[Path] = None, profile: Optional[str] = None) -> Optional["Config"]:
         """Read the adapter config; None (adapter disabled) when absent or this profile has no agent."""
-        path = path or default_config_path()
-        profile = profile or current_profile()
         try:
-            raw = json.loads(path.read_text())
-        except Exception:
-            return None
-        if raw.get("enabled") is False:
-            return None
-        agents = raw.get("agents") or {}
-        entry = agents.get(profile) or {}
-        repo = str(raw.get("repo") or "")
-        tokens: Dict[str, str] = {}
-        for r, t in (entry.get("tokens") or {}).items():
-            tok = t.get("token") if isinstance(t, dict) else t
-            if tok:
-                tokens[str(r)] = str(tok)
-        # Candidate mode (a Hermes run as one best-of-N candidate, e.g. demo/otto): the launcher
-        # pins this process to one repo with its own agent id, token and Change-Id.
-        #   WEFT_HERMES_REPO + WEFT_HERMES_TOKEN  -> that repo's token (instead of the profile's)
-        #   WEFT_HERMES_AGENT                     -> agent id (the token's agent)
-        #   WEFT_HERMES_CHANGE / _TASK / _TASK_TITLE -> see WeftAdapter
-        pinned = os.environ.get("WEFT_HERMES_REPO", "").strip()
-        if pinned and os.environ.get("WEFT_HERMES_TOKEN"):
-            tokens[pinned] = os.environ["WEFT_HERMES_TOKEN"]
-            token = tokens.get(repo) or ""
-        else:
-            token = os.environ.get("WEFT_HERMES_TOKEN") or entry.get("token") or tokens.get(repo) or ""
-        if repo and token:
-            tokens.setdefault(repo, str(token))
-        agent = os.environ.get("WEFT_HERMES_AGENT") or entry.get("agent") or f"hermes-{profile}"
-        url = os.environ.get("WEFT_HERMES_URL") or raw.get("url")
-        if not (url and tokens):
-            return None
-        roots = []
-        for r in raw.get("roots") if raw.get("roots") is not None else DEFAULT_ROOTS:
-            p = _real(str(r.get("path", "")))
-            if p and p != "/":
-                roots.append(Root(p, str(r.get("prefix", "")), str(r.get("repo") or "")))
-        proj = raw.get("projects") or {}
-        project_dirs = [_real(d) for d in (proj.get("dirs") or DEFAULT_PROJECT_DIRS)]
-        projects = {_real(p): str(r) for p, r in (proj.get("repos") or {}).items()}
-        excludes = [_real(x) for x in (raw.get("exclude") or DEFAULT_EXCLUDES)]
-        analyzer = raw.get("analyzer")
-        if not analyzer:
-            here = Path(__file__).resolve().parent / "analyze.mjs"
-            analyzer = str(here) if here.exists() else None
-        cache = Path(os.environ.get("WEFT_HERMES_CACHE", "~/.cache/weft-hermes")).expanduser()
-        modes = {str(k): str(v) for k, v in (raw.get("modes") or {}).items()}
-        if repo and raw.get("mode") and repo not in modes:  # legacy single-repo "mode"
-            modes[repo] = str(raw["mode"])
-        cfg = Config(
-            url=url, repo=repo, token=str(tokens.get(repo, "")), agent=str(agent), profile=profile,
-            roots=roots, node=str(raw.get("node") or _find_node()), analyzer=analyzer,
-            timeout=float(raw.get("timeout", 4.0)), log_path=cache / f"{profile}.log",
-            tokens=tokens, modes=modes, default_mode=str(raw.get("default_mode") or "advise"),
-            project_dirs=project_dirs, projects=projects, excludes=excludes,
-            breaker_cooldown=float(raw.get("breaker_cooldown_s", 300.0)),
-            trunks={str(k): str(v) for k, v in (raw.get("trunks") or {}).items()},
-            auto_land=raw.get("auto_land", True) is not False,
-        )
-        cfg.mode = cfg.mode_for(repo) if repo else cfg.default_mode
-        return cfg
+            from .legacy_config import load
+        except ImportError:
+            try:
+                from legacy_config import load  # only the development installer supplies this module
+            except ImportError:
+                return None
+        return load(path, profile)
 
 
 def _find_node() -> str:
@@ -494,7 +440,7 @@ class Scope:
         parts = rel.split("/")
         if parts[0] == ".worktrees" and len(parts) > 2:  # a worktree dir without its own .git yet
             parts = parts[2:]
-        if any(part in SKIP_PARTS for part in parts):
+        if any(part in SKIP_PARTS or part == ".env" or part.startswith(".env.") for part in parts) or parts[-1].endswith((".pem", ".key", ".p12", ".pfx")):
             return None
         return Target(p, worktree, root.prefix + "/".join(parts), self.repo_of(root))
 
@@ -888,6 +834,11 @@ class WeftAdapter:
                 info["title"] = os.environ["WEFT_HERMES_TASK_TITLE"][:200]
             return info
         task_id = os.environ.get("HERMES_KANBAN_TASK", "").strip()
+        if not task_id and self.cfg.links is not None:
+            # Standalone: the checkout is the unit of work. Weft treats changes that share a task as
+            # alternatives (best-of-N candidates), not as conflicts, so two checkouts must never share
+            # one: a gateway process serves many sessions under one HERMES_SESSION_ID.
+            return {"id": f"hermes-{hashlib.sha256(self.cfg.route_key.encode()).hexdigest()[:12]}"}
         if not task_id:
             sid = os.environ.get("HERMES_SESSION_ID", "").strip() or f"pid{os.getpid()}"
             return {"id": f"adhoc-{sid}"}
@@ -1637,6 +1588,8 @@ class WeftRouter:
             return adapter
 
     def _repos(self, name: str, args: dict, task_id: Any = "") -> List[str]:
+        if self.cfg.links is not None:
+            self._reload()
         base = base_dir(task_id)
         repos: List[str] = []
         if name in EDIT_TOOLS:
@@ -1663,6 +1616,8 @@ class WeftRouter:
 
     def adapter_at(self, directory: Any) -> Optional[WeftAdapter]:
         """The adapter for the checkout that contains ``directory`` (created if it is linked)."""
+        if self.cfg.links is not None:
+            self._reload()
         hit = self.scope.locate_dir(directory) if isinstance(directory, str) else None
         return self.adapter_for(hit[1]) if hit else None
 
@@ -1694,6 +1649,27 @@ class WeftRouter:
     def post_tool_call(self, **kw: Any) -> None:
         for adapter in self._live():
             adapter.post_tool_call(**kw)
+
+    def session_started(self, session_id: Any = "", **_: Any) -> None:
+        """A Hermes session began: open this session's Weft session for its checkout *now* (off the
+        turn's path), so its base is the log head at the start of the work. Opened lazily at the
+        first edit instead, an agent that started before another agent's edit would count that
+        edit as already seen and never be told it conflicts."""
+        try:
+            adapter = self.adapter_at(base_dir(session_id))
+        except Exception as err:  # fail open
+            self.log(f"session start route failed open: {err!r}")
+            return
+        if adapter is None or adapter.session:
+            return
+
+        def open_session() -> None:
+            try:
+                adapter.ensure_session()
+            except Exception as err:  # fail open: the first edit retries
+                adapter.log(f"[{adapter.cfg.repo}] session start hello failed open: {err!r}")
+
+        threading.Thread(target=open_session, name="weft-hello", daemon=True).start()
 
     def transform_tool_result(self, result: Any = None, **kw: Any) -> Optional[str]:
         out, changed = result, False
@@ -1785,6 +1761,10 @@ def get_adapter() -> Optional[WeftRouter]:
     """The process-wide router. A process that found no usable config (or no agent for this
     profile) retries at most once per ``RELOAD_EVERY_S``: the Hermes gateway outlives installs."""
     global _ADAPTER, _LOADED, _LOAD_TRIED_AT
+    if _setting("enabled", True) is False:
+        if _ADAPTER is not None:
+            shutdown()
+        return None
     if _LOADED and (_ADAPTER is not None or time.monotonic() - _LOAD_TRIED_AT < RELOAD_EVERY_S):
         return _ADAPTER
     with _ADAPTER_LOCK:

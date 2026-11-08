@@ -4,9 +4,10 @@ A user who installed the plugin from the Hermes catalog has no ``~/.config/weft/
 (that file belongs to Weft's own multi-profile dev installer). Instead each *checkout* says where it
 reports, the way every other Weft adapter works:
 
-1. ``<checkout>/.weft/space.json`` + ``<checkout>/.weft/token``: written by ``npx @celador/weft``
+1. ``<checkout>/.weft/space.json`` + Hermes-managed ``WEFT_AGENT_TOKEN``: written by ``npx @celador/weft``
    (the local gateway on 127.0.0.1 by default; ``--hosted`` / ``deploy`` for the others). One agent
-   token per checkout, git-ignored. A checkout without ``.weft/`` is never reported.
+   token saved by the user in Hermes, never read from CLI credential files. A checkout without
+   ``.weft/`` is never reported (unless explicit project_dirs are configured).
 2. Explicit settings (``plugins.entries.weft.settings``): ``gateway_url`` + ``repo`` + the secret
    ``WEFT_AGENT_TOKEN`` (read through Hermes' secret scope) for the checkouts under ``project_dirs``.
    Empty by default.
@@ -123,8 +124,8 @@ class Links:
         if not isinstance(meta, dict):
             return None
         url, repo = norm_url(meta.get("url")), str(meta.get("repo") or "")
-        token = (_read_text(os.path.join(root, ".weft", "token"), 512) or "").strip()
-        agent = str(meta.get("agent") or "")
+        token = (self.secret("WEFT_AGENT_TOKEN") or "").strip()
+        agent = self.settings.agent or str(meta.get("agent") or "")
         if not (url and repo and token and _AGENT.match(agent)):
             return None
         if not is_trusted(url, self.settings.trusted_gateways):

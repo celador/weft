@@ -18,6 +18,7 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "installer"))
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "plugin"))
 
@@ -350,6 +351,18 @@ class GatewayProcessTests(Workspace):
         hooks, unloads = {}, []
 
         class Ctx:
+            def get_config(self, key, default=None):
+                return default
+
+            def set_config(self, key, value):
+                pass
+
+            def register_tool(self, **kwargs):
+                pass
+
+            def register_command(self, *args, **kwargs):
+                pass
+
             def register_hook(self, name, fn):
                 hooks[name] = fn
 

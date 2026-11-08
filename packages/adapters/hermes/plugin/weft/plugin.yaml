@@ -1,12 +1,13 @@
 name: weft
 version: 0.4.0
 manifest_version: 2
-description: "Edit-time coordination for coding agents: reports every edit to a Weft gateway (local by default) and puts conflict diagnostics from other agents into your agent's tool results before it overwrites their work. Tools weft_status / weft_inbox, /weft command, Desktop live-feed pane. Silent until a checkout is linked with /weft setup."
+description: "Edit-time coordination for coding agents: reports every edit to a Weft gateway (local by default) and puts conflict diagnostics from other agents into your agent's tool results before it overwrites their work. Tools weft_status / weft_inbox, /weft command, Desktop live-feed pane. Silent until a checkout is linked and its agent token is configured in Hermes."
 author: "Weft (github.com/celador/weft)"
 license: MIT
 homepage: https://github.com/celador/weft
 requires_hermes: ">=0.22.5"
 tags: [coordination, multi-agent, git, diagnostics, desktop]
+capabilities: []  # no privileged core overrides; tools/hooks are enumerated below
 provides_tools:
   - weft_status
   - weft_inbox
@@ -15,6 +16,7 @@ provides_hooks:
   - post_tool_call
   - transform_tool_result
   - pre_verify
+  - on_session_start
   - on_session_end
   - on_session_finalize
 config_schema:
@@ -47,8 +49,8 @@ config_schema:
   agent:
     type: str
     default: ""
-    label: Agent id (explicit mode)
-    description: "Advanced. The agent id the token was issued for (default hermes-<profile>)."
+    label: Agent id
+    description: "The agent id the token was issued for. Set this when sharing one repo token across paired checkouts (each checkout still gets a distinct change)."
   project_dirs:
     type: list
     default: []
@@ -57,8 +59,8 @@ config_schema:
   agent_token:
     type: secret
     env: WEFT_AGENT_TOKEN
-    label: Agent token (explicit mode)
-    description: "Advanced. A repo-scoped Weft agent token for the explicit gateway. Stored by Hermes like any provider key; the plugin reads it through agent.secret_scope."
+    label: Agent token
+    description: "A repo-scoped Weft agent token. Paste it here from your Weft setup; the plugin never reads .weft/token. Stored by Hermes like any provider key; the plugin reads it through agent.secret_scope."
   analyzer:
     type: str
     default: ""

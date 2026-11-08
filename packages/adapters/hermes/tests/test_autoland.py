@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "installer"))
 sys.path.insert(0, str(HERE.parent / "plugin" / "weft"))
 sys.path.insert(0, str(HERE))
 

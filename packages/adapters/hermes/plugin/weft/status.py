@@ -16,7 +16,9 @@ a day ago.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
 import re
 import threading
@@ -67,7 +69,7 @@ class Recorder:
         self.directory = directory  # None: recording only, nothing written (unit tests)
         self.identity = dict(identity)
         key = f"{identity.get('route', '')}|{identity.get('change', '')}"
-        self.path = (directory / (re.sub(r"[^A-Za-z0-9]+", "", key)[-24:] + f"-{os.getpid()}.json")
+        self.path = (directory / (hashlib.sha1(key.encode()).hexdigest()[:16] + f"-{os.getpid()}.json")
                      if directory else None)
         self.started = time.time()
         self.lock = threading.Lock()
@@ -245,7 +247,12 @@ def read_all(cache_dir: Optional[Path] = None, now: Optional[float] = None) -> L
             continue
         if not isinstance(snap, dict):
             continue
-        age = now - float(snap.get("updated_at") or 0)
+        try:
+            age = now - float(snap.get("updated_at") or 0)
+            if not math.isfinite(age):
+                continue
+        except (TypeError, ValueError, OverflowError):
+            continue
         alive = pid_alive(snap.get("pid")) and not snap.get("ended")
         if age > STALE_AFTER_S and not alive:
             try:

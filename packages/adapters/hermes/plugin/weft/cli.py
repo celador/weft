@@ -52,9 +52,15 @@ def run(args: List[str], cwd: str, timeout: int = QUICK_TIMEOUT_S, env: Optional
     problem = node_problem()
     if problem:
         return 127, problem
+    # The CLI needs OS paths, not Hermes/provider credentials or unattended approval flags.
+    child_env = {k: v for k, v in os.environ.items() if k in {
+        "PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT",
+        "WINDIR", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "WEFT_HOME"}}
+    child_env.update(WRANGLER_SEND_METRICS="false", CI="true", NO_COLOR="1")
+    child_env.update(env or {})
     try:
         proc = subprocess.run(command(*args), cwd=cwd, capture_output=True, text=True, timeout=timeout,
-                              stdin=subprocess.DEVNULL, env={**os.environ, **(env or {})})
+                              stdin=subprocess.DEVNULL, env=child_env)
     except subprocess.TimeoutExpired:
         return 124, f"timed out after {timeout}s"
     except OSError as err:
