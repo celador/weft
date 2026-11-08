@@ -76,9 +76,13 @@ def cache_dir() -> Path:
 
 def load_config(path: Optional[Path] = None) -> dict:
     try:
-        return json.loads((path or config_path()).read_text())
-    except Exception:
-        return {}
+        from .legacy_config import read_raw
+    except ImportError:
+        try:
+            from legacy_config import read_raw  # development installer only, absent from catalog
+        except ImportError:
+            return {}
+    return read_raw(path or config_path())
 
 
 # ---------------------------------------------------------------------------- pure helpers

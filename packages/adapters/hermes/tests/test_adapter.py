@@ -17,6 +17,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PKG = HERE.parent
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "installer"))
 sys.path.insert(0, str(PKG / "plugin"))
 
 from weft.adapter import (  # noqa: E402

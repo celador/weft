@@ -45,3 +45,10 @@ description = "RFC 6455 sample Sec-WebSocket-Key"
 paths = ['''^apps/local/test/ws\.test\.ts$''']
 regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']
 condition = "AND"
+
+# 6. English prose, not a key: "declaration keys, signature/body" in the catalog README.
+[[allowlists]]
+description = "literal signature/body classification term in Hermes plugin documentation"
+paths = ['''^packages/adapters/hermes/plugin/weft/README\.md$''']
+regexes = ['''^signature/body$''']
+condition = "AND"

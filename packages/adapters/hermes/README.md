@@ -1,5 +1,11 @@
 # @weft/adapter-hermes
 
+For ordinary users and catalog reviewers, start with [Weft for Hermes](plugin/weft/README.md):
+local-first, configurable checkout linking, Hermes-managed credentials, tools, `/weft`, Desktop pane.
+The remainder of this document describes the **separate development installer** used for Weft's
+own multi-profile build. It is not the catalog setup path; its optional `installer/legacy_config.py`
+is copied only by `scripts/install.py` and is absent from the catalog subdirectory.
+
 WCP v0.1 adapter for [Hermes Agent](https://hermes-agent.nousresearch.com/docs): a Python plugin
 that puts Hermes' tool calls on the Weft log and Weft's diagnostics back into the agent's run.
 It is how Weft's own build (Hermes kanban workers on the `weft` board) is coordinated by Weft, and
