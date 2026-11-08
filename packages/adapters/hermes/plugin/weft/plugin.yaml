@@ -1,7 +1,15 @@
 name: weft
-version: 0.2.1
-description: "Weft edit-time coordination (WCP v0.1): streams every edit in John's projects (~/github/*, ~/code/*; one Weft repo per project) into the Weft log and injects diagnostics into tool results. Enforce repos block conflicting edits and completion while Weft errors are open; advise repos (the default) never block or wait. Fail-open with a circuit breaker; ~/.hermes is never reported."
+version: 0.4.0
+manifest_version: 2
+description: "Edit-time coordination for coding agents: reports every edit to a Weft gateway (local by default) and puts conflict diagnostics from other agents into your agent's tool results before it overwrites their work. Tools weft_status / weft_inbox, /weft command, Desktop live-feed pane. Silent until a checkout is linked with /weft setup."
 author: "Weft (github.com/celador/weft)"
+license: MIT
+homepage: https://github.com/celador/weft
+requires_hermes: ">=0.22.5"
+tags: [coordination, multi-agent, git, diagnostics, desktop]
+provides_tools:
+  - weft_status
+  - weft_inbox
 provides_hooks:
   - pre_tool_call
   - post_tool_call
@@ -9,3 +17,50 @@ provides_hooks:
   - pre_verify
   - on_session_end
   - on_session_finalize
+config_schema:
+  mode:
+    type: str
+    choices: [advise, enforce]
+    default: advise
+    label: Mode
+    description: "advise never blocks or waits: diagnostics arrive with later tool results. enforce blocks an edit that conflicts with another agent's change, and refuses git commit / task completion while Weft errors are open."
+  enabled:
+    type: bool
+    default: true
+    label: Report edits
+    description: "Turn off to keep the plugin loaded but silent."
+  trusted_gateways:
+    type: list
+    default: []
+    label: Trusted gateways
+    description: "Gateway URLs (besides this machine and Weft's hosted gateway) that a checkout's .weft/space.json may name, e.g. your own `npx @celador/weft deploy`. A cloned repo can never point your edits at a server not listed here. Add one with /weft trust <url>."
+  gateway_url:
+    type: str
+    default: ""
+    label: Gateway URL (explicit mode)
+    description: "Advanced. Report the checkouts under 'Project directories' to this gateway instead of reading .weft/. Needs Repo and the Agent token secret."
+  repo:
+    type: str
+    default: ""
+    label: Repo (explicit mode)
+    description: "Advanced. The Weft repo id on that gateway."
+  agent:
+    type: str
+    default: ""
+    label: Agent id (explicit mode)
+    description: "Advanced. The agent id the token was issued for (default hermes-<profile>)."
+  project_dirs:
+    type: list
+    default: []
+    label: Project directories (explicit mode)
+    description: "Advanced. Directories whose checkouts report to the explicit gateway. Empty by default: only checkouts linked with /weft setup report."
+  agent_token:
+    type: secret
+    env: WEFT_AGENT_TOKEN
+    label: Agent token (explicit mode)
+    description: "Advanced. A repo-scoped Weft agent token for the explicit gateway. Stored by Hermes like any provider key; the plugin reads it through agent.secret_scope."
+  analyzer:
+    type: str
+    default: ""
+    label: Analyzer bundle (advanced)
+    description: "Path to a built Weft analyze.mjs (Node) for declaration-level keys in languages beyond Python. Empty = built-in Python analysis; other files use whole-file keys."

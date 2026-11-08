@@ -56,11 +56,13 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 try:  # package import inside Hermes; flat import in tests
     from .wcp import WcpClient, WcpError
     from .land import commit_time, detect_trunk, is_ancestor, pending_path, state_path, trunk_tips
+    from . import pyanalyze, standalone, status
 except ImportError:  # pragma: no cover
     from wcp import WcpClient, WcpError  # type: ignore
     from land import commit_time, detect_trunk, is_ancestor, pending_path, state_path, trunk_tips  # type: ignore
+    import pyanalyze, standalone, status  # type: ignore
 
-ADAPTER_VERSION = "0.3.0"
+ADAPTER_VERSION = "0.4.0"
 EDIT_TOOLS = {"write_file", "patch"}
 TERMINAL_TOOLS = {"terminal"}
 # Tools that can run git: HEAD moves of the session's worktrees and trunk moves are watched
@@ -213,6 +215,18 @@ class Config:
     # Auto-land (0.3): when trunk moves, spawn land.py to land changes whose work reached it.
     # Off for directly constructed configs (tests); Config.load turns it on (`auto_land`).
     auto_land: bool = False
+    # Standalone mode (catalog installs): each checkout names its own gateway/repo/token
+    # (``.weft/``, see standalone.py). ``links`` resolves a checkout root to that link; the
+    # router's key for a checkout is its root path (``route``), not a Weft repo name.
+    links: Optional["standalone.Links"] = None
+    route: str = ""
+    settings: Optional["standalone.Settings"] = None
+
+    @property
+    def route_key(self) -> str:
+        """What ``Scope`` calls this adapter's repo: the Weft repo name (multi-project mode) or
+        the checkout root (standalone)."""
+        return self.route or self.repo
 
     def mode_for(self, repo: str) -> str:
         forced = os.environ.get("WEFT_HERMES_MODE")
@@ -221,14 +235,55 @@ class Config:
         return self.modes.get(repo) or self.default_mode
 
     def for_repo(self, repo: str) -> Optional["Config"]:
+        if self.links is not None:
+            link = self.links.link(repo)
+            if not link:
+                return None
+            return replace(self, url=link["url"], repo=link["repo"], token=link["token"], agent=link["agent"],
+                           route=repo, mode=self.mode_for(repo))
         token = self.tokens.get(repo) or (self.token if repo == self.repo else "")
         if not token:
             return None
         return replace(self, repo=repo, token=token, mode=self.mode_for(repo))
 
     def scope(self) -> "Scope":
+        if self.links is not None:
+            return StandaloneScope(self.links, self.excludes)
         return Scope(self.roots, projects=self.projects, project_dirs=self.project_dirs,
                      excludes=self.excludes, default_repo=self.repo)
+
+    @staticmethod
+    def standalone(get_config: Callable[[str, Any], Any], get_secret: Callable[[str], Optional[str]],
+                   profile: Optional[str] = None) -> Optional["Config"]:
+        """Config for a catalog install: nothing preconfigured, checkouts link themselves.
+        None only when the user switched the plugin off (``enabled: false``)."""
+        profile = profile or current_profile()
+        st = standalone.Settings.read(get_config)
+        if not st.enabled:
+            return None
+        cache = Path(os.environ.get("WEFT_HERMES_CACHE", "~/.cache/weft-hermes")).expanduser()
+        log_path = cache / f"{profile}.log"
+
+        def log(message: str) -> None:
+            try:
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                with log_path.open("a") as f:
+                    f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} [{profile}] {message}\n")
+            except Exception:
+                pass
+
+        links = standalone.Links(st, get_secret, profile, log=log)
+        analyzer = st.analyzer or None
+        if analyzer:
+            analyzer = os.path.expanduser(analyzer)
+            if not os.path.isfile(analyzer):
+                log(f"analyzer setting {analyzer!r} is not a file; using the built-in analyzers")
+                analyzer = None
+        return Config(
+            url="", repo="", token="", agent=f"hermes-{profile}", profile=profile, roots=[], mode=st.mode,
+            node=_find_node(), analyzer=analyzer, log_path=log_path, default_mode=st.mode,
+            excludes=[_real(x) for x in DEFAULT_EXCLUDES], auto_land=False, links=links, settings=st,
+            async_advise=True)
 
     @staticmethod
     def load(path: Optional[Path] = None, profile: Optional[str] = None) -> Optional["Config"]:
@@ -478,12 +533,45 @@ class Scope:
             d = parent
 
 
+class StandaloneScope(Scope):
+    """Scope for catalog installs: a path belongs to the git checkout that contains it, and that
+    checkout is in scope only when it names a gateway (``.weft/`` from ``npx @celador/weft``, or
+    the ``project_dirs`` setting). The route key of a checkout is its root path, so every
+    checkout (every git worktree) is its own adapter, agent identity and WCP session: two Hermes
+    sessions in two worktrees of one repo are two agents, even inside one gateway process."""
+
+    def __init__(self, links: "standalone.Links", excludes: Optional[List[str]] = None):
+        super().__init__([], excludes=excludes)
+        self.links = links
+
+    @staticmethod
+    def checkout_of(path: str) -> Optional[str]:
+        d = path if os.path.isdir(path) else os.path.dirname(path)
+        for _ in range(64):
+            if os.path.exists(os.path.join(d, ".git")):
+                return d
+            parent = os.path.dirname(d)
+            if parent == d:
+                return None
+            d = parent
+        return None
+
+    def root_for(self, path: str) -> Optional[Root]:
+        if any(_under(path, x) for x in self.excludes):
+            return None
+        wt = self.checkout_of(path)
+        if not wt or not self.links.link(wt):
+            return None
+        return Root(wt, "", wt)
+
+
 # ------------------------------------------------------------------------------------------
 # analysis
 # ------------------------------------------------------------------------------------------
 
 class Analyzer:
-    """Persistent ``node analyze.mjs --serve`` child; whole-file keys when unavailable."""
+    """Persistent ``node analyze.mjs --serve`` child. Without a bundle: ``pyanalyze`` for Python
+    files, whole-file keys for everything else."""
 
     def __init__(self, node: str, script: Optional[str], timeout: float = 6.0,
                  log: Callable[[str], None] = lambda _m: None):
@@ -579,6 +667,17 @@ class Analyzer:
             reads = list(result.get("reads", []))
             for w in result.get("writes", []):
                 writes[w["key"]] = {"key": w["key"], "kind": w["kind"]}
+        # No bundle (a catalog install), or it failed: Python files still get declaration-level keys.
+        for path, before, after in changes:
+            if path in analyzed or before == after or not path.lower().endswith((".py", ".pyi")):
+                continue
+            res = pyanalyze.analyze_file(path, before, after, root, prefix)
+            if res is None:
+                continue
+            analyzed.add(path)
+            reads += res[0]
+            for w in res[1]:
+                writes[w["key"]] = w
         for path, before, after in changes:
             if path in analyzed or before == after:
                 continue
@@ -713,6 +812,12 @@ class WeftAdapter:
         self.refusals: Dict[str, int] = {}  # open-error fingerprint -> consecutive refusals
         self.task = self._task_info()
         self.change = os.environ.get("WEFT_HERMES_CHANGE", "").strip() or f"{config.agent}/{self.task['id']}"
+        self.rec = status.Recorder(
+            status.status_dir(config.log_path.parent) if config.log_path else None,
+            {"route": config.route_key, "repo": config.repo, "agent": config.agent, "change": self.change,
+             "task": dict(self.task), "mode": config.mode, "profile": config.profile, "url": config.url,
+             "kind": status.gateway_kind(config.url), "worktree": config.route or "",
+             "adapter": ADAPTER_VERSION, "source": "standalone" if config.links is not None else "installer"})
         self._hb_thread: Optional[threading.Thread] = None
         self._hb_enabled = heartbeat
         self._closed = False
@@ -827,21 +932,28 @@ class WeftAdapter:
             self.acked = 0
             self.last_contact = time.monotonic()
             self.log(f"hello -> session {self.session} change {self.change} head {welcome.get('head_seq')}")
+            self.rec.set_session(self.session)
             self._start_heartbeat()
             return self.session
 
     def _call(self, fn: Callable[[str], Any]) -> Any:
         """Run ``fn(session)``; re-hello once if the session expired (§8.2)."""
-        session = self.ensure_session()
         try:
-            result = fn(session)  # type: ignore[arg-type]
+            session = self.ensure_session()
+            try:
+                result = fn(session)  # type: ignore[arg-type]
+            except WcpError as err:
+                if err.code not in ("session_expired",):
+                    raise
+                with self.hello_lock:
+                    self.log("session expired; re-hello")
+                    self.session = None
+                result = fn(self.ensure_session())  # type: ignore[arg-type]
         except WcpError as err:
-            if err.code not in ("session_expired",):
-                raise
-            with self.hello_lock:
-                self.log("session expired; re-hello")
-                self.session = None
-            result = fn(self.ensure_session())  # type: ignore[arg-type]
+            if err.code in ("transport", "circuit_open") or err.status >= 500:
+                self.rec.set_reachable(False)
+            raise
+        self.rec.set_reachable(True)
         self.last_contact = time.monotonic()
         return result
 
@@ -855,6 +967,7 @@ class WeftAdapter:
                 time.sleep(interval)
                 if self._closed or not self.session:
                     continue
+                self.rec.touch()
                 if time.monotonic() - self.last_contact < interval * 0.8:
                     continue
                 try:
@@ -875,6 +988,7 @@ class WeftAdapter:
                 self.client.bye(self.session, "hermes process exit")
             except Exception:
                 pass
+        self.rec.end()
         if close_analyzer:
             self.analyzer.close()
 
@@ -970,7 +1084,7 @@ class WeftAdapter:
         out = []
         for p in paths:
             t = self.scope.resolve(p, base)
-            if t and t.repo == self.cfg.repo and t not in out:
+            if t and t.repo == self.cfg.route_key and t not in out:
                 out.append(t)
         return out
 
@@ -1011,6 +1125,7 @@ class WeftAdapter:
         verdict = self._submit("check", event, pend.call_id)
         if verdict.get("verdict") != "reject":
             return None  # warnings reach the model with the commit verdict (§8.3 step 2)
+        self.rec.verdict("check", [t.rel], writes, verdict, name)
         if self.cfg.mode != "enforce":
             self._queue(verdict, "[weft] (advisory) this edit would be rejected:")
             return None
@@ -1028,7 +1143,7 @@ class WeftAdapter:
     def _pre_terminal(self, name: str, args: dict, call_id: str, task_id: Any = "") -> Optional[dict]:
         workdir = args.get("workdir") or self._base_dir(task_id)
         hit = self.scope.locate_dir(workdir)
-        if not hit or hit[1] != self.cfg.repo:
+        if not hit or hit[1] != self.cfg.route_key:
             return None  # SCOPE GUARD
         worktree = hit[0]
         command = str(args.get("command") or "")
@@ -1078,6 +1193,7 @@ class WeftAdapter:
         if self.cfg.mode != "enforce":
             return None
         result = self._call(lambda s: self.client.gate(s, gate))
+        self.rec.gate(gate, bool(result.get("allow", True)), result.get("open_errors") or [], str(result.get("reason") or ""))
         if result.get("allow", True) or self._retreat(gate, what, result):
             return None
         open_errors = result.get("open_errors") or []
@@ -1130,6 +1246,7 @@ class WeftAdapter:
             self._queue(verdict)
             return False
         self._queue(verdict)
+        self.rec.release(keys, note)
         self.log(f"released {keys} (abandoned, seq {verdict.get('seq')}): {note}")
         return True
 
@@ -1198,6 +1315,7 @@ class WeftAdapter:
         event = self._event([r for r, _, _ in rels], reads, writes, diff, tool, call_id, "post_tool_call")
         verdict = self._submit("commit", event, call_id)
         self.log(f"commit {[r for r, _, _ in rels]} -> {verdict.get('verdict')} seq {verdict.get('seq')}")
+        self.rec.verdict("commit", [r for r, _, _ in rels], writes, verdict, tool)
         self._queue(verdict)
         self.last_drain = time.monotonic()
 
@@ -1238,6 +1356,8 @@ class WeftAdapter:
     def _git_dir(self) -> Optional[str]:
         """A checkout of this repo (refs are shared by all its worktrees): the project dir,
         else an explicit root, else any worktree the session works in."""
+        if self.cfg.route and os.path.isdir(self.cfg.route):  # standalone: this checkout
+            return self.cfg.route
         for path, repo in self.cfg.projects.items():
             if repo == self.cfg.repo and os.path.isdir(path):
                 return path
@@ -1316,6 +1436,7 @@ class WeftAdapter:
             self.log(f"[{self.cfg.repo}] checkpoint {sha[:12]} failed open: {err!r}")
             return
         self._queue(verdict)
+        self.rec.checkpoint(sha, work)
         # A new commit on the worktree: assume it is rebased. Cleared after _queue, because
         # this verdict repeats any still-unacked trunk item and would re-set the floor.
         self.rebase_floor = None
@@ -1373,7 +1494,23 @@ class WeftAdapter:
         batch = self._call(lambda s: self.client.drain(s, ack=self.acked or None))
         self.last_drain = time.monotonic()
         if batch.get("items"):
+            self.rec.inbox(batch["items"])
             self._queue(batch)
+
+    # -- agent-facing reads (the weft_status / weft_inbox tools, /weft status) ----------------
+
+    def inbox_now(self) -> str:
+        """Fetch what other agents sent since the last look and hand it to the model (it advances
+        the base and acks, exactly as an injected diagnostic would)."""
+        self._drain()
+        return self._take_outbox()
+
+    def refresh_open(self) -> List[dict]:
+        """Ask the gateway for this change's open errors (the ``stop`` gate is a read: it only
+        reports them; advise repos never act on it)."""
+        result = self._call(lambda s: self.client.gate(s, "stop"))
+        self.rec.gate("stop", True, result.get("open_errors") or [])
+        return list(self.rec.snapshot()["open"])
 
     # -- hook: transform_tool_result -------------------------------------------------------
 
@@ -1443,6 +1580,13 @@ class WeftRouter:
         if not fresh or fresh.profile != self.cfg.profile:
             return False
         self.cfg = fresh
+        if fresh.links is not None:  # standalone: new settings (mode, trusted gateways, ...) apply live
+            if isinstance(self.scope, StandaloneScope):
+                self.scope.links = fresh.links
+            for adapter in self._live():
+                adapter.cfg = replace(adapter.cfg, mode=fresh.mode_for(adapter.cfg.route_key), links=fresh.links)
+                adapter.rec.set_mode(adapter.cfg.mode)
+            return True
         # Shared with live adapters: update in place (single attribute stores, GIL-atomic).
         self.scope.projects = dict(fresh.projects)
         self.scope.project_dirs = list(fresh.project_dirs)
@@ -1463,6 +1607,8 @@ class WeftRouter:
         if not repo:
             return None
         with self.lock:
+            if self.cfg.links is not None:
+                self._reload()  # rate-limited; picks up settings changed since the last look
             hit = self.adapters.get(repo)
             if hit:
                 return hit
@@ -1507,6 +1653,18 @@ class WeftRouter:
     def _live(self) -> List[WeftAdapter]:
         with self.lock:
             return list(self.adapters.values())
+
+    def set_mode(self, mode: str) -> None:
+        """Switch every live checkout (and later ones) to ``advise`` / ``enforce`` right now."""
+        self.cfg = replace(self.cfg, default_mode=mode, mode=mode)
+        for adapter in self._live():
+            adapter.cfg = replace(adapter.cfg, mode=mode)
+            adapter.rec.set_mode(mode)
+
+    def adapter_at(self, directory: Any) -> Optional[WeftAdapter]:
+        """The adapter for the checkout that contains ``directory`` (created if it is linked)."""
+        hit = self.scope.locate_dir(directory) if isinstance(directory, str) else None
+        return self.adapter_for(hit[1]) if hit else None
 
     def pre_tool_call(self, tool_name: str = "", args: Optional[dict] = None, **kw: Any) -> Optional[dict]:
         name = normalize_tool(tool_name)
@@ -1584,8 +1742,43 @@ _LOADED = False
 _LOAD_TRIED_AT = 0.0
 
 
+_GET_CONFIG: Optional[Callable[[str, Any], Any]] = None
+_GET_SECRET: Callable[[str], Optional[str]] = standalone.default_secret
+
+
+def configure(get_config: Optional[Callable[[str, Any], Any]] = None,
+              get_secret: Optional[Callable[[str], Optional[str]]] = None) -> None:
+    """Called by ``register(ctx)``: the plugin's settings reader (``ctx.get_config``) and secret reader."""
+    global _GET_CONFIG, _GET_SECRET
+    if get_config is not None:
+        _GET_CONFIG = get_config
+    if get_secret is not None:
+        _GET_SECRET = get_secret
+
+
+def _setting(key: str, default: Any = None) -> Any:
+    if _GET_CONFIG is None:
+        return default
+    try:
+        return _GET_CONFIG(key, default)
+    except Exception:
+        return default
+
+
+def installer_managed() -> bool:
+    """True for a copy made by this repo's own installer (``scripts/install.py`` writes
+    ``INSTALLED.json`` next to the code) or when ``WEFT_HERMES_CONFIG`` names a config file: those
+    use the multi-project config file the installer manages. A catalog install has neither and
+    runs standalone (per-checkout ``.weft/``, see standalone.py)."""
+    return bool(os.environ.get("WEFT_HERMES_CONFIG")) or (Path(__file__).resolve().parent / "INSTALLED.json").exists()
+
+
 def _load_config() -> Optional[Config]:
-    return Config.load()
+    if installer_managed():
+        cfg = Config.load()
+        if cfg:
+            return cfg
+    return Config.standalone(_setting, lambda name: _GET_SECRET(name))
 
 
 def get_adapter() -> Optional[WeftRouter]:
