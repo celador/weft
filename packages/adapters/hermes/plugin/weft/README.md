@@ -87,7 +87,12 @@ Peers shown by the pane/tools are Hermes processes visible on this host, not a g
 - **Network:** WCP hello, edit/check submissions, inbox, heartbeat, gate and bye go only to the selected
   gateway. Local loopback is the setup default. Hosted is an explicit choice. Submissions include
   filenames, symbol reads/writes, diffs, agent/change identity and task intent; treat them as source
-  code. No analytics/telemetry is added by this plugin; the optional CLI child explicitly disables Wrangler metrics. Gateway usage accounting is separate from
+  code. When a diagnostic says another agent changed a declaration this agent uses
+  (`stale_assumption`, `stale_overwrite`, `contract_changed`), the plugin reads that one causing event
+  from the same gateway and repo (`GET /v1/repos/<repo>/events/<seq>`, with the agent token; the
+  gateway redacts secret-looking strings in diffs) and shows the model the new declaration plus at
+  most 30 lines of that event's diff for the symbol's file. That is the other agent's code entering
+  this agent's context, from the same repo only; files under the exclusions below are never quoted. No analytics/telemetry is added by this plugin; the optional CLI child explicitly disables Wrangler metrics. Gateway usage accounting is separate from
   optional analytics; see [Weft privacy](https://weft.mx/privacy).
 - **Reads outside the plugin:** linked checkout files (max 512 KiB/file), Git metadata/status/HEAD,
   non-secret `.weft/space.json`, and optional task title/priority from the read-only Kanban DB.

@@ -37,6 +37,7 @@ and a circuit breaker (wcp.py) makes a dead or hung gateway cost at most one tim
 from __future__ import annotations
 
 import atexit
+import collections
 import difflib
 import hashlib
 import json
@@ -79,6 +80,20 @@ SKIP_PARTS = {
     "DerivedData", "Pods", "target", "coverage", ".venv", "venv", ".cache", ".parcel-cache",
     ".pytest_cache", ".mypy_cache", ".gradle",
 }
+SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
+# Diagnostics whose cause is another agent's change to a declaration: the adapter quotes that
+# change (new declaration + a bounded excerpt of the causing event's diff), because in a
+# separate worktree the other agent's edit is not in this checkout, so re-reading the file here
+# shows the old code (the same rule as the claude-code/codex adapters' renderers).
+QUOTE_CODES = {"stale_assumption", "stale_overwrite", "contract_changed"}
+# A byte-identical retry of an edit blocked for these is blocked once more (see _pre_edit).
+RETRY_GUARD_CODES = {"stale_assumption", "stale_overwrite"}
+MAX_QUOTE_LINES = 30
+MAX_QUOTE_LINE_CHARS = 200
+MAX_QUOTED_CAUSES = 3
+MAX_DECL_LINES = 8
+MAX_BLOCKED_EDITS = 16
+MAX_EVENT_CACHE = 64
 MAX_FILE_BYTES = 512 * 1024
 MAX_SNAPSHOT_FILES = 300
 DRAIN_EVERY_S = 20.0
@@ -440,7 +455,7 @@ class Scope:
         parts = rel.split("/")
         if parts[0] == ".worktrees" and len(parts) > 2:  # a worktree dir without its own .git yet
             parts = parts[2:]
-        if any(part in SKIP_PARTS or part == ".env" or part.startswith(".env.") for part in parts) or parts[-1].endswith((".pem", ".key", ".p12", ".pfx")):
+        if sensitive_parts(parts):
             return None
         return Target(p, worktree, root.prefix + "/".join(parts), self.repo_of(root))
 
@@ -655,6 +670,110 @@ def unified_diff(rel: str, before: Optional[str], after: Optional[str]) -> str:
         tofile="/dev/null" if after is None else f"b/{rel}"))
 
 
+def sensitive_parts(parts: List[str]) -> bool:
+    """True for paths the plugin never reports or quotes: VCS internals, dependencies, caches,
+    build outputs, ``.env*`` and common key containers."""
+    return any(part in SKIP_PARTS or part == ".env" or part.startswith(".env.") for part in parts) \
+        or bool(parts and parts[-1].lower().endswith(SECRET_SUFFIXES))
+
+
+def split_key(key: str) -> Tuple[str, str]:
+    """``path#Qualified.name`` -> (path, last name segment); ``path#*`` -> (path, "*")."""
+    path, _, qualified = key.partition("#")
+    return path, qualified.split(".")[-1] if qualified else ""
+
+
+_HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+
+
+def diff_hunks(diff: str, path: str) -> List[List[str]]:
+    """The hunks (``@@`` header + lines) of ``diff`` that touch ``path``. Understands git
+    (``diff --git``) and plain unified (``--- a/x`` / ``+++ b/x``, what this plugin sends) headers,
+    and counts hunk lines, so a removed line starting with ``-- `` is not taken for a header."""
+    out: List[List[str]] = []
+    current: Optional[str] = None
+    minus: Optional[str] = None
+    hunk: Optional[List[str]] = None
+    old_left = new_left = 0
+
+    def strip(p: str) -> str:
+        p = p.split("\t")[0].strip()
+        return p[2:] if p.startswith(("a/", "b/")) else p
+
+    for line in diff.split("\n"):
+        if (old_left > 0 or new_left > 0) and hunk is not None:
+            if line.startswith("\\"):
+                continue  # "\ No newline at end of file"
+            tag = line[:1]
+            if tag == "-":
+                old_left -= 1
+            elif tag == "+":
+                new_left -= 1
+            else:
+                old_left, new_left = old_left - 1, new_left - 1
+            hunk.append(line)
+            continue
+        m = _HUNK.match(line)
+        if m:
+            old_left = int(m.group(1)) if m.group(1) is not None else 1
+            new_left = int(m.group(2)) if m.group(2) is not None else 1
+            hunk = [line]
+            if current == path:
+                out.append(hunk)
+            continue
+        if line.startswith("diff --git "):
+            current, minus = (line.rsplit(" b/", 1)[1] if " b/" in line else None), None
+        elif line.startswith("--- "):
+            minus = strip(line[4:])
+        elif line.startswith("+++ "):
+            plus = line[4:].split("\t")[0].strip()
+            current = minus if plus == "/dev/null" else strip(plus)
+    return out
+
+
+def quote_hunks(hunks: List[List[str]], name: str) -> Optional[str]:
+    """A bounded excerpt of ``hunks``: the ones that mention ``name`` (else all of them), at most
+    ``MAX_QUOTE_LINES`` lines of at most ``MAX_QUOTE_LINE_CHARS`` chars, indented for the model."""
+    if name and name != "*":
+        rx = re.compile(rf"\b{re.escape(name)}\b")
+        hunks = [h for h in hunks if any(rx.search(l) for l in h[1:])] or hunks
+    lines = [l for h in hunks for l in h]
+    if not any(l[:1] in ("+", "-") for l in lines):
+        return None
+    clip = [l if len(l) <= MAX_QUOTE_LINE_CHARS else l[:MAX_QUOTE_LINE_CHARS] + " …" for l in lines]
+    if len(clip) > MAX_QUOTE_LINES:
+        clip = clip[:MAX_QUOTE_LINES] + [f"… ({len(clip) - MAX_QUOTE_LINES} more lines)"]
+    return "\n".join(f"      {l}" for l in clip)
+
+
+def new_declaration(hunks: List[List[str]], name: str) -> Optional[str]:
+    """The declaration of ``name`` as an added (``+``) line of ``hunks`` (the new signature), with
+    continuation lines until its parentheses close. None when the diff did not add one."""
+    if not name or name == "*":
+        return None
+    n = re.escape(name)
+    decl = re.compile(
+        rf"^\s*(?:export\s+)?(?:default\s+)?(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?"
+        rf"(?:def|class|function\*?|fn|func|interface|type|enum|struct|trait|const|let|var|val)\s+"
+        rf"(?:\([^)]*\)\s*)?{n}\b")
+    member = re.compile(
+        rf"^\s*(?:(?:public|private|protected|static|async|readonly|override|abstract|final)\s+)*{n}\s*[(<]")
+    for hunk in hunks:
+        new_side = [l[1:] for l in hunk[1:] if l[:1] != "-"]
+        added = [l[:1] == "+" for l in hunk[1:] if l[:1] != "-"]
+        for i, text in enumerate(new_side):
+            if not added[i] or not (decl.search(text) or member.search(text)):
+                continue
+            out, depth = [], 0
+            for cont in new_side[i:i + MAX_DECL_LINES]:
+                out.append(cont.rstrip() if len(cont) <= MAX_QUOTE_LINE_CHARS else cont[:MAX_QUOTE_LINE_CHARS] + " …")
+                depth += cont.count("(") - cont.count(")")
+                if depth <= 0:
+                    break
+            return "\n".join(out)
+    return None
+
+
 def read_text(path: str) -> Optional[str]:
     try:
         if os.path.getsize(path) > MAX_FILE_BYTES:
@@ -756,6 +875,10 @@ class WeftAdapter:
         self.last_contact = 0.0
         self.last_drain = 0.0
         self.refusals: Dict[str, int] = {}  # open-error fingerprint -> consecutive refusals
+        # Causing events fetched for quotes (seq -> record), and byte-identical edits blocked for a
+        # stale declaration (fingerprint -> the quote shown), for the one-time retry guard.
+        self.event_cache: "collections.OrderedDict[int, dict]" = collections.OrderedDict()
+        self.blocked_edits: "collections.OrderedDict[str, Tuple[List[str], str]]" = collections.OrderedDict()
         self.task = self._task_info()
         self.change = os.environ.get("WEFT_HERMES_CHANGE", "").strip() or f"{config.agent}/{self.task['id']}"
         self.rec = status.Recorder(
@@ -960,12 +1083,115 @@ class WeftAdapter:
                 self.rebase_floor = seq if self.rebase_floor is None else min(self.rebase_floor, seq)
         return top
 
-    def _queue(self, response: dict, extra: str = "") -> None:
-        """Queue a verdict/inbox response's context for injection into the model."""
+    def _queue(self, response: dict, extra: str = "", notes: Optional[str] = None) -> None:
+        """Queue a verdict/inbox response's context for injection into the model, followed by
+        quotes of the changes that caused its diagnostics (``_cause_notes``)."""
         context = response.get("context") or ""
+        if notes is None:
+            notes = self._cause_notes(response)
         top = self._note_items(response.get("inbox") or response.get("items") or [])
-        text = "\n".join(t for t in (extra, context) if t)
+        text = "\n".join(t for t in (extra, context, notes) if t)
         self.outbox.append((text, int(response.get("delivered_through", 0)), top))
+
+    # -- quotes of the causing change ------------------------------------------------------
+
+    @staticmethod
+    def _diagnostics_of(response: dict) -> List[dict]:
+        out = [d for d in response.get("diagnostics") or [] if isinstance(d, dict)]
+        for item in response.get("inbox") or response.get("items") or []:
+            if isinstance(item, dict) and isinstance(item.get("diagnostic"), dict):
+                out.append(item["diagnostic"])
+        return out
+
+    def _event_record(self, seq: int) -> Optional[dict]:
+        """The causing event (``GET /repos/{repo}/events/{seq}``: this session's repo only, with
+        the gateway's secret redaction applied). Successes are cached; failures are logged and
+        quoted as unavailable (tokens without the ``observe`` scope cannot read events)."""
+        with self.lock:
+            if seq in self.event_cache:
+                return self.event_cache[seq]
+        try:
+            record = self.client.event(seq)
+        except Exception as err:
+            self.log(f"event #{seq} unavailable for a quote: {err!r}")
+            return None
+        if not isinstance(record, dict) or record.get("seq") not in (None, seq):
+            return None
+        with self.lock:
+            self.event_cache[seq] = record
+            while len(self.event_cache) > MAX_EVENT_CACHE:
+                self.event_cache.popitem(last=False)
+        return record
+
+    def _in_checkout(self, path: str, decl: str) -> Optional[bool]:
+        """Whether this session's worktrees already contain ``decl`` in ``path`` (None: unknown)."""
+        first = decl.split("\n", 1)[0].strip()
+        seen = False
+        for worktree in list(self.worktrees):
+            prefix = self.scope.prefix_for(worktree)
+            rel = path[len(prefix):] if prefix and path.startswith(prefix) else path
+            full = os.path.join(worktree, rel)
+            if not os.path.isfile(full):
+                continue
+            text = read_text(full)
+            if text is None:
+                continue
+            seen = True
+            if any(line.strip() == first for line in text.splitlines()):
+                return True
+        return False if seen else None
+
+    def _cause_note(self, d: dict, key: str, seq: int) -> str:
+        path, name = split_key(key)
+        who = str(d.get("caused_by_agent") or "another agent")
+        if sensitive_parts(path.split("/")):
+            return (f"  ↳ event #{seq} by {who} changed {key}; Weft does not quote {path} "
+                    "(excluded as sensitive). Ask " + who + " for the new shape.")
+        record = self._event_record(seq)
+        diff = record.get("diff") if record else None
+        hunks = diff_hunks(diff, path) if isinstance(diff, str) else []
+        decl = new_declaration(hunks, name)
+        quote = quote_hunks(hunks, name)
+        here = self._in_checkout(path, decl) if decl else None
+        if here:
+            where = f"Your checkout already has this change in {path}."
+        elif decl:
+            where = (f"That change is NOT in your checkout yet: re-reading {path} here still shows the "
+                     "OLD code. Use the new declaration below, not your copy.")
+        elif quote:
+            where = (f"That change may not be in your checkout yet: if {path} here still shows the old "
+                     "code, trust the diff below, not your copy.")
+        else:
+            where = f"That change may not be in your checkout yet: re-reading {path} here can show the old code."
+        lines = [f"  ↳ event #{seq} by {who} changed {key}. {where}"]
+        if decl:
+            lines.append(f"    New declaration (event #{seq}):\n" + "\n".join(f"      {l}" for l in decl.split("\n")))
+        if quote:
+            lines.append(f"    Their diff to {path} (event #{seq}, excerpt):\n{quote}")
+        elif record is None:
+            lines.append(f"    (Weft could not fetch event #{seq} to show the new code: ask {who} for the new "
+                         f"shape of {key}, or wait until their change reaches your checkout.)")
+        return "\n".join(lines)
+
+    def _cause_notes(self, response: dict) -> str:
+        """For diagnostics caused by another agent's change to a declaration (``QUOTE_CODES``),
+        the new declaration and a bounded excerpt of the causing event's diff. Never raises."""
+        try:
+            lines: List[str] = []
+            done = set()
+            for d in self._diagnostics_of(response):
+                key, seq = d.get("symbol"), d.get("caused_by_seq")
+                if d.get("code") not in QUOTE_CODES or not isinstance(key, str) or not SYMBOL_KEY.match(key) \
+                        or not isinstance(seq, int) or isinstance(seq, bool) or seq <= 0:
+                    continue
+                if (seq, key) in done or len(done) >= MAX_QUOTED_CAUSES:
+                    continue
+                done.add((seq, key))
+                lines.append(self._cause_note(d, key, seq))
+            return "\n".join(lines)
+        except Exception as err:  # a quote is a courtesy: never lose the diagnostic over it
+            self.log(f"cause quote failed: {err!r}")
+            return ""
 
     def _take_outbox(self) -> str:
         """Pop queued text; the model is about to see it, so advance base and ack (§5.2, §5.4)."""
@@ -1067,6 +1293,28 @@ class WeftAdapter:
         after = self._proposed(name, args, pend.before[t.abs])
         if after is None or after == pend.before[t.abs]:
             return None
+        fingerprint = hashlib.sha1(f"{t.rel}\0{after}".encode("utf-8", "surrogatepass")).hexdigest()
+        if self.cfg.mode == "enforce":
+            with self.lock:
+                held = self.blocked_edits.pop(fingerprint, None)
+            if held is not None:
+                # The agent retried the exact edit that was just blocked for a stale declaration.
+                # The coordinator would accept it now (the diagnostic advanced the base: §5.2), but
+                # in a separate worktree a "re-read" shows the old code, so an unchanged retry most
+                # likely means the agent did not take the new declaration in. Block it once more
+                # with the quote; a second unchanged retry goes to the coordinator (deliberate).
+                codes, shown = held
+                with self.lock:
+                    self.pending.pop(pend.call_id, None)
+                self.log(f"identical retry of blocked edit to {t.rel} blocked once more ({', '.join(codes)})")
+                return {"action": "block", "message": (
+                    f"[weft] Edit blocked again: this is the exact edit to {t.rel} that Weft just blocked "
+                    f"({', '.join(codes)}), unchanged. While the other agent's change is not in your checkout, "
+                    "re-reading the file here shows the OLD code. The diagnostics again:\n"
+                    f"{shown}\n"
+                    "Change your edit to match the new declaration (or negotiate with that agent). If you "
+                    "have checked it and this exact edit is still right (for example, the new parameter is "
+                    "optional), retry it unchanged once more and Weft will validate it against the current log.")}
         reads, writes = self.analyzer.analyze([(t.rel, pend.before[t.abs], after)], t.worktree,
                                               self.scope.prefix_for(t.worktree))
         if not writes:
@@ -1080,16 +1328,32 @@ class WeftAdapter:
         if self.cfg.mode != "enforce":
             self._queue(verdict, "[weft] (advisory) this edit would be rejected:")
             return None
+        notes = self._cause_notes(verdict)  # network (event fetch): outside the lock
         with self.lock:
             self.pending.pop(pend.call_id, None)
-            self._queue(verdict)
+            self._queue(verdict, notes=notes)
             context = self._take_outbox()
+        codes = sorted({str(d.get("code")) for d in verdict.get("diagnostics") or []
+                        if isinstance(d, dict) and d.get("severity") == "error" and d.get("code") in RETRY_GUARD_CODES})
+        if codes:
+            with self.lock:
+                self.blocked_edits[fingerprint] = (codes, context)
+                while len(self.blocked_edits) > MAX_BLOCKED_EDITS:
+                    self.blocked_edits.popitem(last=False)
         self.log(f"check rejected {t.rel} seq {verdict.get('seq')}")
+        if notes:
+            advice = ("The new declaration and diff quoted above come from the Weft log, not from your "
+                      "checkout: while the other agent's change is not in your checkout, re-reading the file "
+                      "here shows the OLD code. Work from the quote, follow the suggestion, then retry.")
+        else:
+            advice = ("Follow the suggestion above and adapt your edit, then retry. If another agent changed "
+                      "code you use, their change may not be in your checkout yet: re-reading the file here "
+                      "can show the old code.")
         return {"action": "block", "message": (
             "[weft] Edit blocked by Weft edit-time coordination (another agent's change conflicts "
             f"with this edit to {t.rel}). Diagnostics:\n{context}\n"
-            "Re-read the cited symbols, adapt your edit to the current code, then retry. The log "
-            "base has advanced, so a corrected edit will be validated against the new state.")}
+            f"{advice} The log base has advanced, so a corrected edit will be validated against the "
+            "new state.")}
 
     def _pre_terminal(self, name: str, args: dict, call_id: str, task_id: Any = "") -> Optional[dict]:
         workdir = args.get("workdir") or self._base_dir(task_id)

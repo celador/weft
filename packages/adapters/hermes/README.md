@@ -32,6 +32,16 @@ was actually passed to the model (block message or tool-result injection), and t
 up to the ids injected. A `trunk` item with `requires_rebase` caps the base below the landing until
 the worktree gets a new commit.
 
+Quoting the cause: in separate worktrees the other agent's change is not in this checkout, so
+"re-read the cited symbol" would re-read the old code. For `stale_assumption`, `stale_overwrite` and
+`contract_changed` the adapter fetches the causing event (`GET /repos/{repo}/events/{seq}`, the
+agent token's `observe` scope; space tokens carry it, and so do `install.py` tokens minted from
+this version on) and appends the new
+declaration and at most 30 lines of that event's diff for the symbol's file (never for excluded
+paths). It also says whether this checkout already has the change. An unchanged retry of an edit
+just blocked for `stale_assumption`/`stale_overwrite` is blocked once more, locally, with the same
+quote; a second unchanged retry goes to the coordinator (the agent's deliberate call, §5.2).
+
 Identity: agent `hermes-<profile>` (one repo-scoped token per profile and repo), change
 `hermes-<profile>/<kanban task id>` (`adhoc-<session>` outside kanban), task title/priority read
 from the kanban DB (`HERMES_KANBAN_DB`) and used as `intent` / `summary_hint`.
