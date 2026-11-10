@@ -1,0 +1,45 @@
+{
+  "comment": "Title and end cards for the Hermes-hackathon cut (render-cards.mjs --spec demo/video/hackathon/cards.json).",
+  "cards": [
+    {
+      "id": "H00",
+      "seconds": 7,
+      "mark": true,
+      "kicker": "Weft for Hermes",
+      "title": "Conflicts before commits",
+      "big": true,
+      "sub": "Two coding agents, one codebase. Weft flags the collision while the second agent is still editing.",
+      "source": "Recorded live · two Hermes sessions · real model calls · local gateway · idle time trimmed"
+    },
+    {
+      "id": "H99",
+      "seconds": 10,
+      "mark": true,
+      "kicker": "In the Hermes plugin catalog",
+      "title": "Weft · MIT · github.com/celador/weft",
+      "big": true,
+      "lines": [
+        [
+          "install",
+          "hermes plugins install weft",
+          ""
+        ],
+        [
+          "Python",
+          "declaration-level analysis ships in the plugin",
+          "ok"
+        ],
+        [
+          "others",
+          "whole-file keys, unless a full analyzer is configured",
+          ""
+        ],
+        [
+          "gateway",
+          "local by default · hosted is opt-in",
+          ""
+        ]
+      ]
+    }
+  ]
+}

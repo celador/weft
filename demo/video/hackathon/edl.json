@@ -1,0 +1,114 @@
+{
+  "comment": "Cut list for the Hermes-hackathon video (assemble.mjs). Source times are seconds in the take's clips (install.mp4 / live.mp4, one continuous take each); cuts only remove idle time, nothing is sped up. Narration with src_t+cue starts so that the cue word is heard when src_t of that clip is on screen. Times measured with timing.py on take1. zoom [x, y, w] enlarges one region of the frame (same aspect) for phone readability.",
+  "segments": [
+    {
+      "src": "card:H00",
+      "dur": 6.8
+    },
+    {
+      "src": "install",
+      "from": 0.8,
+      "to": 5.4
+    },
+    {
+      "src": "install",
+      "from": 6.9,
+      "to": 14.6
+    },
+    {
+      "src": "live",
+      "from": 2.4,
+      "to": 8.2
+    },
+    {
+      "src": "live",
+      "from": 9.6,
+      "to": 11.6
+    },
+    {
+      "src": "live",
+      "from": 16.8,
+      "to": 25.4
+    },
+    {
+      "src": "live",
+      "from": 26.4,
+      "to": 36.6
+    },
+    {
+      "src": "live",
+      "from": 37.0,
+      "to": 44.4
+    },
+    {
+      "src": "live",
+      "from": 44.4,
+      "to": 50.2,
+      "zoom": [
+        960,
+        440,
+        960
+      ]
+    },
+    {
+      "src": "live",
+      "from": 50.2,
+      "to": 56.4,
+      "zoom": [
+        960,
+        425,
+        960
+      ]
+    },
+    {
+      "src": "live",
+      "from": 56.4,
+      "to": 62.0
+    },
+    {
+      "src": "card:H99",
+      "dur": 10.0
+    }
+  ],
+  "narration": [
+    {
+      "id": "00",
+      "seg": 0,
+      "at": 0.5
+    },
+    {
+      "id": "01",
+      "seg": 1,
+      "at": 0.6
+    },
+    {
+      "id": "02",
+      "src": "live",
+      "src_t": 20.2,
+      "cue": "Weft status"
+    },
+    {
+      "id": "03",
+      "src": "live",
+      "src_t": 27.4,
+      "cue": "changes calc_total"
+    },
+    {
+      "id": "04",
+      "src": "live",
+      "src_t": 45.2,
+      "cue": "stale assumption"
+    },
+    {
+      "id": "05",
+      "src": "live",
+      "src_t": 51.0,
+      "cue": "status shows"
+    },
+    {
+      "id": "06",
+      "seg": 11,
+      "at": 0.6
+    }
+  ]
+}

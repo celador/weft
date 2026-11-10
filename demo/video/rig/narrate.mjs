@@ -10,9 +10,10 @@
 //   edge         Microsoft Edge neural TTS via edge-tts (Hermes's own TTS provider)
 //   say          macOS `say` (--voice Samantha …)
 // Output: <out>/<id>.mp3 (44.1 kHz mono, loudness-normalised to -16 LUFS) + <out>/manifest.json.
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { args, sections, secretEnv, cloudflareToken, CF_ACCOUNT, sh, durationSec, VIDEO } from "./lib.mjs";
 
 const a = args();
@@ -36,9 +37,12 @@ mkdirSync(out, { recursive: true });
 const tmp = join(process.env.TMPDIR ?? tmpdir(), `weft-narrate-${process.pid}`);
 mkdirSync(tmp, { recursive: true });
 
-// TTS-only spelling fixes (captions keep the script text).
+// TTS-only spelling fixes (captions keep the script text). --lexicon <file.json> adds
+// [["regex", "spoken"], ...] pairs applied first (e.g. the hackathon cut's calc_total).
+const extra = a.lexicon ? JSON.parse(readFileSync(a.lexicon, "utf8")).map(([re, to]) => [new RegExp(re, "g"), to]) : [];
 const speak = (t) =>
-  t
+  extra
+    .reduce((s, [re, to]) => s.replace(re, to), t)
     .replace(/\bWCP\b/g, "W C P")
     .replace(/\bTypeScript\b/g, "TypeScript")
     .replace(/\bcreateSession\b/g, "create Session")
@@ -112,8 +116,17 @@ async function gptAudio(text, file) {
 
 function edge(text, file) {
   const py = `${process.env.HOME}/.hermes/hermes-agent/venv/bin/edge-tts`;
-  const bin = existsSync(py) ? py : "edge-tts";
-  sh(bin, ["--voice", a.voice ?? "en-US-AndrewMultilingualNeural", "--rate", a.rate ?? "+0%", "--text", text, "--write-media", file]);
+  // edge-tts < 7.3 gets HTTP 403 from the service: EDGE_TTS_BIN picks a newer one
+  const bin = process.env.EDGE_TTS_BIN ?? (existsSync(py) ? py : "edge-tts");
+  // the service fails at random (NoAudioReceived): retry with a pause
+  for (let i = 0; ; i++) {
+    try {
+      return void sh(bin, ["--voice", a.voice ?? "en-US-AndrewMultilingualNeural", "--rate", a.rate ?? "+0%", "--text", text, "--write-media", file]);
+    } catch (e) {
+      if (i >= 4) throw e;
+      execFileSync("sleep", [String(2 + i * 2)]);
+    }
+  }
 }
 
 function say(text, file) {
