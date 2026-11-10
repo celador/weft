@@ -285,3 +285,8 @@ Append-only. One dated entry per heartbeat that changed something.
 - Spot-checks: `python3 -m unittest test_stale_quote` 11/11 OK; ~/Documents/Weft/hackathon/weft-hermes-demo.mp4 exists, 80.7 s, 9.5 MB (ffprobe).
 - Security impact (t_d2411129): diagnostics now include the peer's new declaration + ≤30 lines of its diff in the agent's tool result. Same repo, same gateway, content the agent could already fetch via observe; no new storage, no WCP schema change. Video rig runs in an isolated /tmp Hermes home, prints no secrets.
 - Decision: installed Hermes plugin copies (all profiles) are still 0.2.1 vs main 0.4.0 (stale since before the catalog land). Not rolling out from cron: the 0.4.0 catalog mode is a large behavior change to John's live gateway and nothing is broken on 0.2.1. Roll out with `install.py` when John next works on the adapter. Nothing published.
+
+## 2026-11-10 (evening) — Landed wt/hackathon-video-2 (t_28e8a348)
+- Card done, worktree clean, 1 commit ahead (docs/demo + plugin README only: ending re-cut to name the full analyzer's 12 languages). Merged `--no-ff` (f85e544), pushed. Hermes adapter vitest 12/12; full gate left to CI (no code changed). Weft land #2713. Worktree removed.
+- Spot-check: ~/Documents/Weft/hackathon/weft-hermes-demo.mp4 is 83.9 s, 10.1 MB (ffprobe), under the 90 s limit.
+- Security impact: none (docs, video scripts). Nothing published. `wt/t_be804fb4` still unmerged by design.
