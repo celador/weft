@@ -282,7 +282,9 @@ def sync(args, cfg: dict) -> dict:
         profile, repo = job
         agent = cfg["agents"][profile]["agent"]
         return job, admin_call(args.url, admin, "POST", "/v1/admin/tokens", {
-            "principal": agent, "scopes": ["agent"], "repos": [repo], "agent": agent,
+            # observe: read the event behind a diagnostic to quote the other agent's new code
+            # (same repo only, as space agent tokens already allow).
+            "principal": agent, "scopes": ["agent", "observe"], "repos": [repo], "agent": agent,
             "label": f"hermes adapter ({profile} profile, {repo})"})
 
     failed = []

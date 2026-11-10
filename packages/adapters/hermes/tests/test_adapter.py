@@ -44,6 +44,7 @@ class FakeClient:
         self.gate_results = []
         self.head = 10
         self.expire_next = False
+        self.events = {}  # seq -> EventRecord served by event()
 
     def hello(self, agent, capabilities, task=None, change=None, resume_session=None):
         self.calls.append(("hello", agent, capabilities, task, change))
@@ -77,6 +78,12 @@ class FakeClient:
 
     def bye(self, session, reason=""):
         self.calls.append(("bye", session))
+
+    def event(self, seq):
+        self.calls.append(("event", seq))
+        if seq in self.events:
+            return self.events[seq]
+        raise WcpError("not_found", f"no event {seq}", 404)
 
     def submits(self, mode=None):
         return [c for c in self.calls if c[0] == "submit" and (mode is None or c[2] == mode)]
@@ -285,7 +292,14 @@ class EditTests(AdapterTestCase):
         self.assertEqual(path.read_text(), "hello\n")
         self.assertEqual(self.client.submits("commit"), [], "blocked edits are never committed")
         self.assertEqual((self.adapter.base_seq, self.adapter.acked), (12, 3))
-        self.run_edit("write_file", {"path": str(path), "content": "changed\n"}, call_id="c2",
+        # the unchanged retry of an edit blocked for a stale declaration is blocked once more,
+        # locally (the agent most likely re-read its own stale copy) ...
+        again, _ = self.run_edit("write_file", {"path": str(path), "content": "changed\n"}, call_id="c2")
+        self.assertEqual(again["action"], "block")
+        self.assertIn("Edit blocked again", again["message"])
+        self.assertEqual(len(self.client.submits("check")), 1, "the guard does not ask the gateway")
+        # ... and a second unchanged retry is deliberate: it goes to the gateway with the new base
+        self.run_edit("write_file", {"path": str(path), "content": "changed\n"}, call_id="c3",
                       apply=lambda: path.write_text("changed\n"))
         retry = self.client.submits("check")[1]
         self.assertEqual((retry[3]["base_seq"], retry[4]), (12, 3), "retry carries new base + ack")

@@ -175,6 +175,11 @@ class WcpClient:
             body["ack"] = ack
         return self._request("POST", self._session_path(session, "/inbox"), body)
 
+    def event(self, seq: int) -> dict:
+        """One event of this client's repo (§9.3 observer read; needs the ``observe`` scope, which
+        space agent tokens carry). Used to quote the change behind a diagnostic."""
+        return self._request("GET", f"/repos/{self.repo}/events/{int(seq)}")
+
     def heartbeat(self, session: str) -> dict:
         return self._request("POST", self._session_path(session, "/heartbeat"), {"type": "heartbeat"})
 
