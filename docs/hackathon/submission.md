@@ -5,13 +5,13 @@
 - Catalog PR **merged**: https://github.com/NousResearch/hermes-agent/pull/150998 (teknium1,
   2026-11-10 10:32 UTC). `hermes plugins search weft` lists **weft 0.4.0 @ fe30e497**, tier
   community, so `hermes plugins install weft` works from the catalog.
-- Demo video is cut (80.7 s): `~/Documents/Weft/hackathon/weft-hermes-demo.mp4` on John's Mac, with
+- Demo video is cut (83.9 s; ending re-cut Nov 10 to name the full analyzer's languages; v1 in `previous/`): `~/Documents/Weft/hackathon/weft-hermes-demo.mp4` on John's Mac, with
   `captions.srt`, `contact-sheet.jpg` and `x-post.txt` beside it. Not in git (binary). How it was
   made: [demo/video/hackathon/README.md](../../demo/video/hackathon/README.md).
 
 ## John’s remaining steps
 
-1. Watch `~/Documents/Weft/hackathon/weft-hermes-demo.mp4` (80.7 s, under the 90 s limit).
+1. Watch `~/Documents/Weft/hackathon/weft-hermes-demo.mp4` (83.9 s, under the 90 s limit).
 2. Post it on X with the text in `x-post.txt` (also below). **Nothing has been posted.**
 3. Submit the catalog PR URL and the X post URL at **https://form.typeform.com/to/FwJLvOln**.
    Official announcement: https://x.com/NousResearch/status/2118094256438936062.
@@ -19,7 +19,7 @@
 5. Watch for the entry’s Discord thread after submissions close. The announcement does not
    require a separate Discord submission. Support invite: https://t.co/qxek9haYeb.
 
-## The cut (80.7 s)
+## The cut (83.9 s)
 
 One continuous take of two **live** Hermes sessions (model inference, `claude-sonnet-4-5`) in tmux,
 filmed with VHS. Cuts only remove idle time (session start-up, model think time before the reads);
@@ -34,10 +34,11 @@ phone readability. No Desktop pane (it was not filmed in a live Desktop window).
 | 35.5–45.7 s | A is asked to change `calc_total(items)` to `calc_total(items, opts)` in `pricing.py`; the patch is accepted. | “Agent A changes calc_total to take a required options argument. Weft records which declaration changed, not just the file.” |
 | 45.7–58.9 s | B is asked to add `cart_total(items)` calling `calc_total(items)` in `cart.py` (“if Weft blocks the edit, don't retry: quote its error”). The write is blocked; B quotes `[weft error] stale_assumption pricing.py#calc_total … changed in #3 by shop … event #3`. Zoom on B from 53.1 s. | “Agent B still has the old signature in its worktree, and writes code that calls it the old way. Before that edit reaches disk, Hermes gets a stale assumption error, naming the symbol, the other agent, and the event.” |
 | 58.9–70.7 s | `/weft status` in B: 1 rejected, open conflicts (1) `stale_assumption pricing.py#calc_total`, `edit cart.py#cart_total -> REJECTED (blocked before it was written)`. | “B's status shows one rejected edit and one open conflict. Coordination happens in the tool loop, not in the prompt.” |
-| 70.7–80.7 s | End card “Weft · MIT · github.com/celador/weft”: `hermes plugins install weft`; Python declaration analysis ships in the plugin; other languages whole-file unless a full analyzer is configured; local by default, hosted opt-in. | “Python analysis ships with the plugin. Other languages fall back to whole files. Weft is open source, under MIT.” |
+| 70.7–83.9 s | End card “Weft · MIT · github.com/celador/weft”: `hermes plugins install weft`; Python: declaration-level analysis built in; + analyzer: TypeScript, Go, Rust, Java, Kotlin, Swift, C#, Ruby, PHP, C, C++; local by default, hosted opt-in. | “Python analysis is built in. Point the plugin at Weft's full analyzer for TypeScript, Go, Rust, Java and eight more languages. Weft is open source, under MIT.” |
 
-Do not claim all languages have symbol precision out of the box: the catalog ships Python AST
-analysis; other languages have whole-file keys unless a full analyzer is explicitly configured.
+Do not claim all languages have symbol precision out of the box: the catalog plugin has Python AST
+analysis built in; the other 11 of Weft's 12 languages (docs/languages.md) get declaration-level keys
+once the plugin's `analyzer` setting points at a built `analyze.mjs`; without it they are whole-file.
 An in-flight **same-file** overlap is a warning (`claim_wait`), not an unconditional file lock.
 The cross-file stale-signature edit above is the blocking demonstration.
 
@@ -81,7 +82,8 @@ The scripts in `demo/video/hackathon/` do all of this (see its README):
 
 **Short description:** Weft catches conflicts between coding agents while they edit, before Git
 merge time. Its Hermes plugin, now in the Hermes plugin catalog (`hermes plugins install weft`),
-observes edit hooks, injects symbol-level diagnostics for Python, and in enforce mode blocks stale
+observes edit hooks, injects symbol-level diagnostics (Python built in; TypeScript, Go, Rust, Java
+and eight more languages with Weft's full analyzer), and in enforce mode blocks stale
 edits before they reach disk. It includes status/inbox tools, a `/weft` command, a Desktop activity
 pane and a local-first gateway (hosted is opt-in). MIT; no model calls or core overrides.
 
