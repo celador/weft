@@ -62,6 +62,7 @@ LLM/provider calls, no cloud deployments, no paid resources or social posts.
 
 ## Human/maintainer work remaining
 
-Nous must review/merge the catalog entry (and may need to authorize CI first). John must record/post
-the <90s video tagging @NousResearch and submit the form. The entry is **not submitted to the
-hackathon merely because a catalog PR exists**. See [submission.md](submission.md).
+Nous merged the catalog entry on 2026-11-10 (PR #150998; `hermes plugins search weft` lists
+0.4.0 @ fe30e497). The <90s demo video is cut (see [submission.md](submission.md)); John must post it
+on X tagging @NousResearch and submit the form. The entry is **not submitted to the hackathon merely
+because the catalog PR exists**.

@@ -2,7 +2,7 @@
 // Slides (title/end cards, stat/quote/timeline cards, diagram placeholders) → 1920x1080 MP4 stills.
 // Same palette as apps/web. HTML is generated here from shots/cards.json; Playwright screenshots it.
 //
-//   node demo/video/rig/render-cards.mjs [--shots S00b,S11b] [--out demo/video/clips/cards]
+//   node demo/video/rig/render-cards.mjs [--shots S00b,S11b] [--out demo/video/clips/cards] [--spec other-cards.json]
 import { chromium } from "playwright";
 import { readFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -10,7 +10,7 @@ import { args, sh, RIG, VIDEO } from "./lib.mjs";
 import { scanText } from "./screen-safety.mjs";
 
 const a = args();
-const spec = JSON.parse(readFileSync(join(RIG, "shots/cards.json"), "utf8"));
+const spec = JSON.parse(readFileSync(a.spec ?? join(RIG, "shots/cards.json"), "utf8"));
 const want = a.shots ? String(a.shots).split(",") : null;
 const out = a.out ?? join(VIDEO, "clips/cards");
 mkdirSync(out, { recursive: true });
