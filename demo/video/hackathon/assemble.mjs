@@ -52,7 +52,14 @@ function charMap(id) {
   return (scriptCharIdx, edge = "s") => {
     const pos = (scriptCharIdx / totalScript) * totalSpoken;
     let best = starts[0];
-    for (const st of starts) if (st[0] <= pos + 0.01) best = st;
+    if (edge === "s") {
+      // A start lands on a word boundary; the proportional scale is a few letters off when the
+      // lexicon/whisper spelling differs ("Weft's" heard "WEF's"), so take the nearest word start
+      // rather than the last one before pos (which showed a caption one word early).
+      for (const st of starts) if (Math.abs(st[0] - pos) < Math.abs(best[0] - pos)) best = st;
+    } else {
+      for (const st of starts) if (st[0] <= pos + 0.01) best = st;
+    }
     return best[1][edge];
   };
 }

@@ -76,8 +76,9 @@ Peers shown by the pane/tools are Hermes processes visible on this host, not a g
 - **Analysis:** bundled standard-library Python AST analysis produces declaration keys, signature/body
   changes and heuristic in-checkout import dependencies. Other languages use whole-file keys
   (`path#*`): no inferred cross-file dependencies. No download/build is needed at plugin load.
-  An optional locally built `analyze.mjs` can supply the full Weft analyzer; it is never fetched by
-  this plugin. Dynamic imports, shadowed names and runtime call graphs are not fully modeled.
+  An optional locally built `analyze.mjs` (the `analyzer` setting) supplies the full Weft analyzer,
+  which adds declaration-level analysis for TypeScript/JavaScript, Go, Rust, Java, Kotlin, Swift,
+  C#, Ruby, PHP, C and C++ (12 languages with Python); it is never fetched by this plugin. Dynamic imports, shadowed names and runtime call graphs are not fully modeled.
 - Use separate Git checkouts/worktrees for separate agents. Sessions in the **same checkout** share
   a route; they are not independent coordinateable editors. Tools running inside remote containers
   whose files are unavailable on the plugin host are not observed.

@@ -26,13 +26,13 @@
         ],
         [
           "Python",
-          "declaration-level analysis ships in the plugin",
+          "declaration-level analysis built in",
           "ok"
         ],
         [
-          "others",
-          "whole-file keys, unless a full analyzer is configured",
-          ""
+          "+ analyzer",
+          "TypeScript, Go, Rust, Java, Kotlin, Swift, C#, Ruby, PHP, C, C++",
+          "ok"
         ],
         [
           "gateway",

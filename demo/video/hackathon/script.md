@@ -5,7 +5,9 @@ Narration for `demo/video/hackathon` (Hermes Plugin Hackathon entry). Same forma
 `hackathon/assemble.mjs` against `hackathon/edl.json`. Pictures: `install.tape` (catalog install),
 `live.tape` + `live.py` (two live Hermes sessions with model inference), `cards.json`.
 
-Accuracy: Python declaration analysis ships in the plugin; other languages are whole-file. The blocking
+Accuracy: Python declaration analysis is built into the plugin; its `analyzer` setting (a built
+`analyze.mjs`, `@weft/analyzer`) adds the other 11 of Weft's 12 languages (docs/languages.md;
+`analyze.mjs --languages` lists 12). Without it, other languages are whole-file. The blocking
 demonstration is the cross-file stale signature (a same-file overlap is only a `claim_wait` warning).
 Local gateway by default; hosted is opt-in. No Desktop pane in this cut (not filmed in a live Desktop).
 
@@ -48,5 +50,5 @@ B's status shows one rejected edit and one open conflict. Coordination happens i
 ## 06 · End
 
 ```narration
-Python analysis ships with the plugin. Other languages fall back to whole files. Weft is open source, under MIT.
+Python analysis is built in. Point the plugin at Weft's full analyzer for TypeScript, Go, Rust, Java and eight more languages. Weft is open source, under MIT.
 ```

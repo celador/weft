@@ -1,6 +1,6 @@
 # Hermes-hackathon cut (< 90 s)
 
-The 80.7 s demo for Weft's Hermes Plugin Hackathon entry: two **live** Hermes sessions (real model
+The 83.9 s demo for Weft's Hermes Plugin Hackathon entry: two **live** Hermes sessions (real model
 calls) in one repo, where B's stale call to `calc_total` is blocked before it reaches disk. Script
 table and posting steps: [docs/hackathon/submission.md](../../../docs/hackathon/submission.md).
 The competition video (`../script.md`, `../rig/edl.json`, `../weft-demo.mp4`) is untouched.
@@ -33,6 +33,8 @@ for f in $W/audio/0*.mp3; do whisper $f --model medium.en --language en --word_t
 node demo/video/rig/render-cards.mjs --spec demo/video/hackathon/cards.json --out $W/cards
 node demo/video/hackathon/assemble.mjs --take $W/take1 --audio $W/audio --cards $W/cards --whisper $W/wh --out $W/cut
 node demo/video/hackathon/safety.mjs $W/cut/weft-hermes-demo.mp4 --every 0.5
+# re-cutting one section (v2 changed only 06): narrate.mjs ... --sections 06 into a copy of the
+#    audio dir, whisper that one file, re-render cards, adjust the card's dur in edl.json, assemble
 bash demo/video/hackathon/teardown.sh
 ```
 
