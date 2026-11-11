@@ -9,15 +9,19 @@
   `captions.srt`, `contact-sheet.jpg` and `x-post.txt` beside it. Not in git (binary). How it was
   made: [demo/video/hackathon/README.md](../../demo/video/hackathon/README.md).
 
-## John’s remaining steps
+## Submitted (Nov 10, 2026)
 
-1. Watch `~/Documents/Weft/hackathon/weft-hermes-demo.mp4` (83.9 s, under the 90 s limit).
-2. Post it on X with the text in `x-post.txt` (also below). **Nothing has been posted.**
-3. Submit the catalog PR URL and the X post URL at **https://form.typeform.com/to/FwJLvOln**.
-   Official announcement: https://x.com/NousResearch/status/2118094256438936062.
-4. Deadline: **Wednesday Nov 11, 2026, 5 PM EST / 7 PM Montevideo**.
-5. Watch for the entry’s Discord thread after submissions close. The announcement does not
-   require a separate Discord submission. Support invite: https://t.co/qxek9haYeb.
+All of John's steps are done:
+
+- **X post:** https://x.com/elieraillc/status/2120311089019691377 (posted 2026-11-10 from
+  @elieraillc, video attached).
+- **Typeform:** submitted 2026-11-10 at https://form.typeform.com/to/FwJLvOln (confirmation
+  “Submission Received”).
+- **Catalog PR:** https://github.com/NousResearch/hermes-agent/pull/150998, merged 2026-11-10.
+- **Results:** winners are announced in a thread from @NousResearch after the hackathon ends
+  (Nov 11, 2026, 1 PM PST). Official announcement: https://x.com/NousResearch/status/2118094256438936062.
+
+The video file stays at `~/Documents/Weft/hackathon/weft-hermes-demo.mp4` on John's Mac (not in git).
 
 ## The cut (83.9 s)
 
@@ -65,7 +69,7 @@ The scripts in `demo/video/hackathon/` do all of this (see its README):
 - Cleanup: `demo/video/hackathon/teardown.sh` stops the local Weft gateway, the demo's Hermes
   gateway and tmux, and deletes `/tmp/shop`, `/tmp/shop-2` and `/tmp/hx`.
 
-## X post — do not post automatically
+## X post (as posted)
 
 > I built Weft for the @NousResearch Hermes plugin hackathon.
 >
@@ -91,4 +95,4 @@ pane and a local-first gateway (hosted is opt-in). MIT; no model calls or core o
 
 **Catalog PR (merged):** https://github.com/NousResearch/hermes-agent/pull/150998
 
-**Demo:** paste the X post URL after posting.
+**Demo:** https://x.com/elieraillc/status/2120311089019691377

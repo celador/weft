@@ -290,3 +290,9 @@ Append-only. One dated entry per heartbeat that changed something.
 - Card done, worktree clean, 1 commit ahead (docs/demo + plugin README only: ending re-cut to name the full analyzer's 12 languages). Merged `--no-ff` (f85e544), pushed. Hermes adapter vitest 12/12; full gate left to CI (no code changed). Weft land #2713. Worktree removed.
 - Spot-check: ~/Documents/Weft/hackathon/weft-hermes-demo.mp4 is 83.9 s, 10.1 MB (ffprobe), under the 90 s limit.
 - Security impact: none (docs, video scripts). Nothing published. `wt/t_be804fb4` still unmerged by design.
+
+## 2026-11-10 (night) — Hermes hackathon entry submitted (t_f08fa311)
+- Both video branches were already on main (wt/hackathon-video → 6140443, land #2701; wt/hackathon-video-2 → f85e544, land #2713). Confirmed no media entered git (no mp4/mp3/wav/png paths, no file > 500 KB in the merged diffs). Deleted the leftover local `wt/hackathon-video` branch; no hackathon worktrees remain.
+- John's submission steps are done: X post https://x.com/elieraillc/status/2120311089019691377 (2026-11-10, @elieraillc), Typeform submitted 2026-11-10 ("Submission Received"), catalog PR NousResearch/hermes-agent#150998 merged 2026-11-10. Winners announced in a @NousResearch thread after Nov 11, 1 PM PST. docs/hackathon/submission.md now has a "Submitted" section in place of the remaining-steps list. Video stays at ~/Documents/Weft/hackathon/ (not in git).
+- Gate on main: `pnpm -r --no-bail typecheck && test` GATE_EXIT=0, no failures (load avg ~100 during the run).
+- Security impact: none (docs and video scripts only). Nothing published, no posts; no plugin or gateway change.
