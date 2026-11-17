@@ -5,7 +5,7 @@
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { Welcome } from "@weft/protocol";
-import { DEFAULT_FREE_EVENTS } from "../src/usage";
+import { DEFAULT_FAIR_USE_PER_SEAT, DEFAULT_FREE_EVENTS, MAX_SEATS } from "../src/usage";
 import pricingDoc from "../../../docs/pricing.md?raw";
 import wrangler from "../wrangler.toml?raw";
 import { ADMIN, BASE, call, hello, wcp } from "./helpers";
@@ -30,6 +30,8 @@ describe("billing is inert without Stripe secrets", () => {
       ["POST", "/v1/space/billing/portal", a.owner],
       ["POST", "/v1/billing/stripe/webhook", undefined],
       ["POST", "/v1/admin/billing/report", ADMIN],
+      ["POST", "/v1/space/billing/claim", a.owner],
+      ["POST", "/v1/billing/claim", undefined],
     ] as const) {
       const r = await call(m, p, tok, {});
       expect(r.status, p).toBe(503);
@@ -38,6 +40,10 @@ describe("billing is inert without Stripe secrets", () => {
     // even a correctly shaped webhook is not read
     const w = await SELF.fetch(`${BASE}/v1/billing/stripe/webhook`, { method: "POST", headers: { "stripe-signature": "t=1,v1=" + "0".repeat(64) }, body: "{}" });
     expect(w.status).toBe(503);
+    // the web purchase link says Pro is not sold here, as a page, without calling Stripe
+    const b = await SELF.fetch(`${BASE}/buy?interval=year&seats=2`, { redirect: "manual" });
+    expect(b.status).toBe(503);
+    expect(b.headers.get("content-type")).toContain("text/html");
   });
 
   it("nobody hits an allowance: over the allowance still works, and usage is still counted", async () => {
@@ -59,12 +65,20 @@ describe("billing is inert without Stripe secrets", () => {
     expect(events).toBe(4); // counted, never refused
   });
 
-  it("the default allowance is the one in docs/pricing.md and in the hosted wrangler vars", () => {
-    const cfg = JSON.parse(/```json pricing-config\n([\s\S]*?)\n```/.exec(pricingDoc)![1]!) as { free_events_per_month: number; usd_per_1000_events: number; meter_event_name: string };
+  it("the gateway's defaults are the numbers in docs/pricing.md and in the hosted wrangler vars", () => {
+    const cfg = JSON.parse(/```json pricing-config\n([\s\S]*?)\n```/.exec(pricingDoc)![1]!) as {
+      free_events_per_month: number;
+      pro: { usd_per_user_month: number; usd_per_user_year: number; fair_use_events_per_seat_month: number; max_seats: number };
+      legacy_usage: { meter_event_name: string };
+    };
     expect(cfg.free_events_per_month).toBe(DEFAULT_FREE_EVENTS);
-    expect(cfg.meter_event_name).toBe("weft_agent_events");
-    expect(cfg.usd_per_1000_events).toBeGreaterThan(0);
+    expect(cfg.pro.fair_use_events_per_seat_month).toBe(DEFAULT_FAIR_USE_PER_SEAT);
+    expect(cfg.pro.max_seats).toBe(MAX_SEATS);
+    expect(cfg.pro.usd_per_user_month).toBeGreaterThan(0);
+    expect(cfg.pro.usd_per_user_year).toBeGreaterThan(0);
+    expect(cfg.legacy_usage.meter_event_name).toBe("weft_agent_events");
     const hosted = wrangler.slice(wrangler.indexOf("[env.hosted.vars]"));
     expect(Number(/WEFT_FREE_EVENTS = "(\d+)"/.exec(hosted)![1])).toBe(DEFAULT_FREE_EVENTS);
+    expect(Number(/WEFT_PRO_FAIR_USE_EVENTS = "(\d+)"/.exec(hosted)![1])).toBe(DEFAULT_FAIR_USE_PER_SEAT);
   });
 });

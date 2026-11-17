@@ -141,3 +141,17 @@ test("hosted-admin spaces lists every space with the internal flag", async () =>
   const { retention, ...old } = STATS;
   assert.equal(await run(["spaces"], { fetchFn: jsonFetch(200, old), readToken: tok(), out: () => {}, err: () => {} }), 1);
 });
+
+test("hosted-admin: billing lists paid spaces with seats, interval, events and the fair-use flag", async () => {
+  const lines = [];
+  const body = { spaces: [
+    { id: "spaaaaaaaaaa", status: "active", plan: "paid", seats: 2, interval: "year", events_this_month: 120001, fair_use_exceeded_at: "2026-11-17T10:00:00.000Z" },
+    { id: "spbbbbbbbbbb", status: "active", plan: "free", events_this_month: 10 },
+    { id: "spcccccccccc", status: "active", plan: "paid", seats: 5, interval: "month", events_this_month: 300 },
+  ] };
+  const code = await run(["billing"], { base: "https://gw.test", readToken: () => ({ token: "k" }), fetchFn: async (url) => { assert.equal(url, "https://gw.test/v1/admin/spaces"); return new Response(JSON.stringify(body)); }, out: (l) => lines.push(l), err: () => {} });
+  assert.equal(code, 0);
+  assert.equal(lines.length, 4);
+  assert.match(lines[1], /^spaaaaaaaaaa\s+2\s+year\s+120001\s+2026-11-17T10:00:00.000Z$/);
+  assert.match(lines[3], /2 paid space\(s\), 7 Pro seat\(s\), 1 past fair use this month/);
+});

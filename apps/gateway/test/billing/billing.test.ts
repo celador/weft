@@ -181,26 +181,41 @@ describe("metering and the free allowance", () => {
 // ------------------------------------------------------------------ checkout and portal
 
 describe("checkout and portal", () => {
-  it("POST /v1/space/billing/checkout creates a subscription Checkout Session for the space and returns its URL", async () => {
+  it("POST /v1/space/billing/checkout creates a Pro Checkout Session (per seat) for the space and returns its URL", async () => {
     const a = await signup();
     let body = "";
     stripe()
       .intercept({ path: "/v1/checkout/sessions", method: "POST" })
       .reply(200, (o) => ((body = String(o.body)), { id: "cs_test_1", url: "https://checkout.stripe.com/c/pay/cs_test_1" }));
-    const r = await call("POST", "/v1/space/billing/checkout", a.owner, {});
+    const r = await call("POST", "/v1/space/billing/checkout", a.owner, { interval: "year", seats: 3 });
     expect(r.status).toBe(201);
-    expect(await r.json()).toEqual({ type: "billing.checkout", url: "https://checkout.stripe.com/c/pay/cs_test_1" });
+    expect(await r.json()).toEqual({ type: "billing.checkout", url: "https://checkout.stripe.com/c/pay/cs_test_1", interval: "year", seats: 3 });
     const f = form(body);
     expect(f.mode).toBe("subscription");
     expect(f.client_reference_id).toBe(a.id);
-    expect(f["line_items[0][price]"]).toBe("price_unit");
+    expect(f["line_items[0][price]"]).toBe("price_pro_year");
+    expect(f["line_items[0][quantity]"]).toBe("3");
+    expect(f["line_items[0][adjustable_quantity][enabled]"]).toBe("true");
+    expect(f["line_items[0][adjustable_quantity][minimum]"]).toBe("1");
+    expect(f["line_items[0][adjustable_quantity][maximum]"]).toBe("500");
     expect(f["metadata[weft_space]"]).toBe(a.id);
     expect(f["subscription_data[metadata][weft_space]"]).toBe(a.id);
     expect(f.success_url).toBe(`${BASE}/billing/done`);
     expect(f.cancel_url).toBe(`${BASE}/billing/cancelled`);
     expect(f.customer).toBeUndefined(); // Stripe creates the customer; we store only its id, later
-    expect(f["line_items[0][quantity]"]).toBeUndefined(); // metered: no quantity
     expect(f["adaptive_pricing[enabled]"]).toBe("false"); // USD, like the price
+    fetchMock.assertNoPendingInterceptors();
+  });
+
+  it("checkout defaults to monthly, one seat, and refuses a bad interval or seat count", async () => {
+    const a = await signup();
+    let body = "";
+    stripe()
+      .intercept({ path: "/v1/checkout/sessions", method: "POST" })
+      .reply(200, (o) => ((body = String(o.body)), { id: "cs_test_2", url: "https://checkout.stripe.com/c/pay/cs_test_2" }));
+    expect((await call("POST", "/v1/space/billing/checkout", a.owner, {})).status).toBe(201);
+    expect(form(body)).toMatchObject({ "line_items[0][price]": "price_pro_month", "line_items[0][quantity]": "1" });
+    for (const bad of [{ interval: "week" }, { seats: 0 }, { seats: 501 }, { seats: 2.5 }, { seats: "many" }]) expect((await call("POST", "/v1/space/billing/checkout", a.owner, bad)).status, JSON.stringify(bad)).toBe(400);
     fetchMock.assertNoPendingInterceptors();
   });
 

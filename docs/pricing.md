@@ -1,14 +1,136 @@
-# Hosted Weft: cost model and usage-based pricing
+# Hosted Weft: pricing
 
-**Status: section 3 (allowance and price) APPROVED by John 2026-11-01.** The cost model below is kept as the
-basis. The code reads the numbers from configuration and stays inert until Stripe secrets are set on the hosted
-gateway (see the [go-live record](#go-live-record-2026-11-03)). Local and self-hosted Weft stay
-free and open source. Pricing is **usage-based only: there is no per-developer, per-seat or
-per-agent fee**, and nothing here depends on how many people or agents a team has.
+**Status (2026-11-17): the per-user Weft Pro model below is a PROPOSAL, awaiting John.** It replaces the
+usage-based price (approved 2026-11-01, live since 2026-11-03), which is kept further down as
+[history](#history-the-usage-based-model-2026-11-01). Until John approves the Pro numbers, the live hosted
+gateway still runs the usage model; the code in this repo sells Pro and is proven in Stripe TEST mode only.
+Local and self-hosted Weft stay free and open source (MIT), with no limits from us.
 
-Reproduce every number: `node scripts/pricing-model.mjs` (constants and sources are at the top of the file).
+Every number lives in the `pricing-config` block at the end of the Pro section: a price change is a one-line
+edit there, then `node scripts/stripe-setup.mjs` (new Stripe prices take over the lookup keys) and the two
+`STRIPE_PRICE_PRO_*` secrets.
 
-## 1. What a hosted space consumes
+## Weft Pro: per user, monthly or yearly (PROPOSAL, awaiting John)
+
+Modelled on cap.so: a free tier, and one paid tier priced per user.
+
+| | Free | **Pro, monthly** | **Pro, yearly** |
+|---|---|---|---|
+| Local and self-hosted (`npx @celador/weft`, `weft deploy`) | unlimited, open source | same | same |
+| Hosted space (`--hosted`) | 5,000 agent events per space per month; over it, agents keep working uncoordinated and are told so | no event cut-off | no event cut-off |
+| Price | $0 | **$12 per user per month** | **$98 per user per year** (= $8.17 a month, save 32%) |
+| Seats | | a quantity the buyer picks in Stripe Checkout and can change in the Customer Portal | same |
+| Fair use | | 50,000 agent events per seat per month: passing it cuts nothing off; the month is flagged for the operator | same |
+
+- **Seats are an honor system**, like Cap's license counter. Weft has no accounts, so nothing checks who the users
+  are; the buyer says how many people use the space.
+- **Fair use** is a flag, not a limit: when a Pro space's events this month pass `seats x 50,000`, the Registry records
+  the time (`fair_use_exceeded_at` in `GET /v1/admin/spaces`, `node site/hosted-admin.mjs spaces`) and
+  `GET /v1/admin/billing` counts it. We reach out; we do not cut off.
+- **Changing seats** (Customer Portal): prorated. **Cancelling**: at the end of the paid period; the space then goes
+  back to the free plan. **Erasing a Pro space** (`weft uninstall --space`) cancels the subscription at once, with no
+  refund for the rest of the period.
+- **The $500 pilot** (`weft deploy` on the customer's own Cloudflare account, fixed fee) is unchanged.
+- **No commercial-license tier.** Weft is MIT, which already allows commercial use; a paid license would need a
+  relicense, which is John's call and is not built.
+
+### Two ways to buy
+
+1. **CLI first** (someone already using a hosted space): `npx @celador/weft upgrade [--seats N] [--year]` opens
+   Stripe Checkout for that space. The webhook makes the space Pro with the seats bought.
+2. **Web first** (a stranger on weft.mx): the pricing page links to `https://weft-hosted.elier.ai/buy?interval=year&seats=2`.
+   The buyer pays on Stripe Checkout, lands on `https://weft.mx/welcome/?session_id=...`, and the page shows a
+   one-time claim code and the command `npx @celador/weft --hosted --claim XXXX-XXXX-XXXX`. Running it in a repo creates
+   the hosted space (or reuses the one that repo already has) as Pro. The exact contract the site uses is in
+   [hosted.md](hosted.md#weft-pro-on-the-web-the-contract-the-site-uses).
+
+### Margin check (from the cost model in section H1)
+
+At the reference workload (25 events per live agent-hour) an agent event costs us about $0.153 per 1,000 all-in.
+Stripe takes 2.9% + $0.30 per charge.
+
+| per seat, per month | revenue after Stripe | infra at a typical 2,500 events | margin | infra at fair use (50,000 events) | margin |
+|---|---|---|---|---|---|
+| monthly ($12) | $11.35 | $0.38 | 91% | $7.65 | 31% |
+| yearly ($98 / 12 = $8.17) | $7.90 | $0.38 | 92% | $7.65 | 3% |
+
+A typical seat is very profitable; a yearly seat that sits at fair use every month is close to break-even. Open
+points for John: (1) the prices themselves, (2) whether fair use should be lower for yearly seats (25,000 keeps the
+yearly margin at 50%), (3) whether to offer a free trial (Checkout supports `trial_period_days`; none is set).
+
+### How billing works (implementation)
+
+All of it lives in the hosted gateway (`apps/gateway/src/billing.ts`, Registry tables in `registry.ts`) and is **off
+until four secrets are set**: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PRO_MONTH`,
+`STRIPE_PRICE_PRO_YEAR` (plus `STRIPE_PORTAL_CONFIG_ID` for the Pro portal configuration). With any of them missing,
+the billing routes answer `503`, `/buy` shows a "not on sale here" page, no allowance is enforced and no Stripe call is
+made. Usage is still counted so `GET /v1/space` and `weft usage` have real numbers.
+
+- **Registry, per space**: `plan` (`free` | `paid`), `product` (`pro`, or empty for a legacy usage subscription),
+  `seats`, `interval`, `allowance` (nullable override), `stripe_customer_id`, and a per-month usage row (`events`,
+  `fair_use_at`, and the legacy report window). Stripe Checkout collects the email and card and keeps them.
+- **Registry, per web purchase** (`entitlements`): the Checkout Session id, the Stripe customer and subscription ids,
+  seats, interval, plan, and when and to which space it was claimed. Claim codes (`claim_codes`) are stored only as
+  SHA-256 of a per-Registry random salt plus the code, expire after an hour, and are deleted on use. A claimed purchase
+  is deleted with its space; an unclaimed purchase whose subscription ended is deleted after 30 days.
+- **Metering**: after a submit that entered the log the gateway adds one unit through a coalescing background write
+  (`ctx.waitUntil`). The count feeds the free allowance, `weft usage`, and the Pro fair-use flag. **Pro sends no meter
+  events**: the hourly report runs only for legacy usage subscriptions.
+- **Allowance**: a `free` space whose month count has reached its allowance gets `429 over_allowance` ("Run
+  `npx @celador/weft upgrade` for Weft Pro ...") on submit, from cached state, with no extra Durable Object call.
+- **Webhook** `POST /v1/billing/stripe/webhook`: HMAC-SHA-256 over `t.payload`, constant-time compare, 5-minute
+  timestamp tolerance, idempotent on event id (a replay is answered without a Stripe call), events older than the last
+  applied one ignored. A checkout's seats, interval and status are read from its subscription
+  (`GET /v1/subscriptions/{id}`); if Stripe cannot be read the webhook answers `503` and Stripe retries. Other
+  products on the same Stripe account send their events here too; only checkouts we created (a space id in
+  `client_reference_id` and metadata, or `weft_purchase=web` metadata) and customers we know are acted on.
+- **Erasing a space** cancels its subscription first (`DELETE /v1/space` and the operator erase); if Stripe cannot be
+  reached the erase answers `503`, the space is already unreachable, and the Registry retries every minute.
+
+The machine-readable copy below is what `scripts/stripe-setup.mjs` creates in Stripe and what the gateway's defaults
+(`WEFT_FREE_EVENTS`, `WEFT_PRO_FAIR_USE_EVENTS`, `MAX_SEATS`) must equal; `apps/gateway/test/billing-inert.test.ts`
+checks them. `legacy_usage` describes the superseded usage price, kept so existing Stripe objects can be found.
+
+```json pricing-config
+{
+  "currency": "usd",
+  "free_events_per_month": 5000,
+  "pro": {
+    "product_id": "weft_pro",
+    "product_name": "Weft Pro",
+    "usd_per_user_month": 12,
+    "usd_per_user_year": 98,
+    "fair_use_events_per_seat_month": 50000,
+    "max_seats": 500
+  },
+  "legacy_usage": {
+    "product_name": "Weft hosted",
+    "meter_display_name": "Weft agent events",
+    "meter_event_name": "weft_agent_events",
+    "usd_per_1000_events": 1.0
+  }
+}
+```
+
+### Go-live checklist (card t_5408b767, after John approves the numbers)
+
+1. Edit the numbers above if John changed them.
+2. `node scripts/stripe-setup.mjs --live` (restricted key from keychain `weft-stripe-live-key`; the key also needs
+   write access to Prices and Customer Portal, which it has): product `weft_pro`, prices `weft_pro_user_month` and
+   `weft_pro_user_year`, Pro portal configuration (metadata `weft=pro`).
+3. `wrangler secret put --env hosted` for `STRIPE_PRICE_PRO_MONTH`, `STRIPE_PRICE_PRO_YEAR` and
+   `STRIPE_PORTAL_CONFIG_ID` (the existing key and webhook secret stay; the webhook endpoint already sends the four
+   events). Until these are set, a deploy of this code turns hosted billing OFF (no allowance enforced).
+4. Deploy `weft-hosted`, publish the CLI (0.4.0), ship the site's pricing and welcome pages.
+5. Verify: `/buy` answers 303 to a live Checkout page; `GET /v1/admin/billing` shows `enabled: true`.
+
+## History: the usage-based model (2026-11-01)
+
+Approved by John 2026-11-01 and live from 2026-11-03 to the Pro go-live: 5,000 agent events free per space per month,
+then $1.00 per 1,000 events, never per seat. On 2026-11-17 the live Stripe account had **0 subscriptions** on it (any
+status), so nobody needs to be moved. The cost model below is still the basis of the margin check above.
+
+### H1. What a hosted space consumes
 
 A hosted space (`npx @celador/weft` against `weft-hosted.elier.ai`) is a tenant on one Worker, `weft-hosted`
 (`[env.hosted]` in `apps/gateway/wrangler.toml`): the gateway Worker, one `RepoCoordinator` Durable Object per
@@ -42,7 +164,7 @@ Cloudflare list prices (Workers Paid, retrieved 2026-11-01), the inputs of the m
 The model uses the marginal price and ignores the included allotments, so it is what the 1,000,000th event costs,
 not what today's traffic costs.
 
-### How the numbers were measured
+#### How the numbers were measured
 
 - **Rows per operation**: `SqlStorage` `rowsRead` / `rowsWritten` summed around `RepoCoordinator` calls in the
   gateway's Workers test runtime, 20 edits through the real gateway routes. One edit (a `check` submit then a `commit`
@@ -57,7 +179,7 @@ not what today's traffic costs.
   drain); 3 KB stored per event, kept 12 months; one heartbeat every 30 s while a session is live (the coordinator's
   default `heartbeat_interval_ms`).
 
-### Cost per unit of work
+#### Cost per unit of work
 
 | | Cost |
 |---|---|
@@ -79,7 +201,7 @@ The 70% target holds from about 11 events per agent-hour up. Below that the hear
 heartbeat, not the price: it writes 22 rows (session row, input journal, tick) for a 30-second liveness ping. Cutting it
 to 5 rows lifts the 10-events/hour margin to about 90%. That is a coordinator change, not part of this card.
 
-## 2. The billable meter
+### H2. The billable meter
 
 **Candidates**
 
@@ -105,7 +227,7 @@ Counting rules (implemented in `apps/gateway/src/billing.ts` and the gateway's s
   free;
 - the calendar month is UTC; the counter is per space; nothing in it identifies a person or a repo.
 
-## 3. Allowance, price, example bills (approved 2026-11-01)
+### H3. Allowance, price, example bills (approved 2026-11-01, superseded)
 
 | | Proposal |
 |---|---|
@@ -135,61 +257,12 @@ Open points for John, not decided here:
 2. **$1.00 vs $1.50 per 1,000.** $1.50 holds 70% down to 7 events per agent-hour without touching the heartbeat.
 3. **Allowance size.** Doubling it to 10,000 costs us at most $1.50 per free space per month.
 
-The machine-readable copy below is what `scripts/stripe-setup.mjs` creates in Stripe and what the gateway's
-`WEFT_FREE_EVENTS` default must equal (a unit test checks both).
-
-```json pricing-config
-{
-  "product_name": "Weft hosted",
-  "meter_display_name": "Weft agent events",
-  "meter_event_name": "weft_agent_events",
-  "free_events_per_month": 5000,
-  "usd_per_1000_events": 1.0,
-  "currency": "usd"
-}
-```
-
-## 4. How billing works (implementation)
-
-All of it lives in the hosted gateway (`apps/gateway/src/billing.ts`, Registry tables in `registry.ts`) and is **off
-until three secrets are set**: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID` (plus the optional
-var `STRIPE_METER_EVENT_NAME`). With any of them missing: the billing routes answer `503 unavailable`, no allowance
-is enforced, no Stripe call is made. Usage is still counted so `GET /v1/space` and `weft usage` have real numbers.
-
-- **Registry** keeps, per space: `plan` (`free` | `paid`), `allowance` (nullable override of the default),
-  `stripe_customer_id` (nothing else about the customer: Stripe Checkout collects email and card and keeps them),
-  and a per-month usage row (`events`, `reported`, a pending report window). A `stripe_events` table holds event ids
-  for idempotency, nothing else from the event.
-- **Metering**: after a submit that entered the log the gateway adds one unit through a coalescing background
-  write (`ctx.waitUntil`), so the hot path never waits on the Registry. The write returns the space's plan and
-  remaining allowance, which the gateway caches for the isolate.
-- **Allowance**: a `free` space whose month count has reached its allowance gets
-  `429 {"error":{"code":"over_allowance","message":"Free allowance of 5,000 events used this month. Run `npx @celador/weft upgrade` ..."}}` on submit.
-  It is checked from the cached state, so it costs no extra Durable Object call.
-- **Upgrade**: `weft upgrade` -> `POST /v1/space/billing/checkout` -> Stripe Checkout Session in `subscription`
-  mode with the metered price, `client_reference_id` = space id. `weft billing` -> Stripe Customer Portal session.
-- **Webhook** `POST /v1/billing/stripe/webhook`: HMAC-SHA-256 over `t.payload`, constant-time compare, 5-minute
-  timestamp tolerance, idempotent on event id, events older than the last applied one ignored. Other products on
-  the same Stripe account send their events here too; only events for a space we created (marked in metadata) or a
-  customer we know are acted on.
-- **Reporting**: the Registry alarm runs hourly while a paid space has unreported usage. For each space it sends one
-  Stripe meter event for the overage since the last report (`events - allowance`, never negative) with the identifier
-  `weft:<space>:<month>:<from>-<to>`; the window is stored before the call and reused on retry, so a retry cannot be
-  counted twice (Stripe deduplicates the identifier for 24 hours). `POST /v1/admin/billing/report` runs it on
-  demand.
-- **Erasing a space** cancels the subscription first (`DELETE /v1/space` and the operator suspend/erase paths call
-  `cancelSubscriptions`); if Stripe cannot be reached the delete is refused with `503` rather than leaving a live
-  subscription for a deleted space.
-
-A usage retry with the same `Idempotency-Key` can count one event twice (the coordinator replays the old verdict, the
-gateway cannot tell). At $0.001 an event this is noise and is not engineered away.
-
-## Go-live record (2026-11-03)
+### H4. Go-live record of the usage model (2026-11-03)
 
 Billing is on for the production hosted gateway (`weft-hosted.elier.ai`), in Stripe account elier.ai (customers see
 "Atelier" on Checkout and statements).
 
-1. Numbers approved by John, 2026-11-01 (section 3).
+1. Numbers approved by John, 2026-11-01 (section H3).
 2. A restricted live key `weft-hosted` (write on Products, Prices, Billing Meters, Meter Events, Checkout Sessions,
    Customers, Subscriptions, Customer Portal, Webhook Endpoints; no balance, charges or payouts) is in the operator's
    keychain (`weft-stripe-live-key`) and is the Worker's `STRIPE_SECRET_KEY`. The account's full secret key is not on the Worker.
@@ -201,5 +274,5 @@ Billing is on for the production hosted gateway (`weft-hosted.elier.ai`), in Str
    (the four events). Secrets on the Worker: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`,
    `STRIPE_PORTAL_CONFIG_ID`.
 5. This month's counters were reset (`POST /v1/admin/billing/reset-usage`) so no existing space hit the allowance on day one.
-6. To change a number: edit the `pricing-config` block above, `WEFT_FREE_EVENTS` in `[env.hosted.vars]`, rerun step 3
-   and set the new `STRIPE_PRICE_ID`.
+6. (Usage model) a number change meant editing `pricing-config`, `WEFT_FREE_EVENTS`, rerunning step 3 and setting
+   `STRIPE_PRICE_ID`. The legacy objects are now made only with `node scripts/stripe-setup.mjs --legacy-usage`.
