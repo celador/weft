@@ -13,6 +13,20 @@ a social post to that first run in as few steps as possible.
 | 3. Command copies | Clicks on a Copy button, or copying the command by hand | `copy` events in Workers Analytics Engine dataset `weft_site_events`, by source/placement |
 | 4. npm downloads | Downloads of `@celador/weft` per day | `api.npmjs.org/downloads/range/<from>:<to>/@celador/weft` |
 | 5. First runs | New hosted spaces per day | `GET https://weft-hosted.elier.ai/v1/admin/stats` (Registry `signupStats`, `docs/hosted.md`) |
+| Sales: pricing views | Loads of weft.mx/pricing/ | `pricing_view` events |
+| Sales: buy clicks | Clicks on Get Pro on the pricing page (placement = `<interval>-<seats>`) | `buy_click` events |
+| Sales: paid | Returns from Stripe Checkout to /welcome/ with a session (one per session per tab) | `welcome_view` events, placement other than `no-session` |
+| Sales: claimed | The welcome page got a claim code from the gateway | `claim_ok` events |
+
+Every site event also carries `utm_campaign` (blob5; the first page of a browser tab remembers the
+`utm_*` tags in sessionStorage, so a buy click two pages later still counts for the campaign).
+The report prints the sales columns per day, a `sales:` line, and a per-campaign table. For video
+links use `https://weft.mx/start/?utm_source=<platform>&utm_campaign=<video>`. "Paid" is measured on
+the site, so a buyer who closes the tab before the welcome page loads is missing from it; Stripe and
+`GET /v1/admin/billing` are the source of truth for revenue.
+
+Since local became the default (2026-11), `npx @celador/weft` creates a hosted space only with
+`--hosted`, so "first runs" counts hosted first runs only; local first runs are not measured.
 
 Conversion is each step divided by the one before it. Steps 3 and 4 are leaky: people type the
 command without copying it, and `npx` caches the package, so first runs can exceed copies.
@@ -53,8 +67,9 @@ to Telegram) runs `node site/funnel.mjs --alert` over the last 14 days. It print
 messages John, only when one of these happens for the first time:
 
 - a step goes above zero for the first time (`First first runs: …`);
+  this includes the first Pro buy click and the first paid checkout;
 - a day has at least 10x the average of the 7 days before it, and at least 50 visits, 10
-  copies, 50 downloads or 5 first runs;
+  copies, 10 buy clicks, 5 paid checkouts, 50 downloads or 5 first runs;
 - all-time hosted spaces pass 25, 50, 100, 250, 500, 1000, 2500, 5000 or 10000;
 - the first non-internal hosted space is active (an event in the last 7 days), and the retained-space count passes 1, 3, 10, 25, 50, 100, 250, 500 or 1000.
 
