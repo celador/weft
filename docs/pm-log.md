@@ -321,3 +321,9 @@ Append-only. One dated entry per heartbeat that changed something.
 - Card showed `running` 3h06 but its worker died at 13:33 (exit 130, `session_turn_lease_lost` in agent.log); board never noticed. Two commits on wt/clerk-accounts (0de6a73 gateway, 1862fe3 CLI 0.5.0) plus 26 uncommitted site/CLI files; E2E stopped at Stripe Checkout Subscribe.
 - Reclaimed, posted a resume comment (commit the uncommitted files first, E2E rig paths, leftover wrangler dev pids 17430/18278, remaining steps), dispatched: new run pid 54648 running.
 - Nothing else to land: wt/license-change held for go-live, wt/t_be804fb4 stays private. Security impact: none (board operation only).
+
+## 2026-11-17 17:00 — Re-dispatched t_4fe570cd (Clerk accounts) after Mac reboot
+- Runs 442/443 crashed (exit 130) at 16:21/16:33 with the Mac reboot (uptime 28 min at 16:58); dispatcher gave up after 2. Not a card problem.
+- Verified state: E2E passed at 16:17 (~/Documents/Weft/clerk-accounts/e2e/e2e-pass.log: sign-up, account, Pro 2 seats, space, delete; Stripe sub canceled, Clerk user 404, test customer deleted). Commits through b603893 on wt/clerk-accounts; one uncommitted file (site/public/assets/account.js). Gate log was cut off by the reboot.
+- Unblocked with a resume note (commit account.js, rerun gate, deliverables, complete; don't rerun E2E) and dispatched: run 444 running.
+- Security impact: none (board operation only).
