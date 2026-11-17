@@ -15,7 +15,7 @@
 //   POST /v1/admin/spaces/{id}/allowance {events|null}   override one space's free allowance
 //   GET  /v1/admin/billing            plan counts, Pro seats, fair use, unclaimed purchases
 
-import type { Registry, SpaceGrant } from "./registry";
+import type { Registry, SpaceGrant, Utm } from "./registry";
 import { StripeError, cancelCustomerSubscriptions, fetchSubscription, stripeConfig, stripeRequest, subscriptionFacts, verifyStripeSignature, type StripeConfig, type StripeEnv, type SubscriptionFacts } from "./stripe";
 import { freeEvents, isInterval, MAX_SEATS, monthKey, parseSeats, type Interval, type Plan } from "./usage";
 
@@ -248,14 +248,19 @@ type SessionObject = { id?: unknown; mode?: unknown; status?: unknown; payment_s
 
 const idOf = (v: unknown): string | undefined => (typeof v === "string" ? v : v && typeof v === "object" && typeof (v as { id?: unknown }).id === "string" ? (v as { id: string }).id : undefined);
 
-/** A completed web purchase (ours, a subscription, paid or $0 due), as {session, customer, subscription}; else null. */
-function webPurchase(o: SessionObject): { session: string; customer: string; subscription: string } | null {
+/** A completed web purchase (ours, a subscription, paid or $0 due), as {session, customer, subscription, utm}; else null. */
+function webPurchase(o: SessionObject): { session: string; customer: string; subscription: string; utm: Utm } | null {
   const session = idOf(o);
   const customer = idOf(o.customer);
   const subscription = idOf(o.subscription);
   if (o.metadata?.weft_purchase !== "web" || o.mode !== "subscription" || !session || !customer || !subscription || o.client_reference_id) return null;
   if (o.payment_status === "unpaid" && Number(o.amount_total ?? 0) > 0) return null;
-  return { session, customer, subscription };
+  const m = o.metadata;
+  const utm: Utm = {
+    ...(typeof m.utm_source === "string" && clean(m.utm_source) ? { source: clean(m.utm_source) } : {}),
+    ...(typeof m.utm_campaign === "string" && clean(m.utm_campaign) ? { campaign: clean(m.utm_campaign) } : {}),
+  };
+  return { session, customer, subscription, utm };
 }
 
 function corsHeaders(env: BillingEnv, req: Request): Record<string, string> {
@@ -303,10 +308,24 @@ async function claimStart(req: Request, env: BillingEnv, k: Kit): Promise<Respon
   const r = await reg.claimCodeCreate(session as string);
   if ("error" in r) {
     if (r.code === "unknown") k.fail("not_found", r.error, { status: "unknown" });
+    // Already bound to a space: a 409 the welcome page tells apart from a failure.
+    if (r.code === "claimed") return k.json({ type: "error", error: { code: "already_claimed", message: r.error, retryable: false, details: { status: "claimed" } } }, 409);
     k.fail("invalid_message", r.error, { status: r.code });
   }
-  const ok = r as { code: string; expires_at: string; seats: number; interval: Interval };
-  return k.json({ type: "billing.claim", code: ok.code, expires_at: ok.expires_at, seats: ok.seats, interval: ok.interval, command: `npx @celador/weft --hosted --claim ${ok.code}` }, 201);
+  const ok = r as { code: string; expires_at: string; seats: number; interval: Interval; utm: Utm };
+  return k.json(
+    {
+      type: "billing.claim",
+      code: ok.code,
+      expires_at: ok.expires_at,
+      seats: ok.seats,
+      interval: ok.interval,
+      command: `npx @celador/weft --hosted --claim ${ok.code}`,
+      ...(ok.utm.source ? { utm_source: ok.utm.source } : {}),
+      ...(ok.utm.campaign ? { utm_campaign: ok.utm.campaign } : {}),
+    },
+    201,
+  );
 }
 
 /** `POST /v1/space/billing/claim {code}` (owner key): the space becomes Pro with the purchase's seats. */
@@ -343,6 +362,8 @@ export type Intent = {
   purchase?: string;
   /** What a customer.subscription.* event says the subscription is now. */
   facts?: SubscriptionFacts;
+  /** A web purchase's marketing link (utm_source / utm_campaign from the /buy link). */
+  utm?: Utm;
 };
 
 /**
@@ -358,7 +379,7 @@ export function intentOf(ev: StripeEvent, prices?: { month: string; year: string
   switch (ev.type) {
     case "checkout.session.completed": {
       const web = webPurchase(o as SessionObject);
-      if (web) return { customer: web.customer, plan: "paid", checkout: true, subscription: web.subscription, purchase: web.session };
+      if (web) return { customer: web.customer, plan: "paid", checkout: true, subscription: web.subscription, purchase: web.session, ...(Object.keys(web.utm).length ? { utm: web.utm } : {}) };
       const space = typeof o.client_reference_id === "string" ? o.client_reference_id : undefined;
       const meta = (o.metadata ?? {}) as Record<string, unknown>;
       if (o.mode !== "subscription" || !space || !SPACE_ID.test(space) || meta.weft_space !== space || !customer) return null;
@@ -426,7 +447,7 @@ export async function stripeWebhook(req: Request, env: BillingEnv, k: Kit): Prom
   if (intent.purchase) {
     // A web purchase is Pro by construction; anything else carrying our marker is not something we sold.
     if (!pro || !intent.customer || !intent.subscription) return k.json({ received: true, result: "ignored" });
-    const r = await reg.recordPurchase({ session: intent.purchase, customer: intent.customer, subscription: intent.subscription, seats: pro.seats, interval: pro.interval, plan, created: ev.created, eventId: ev.id });
+    const r = await reg.recordPurchase({ session: intent.purchase, customer: intent.customer, subscription: intent.subscription, seats: pro.seats, interval: pro.interval, plan, created: ev.created, eventId: ev.id, ...(intent.utm ? { utm: intent.utm } : {}) });
     return k.json({ received: true, result: r.result });
   }
 

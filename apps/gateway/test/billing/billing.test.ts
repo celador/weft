@@ -197,7 +197,7 @@ describe("checkout and portal", () => {
     expect(f["line_items[0][quantity]"]).toBe("3");
     expect(f["line_items[0][adjustable_quantity][enabled]"]).toBe("true");
     expect(f["line_items[0][adjustable_quantity][minimum]"]).toBe("1");
-    expect(f["line_items[0][adjustable_quantity][maximum]"]).toBe("500");
+    expect(f["line_items[0][adjustable_quantity][maximum]"]).toBe("999");
     expect(f["metadata[weft_space]"]).toBe(a.id);
     expect(f["subscription_data[metadata][weft_space]"]).toBe(a.id);
     expect(f.success_url).toBe(`${BASE}/billing/done`);
@@ -215,7 +215,7 @@ describe("checkout and portal", () => {
       .reply(200, (o) => ((body = String(o.body)), { id: "cs_test_2", url: "https://checkout.stripe.com/c/pay/cs_test_2" }));
     expect((await call("POST", "/v1/space/billing/checkout", a.owner, {})).status).toBe(201);
     expect(form(body)).toMatchObject({ "line_items[0][price]": "price_pro_month", "line_items[0][quantity]": "1" });
-    for (const bad of [{ interval: "week" }, { seats: 0 }, { seats: 501 }, { seats: 2.5 }, { seats: "many" }]) expect((await call("POST", "/v1/space/billing/checkout", a.owner, bad)).status, JSON.stringify(bad)).toBe(400);
+    for (const bad of [{ interval: "week" }, { seats: 0 }, { seats: 1000 }, { seats: 2.5 }, { seats: "many" }]) expect((await call("POST", "/v1/space/billing/checkout", a.owner, bad)).status, JSON.stringify(bad)).toBe(400);
     fetchMock.assertNoPendingInterceptors();
   });
 
