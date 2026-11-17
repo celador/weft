@@ -302,3 +302,9 @@ Append-only. One dated entry per heartbeat that changed something.
 - Verified main clean and synchronized with origin; Gate run 42934150092 succeeded for 6dda60c. D0 remains resolved/archived; no open cards or diagnostics, nothing to dispatch. Both competition entries are already submitted; no schedule change or owner action needed.
 - Live probes with curl: weft.mx 200; demo.weft.mx/api/repos 200 and only `weft`; weft.elier.ai 301 to demo.weft.mx. Python urllib's default request returned 403, so retried with curl rather than reporting a site outage. `/health` is not a gateway route (404), not evidence of downtime.
 - Security impact: none (local collector directory filter and log only); no deploy, release, credential access, or spend. Decision: leave the intentionally private branch and live adapter versions unchanged.
+
+## 2026-11-17 — Landed wt/site-signup (t_77ce8f6b)
+- Card done, worktree clean, 1 commit (site/ only: Start free / Get Pro, per-user pricing page, /welcome claim, /start, funnel events, `env.preview`). site tests 29/29 in the worktree. Merged `--no-ff` (d440494), pushed; GitHub Gate run 44115278420 green. Weft land #2809. Worktree removed.
+- Spot-check: weft-site-preview.elier.ai `/`, `/pricing/`, `/welcome/`, `/start/` all 200 with the $12/$98 prices and noindex on /welcome (local resolver had a negative DNS cache for the new host; checked via `--resolve` to Cloudflare's IP). weft.mx not redeployed: the new pricing ships with go-live t_52c6e0ad.
+- Decision: land now (not at go-live) so the Clerk, license-purchase and team-join cards build on main. Risk noted: any `wrangler deploy` of site/ from main before go-live would publish the new pricing page; only t_52c6e0ad deploys weft.mx.
+- Security impact: none server-side (static site + preview Worker env; no secrets, nothing published).
