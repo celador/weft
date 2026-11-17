@@ -47,10 +47,11 @@ Website: <https://weft.mx> · Source: <https://github.com/celador/weft>
 | `npx @celador/weft watch` | report edits from tools without hooks (file watcher) |
 | `npx @celador/weft mcp` | MCP server for this checkout, for agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode): `{"command":"npx","args":["-y","@celador/weft","mcp","--dir","/path/to/checkout"]}` |
 | `npx @celador/weft uninstall [--space]` | remove Weft from this repo; `--space` also erases the space on the gateway: every stored event, diff and key, for good (asks first; `--yes` skips) |
-| `npx @celador/weft --hosted` | opt in to a hosted space on Weft's Cloudflare gateway instead (5,000 events a month free, then $1 per 1,000, never per seat) |
-| `npx @celador/weft usage` | agent events this month against your hosted space's free allowance (hosted only; billing is usage-based, never per seat) |
-| `npx @celador/weft upgrade` | the hosted usage-based plan: prints a Stripe Checkout link (only where the gateway sells one) |
-| `npx @celador/weft billing` | your plan, payment method and invoices (Stripe's customer portal) |
+| `npx @celador/weft --hosted` | opt in to a hosted space on Weft's Cloudflare gateway instead (5,000 agent events a month free; Weft Pro, per user, has no event cap) |
+| `npx @celador/weft usage` | your hosted space's plan (Free, or Weft Pro and its seats) and agent events this month |
+| `npx @celador/weft upgrade [--seats N] [--year]` | Weft Pro for your hosted space, per user, monthly or yearly: prints a Stripe Checkout link (only where the gateway sells one) |
+| `npx @celador/weft --hosted --claim CODE` | bought Weft Pro on weft.mx? the welcome page's one-time code makes this repo's hosted space Pro |
+| `npx @celador/weft billing` | change seats, payment method, invoices or cancel (Stripe's customer portal) |
 | `npx @celador/weft deploy [--domain HOST]` | run your own gateway in your Cloudflare account |
 | `npx @celador/weft use local\|hosted\|URL` | choose the default gateway (local unless you chose otherwise; `--local` is still accepted) |
 
@@ -71,7 +72,7 @@ Options for the setup: `--agents N` (checkouts to coordinate), `--harness claude
 - **Local (default):** the gateway runs on your machine with `wrangler dev` (installed once into
   `~/.config/weft/tools`). Nothing leaves the machine.
 - **Hosted (`--hosted`, opt-in):** a hosted space on Weft's Cloudflare account; your edits are sent
-  there. Each space sees only its own repos. Usage-based pricing is coming. If you already have a
+  there. Each space sees only its own repos. 5,000 agent events a month are free; Weft Pro (per user) has no cap. If you already have a
   hosted space, `npx @celador/weft` keeps using it and tells you how to switch. See
   [docs/hosted.md](https://github.com/celador/weft/blob/main/docs/hosted.md).
 - **Your Cloudflare (`deploy`):** logs in with wrangler (browser OAuth) and deploys the gateway

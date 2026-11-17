@@ -15,8 +15,9 @@
 //   weft deploy [--name N] [--domain HOST]   your own gateway on your Cloudflare account
 //   weft local stop          stop the local gateway
 //   weft use hosted|local|URL   choose the default gateway
-//   weft usage                  agent events this month against the hosted space's free allowance
-//   weft upgrade                the usage-based plan (Stripe Checkout); `weft billing` manages it (Stripe portal)
+//   weft usage                  the hosted space's plan (Free or Weft Pro with its seats) and events this month
+//   weft upgrade [--seats N] [--year]   Weft Pro, per user (Stripe Checkout); `weft billing` manages it (Stripe portal)
+//   weft --hosted --claim CODE  a purchase made on weft.mx (the welcome page's code) makes this repo's space Pro
 import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -24,7 +25,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { Api, statusOf, type FeedEvent, type Viewer } from "./api";
 import { MCP, WATCHER, adapterBin, detectHarnesses, ensureRuntime, harnessName, HARNESSES, installAdapter, installedIn, removeAdapters, startOrder, type HarnessId } from "./adapters";
 import { deploy, ensureSpace, feedUrl, hermesPointer, HOSTED_URL, HUMAN_TOKEN_FILE, kindOf, loadState, readPointer, saveState, sharedHumanToken, startLocal, stopLocal, withViewer, writePointer, LOCAL_PORT, type CliState, type HermesPointer, type RepoPointer } from "./gateways";
-import { billing as billingPage, upgrade as upgradePage, usage as showUsage } from "./billing";
+import { billing as billingPage, claim as claimPurchase, looksLikeClaimCode, upgrade as upgradePage, usage as showUsage } from "./billing";
 import { ask, c, configDir, git, info, mainCheckout, ok, openUrl, readJson, readSecret, slug, tilde, tryGit, VERSION, warn, WeftError, worktrees, writeJson } from "./util";
 
 type Opts = {
@@ -41,11 +42,16 @@ type Opts = {
   name?: string;
   domain?: string;
   dir?: string;
+  /** `weft upgrade`: Weft Pro seats (default 1) and yearly billing. */
+  seats?: number;
+  year: boolean;
+  /** A claim code from the weft.mx welcome page. */
+  claim?: string;
   positional: string[];
 };
 
 export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
-  const o: Opts = { local: false, hosted: false, yes: false, open: true, space: false, all: false, positional: [] };
+  const o: Opts = { local: false, hosted: false, yes: false, open: true, space: false, all: false, year: false, positional: [] };
   let cmd = "init";
   const known = new Set(["init", "demo", "add", "status", "pair", "viewers", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "usage", "upgrade", "billing", "help", "version"]);
   for (let i = 0; i < argv.length; i++) {
@@ -68,6 +74,10 @@ export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
     else if (a === "--no-open") o.open = false;
     else if (a === "--space") o.space = true;
     else if (a === "--all") o.all = true;
+    else if (a === "--seats") o.seats = Number(val());
+    else if (a === "--year" || a === "--yearly") o.year = true;
+    else if (a === "--month" || a === "--monthly") o.year = false;
+    else if (a === "--claim") o.claim = val();
     else if (a === "-h" || a === "--help") cmd = "help";
     else if (a === "-v" || a === "--version") cmd = "version";
     else if (a.startsWith("-")) throw new WeftError(`unknown option ${a}`, "Run `npx @celador/weft help`.");
@@ -75,6 +85,13 @@ export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
     else o.positional.push(a);
   }
   if (o.local && o.hosted) throw new WeftError("--local and --hosted contradict each other", "Local is the default; add --hosted only to use a hosted space.");
+  if (o.seats !== undefined && (!Number.isInteger(o.seats) || o.seats < 1 || o.seats > 500)) throw new WeftError("--seats must be a whole number from 1 to 500");
+  if (o.claim !== undefined) {
+    if (o.local) throw new WeftError("a claim code is for a hosted space", "Run: npx @celador/weft --hosted --claim <code>");
+    if (!looksLikeClaimCode(o.claim)) throw new WeftError("that does not look like a claim code (XXXX-XXXX-XXXX)", "Copy it from the welcome page you saw after paying.");
+    // A purchase made on weft.mx is for the hosted gateway: --claim implies --hosted unless another gateway is named.
+    if (!o.url) o.hosted = true;
+  }
   if (o.agents !== undefined && (!Number.isInteger(o.agents) || o.agents < 1 || o.agents > 8)) throw new WeftError("--agents must be 1-8");
   const ids = [...HARNESSES.map((h) => h.id), WATCHER.id];
   for (const h of o.harness ?? []) if (!ids.includes(h)) throw new WeftError(`unknown harness ${h}`, `Known: ${ids.join(", ")}`);
@@ -111,9 +128,11 @@ ${c.bold("npx @celador/weft")}            in a git repo: a gateway on this machi
                               your own gateway on your Cloudflare account (wrangler login)
   use local|hosted|URL        choose the default gateway (local unless you chose otherwise)
   local stop                  stop the local gateway
-  usage                       agent events this month against your hosted space's free allowance
-  upgrade                     the hosted usage-based plan (Stripe Checkout; no seats, you pay only above the allowance)
-  billing                     your plan, payment method and invoices (Stripe portal)
+  usage                       your hosted space's plan (Free, or Weft Pro and its seats) and events this month
+  upgrade [--seats N] [--year]
+                              Weft Pro for the hosted space, per user, monthly or yearly (Stripe Checkout)
+  billing                     change seats, payment method, invoices or cancel (Stripe portal)
+  --hosted --claim CODE       bought Weft Pro on weft.mx? this makes the repo's hosted space Pro (code from the welcome page)
 
 Docs: https://github.com/celador/weft/blob/main/docs/try-it.md`;
 
@@ -263,6 +282,10 @@ async function init(o: Opts, addName?: string | true, fresh = false): Promise<st
   const { gw, created } = await ensureSpace(api, url!, top, name);
   const where = kindOf(url!) === "hosted" ? "hosted space on Cloudflare" : kindOf(url!) === "local" ? "local space" : "space";
   ok(`${created ? "created your" : "using your"} ${where} ${c.bold(gw.space!)} ${c.dim(`(${new URL(url!).host}${kindOf(url!) === "local" ? "; your edits stay on this machine" : ""})`)}`);
+  if (o.claim) {
+    const p = await claimPurchase(api, url!, gw.owner!, o.claim);
+    ok(`Weft Pro: ${p.seats} ${p.seats === 1 ? "seat" : "seats"}, billed ${p.interval === "year" ? "yearly" : "monthly"} ${c.dim("(no event cut-off; manage it: npx @celador/weft billing)")}`);
+  }
   const r = await api.createRepo(gw.owner!, name);
   ok(`repo ${c.bold(name)} ${c.dim(r.created ? "(new)" : "(already there)")}`);
 
@@ -797,7 +820,7 @@ export async function main(argv: string[]): Promise<number> {
     }
     case "upgrade": {
       const s = spaceHere(o);
-      await upgradePage(s.ptr.url, s.owner, o.open);
+      await upgradePage(s.ptr.url, s.owner, o.open, { seats: o.seats ?? 1, interval: o.year ? "year" : "month" });
       return 0;
     }
     case "billing": {
