@@ -1,6 +1,7 @@
 {
   "name": "@weft/adapter-gemini",
   "version": "0.0.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "WCP v0.1 adapter for Gemini CLI hooks (BeforeTool/AfterTool/AfterAgent). FIXTURE-TESTED ONLY: no live Gemini CLI run (no usable auth).",

@@ -1,6 +1,7 @@
 {
   "name": "@weft/adapter-hermes",
   "version": "0.0.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "WCP adapter for Hermes Agent: a Python plugin (pre_tool_call / transform_tool_result / pre_verify) plus a bundled analyzer bridge.",

@@ -1,6 +1,7 @@
 {
   "name": "@weft/adapter-copilot",
   "version": "0.0.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "WCP v0.1 adapter for GitHub Copilot hooks (Copilot CLI, VS Code agent mode, Copilot cloud agent): preToolUse deny (L2), postToolUse additionalContext (L1), agentStop block (L3).",

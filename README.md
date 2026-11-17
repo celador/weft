@@ -55,7 +55,8 @@ No login and no account. It runs locally by default: it starts a Weft gateway on
 you have (Claude Code, Codex, Cursor, Copilot CLI, OpenCode, Gemini, Antigravity) to every
 checkout, offers a second worktree so two agents can work side by side, and opens your live feed.
 Agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode) use `npx @celador/weft mcp`. Local is
-free and open source. A hosted team space on Weft's Cloudflare gateway is an option
+free for personal use; using it at work needs a [commercial license](docs/commercial-license.md)
+or Pro. The source is open (AGPL-3.0; the protocol and plugins are MIT). A hosted team space on Weft's Cloudflare gateway is an option
 (`--hosted`; 5,000 events a month free, then $1 per 1,000, never per seat); `deploy` puts the gateway in your own Cloudflare
 account. The npm package is [`@celador/weft`](https://www.npmjs.com/package/@celador/weft)
 (the name `weft` is taken on npm). No repo handy? `npx @celador/weft demo` makes a two-file
@@ -108,4 +109,21 @@ Discussions are open: [github.com/celador/weft/discussions](https://github.com/c
 
 ## License
 
-MIT; see [LICENSE](LICENSE).
+Weft is licensed in parts; [LICENSE](LICENSE) has the exact list.
+
+- **AGPL-3.0-only:** the product: gateway, sequencer, analyzer, adapters, CLI, MCP server, feed,
+  web UI and VS Code extension.
+- **MIT:** the protocol specifications and JSON schema ([docs/protocol](docs/protocol),
+  [packages/protocol](packages/protocol)), the conformance suite
+  ([packages/conformance](packages/conformance)) and the agent plugins
+  ([plugins/weft](plugins/weft), [the Hermes plugin](packages/adapters/hermes/plugin/weft)), so
+  anyone can implement WCP.
+- **The builds we distribute** (`@celador/weft` on npm, the VS Code extension, the hosted service)
+  are free for personal use; commercial use needs a
+  [commercial license](docs/commercial-license.md) or Weft Pro. Builds you make from source are
+  under the AGPL only.
+- Everything released up to and including 0.3.0 stays available under the MIT License
+  ([licenses/LICENSE-MIT](licenses/LICENSE-MIT)).
+
+Contributions need the [contributor license agreement](CLA.md); see
+[CONTRIBUTING.md](CONTRIBUTING.md).

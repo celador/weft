@@ -7,7 +7,7 @@ import { build } from "esbuild";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(dirname(fileURLToPath(import.meta.url)));
 const root = join(here, "..", "..");
@@ -75,5 +75,9 @@ await build({
   logLevel: "warning",
 });
 writeFileSync(join(dist, "manifest.json"), JSON.stringify({ version: pkg.version, adapters: ADAPTERS }, null, 2) + "\n");
-// npm ships LICENSE from the package directory
-cpSync(join(root, "LICENSE"), join(here, "LICENSE"));
+// npm ships LICENSE from the package directory: the terms for builds Weft distributes (free for
+// personal use, commercial use needs a license; source under AGPL-3.0-only), the MIT notice for
+// code released up to 0.3.0, and the notices of every bundled third-party package. Fails on a
+// bundled package whose license the distributed build may not carry.
+const { buildLicense } = await import(pathToFileURL(join(root, "scripts/third-party-notices.mjs")).href);
+writeFileSync(join(here, "LICENSE"), buildLicense({ dists: [dist], root }));

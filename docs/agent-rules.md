@@ -25,4 +25,6 @@ Plan and schedule: `docs/plan.md`. PM log: `docs/pm-log.md`.
 9. Spikes/research: write findings to `docs/research/<topic>.md`, separate verified facts
    (with the command/doc URL that proved them) from assumptions.
 
-License: MIT.
+License: AGPL-3.0-only for the product; MIT for docs/protocol, packages/protocol, packages/conformance,
+plugins/weft and the Hermes catalog plugin (see LICENSE). Builds we distribute also carry the commercial
+terms in docs/commercial-license.md. Outside contributions need the CLA (CLA.md).

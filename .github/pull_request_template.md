@@ -35,3 +35,11 @@ paste here
 
 - [ ] `pnpm -r typecheck && pnpm -r test` passes
 - [ ] I read CONTRIBUTING.md
+
+## Contributor License Agreement
+
+<!-- Required. Keep the sentence and put your GitHub username at the end. If you contribute as
+     part of your job, add: "I contribute on behalf of <employer>, which has authorized me to
+     agree to the CLA for it." -->
+
+I have read the Weft CLA (CLA.md, version 1.0) and agree to it for this contribution. — @
