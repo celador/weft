@@ -114,13 +114,20 @@ export function quoteDiff(record: EventRecord, symbol: string): string | undefin
 }
 
 /** How to exercise the loser's options from the shell (spec §7.2 options, §7.4, §7.6). */
-export function optionsHint(cli: string, other: string): string {
+export function optionsHint(cli: string, other: string, keys: string[] = []): string {
+  // Name the counterpart and the symbols: after a pre-edit denial there is no open error for the
+  // CLI to take them from, and a bare `negotiate propose` then fails ("no open conflict").
+  const safe = [...new Set(keys)].filter((k) => SHELL_SAFE.test(k));
+  const target = SHELL_SAFE.test(other) ? ` --to ${other}${safe.length ? ` --keys ${safe.join(",")}` : ""}` : "";
   return (
     `  ↳ Your options: retreat (rework without that code) | wait (until ${other} lands or releases it) | ` +
-    `negotiate: \`${cli} negotiate propose overload "<what ${other} should keep working for you>" --wait 240\` (terms: overload | transfer | share | sequence | merge_tasks | other; it is delivered to ${other} and you get the reply) | ` +
-    `escalate: \`${cli} negotiate escalate "<why>"\` (the coordinator merges your two tasks).`
+    `negotiate: \`${cli} negotiate propose overload "<what ${other} should keep working for you>"${target} --wait 240\` (terms: overload | transfer | share | sequence | merge_tasks | other; it is delivered to ${other} and you get the reply) | ` +
+    `escalate: \`${cli} negotiate escalate "<why>"${target}\` (the coordinator merges your two tasks).`
   );
 }
+
+/** Agent ids and symbol keys that can go into a shell command unquoted. */
+const SHELL_SAFE = /^[\w./#:@+-]+$/;
 
 function answerHint(cli: string, seq: number): string {
   return `  ↳ Answer from the shell: \`${cli} negotiate accept ${seq}\` | \`${cli} negotiate reject ${seq} "<why>"\` | \`${cli} negotiate counter ${seq} <overload|transfer|share|sequence|merge_tasks|other> "<terms>"\`.`;
@@ -193,7 +200,8 @@ export async function renderForModel(diagnostics: Diagnostic[], inbox: InboxItem
   // One options hint per conflicting agent (the loser decides what to do next).
   if (ctx.cli) {
     const losers = [...diagnostics, ...inbox.flatMap((i) => (i.diagnostic ? [i.diagnostic] : []))].filter((d) => d.severity === "error" && LOSER_CODES.has(d.code));
-    for (const other of new Set(losers.map((d) => d.caused_by_agent))) push(optionsHint(ctx.cli, other));
+    for (const other of new Set(losers.map((d) => d.caused_by_agent)))
+      push(optionsHint(ctx.cli, other, losers.filter((d) => d.caused_by_agent === other && d.symbol).map((d) => d.symbol)));
   }
   return lines.join("\n");
 }

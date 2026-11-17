@@ -61,7 +61,9 @@ function declarationKey(node: ts.Node, source: ts.SourceFile, path: string): str
 function declarations(source: ts.SourceFile, path: string): Map<string, DeclarationInfo> {
   const result = new Map<string, DeclarationInfo>();
   const visit = (node: ts.Node): void => {
-    if (declarationKinds.has(node.kind)) {
+    // A declaration with no name of its own (`const { a } = …`, `[Symbol.iterator]() {}`) would get
+    // its enclosing declaration's key and overwrite that entry, hiding the parent's own changes.
+    if (declarationKinds.has(node.kind) && nameOf(node)) {
       const key = declarationKey(node, source, path);
       if (key) {
         const whole = node.getText(source);
