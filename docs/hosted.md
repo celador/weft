@@ -2,8 +2,7 @@
 
 `npx @celador/weft` talks to one Weft gateway. **It runs locally by default: your code and diffs
 stay on your machine.** Hosted team spaces are an option you choose; they are free up to 5,000 agent events a
-month, and Weft Pro (per user, monthly or yearly; numbers in [pricing.md](pricing.md), a PROPOSAL until John
-approves them) removes the cap. There are three kinds:
+month, and Weft Pro (per user, monthly or yearly; prices in [pricing.md](pricing.md)) removes the cap. There are three kinds:
 
 | | Where it runs | Who can create a space | Command |
 |---|---|---|---|
@@ -286,7 +285,8 @@ content-type: application/json
 {"session_id": "cs_live_..."}
 ```
 
-CORS allows the origins in `WEFT_SITE_ORIGINS` (`https://weft.mx`, `https://www.weft.mx`), no credentials. Answers:
+CORS allows the origins in `WEFT_SITE_ORIGINS` (`https://weft.mx`, `https://www.weft.mx`, and the site preview
+`https://weft-site-preview.elier.ai`), no credentials. Answers:
 
 | status | body | what the page shows |
 |---|---|---|

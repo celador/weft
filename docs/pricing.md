@@ -1,16 +1,17 @@
 # Hosted Weft: pricing
 
-**Status (2026-11-17): the per-user Weft Pro model below is a PROPOSAL, awaiting John.** It replaces the
-usage-based price (approved 2026-11-01, live since 2026-11-03), which is kept further down as
-[history](#history-the-usage-based-model-2026-11-01). Until John approves the Pro numbers, the live hosted
-gateway still runs the usage model; the code in this repo sells Pro and is proven in Stripe TEST mode only.
+**Status: the per-user Weft Pro prices below were APPROVED by John on 2026-11-17 ($12 per user per month, $98 per
+user per year).** They replace the usage-based price (approved 2026-11-01, live since 2026-11-03), which is kept
+further down as [history](#history-the-usage-based-model-2026-11-01). Until the go-live card deploys this code with
+the live Pro prices, the live hosted gateway still runs the usage model; the code in this repo sells Pro and is
+proven in Stripe TEST mode.
 Local and self-hosted Weft stay free and open source (MIT), with no limits from us.
 
 Every number lives in the `pricing-config` block at the end of the Pro section: a price change is a one-line
 edit there, then `node scripts/stripe-setup.mjs` (new Stripe prices take over the lookup keys) and the two
 `STRIPE_PRICE_PRO_*` secrets.
 
-## Weft Pro: per user, monthly or yearly (PROPOSAL, awaiting John)
+## Weft Pro: per user, monthly or yearly (approved 2026-11-17)
 
 Modelled on cap.so: a free tier, and one paid tier priced per user.
 
@@ -55,8 +56,8 @@ Stripe takes 2.9% + $0.30 per charge.
 | yearly ($98 / 12 = $8.17) | $7.90 | $0.38 | 92% | $7.65 | 3% |
 
 A typical seat is very profitable; a yearly seat that sits at fair use every month is close to break-even. Open
-points for John: (1) the prices themselves, (2) whether fair use should be lower for yearly seats (25,000 keeps the
-yearly margin at 50%), (3) whether to offer a free trial (Checkout supports `trial_period_days`; none is set).
+points for John: (1) whether fair use should be lower for yearly seats (25,000 keeps the yearly margin at 50%),
+(2) whether to offer a free trial (Checkout supports `trial_period_days`; none is set).
 
 ### How billing works (implementation)
 
@@ -112,9 +113,9 @@ checks them. `legacy_usage` describes the superseded usage price, kept so existi
 }
 ```
 
-### Go-live checklist (card t_5408b767, after John approves the numbers)
+### Go-live checklist (the go-live card)
 
-1. Edit the numbers above if John changed them.
+1. The numbers above are the approved ones (2026-11-17); edit them only if John changes them.
 2. `node scripts/stripe-setup.mjs --live` (restricted key from keychain `weft-stripe-live-key`; the key also needs
    write access to Prices and Customer Portal, which it has): product `weft_pro`, prices `weft_pro_user_month` and
    `weft_pro_user_year`, Pro portal configuration (metadata `weft=pro`).

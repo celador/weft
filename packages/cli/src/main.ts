@@ -348,7 +348,7 @@ async function init(o: Opts, addName?: string | true, fresh = false): Promise<st
   const memberPtr = o.join ? undefined : [top, main].map(readPointer).find((p) => p?.role === "member" && p.url === url);
   let acc: Access;
   let name = slug(o.repo ?? memberPtr?.name ?? basename(main), 48);
-  const host = c.dim(`(${new URL(url!).host}${kindOf(url!) === "local" ? "; your edits stay on this machine" : ""})`);
+  const host = c.dim(`(${new URL(url!).host}${kindOf(url!) === "local" ? "; your edits stay on this machine" : "; your agents' edits and diffs are sent there"})`);
   if (o.join) {
     refuseOverOwnSpace([top, main], url!, o.join.space);
     const j = await joinSpace(api, url!, o.join, memberIdentity(o.as));
@@ -365,6 +365,7 @@ async function init(o: Opts, addName?: string | true, fresh = false): Promise<st
     acc = { space: gw.space!, key: gw.owner!, role: "owner" };
     const where = kindOf(url!) === "hosted" ? "hosted space on Cloudflare" : kindOf(url!) === "local" ? "local space" : "space";
     ok(`${created ? "created your" : "using your"} ${where} ${c.bold(gw.space!)} ${host}`);
+    if (kindOf(url!) === "hosted" && !o.claim) info(`Hosted plan: Free, a monthly allowance of agent events ${c.dim("(npx @celador/weft usage)")}; Weft Pro has no cap, per user ${c.dim("(npx @celador/weft upgrade)")}`);
   }
   if (o.claim) {
     if (acc.role === "member") throw new WeftError("only the space's owner can attach a purchase to it", "Claim it in a repo with a space of your own, or send the code to the owner.");

@@ -229,7 +229,7 @@ WEFT_PRO_FAIR_USE_EVENTS = "50000"
 # Web-first purchase (GET /buy): where Stripe sends the buyer, and which site origins may ask for a claim code.
 WEFT_WELCOME_URL = "https://weft.mx/welcome/"
 WEFT_PRICING_URL = "https://weft.mx/pricing/"
-WEFT_SITE_ORIGINS = "https://weft.mx,https://www.weft.mx"
+WEFT_SITE_ORIGINS = "https://weft.mx,https://www.weft.mx,https://weft-site-preview.elier.ai"
 
 [env.hosted.observability]
 enabled = true
