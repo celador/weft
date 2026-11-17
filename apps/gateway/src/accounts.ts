@@ -4,7 +4,10 @@
 //
 //   GET    /v1/account                       Clerk session: plan, seats, renewal, spaces (created on first call)
 //   POST   /v1/account/billing/checkout      Clerk session {interval, seats, utm_source?, utm_campaign?}: Stripe Checkout URL
+//   POST   /v1/account/billing/checkout      Clerk session {product: "license", term: year|lifetime, seats}: the Commercial License
 //   POST   /v1/account/billing/portal        Clerk session: Stripe Customer Portal URL
+//   POST   /v1/account/license/key           Clerk session: a new license key (shown once; the old one stops working)
+//   POST   /v1/license/verify {key}          no auth: what a license key covers now (`weft license <key>`), never who owns it
 //   DELETE /v1/account                       Clerk session: cancel the subscription, erase every space, delete the account
 //   POST   /v1/login                         no auth: `weft login` starts (device code + the code the person confirms)
 //   POST   /v1/login/approve {code}          Clerk session (weft.mx/cli/): confirm the code shown in the terminal
@@ -14,7 +17,7 @@
 // Browser calls come from the site's origins only (CORS allow-list, no cookies: the token is a Bearer header).
 
 import { clerkConfig, ClerkTokenError, verifyClerkToken, type ClerkEnv } from "./clerk";
-import { accountCheckout, accountUrl, clean, corsHeaders, portalUrl, proChoice, requireBilling, withHeaders, type BillingEnv, type BillingKit } from "./billing";
+import { accountCheckout, accountUrl, clean, corsHeaders, licenseCheckout, licenseChoice, portalUrl, proChoice, requireBilling, withHeaders, type BillingEnv, type BillingKit } from "./billing";
 import type { SpaceGrant, Utm } from "./registry";
 import { limits, networkKey, type SpacesEnv } from "./spaces";
 import { StripeError, stripeConfig } from "./stripe";
@@ -116,11 +119,19 @@ async function route(req: Request, env: AccountsEnv, k: AccountsKit, path: strin
   if (bm && m === "POST") {
     const account = await requireAccount(req, env, k);
     const cfg = requireBilling(env, k);
-    const body = ((await k.readJson(req, true)) ?? {}) as { interval?: unknown; seats?: unknown; utm_source?: unknown; utm_campaign?: unknown };
+    const body = ((await k.readJson(req, true)) ?? {}) as { product?: unknown; term?: unknown; interval?: unknown; seats?: unknown; utm_source?: unknown; utm_campaign?: unknown };
     await reg.ensureAccount(account, utmFrom(body));
     const a = await reg.accountCustomer(account);
     const back = accountUrl(env);
     try {
+      if (bm[1] === "checkout" && body.product === "license") {
+        const choice = licenseChoice({ term: body.term, seats: body.seats }, k);
+        if (!cfg.license) k.fail("unavailable", "the commercial license is not on sale on this gateway");
+        if ((await reg.accountLicense(account)).included_in_pro) k.fail("invalid_message", "Weft Pro already includes the commercial license for every Pro user", { issues: [{ path: "/product", message: "included in Pro" }], reason: "included_in_pro" });
+        const url = await licenseCheckout(cfg, account, a.customer, choice, { success: `${back}?checkout=done&product=license`, cancel: `${back}?checkout=cancelled` }, utmFrom(body));
+        return k.json({ type: "billing.checkout", product: "license", url, term: choice.term, seats: choice.seats }, 201);
+      }
+      if (bm[1] === "checkout" && body.product !== undefined && body.product !== "pro") k.fail("invalid_message", "product must be pro or license", { issues: [{ path: "/product", message: "pro|license" }] });
       if (bm[1] === "checkout") {
         const choice = proChoice({ interval: body.interval, seats: body.seats }, k);
         if (a.plan === "paid") k.fail("invalid_message", "this account already has Weft Pro; change seats or cancel with Manage billing", { issues: [{ path: "", message: "already paid" }] });
@@ -135,14 +146,32 @@ async function route(req: Request, env: AccountsEnv, k: AccountsKit, path: strin
       return k.fail("unavailable", `Stripe could not start ${bm[1] === "checkout" ? "checkout" : "the billing portal"}; try again in a minute`);
     }
   }
+  // ----- the license key (shown once) and its check from `weft license <key>`
+  if (path === "/v1/account/license/key" && m === "POST") {
+    const account = await requireAccount(req, env, k);
+    await k.throttle(req, "license-key", [`account:${account}`]);
+    await reg.ensureAccount(account);
+    const r = await reg.newLicenseKey(account);
+    if ("error" in r) k.fail("forbidden", "buy a commercial license (or Weft Pro) first; the key records it on a machine that never signs in", { reason: r.code });
+    return k.json({ type: "license.key", ...(r as object) }, 201, { "cache-control": "no-store" });
+  }
+  if (path === "/v1/license/verify" && m === "POST") {
+    if (!clerkConfig(env)) k.fail("unavailable", "license keys are issued by the hosted gateway (weft.mx accounts)");
+    await k.throttle(req, "license-verify");
+    const body = ((await k.readJson(req, true)) ?? {}) as { key?: unknown };
+    if (typeof body.key !== "string" || body.key.length > 80) k.fail("invalid_message", "key is required", { issues: [{ path: "/key", message: "string" }] });
+    const state = await reg.checkLicenseKey((body.key as string).trim());
+    if (!state) k.fail("not_found", "that license key is not valid (it may have been replaced by a newer one on weft.mx/account/)");
+    return k.json({ type: "license", license: state });
+  }
   return null;
 }
 
-const BROWSER_PATHS = /^\/v1\/(account(\/billing\/(checkout|portal))?|login\/approve)$/;
+const BROWSER_PATHS = /^\/v1\/(account(\/billing\/(checkout|portal)|\/license\/key)?|login\/approve)$/;
 
 /** Account and login routes (null for any other path). The browser-facing ones answer CORS for the site's origins. */
 export async function accountsRoute(req: Request, env: AccountsEnv, k: AccountsKit, path: string): Promise<Response | null> {
-  if (!path.startsWith("/v1/account") && !path.startsWith("/v1/login")) return null;
+  if (!path.startsWith("/v1/account") && !path.startsWith("/v1/login") && path !== "/v1/license/verify") return null;
   const browser = BROWSER_PATHS.test(path);
   const cors = browser ? corsHeaders(env, req) : {};
   if (req.method === "OPTIONS" && browser) return new Response(null, { status: 204, headers: { ...cors, "cache-control": "no-store" } });

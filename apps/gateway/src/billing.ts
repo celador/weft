@@ -4,6 +4,7 @@
 // answer 503 and no allowance is enforced. Usage is counted either way.
 //
 //   POST /v1/account/billing/checkout {interval, seats}   Clerk session (weft.mx/account/): Checkout for the account (accounts.ts)
+//   POST /v1/account/billing/checkout {product: "license", term: year|lifetime, seats}   the Commercial License (accounts.ts)
 //   POST /v1/account/billing/portal                       Clerk session: the account's Customer Portal
 //   POST /v1/space/billing/checkout {interval, seats}  owner key -> Checkout for the space's ACCOUNT (a space with no
 //                                     account gets 403 login_required on a gateway with accounts: `weft login` first)
@@ -171,6 +172,46 @@ export async function accountCheckout(cfg: StripeConfig, account: string, custom
   return s.url;
 }
 
+export type LicenseChoice = { term: "year" | "lifetime"; seats: number };
+
+/** `{term, seats}` for the Commercial License: term year|lifetime (default year), seats 1..MAX_SEATS (default 1). */
+export function licenseChoice(body: unknown, k: Pick<Kit, "fail">): LicenseChoice {
+  const b = (body ?? {}) as { term?: unknown; seats?: unknown };
+  const term = b.term === undefined ? "year" : b.term;
+  if (term !== "year" && term !== "lifetime") k.fail("invalid_message", "term must be year or lifetime", { issues: [{ path: "/term", message: "year|lifetime" }] });
+  const seats = b.seats === undefined ? 1 : parseSeats(b.seats);
+  if (seats === undefined) k.fail("invalid_message", `seats must be a whole number from 1 to ${MAX_SEATS}`, { issues: [{ path: "/seats", message: `1..${MAX_SEATS}` }] });
+  return { term: term as LicenseChoice["term"], seats: seats! };
+}
+
+/**
+ * A Commercial License Checkout Session for an account: yearly = a per-seat subscription, lifetime = a one-time
+ * payment per seat. The buyer can change the number of seats on the Checkout page. Metadata `weft_product=license`
+ * and the account id (also the client_reference_id) are how the webhook knows it.
+ */
+export async function licenseCheckout(cfg: StripeConfig, account: string, customer: string | null, choice: LicenseChoice, back: { success: string; cancel: string }, utm: Utm = {}): Promise<string> {
+  const lic = cfg.license!;
+  const tag = { weft_account: account, weft_product: "license", weft_term: choice.term };
+  const meta: Record<string, string> = { ...tag, ...(utm.source ? { utm_source: utm.source } : {}), ...(utm.campaign ? { utm_campaign: utm.campaign } : {}) };
+  const line = { price: choice.term === "year" ? lic.year : lic.lifetime, quantity: choice.seats, adjustable_quantity: { enabled: true, minimum: 1, maximum: MAX_SEATS } };
+  const s = await stripeRequest<CheckoutSession>(cfg.key, "POST", "/v1/checkout/sessions", {
+    mode: choice.term === "year" ? "subscription" : "payment",
+    line_items: [line],
+    client_reference_id: account,
+    metadata: meta,
+    ...(choice.term === "year"
+      ? { subscription_data: { metadata: tag } }
+      : { payment_intent_data: { metadata: tag }, invoice_creation: { enabled: true, invoice_data: { metadata: tag } }, ...(customer ? {} : { customer_creation: "always" }) }),
+    allow_promotion_codes: true,
+    adaptive_pricing: { enabled: false },
+    success_url: back.success,
+    cancel_url: back.cancel,
+    ...(customer ? { customer } : {}),
+  });
+  if (!s.url) throw new StripeError(502, "no_url", "Stripe returned no Checkout URL");
+  return s.url;
+}
+
 export async function portalUrl(cfg: StripeConfig, customer: string, returnUrl: string): Promise<string> {
   const s = await stripeRequest<{ url: string }>(cfg.key, "POST", "/v1/billing_portal/sessions", { customer, return_url: returnUrl, ...(cfg.portalConfig ? { configuration: cfg.portalConfig } : {}) });
   return s.url;
@@ -262,6 +303,8 @@ export type Intent = {
   subscription?: string;
   /** What a customer.subscription.* event says the subscription is now. */
   facts?: SubscriptionFacts;
+  /** A Commercial License purchase (never touches the Pro plan): a one-time Checkout (`session`) or a yearly subscription. */
+  license?: { term: "year" | "lifetime"; session?: string; subscription?: string; deleted?: boolean };
 };
 
 /**
@@ -270,7 +313,17 @@ export type Intent = {
  * subscription we created (our account or space id as client_reference_id AND in metadata), the rest only
  * through a customer we attached to an account or a space.
  */
-export function intentOf(ev: StripeEvent, prices?: { month: string; year: string }): Intent | null {
+const isLicenseMeta = (m: unknown) => Boolean(m && typeof m === "object" && (m as Record<string, unknown>).weft_product === "license");
+
+/** Whether an invoice belongs to a Commercial License subscription (by its subscription's metadata or its line's price). */
+function licenseInvoice(o: Record<string, unknown>, license?: { year: string; lifetime: string }): boolean {
+  const parent = (o.parent ?? {}) as { subscription_details?: { metadata?: unknown } };
+  if (isLicenseMeta(parent.subscription_details?.metadata) || isLicenseMeta((o.subscription_details as { metadata?: unknown } | undefined)?.metadata)) return true;
+  const lines = ((o.lines as { data?: unknown[] } | undefined)?.data ?? []) as Array<{ price?: { id?: unknown }; pricing?: { price_details?: { price?: unknown } } }>;
+  return Boolean(license && lines.some((l) => [l.price?.id, l.pricing?.price_details?.price].some((p) => p === license.year || p === license.lifetime)));
+}
+
+export function intentOf(ev: StripeEvent, prices?: { month: string; year: string }, license?: { year: string; lifetime: string }): Intent | null {
   const o = ev.data?.object;
   if (!o || typeof o !== "object") return null;
   const customer = idOf(o.customer);
@@ -278,6 +331,15 @@ export function intentOf(ev: StripeEvent, prices?: { month: string; year: string
     case "checkout.session.completed": {
       const ref = typeof o.client_reference_id === "string" ? o.client_reference_id : undefined;
       const meta = (o.metadata ?? {}) as Record<string, unknown>;
+      // The Commercial License (accounts only): a one-time payment, or a yearly subscription.
+      if (isLicenseMeta(meta)) {
+        if (!ref || !ACCOUNT_ID.test(ref) || meta.weft_account !== ref || !customer || typeof o.id !== "string") return null;
+        if (o.mode === "payment") return o.payment_status === "paid" ? { account: ref, customer, plan: "paid", checkout: true, license: { term: "lifetime", session: o.id } } : null;
+        if (o.mode !== "subscription") return null;
+        if (o.payment_status === "unpaid" && Number(o.amount_total ?? 0) > 0) return null;
+        const subscription = idOf(o.subscription);
+        return subscription ? { account: ref, customer, plan: "paid", checkout: true, license: { term: "year", subscription } } : null;
+      }
       if (o.mode !== "subscription" || !ref || !customer) return null;
       const account = ACCOUNT_ID.test(ref) && meta.weft_account === ref ? ref : undefined;
       const space = SPACE_ID.test(ref) && meta.weft_space === ref ? ref : undefined;
@@ -292,11 +354,16 @@ export function intentOf(ev: StripeEvent, prices?: { month: string; year: string
     case "customer.subscription.updated":
     case "customer.subscription.deleted": {
       if (!customer) return null;
-      const facts = subscriptionFacts(o, prices);
+      const facts = subscriptionFacts(o, prices, license);
+      // A yearly Commercial License: its own purchase row, never the account's Pro plan.
+      if (facts && ((license && facts.priceId === license.year) || isLicenseMeta(o.metadata)))
+        return { customer, plan: "paid", checkout: false, facts, license: { term: "year", subscription: facts.id, ...(ev.type === "customer.subscription.deleted" ? { deleted: true } : {}) } };
       const plan = ev.type === "customer.subscription.deleted" ? "free" : o.status === "active" || o.status === "trialing" ? "paid" : "free";
       return { customer, plan, checkout: false, ...(facts?.pro ? { facts } : {}) };
     }
     case "invoice.payment_failed":
+      // A failed license renewal is handled by its subscription's own update (past_due); it never ends Pro.
+      if (licenseInvoice(o, license)) return null;
       return customer ? { customer, plan: "free", checkout: false } : null;
     default:
       return null;
@@ -319,8 +386,9 @@ export async function stripeWebhook(req: Request, env: BillingEnv, k: Kit): Prom
     return k.fail("invalid_message", "body is not JSON");
   }
   if (typeof ev.id !== "string" || typeof ev.created !== "number") return k.fail("invalid_message", "not a Stripe event");
-  const intent = intentOf(ev, cfg.prices);
+  const intent = intentOf(ev, cfg.prices, cfg.license);
   if (!intent) return k.json({ received: true, result: "ignored" });
+  if (intent.license) return licenseWebhook(env, ev as StripeEvent & { id: string; created: number }, intent, cfg, k);
 
   // A checkout's seats, interval and status live on the subscription it created: read it (a failure is a 503, and Stripe retries).
   let plan = intent.plan;
@@ -360,6 +428,53 @@ export async function stripeWebhook(req: Request, env: BillingEnv, k: Kit): Prom
       await cancelCustomerSubscriptions(cfg, intent.customer);
     } catch (e) {
       console.error("billing: could not cancel a subscription for a missing space", e instanceof Error ? e.message : String(e));
+      return k.fail("unavailable", "could not cancel the orphaned subscription; Stripe will retry");
+    }
+  }
+  return k.json({ received: true, result: r.result });
+}
+
+/**
+ * The license state a subscription's facts mean: active (or cancelling) until the end of the paid period; a renewal
+ * that failed is paid only up to the start of the unpaid period; a cancelled one keeps what was paid for.
+ */
+export function licenseFromFacts(f: SubscriptionFacts, deleted = false): { status: "active" | "canceling" | "past_due" | "canceled"; validUntil: number | null } {
+  if (deleted || f.status === "canceled" || f.status === "incomplete_expired") return { status: "canceled", validUntil: f.endedAt ?? f.periodEnd ?? null };
+  if (f.status === "active" || f.status === "trialing") return { status: f.cancelAtPeriodEnd ? "canceling" : "active", validUntil: f.periodEnd ?? null };
+  return { status: "past_due", validUntil: f.periodStart ?? Math.floor(Date.now() / 1000) };
+}
+
+/** Webhook, Commercial License part: record the purchase on the account (a Stripe read for a finished checkout). */
+async function licenseWebhook(env: BillingEnv, ev: StripeEvent & { id: string; created: number }, intent: Intent, cfg: StripeConfig, k: Kit): Promise<Response> {
+  const lic = intent.license!;
+  if (!cfg.license) return k.json({ received: true, result: "ignored" });
+  const reg = registry(env);
+  if (intent.checkout && (await reg.billingEventSeen(ev.id))) return k.json({ received: true, result: "duplicate" });
+  let row: Parameters<Registry["applyLicenseEvent"]>[0] | undefined;
+  try {
+    if (lic.term === "lifetime" && lic.session) {
+      // Seats are the quantity the buyer settled on in Checkout: read from Stripe, only for our one-time price.
+      const items = await stripeRequest<{ data?: Array<{ quantity?: number; price?: { id?: string } }> }>(cfg.key, "GET", `/v1/checkout/sessions/${encodeURIComponent(lic.session)}/line_items`, { limit: 10 });
+      const item = (items.data ?? []).find((i) => i.price?.id === cfg.license!.lifetime);
+      if (!item || !Number.isInteger(item.quantity) || item.quantity! < 1) return k.json({ received: true, result: "ignored" });
+      row = { id: ev.id, created: ev.created, ref: lic.session, term: "lifetime", seats: item.quantity!, status: "active", validUntil: null };
+    } else {
+      const facts = intent.checkout && lic.subscription ? await fetchSubscription(cfg, lic.subscription) : intent.facts;
+      if (!facts || facts.priceId !== cfg.license.year || !facts.quantity) return k.json({ received: true, result: "ignored" });
+      row = { id: ev.id, created: ev.created, ref: facts.id, term: "year", seats: facts.quantity, ...licenseFromFacts(facts, lic.deleted) };
+    }
+  } catch (e) {
+    if (!(e instanceof StripeError)) throw e;
+    console.error("billing: could not read a license purchase", e.status, e.code ?? "", e.message);
+    return k.fail("unavailable", "could not read the purchase from Stripe; Stripe will retry");
+  }
+  const r = await reg.applyLicenseEvent({ ...row, ...(intent.account ? { account: intent.account } : {}), ...(intent.customer ? { customer: intent.customer } : {}) });
+  // A yearly license bought for an account that is gone: do not leave it renewing.
+  if (r.result === "ignored" && intent.checkout && lic.term === "year" && lic.subscription) {
+    try {
+      await stripeRequest(cfg.key, "DELETE", `/v1/subscriptions/${encodeURIComponent(lic.subscription)}`, {});
+    } catch (e) {
+      console.error("billing: could not cancel a license for a missing account", e instanceof Error ? e.message : String(e));
       return k.fail("unavailable", "could not cancel the orphaned subscription; Stripe will retry");
     }
   }

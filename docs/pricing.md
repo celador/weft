@@ -107,6 +107,13 @@ checks them. `legacy_usage` describes the superseded usage price, kept so existi
     "fair_use_events_per_seat_month": 50000,
     "max_seats": 999
   },
+  "commercial_license": {
+    "product_id": "weft_license",
+    "product_name": "Weft Commercial License",
+    "usd_per_user_year": 29,
+    "usd_per_user_once": 58,
+    "max_seats": 999
+  },
   "legacy_usage": {
     "product_name": "Weft hosted",
     "meter_display_name": "Weft agent events",

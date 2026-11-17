@@ -39,6 +39,8 @@ export default defineWorkersConfig(async () => {
               STRIPE_WEBHOOK_SECRET: "whsec_unit_secret",
               STRIPE_PRICE_PRO_MONTH: "price_pro_month",
               STRIPE_PRICE_PRO_YEAR: "price_pro_year",
+              STRIPE_PRICE_LICENSE_YEAR: "price_license_year",
+              STRIPE_PRICE_LICENSE_LIFETIME: "price_license_lifetime",
             },
           },
         },

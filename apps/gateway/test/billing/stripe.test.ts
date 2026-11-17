@@ -69,7 +69,12 @@ describe("stripeConfig", () => {
     expect(stripeConfig({ ...full, STRIPE_PRICE_PRO_YEAR: undefined })).toBeNull();
     expect(stripeConfig({ ...full, STRIPE_SECRET_KEY: "pk_test_x" })).toBeNull();
     expect(stripeConfig({ ...full, STRIPE_SECRET_KEY: "rk_live_x" })).not.toBeNull();
-    // the legacy metered price alone no longer switches billing on
+    // the Commercial License is optional and needs both of its prices
+    expect(stripeConfig(full)?.license).toBeUndefined();
+    expect(stripeConfig({ ...full, STRIPE_PRICE_LICENSE_YEAR: "price_ly" } as never)?.license).toBeUndefined();
+    expect(stripeConfig({ ...full, STRIPE_PRICE_LICENSE_YEAR: "price_ly", STRIPE_PRICE_LICENSE_LIFETIME: "price_ll" } as never)?.license).toEqual({ year: "price_ly", lifetime: "price_ll" });
+    expect(stripeConfig({ ...full, STRIPE_PRICE_LICENSE_YEAR: "price_ly", STRIPE_PRICE_LICENSE_LIFETIME: "prod_x" } as never)?.license).toBeUndefined();
+        // the legacy metered price alone no longer switches billing on
     expect(stripeConfig({ STRIPE_SECRET_KEY: "sk_test_x", STRIPE_WEBHOOK_SECRET: "whsec_x", STRIPE_PRICE_ID: "price_x" } as never)).toBeNull();
   });
 });
@@ -78,7 +83,13 @@ describe("subscriptionFacts", () => {
   const prices = { month: "price_m", year: "price_y" };
   const sub = (price: Record<string, unknown>, quantity?: number) => ({ id: "sub_1", status: "active", customer: "cus_1", items: { data: [{ ...(quantity !== undefined ? { quantity } : {}), price }] } });
   it("reads seats and interval from a Pro subscription", () => {
-    expect(subscriptionFacts(sub({ id: "price_y", recurring: { interval: "year", usage_type: "licensed" } }, 3), prices)).toEqual({ id: "sub_1", status: "active", customer: "cus_1", pro: true, seats: 3, interval: "year" });
+    expect(subscriptionFacts(sub({ id: "price_y", recurring: { interval: "year", usage_type: "licensed" } }, 3), prices)).toEqual({ id: "sub_1", status: "active", customer: "cus_1", pro: true, seats: 3, interval: "year", priceId: "price_y", quantity: 3 });
+  });
+  it("a Commercial License subscription is not Pro, and carries its period and cancellation", () => {
+    const f = subscriptionFacts({ ...sub({ id: "price_ly", recurring: { interval: "year", usage_type: "licensed" } }, 2), cancel_at_period_end: true, items: { data: [{ quantity: 2, current_period_start: 10, current_period_end: 20, price: { id: "price_ly", recurring: { interval: "year" } } }] } }, prices, { year: "price_ly" });
+    expect(f).toMatchObject({ pro: false, priceId: "price_ly", quantity: 2, periodStart: 10, periodEnd: 20, cancelAtPeriodEnd: true });
+    // the same price without the license config would look like a (non-Weft) yearly subscription, never like the license
+    expect(subscriptionFacts(sub({ id: "price_y", recurring: { interval: "year", usage_type: "licensed" } }, 1), prices, { year: "price_ly" })).toMatchObject({ pro: true });
   });
   it("a legacy metered subscription, or a price that is not ours, is not Pro", () => {
     expect(subscriptionFacts(sub({ id: "price_old", recurring: { interval: "month", usage_type: "metered" } }), prices)).toMatchObject({ pro: false });

@@ -297,6 +297,16 @@ export class Registry extends DurableObject<RegistryEnv> {
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS device_logins (id TEXT PRIMARY KEY, device_hash TEXT NOT NULL UNIQUE, user_hash TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, account_id TEXT, approved_at TEXT)`,
     );
+    // The Commercial License (docs/pricing.md, docs/commercial-license.md): one row per purchase (a yearly subscription,
+    // `ref` = its id; or a one-time Checkout, `ref` = the session id). Seats add up across rows. `valid_until` is the
+    // paid-through time (unix seconds), NULL for a lifetime purchase. Nothing about the buyer beyond the account id.
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS licenses (ref TEXT PRIMARY KEY, account_id TEXT NOT NULL, term TEXT NOT NULL, seats INTEGER NOT NULL, status TEXT NOT NULL, valid_until INTEGER, created_at TEXT NOT NULL, billing_event_at INTEGER NOT NULL DEFAULT 0)`,
+    );
+    this.sql.exec(`CREATE INDEX IF NOT EXISTS licenses_account ON licenses(account_id)`);
+    // One license key per account, for machines that never sign in: stored only as a salted SHA-256, plus its last 4
+    // characters so the account page can say which key is current.
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS license_keys (account_id TEXT PRIMARY KEY, key_hash TEXT NOT NULL UNIQUE, hint TEXT NOT NULL, created_at TEXT NOT NULL)`);
     // The anonymous web purchase (GET /buy + claim codes) is gone: paying on the web needs an account.
     this.sql.exec(`DROP TABLE IF EXISTS claim_codes`);
     this.sql.exec(`DROP TABLE IF EXISTS entitlements`);
@@ -869,6 +879,7 @@ export class Registry extends DurableObject<RegistryEnv> {
     active_this_month: number;
     over_allowance: number;
     accounts: { total: number; pro: number; seats: number };
+    licenses: { accounts: number; lifetime_seats: number; year_seats: number };
   } {
     this.ensureSpaces();
     const month = monthKey();
@@ -894,6 +905,14 @@ export class Registry extends DurableObject<RegistryEnv> {
       active_this_month: u.n,
       over_allowance: states.filter((s) => s.over).length,
       accounts: { total: acc.n, pro: acc.pro, seats: acc.seats },
+      licenses: this.sql
+        .exec<{ accounts: number; lifetime_seats: number; year_seats: number }>(
+          `SELECT COUNT(DISTINCT account_id) AS accounts, COALESCE(SUM(CASE WHEN term = 'lifetime' THEN seats ELSE 0 END), 0) AS lifetime_seats,
+             COALESCE(SUM(CASE WHEN term = 'year' THEN seats ELSE 0 END), 0) AS year_seats
+           FROM licenses WHERE (term = 'lifetime' AND status = 'active') OR (term = 'year' AND valid_until > ?)`,
+          Math.floor(Date.now() / 1000),
+        )
+        .one(),
     };
   }
 
@@ -1122,6 +1141,7 @@ export class Registry extends DurableObject<RegistryEnv> {
         has_billing_account: boolean;
         events_this_month: number;
         spaces: Array<{ id: string; label?: string; created_at: string; last_event_at: string | null; repos: number; events_this_month: number }>;
+        license: LicenseState;
       }
     | undefined
   > {
@@ -1151,6 +1171,7 @@ export class Registry extends DurableObject<RegistryEnv> {
       has_billing_account: a.customer !== null,
       events_this_month: spaces.reduce((n, s) => n + s.events_this_month, 0),
       spaces,
+      license: this.licenseOf(id),
     };
   }
 
@@ -1192,12 +1213,14 @@ export class Registry extends DurableObject<RegistryEnv> {
       if (r) reports.push(r);
     }
     this.sql.exec(`DELETE FROM device_logins WHERE account_id = ?`, id);
+    this.sql.exec(`DELETE FROM licenses WHERE account_id = ?`, id);
+    this.sql.exec(`DELETE FROM license_keys WHERE account_id = ?`, id);
     this.sql.exec(`DELETE FROM accounts WHERE id = ?`, id);
     return { account: id, deleted: true, subscriptions_cancelled: cancelled, spaces: reports };
   }
 
   /** Operator: every account with its plan, seats, spaces and events in the last 7 days (no email: that is in Clerk). */
-  async listAccounts(now = Date.now()): Promise<Array<{ id: string; created_at: string; plan: Plan; seats: number | null; interval: Interval | null; paid_at: string | null; utm_source?: string; utm_campaign?: string; spaces: number; events_7d: number; last_event_at: string | null }>> {
+  async listAccounts(now = Date.now()): Promise<Array<{ id: string; created_at: string; plan: Plan; seats: number | null; interval: Interval | null; paid_at: string | null; utm_source?: string; utm_campaign?: string; spaces: number; events_7d: number; last_event_at: string | null; license_seats: number }>> {
     this.ensureSpaces();
     const from7 = utcDay(now - 6 * 86_400_000);
     return this.sql
@@ -1224,8 +1247,125 @@ export class Registry extends DurableObject<RegistryEnv> {
           spaces: r.spaces,
           events_7d: r.events_7d,
           last_event_at: r.last_event_at,
+          license_seats: this.licenseRows(r.id, now).filter((l) => l.active).reduce((n, l) => n + l.seats, 0),
         };
       });
+  }
+
+  // ------------------------------------------------------------------ the Commercial License
+  //
+  // Bought by an account on weft.mx (yearly per seat, or once per seat); Weft Pro includes it. Seats add up across
+  // purchases. A yearly purchase is valid until its paid-through time: cancelling keeps it to the end of the paid
+  // period, a renewal that fails leaves it paid only up to the start of the unpaid period. A lifetime one never ends.
+
+  private licenseRows(account: string, now = Date.now()): Array<{ ref: string; term: LicenseTerm; seats: number; status: string; valid_until: number | null; created_at: string; active: boolean }> {
+    const nowSec = Math.floor(now / 1000);
+    return this.sql
+      .exec<{ ref: string; term: string; seats: number; status: string; valid_until: number | null; created_at: string }>(`SELECT ref, term, seats, status, valid_until, created_at FROM licenses WHERE account_id = ? ORDER BY created_at`, account)
+      .toArray()
+      .map((r) => {
+        const term: LicenseTerm = r.term === "lifetime" ? "lifetime" : "year";
+        const active = term === "lifetime" ? r.status === "active" : r.valid_until !== null && r.valid_until > nowSec;
+        return { ...r, term, active };
+      });
+  }
+
+  /** What the account page, `weft license` and a key check show: seats, term, renewal, and whether Pro covers it. */
+  private licenseOf(account: string, now = Date.now()): LicenseState {
+    this.ensureSpaces();
+    const a = this.accountRow(account);
+    const pro = Boolean(a && a.plan === "paid" && a.pro);
+    const rows = this.licenseRows(account, now);
+    const live = rows.filter((r) => r.active);
+    const lifetime = live.filter((r) => r.term === "lifetime").reduce((n, r) => n + r.seats, 0);
+    const yearly = live.filter((r) => r.term === "year");
+    const year = yearly.reduce((n, r) => n + r.seats, 0);
+    const until = yearly.reduce<number | null>((m, r) => (r.valid_until !== null && (m === null || r.valid_until > m) ? r.valid_until : m), null);
+    const key = this.sql.exec<{ hint: string; created_at: string }>(`SELECT hint, created_at FROM license_keys WHERE account_id = ?`, account).toArray()[0];
+    return {
+      active: pro || live.length > 0,
+      included_in_pro: pro,
+      seats: lifetime + year,
+      lifetime_seats: lifetime,
+      year_seats: year,
+      term: lifetime > 0 && year > 0 ? "mixed" : lifetime > 0 ? "lifetime" : year > 0 ? "year" : null,
+      valid_until: year > 0 && until !== null ? new Date(until * 1000).toISOString() : null,
+      renews: yearly.some((r) => r.status === "active"),
+      purchases: rows.map((r) => ({ term: r.term, seats: r.seats, status: r.active ? (r.term === "year" && r.status === "canceling" ? "ends" : r.status === "past_due" ? "past_due" : "active") : "ended", valid_until: r.valid_until === null ? null : new Date(r.valid_until * 1000).toISOString(), created_at: r.created_at })),
+      key: key ? { hint: key.hint, created_at: key.created_at } : null,
+    };
+  }
+
+  /** `GET /v1/space` for an owner: the license state of the space's account (null: an anonymous space). */
+  async spaceLicense(space: string): Promise<LicenseState | null> {
+    const account = this.activeSpace(space) ? this.accountOf(space) : null;
+    return account && this.accountRow(account) ? this.licenseOf(account) : null;
+  }
+
+  /** Whether the account has a Stripe customer already, and whether it is on Pro (a license purchase is then refused). */
+  async accountLicense(account: string): Promise<LicenseState> {
+    return this.licenseOf(account);
+  }
+
+  /**
+   * Apply one verified Stripe event about a Commercial License purchase, once (the event id), never older over newer
+   * (per purchase). `account` is set for a checkout we started; later events find the purchase by `ref` or the account
+   * by its customer. `validUntil` null = lifetime; on `canceled` the paid-through time already recorded is kept.
+   */
+  applyLicenseEvent(e: { id: string; created: number; account?: string; customer?: string; ref: string; term: LicenseTerm; seats?: number; status: "active" | "canceling" | "past_due" | "canceled"; validUntil: number | null }): { result: "applied" | "duplicate" | "ignored" | "stale"; account?: string } {
+    this.ensureSpaces();
+    let account = e.account ?? this.sql.exec<{ account_id: string }>(`SELECT account_id FROM licenses WHERE ref = ?`, e.ref).toArray()[0]?.account_id;
+    if (account === undefined && e.customer) account = this.sql.exec<{ id: string }>(`SELECT id FROM accounts WHERE stripe_customer_id = ?`, e.customer).toArray()[0]?.id;
+    if (account === undefined || !this.accountRow(account)) return { result: "ignored" };
+    if (this.sql.exec(`INSERT OR IGNORE INTO stripe_events (id, at) VALUES (?, ?)`, e.id, Math.floor(Date.now() / 1000)).rowsWritten === 0) return { result: "duplicate", account };
+    if (e.account !== undefined && e.customer) this.sql.exec(`UPDATE accounts SET stripe_customer_id = COALESCE(stripe_customer_id, ?) WHERE id = ?`, e.customer, account);
+    const existing = this.sql.exec<{ account_id: string }>(`SELECT account_id FROM licenses WHERE ref = ?`, e.ref).toArray()[0];
+    if (existing && existing.account_id !== account) return { result: "ignored" };
+    if (!existing) {
+      if (e.seats === undefined) return { result: "ignored" };
+      this.sql.exec(`INSERT INTO licenses (ref, account_id, term, seats, status, valid_until, created_at, billing_event_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0)`, e.ref, account, e.term, e.seats, e.status, e.validUntil, new Date().toISOString());
+    }
+    const moved =
+      e.status === "canceled"
+        ? this.sql.exec(`UPDATE licenses SET status = 'canceled', valid_until = CASE WHEN term = 'lifetime' THEN NULL ELSE COALESCE(valid_until, ?) END, seats = COALESCE(?, seats), billing_event_at = ? WHERE ref = ? AND billing_event_at <= ?`, e.validUntil, e.seats ?? null, e.created, e.ref, e.created).rowsWritten
+        : this.sql.exec(`UPDATE licenses SET status = ?, valid_until = ?, seats = COALESCE(?, seats), billing_event_at = ? WHERE ref = ? AND billing_event_at <= ?`, e.status, e.validUntil, e.seats ?? null, e.created, e.ref, e.created).rowsWritten;
+    if (moved > 0 && e.status !== "canceled" && e.status !== "past_due") this.sql.exec(`UPDATE accounts SET paid_at = ? WHERE id = ? AND paid_at IS NULL`, new Date().toISOString(), account);
+    return { result: moved > 0 ? "applied" : "stale", account };
+  }
+
+  private licenseSalt(): string {
+    this.ensureSpaces();
+    const row = this.sql.exec<{ value: string }>(`SELECT value FROM settings WHERE key = 'license_salt'`).toArray()[0];
+    if (row) return row.value;
+    const salt = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    this.sql.exec(`INSERT OR IGNORE INTO settings (key, value) VALUES ('license_salt', ?)`, salt);
+    return this.sql.exec<{ value: string }>(`SELECT value FROM settings WHERE key = 'license_salt'`).one().value;
+  }
+
+  /**
+   * A new license key for the account (the old one stops working). Returned once; only its salted hash and last 4
+   * characters are kept. Only for an account with a license or Pro.
+   */
+  async newLicenseKey(account: string): Promise<{ key: string; hint: string; created_at: string } | { error: string; code: "unlicensed" }> {
+    if (!this.licenseOf(account).active) return { error: "this account has no commercial license or Weft Pro yet", code: "unlicensed" };
+    const bytes = crypto.getRandomValues(new Uint8Array(24));
+    const key = `weft_lic_${btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
+    const hash = await sha256Hex(`${this.licenseSalt()}:${key}`);
+    const created = new Date().toISOString();
+    const hint = key.slice(-4);
+    this.sql.exec(`INSERT INTO license_keys (account_id, key_hash, hint, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(account_id) DO UPDATE SET key_hash = excluded.key_hash, hint = excluded.hint, created_at = excluded.created_at`, account, hash, hint, created);
+    return { key, hint, created_at: created };
+  }
+
+  /** `weft license <key>`: what the key's account holds now (never the account id), or null for an unknown key. */
+  async checkLicenseKey(key: string): Promise<Omit<LicenseState, "key" | "purchases"> | null> {
+    this.ensureSpaces();
+    if (!/^weft_lic_[A-Za-z0-9_-]{32}$/.test(key)) return null;
+    const hash = await sha256Hex(`${this.licenseSalt()}:${key}`);
+    const row = this.sql.exec<{ account_id: string }>(`SELECT account_id FROM license_keys WHERE key_hash = ?`, hash).toArray()[0];
+    if (!row || !this.accountRow(row.account_id)) return null;
+    const { key: _k, purchases: _p, ...state } = this.licenseOf(row.account_id);
+    return state;
   }
 
   private loginSalt(): string {
@@ -1743,3 +1883,21 @@ function spaceId(): string {
   const b = crypto.getRandomValues(new Uint8Array(10));
   return `sp${[...b].map((x) => "abcdefghijklmnopqrstuvwxyz0123456789"[x % 36]).join("")}`;
 }
+
+export type LicenseTerm = "year" | "lifetime";
+/** The Commercial License of an account (docs/commercial-license.md). `active` is true with a license OR Weft Pro. */
+export type LicenseState = {
+  active: boolean;
+  included_in_pro: boolean;
+  seats: number;
+  lifetime_seats: number;
+  year_seats: number;
+  term: "lifetime" | "year" | "mixed" | null;
+  /** The latest paid-through time of the yearly seats (null when none are active). */
+  valid_until: string | null;
+  /** Whether a yearly purchase renews (false once cancelled: it ends at `valid_until`). */
+  renews: boolean;
+  purchases: Array<{ term: LicenseTerm; seats: number; status: "active" | "ends" | "past_due" | "ended"; valid_until: string | null; created_at: string }>;
+  /** The current license key's last 4 characters (the key itself is shown once, when made). */
+  key: { hint: string; created_at: string } | null;
+};

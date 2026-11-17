@@ -337,6 +337,8 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
       // The Clerk user id the space belongs to (null: an anonymous space); `accounts` says whether this gateway has them.
       account: await reg.spaceAccount(space),
       accounts: clerkConfig(env) !== null,
+      // The Commercial License of the space's account (owner only; null for an anonymous space): `weft license`.
+      ...(by ? {} : { license: await reg.spaceLicense(space) }),
     });
   }
   const bm = /^\/v1\/space\/billing\/(checkout|portal)$/.exec(path);
