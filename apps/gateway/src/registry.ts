@@ -181,6 +181,10 @@ export class Registry extends DurableObject<RegistryEnv> {
     if (!r) return null;
     const now = Date.now();
     if (r.expires_at && Date.parse(r.expires_at) <= now) return null;
+    if (r.kind === "member" && (!r.last_seen_at || now - Date.parse(r.last_seen_at) >= TOUCH_EVERY_MS)) {
+      // A member key never expires; the owner sees when it was last used (written at most once a minute).
+      this.sql.exec(`UPDATE tokens SET last_seen_at = ? WHERE id = ?`, new Date(now).toISOString(), r.id);
+    }
     if (r.kind === "device") {
       // Sliding expiry: a device that keeps using the feed stays paired, up to the absolute cap.
       // Written at most once a minute (the feed page polls every 2 s).
@@ -238,6 +242,11 @@ export class Registry extends DurableObject<RegistryEnv> {
     // One-time pairing codes for the feed page: stored as salted hashes, deleted on use or expiry.
     this.sql.exec(`CREATE TABLE IF NOT EXISTS pairings (id TEXT PRIMARY KEY, space TEXT NOT NULL, code_hash TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)`);
     this.sql.exec(`CREATE INDEX IF NOT EXISTS pairings_space ON pairings(space)`);
+    // A pairing code minted with a member key: the browser it pairs is that member's, and goes when the member does.
+    if (!this.sql.exec<{ name: string }>(`PRAGMA table_info(pairings)`).toArray().some((c) => c.name === "member")) this.sql.exec(`ALTER TABLE pairings ADD COLUMN member TEXT`);
+    // One-time invite codes (team join): salted hashes only, deleted on use or expiry, at most MAX_OPEN_INVITES per space.
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS invites (id TEXT PRIMARY KEY, space TEXT NOT NULL, code_hash TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)`);
+    this.sql.exec(`CREATE INDEX IF NOT EXISTS invites_space ON invites(space)`);
     // Per-day signup counters keyed by a daily-rotating HMAC of the network address (spaces.ts
     // networkKey); deleted within 48 hours (pruneSignupCounters, also on the alarm).
     this.sql.exec(`CREATE TABLE IF NOT EXISTS signup_counters (day TEXT NOT NULL, net_key TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, net_key))`);
@@ -397,14 +406,15 @@ export class Registry extends DurableObject<RegistryEnv> {
     return { id: r.id, status: "active", created_at: r.created_at, ...(r.label ? { label: r.label } : {}) };
   }
 
-  async spaceInfo(space: string): Promise<(SpaceInfo & { repos: Array<{ name: string; repo: string; created_at: string }>; tokens: number; devices: number }) | undefined> {
+  async spaceInfo(space: string): Promise<(SpaceInfo & { repos: Array<{ name: string; repo: string; created_at: string }>; tokens: number; devices: number; members: number }) | undefined> {
     const s = this.activeSpace(space);
     if (!s) return undefined;
     const tokens = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM tokens WHERE space = ? AND revoked_at IS NULL AND kind IS NOT 'device'`, space).one().n;
-    return { ...s, repos: this.spaceRepos(space), tokens, devices: this.deviceRows(space).length };
+    return { ...s, repos: this.spaceRepos(space), tokens, devices: this.deviceRows(space).length, members: this.memberRows(space).length };
   }
 
-  async spaceCreateRepo(space: string, name: string, maxRepos: number): Promise<{ created: boolean; name: string; repo: string } | { error: string; code: "invalid" | "quota" | "gone" }> {
+  /** `existingOnly` (a member key): an existing repo answers as before, a new name is refused (code `forbidden`). */
+  async spaceCreateRepo(space: string, name: string, maxRepos: number, existingOnly = false): Promise<{ created: boolean; name: string; repo: string } | { error: string; code: "invalid" | "quota" | "gone" | "forbidden" }> {
     if (!this.activeSpace(space)) return { error: "space not found", code: "gone" };
     if (!SPACE_REPO_NAME.test(name)) return { error: "repo name must be 1-48 chars of a-z, 0-9, '.', '_' or '-', starting with a letter or digit", code: "invalid" };
     const repo = `${space}-${name}`;
@@ -412,6 +422,10 @@ export class Registry extends DurableObject<RegistryEnv> {
     if (existing) {
       if (existing.space !== space) return { error: "repo name not available", code: "invalid" };
       return { created: false, name, repo };
+    }
+    if (existingOnly) {
+      const names = this.spaceRepos(space).map((r) => r.name);
+      return { error: `this space has no repo ${name}${names.length ? ` (it has: ${names.join(", ")}; pass --repo <name>)` : ""}; only the space's owner can add one`, code: "forbidden" };
     }
     if (this.spaceRepos(space).length >= maxRepos) return { error: `a space holds at most ${maxRepos} repos`, code: "quota" };
     const r = await this.createRepo({ repo });
@@ -427,12 +441,25 @@ export class Registry extends DurableObject<RegistryEnv> {
     return { created: r.created, name, repo };
   }
 
+  /**
+   * Mint a repo-bound key. `by` = a member key is asking: only agent keys, and only for an agent id that ends in
+   * `.<the member's handle>`, so one person's agents can never take (or share) another's id; the key records the
+   * member, and goes when the member is removed.
+   */
   async spaceIssueToken(
     space: string,
     spec: { kind: "agent" | "system"; repo?: string; agent?: string; label?: string },
     maxTokens: number,
-  ): Promise<{ token: string; info: TokenInfo } | { error: string; code: "invalid" | "quota" | "gone" | "repo" }> {
+    by?: MemberRef,
+  ): Promise<{ token: string; info: TokenInfo } | { error: string; code: "invalid" | "quota" | "gone" | "repo" | "forbidden" }> {
+    const token = randomToken();
+    const tokenHash = await sha256Hex(token);
+    // ---- no await below this line: the member check and the insert are one step (a member removed meanwhile mints nothing)
     if (!this.activeSpace(space)) return { error: "space not found", code: "gone" };
+    if (by && !this.memberActive(space, by.id)) return { error: "this member key was removed from the space", code: "gone" };
+    if (by && spec.kind !== "agent") return { error: "a member key mints agent keys only; landing keys come from the space's owner", code: "forbidden" };
+    if (by && !(spec.agent ?? "").endsWith(`.${by.handle}`))
+      return { error: `a member's agent ids end in .${by.handle} (so they never clash with a teammate's): e.g. ${slugAgent(spec.agent ?? "agent", by.handle)}`, code: "forbidden" };
     const n = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM tokens WHERE space = ? AND revoked_at IS NULL AND kind IS NOT 'device'`, space).one().n;
     if (n >= maxTokens) return { error: `a space holds at most ${maxTokens} active tokens; run \`npx @celador/weft uninstall\` in checkouts you no longer use`, code: "quota" };
     const id = `tok_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
@@ -443,21 +470,27 @@ export class Registry extends DurableObject<RegistryEnv> {
     let grant: SpaceGrant;
     if (spec.kind === "agent") {
       if (!spec.agent || !AGENT_ID.test(spec.agent)) return { error: "agent must be 1-64 chars of letters, digits, '.', '_' or '-'", code: "invalid" };
-      grant = { id, principal: spec.agent, scopes: ["agent", "observe"], repos: [repo], agent: spec.agent, space, role: "agent" };
+      grant = { id, principal: spec.agent, scopes: ["agent", "observe"], repos: [repo], agent: spec.agent, space, role: "agent", ...(by ? { member: by.id } : {}) };
     } else if (spec.kind === "system") {
       grant = { id, principal: `space:${space}:lander`, scopes: ["system", "observe"], repos: [repo], space, role: "system" };
     } else return { error: "kind must be agent or system", code: "invalid" };
-    const token = randomToken();
     const created_at = new Date().toISOString();
     const label = spec.label?.slice(0, 120) ?? null;
-    this.sql.exec(`INSERT INTO tokens (id, hash, grant_json, label, created_at, space) VALUES (?, ?, ?, ?, ?, ?)`, id, await sha256Hex(token), JSON.stringify(grant), label, created_at, space);
+    this.sql.exec(`INSERT INTO tokens (id, hash, grant_json, label, created_at, space) VALUES (?, ?, ?, ?, ?, ?)`, id, tokenHash, JSON.stringify(grant), label, created_at, space);
     return { token, info: { ...grant, ...(label ? { label } : {}), created_at } };
   }
 
-  /** Revoke one of the space's own tokens (never the owner token, never another space's). */
-  async spaceRevoke(space: string, tokenId: string): Promise<boolean> {
+  /**
+   * Revoke one of the space's own tokens (never the owner token, never another space's). A member key revoked this way
+   * takes everything it minted with it (memberRevoke). `by` = a member asking: only keys that member minted.
+   */
+  async spaceRevoke(space: string, tokenId: string, by?: MemberRef): Promise<boolean> {
     const r = this.sql.exec<{ grant_json: string }>(`SELECT grant_json FROM tokens WHERE id = ? AND space = ? AND revoked_at IS NULL`, tokenId, space).toArray()[0];
-    if (!r || (JSON.parse(r.grant_json) as SpaceGrant).role === "owner") return false;
+    if (!r) return false;
+    const g = JSON.parse(r.grant_json) as SpaceGrant;
+    if (g.role === "owner") return false;
+    if (by && g.member !== by.id) return false;
+    if (g.role === "member") return (await this.memberRevoke(space, tokenId)) > 0;
     return this.revoke(tokenId);
   }
 
@@ -468,6 +501,7 @@ export class Registry extends DurableObject<RegistryEnv> {
     const n = this.sql.exec(`UPDATE spaces SET status = 'suspended', deleted_at = ? WHERE id = ? AND status = 'active'`, now, space).rowsWritten;
     this.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE space = ? AND revoked_at IS NULL`, now, space);
     this.sql.exec(`DELETE FROM pairings WHERE space = ?`, space);
+    this.sql.exec(`DELETE FROM invites WHERE space = ?`, space);
     return n > 0;
   }
 
@@ -498,6 +532,7 @@ export class Registry extends DurableObject<RegistryEnv> {
     this.sql.exec(`UPDATE spaces SET status = 'erasing' WHERE id = ?`, space);
     this.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE space = ? AND revoked_at IS NULL`, new Date().toISOString(), space);
     this.sql.exec(`DELETE FROM pairings WHERE space = ?`, space); // open pairing codes die with the space
+    this.sql.exec(`DELETE FROM invites WHERE space = ?`, space); // and so do open invites
     // A paying space settles with Stripe BEFORE anything is deleted: its last usage is reported and its subscription cancelled.
     const billingError = await this.settleBilling(space);
     if (billingError) {
@@ -1118,15 +1153,18 @@ export class Registry extends DurableObject<RegistryEnv> {
     const now = new Date();
     const cutoff = new Date(now.getTime() - DEVICE_KEEP_MS).toISOString();
     this.sql.exec(`DELETE FROM tokens WHERE kind = 'device' AND (revoked_at < ? OR expires_at < ?)`, cutoff, cutoff);
+    // `by`: the handle of the member who paired it (none = the owner).
     return this.sql
-      .exec<{ id: string; label: string | null; created_at: string; last_seen_at: string | null; expires_at: string; hard_expires_at: string }>(
-        `SELECT id, label, created_at, last_seen_at, expires_at, hard_expires_at FROM tokens
-         WHERE space = ? AND kind = 'device' AND revoked_at IS NULL AND expires_at > ? ORDER BY created_at`,
+      .exec<{ id: string; label: string | null; created_at: string; last_seen_at: string | null; expires_at: string; hard_expires_at: string; by: string | null }>(
+        `SELECT t.id, t.label, t.created_at, t.last_seen_at, t.expires_at, t.hard_expires_at,
+           (SELECT json_extract(m.grant_json, '$.handle') FROM tokens m WHERE m.id = json_extract(t.grant_json, '$.member')) AS by
+         FROM tokens t
+         WHERE t.space = ? AND t.kind = 'device' AND t.revoked_at IS NULL AND t.expires_at > ? ORDER BY t.created_at`,
         space,
         now.toISOString(),
       )
       .toArray()
-      .map((r) => ({ id: r.id, label: r.label ?? "", created_at: r.created_at, last_seen_at: r.last_seen_at ?? r.created_at, expires_at: r.expires_at, hard_expires_at: r.hard_expires_at }));
+      .map((r) => ({ id: r.id, label: r.label ?? "", created_at: r.created_at, last_seen_at: r.last_seen_at ?? r.created_at, expires_at: r.expires_at, hard_expires_at: r.hard_expires_at, ...(r.by ? { by: r.by } : {}) }));
   }
 
   async devices(space: string): Promise<DeviceInfo[]> {
@@ -1152,13 +1190,13 @@ export class Registry extends DurableObject<RegistryEnv> {
   }
 
   /** Insert a device session. Synchronous: callers have already hashed the token. */
-  private insertDevice(space: string, tokenHash: string, label: string): DeviceInfo {
+  private insertDevice(space: string, tokenHash: string, label: string, member?: string): DeviceInfo {
     const id = `dev_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
     const now = Date.now();
     const created_at = new Date(now).toISOString();
     const expires_at = new Date(now + SESSION_TTL_MS).toISOString();
     const hard_expires_at = new Date(now + SESSION_HARD_MS).toISOString();
-    const grant: SpaceGrant = { id, principal: `space:${space}:device`, scopes: ["observe"], repos: [], space, role: "device" };
+    const grant: SpaceGrant = { id, principal: `space:${space}:device`, scopes: ["observe"], repos: [], space, role: "device", ...(member ? { member } : {}) };
     this.sql.exec(
       `INSERT INTO tokens (id, hash, grant_json, label, created_at, space, kind, expires_at, hard_expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, 'device', ?, ?, ?)`,
       id,
@@ -1175,27 +1213,29 @@ export class Registry extends DurableObject<RegistryEnv> {
   }
 
   /** A device session for the owner's own machine (the CLI): no code, the owner token vouches for it. */
-  async deviceCreate(space: string, label: string, maxDevices: number): Promise<{ token: string; device: DeviceInfo } | { error: string; code: "gone" | "quota" }> {
+  async deviceCreate(space: string, label: string, maxDevices: number, by?: MemberRef): Promise<{ token: string; device: DeviceInfo } | { error: string; code: "gone" | "quota" }> {
     const token = randomDeviceToken();
     const hash = await sha256Hex(token);
     this.ensureSpaces();
     if (!this.activeSpace(space)) return { error: "space not found", code: "gone" };
+    if (by && !this.memberActive(space, by.id)) return { error: "this member key was removed from the space", code: "gone" };
     if (this.deviceRows(space).length >= maxDevices) return { error: `a space holds at most ${maxDevices} paired devices; revoke some with \`npx @celador/weft viewers revoke --all\``, code: "quota" };
-    return { token, device: this.insertDevice(space, hash, cleanLabel(label, "device")) };
+    return { token, device: this.insertDevice(space, hash, cleanLabel(label, "device"), by?.id) };
   }
 
   /** A fresh one-time pairing code for the feed page (10 minutes, one use). At most 3 are outstanding. */
-  async pairingCreate(space: string): Promise<{ code: string; expires_at: string; expires_in: number } | { error: string; code: "gone" }> {
+  async pairingCreate(space: string, by?: MemberRef): Promise<{ code: string; expires_at: string; expires_in: number } | { error: string; code: "gone" }> {
     const code = pairingCode();
     const hash = await sha256Hex(pairingSalt(space, normalizeCode(code)));
     this.ensureSpaces();
     if (!this.activeSpace(space)) return { error: "space not found", code: "gone" };
+    if (by && !this.memberActive(space, by.id)) return { error: "this member key was removed from the space", code: "gone" };
     const now = Date.now();
     this.sql.exec(`DELETE FROM pairings WHERE expires_at <= ?`, new Date(now).toISOString());
     const open = this.sql.exec<{ id: string }>(`SELECT id FROM pairings WHERE space = ? ORDER BY created_at DESC`, space).toArray();
     for (const old of open.slice(MAX_OPEN_PAIRINGS - 1)) this.sql.exec(`DELETE FROM pairings WHERE id = ?`, old.id);
     const expires_at = new Date(now + PAIRING_TTL_MS).toISOString();
-    this.sql.exec(`INSERT INTO pairings (id, space, code_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`, `pr_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`, space, hash, new Date(now).toISOString(), expires_at);
+    this.sql.exec(`INSERT INTO pairings (id, space, code_hash, created_at, expires_at, member) VALUES (?, ?, ?, ?, ?, ?)`, `pr_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`, space, hash, new Date(now).toISOString(), expires_at, by?.id ?? null);
     return { code, expires_at, expires_in: PAIRING_TTL_MS / 1000 };
   }
 
@@ -1211,16 +1251,154 @@ export class Registry extends DurableObject<RegistryEnv> {
     // ---- no await below this line: select, compare, consume and insert happen in one step
     this.ensureSpaces();
     const nowIso = new Date().toISOString();
-    const rows = this.sql.exec<{ id: string; code_hash: string }>(`SELECT id, code_hash FROM pairings WHERE space = ? AND expires_at > ?`, req.space, nowIso).toArray();
+    const rows = this.sql.exec<{ id: string; code_hash: string; member: string | null }>(`SELECT id, code_hash, member FROM pairings WHERE space = ? AND expires_at > ?`, req.space, nowIso).toArray();
     let hit: string | undefined;
-    for (const r of rows.length ? rows : [{ id: "", code_hash: "0".repeat(64) }]) if (constantTimeEqual(r.code_hash, hash) && r.id) hit = r.id;
+    let member: string | null = null;
+    for (const r of rows.length ? rows : [{ id: "", code_hash: "0".repeat(64), member: null }])
+      if (constantTimeEqual(r.code_hash, hash) && r.id) {
+        hit = r.id;
+        member = r.member;
+      }
     const space = this.activeSpace(req.space);
     if (!hit || !space) return { error: "that pairing code is not valid or has expired", code: "invalid" };
+    // A code a member minted dies with the member (they were removed after minting it).
+    if (member && !this.memberActive(req.space, member)) return { error: "that pairing code is not valid or has expired", code: "invalid" };
     if (this.hostedModeNow() === "off") return { error: "hosted spaces are switched off on this gateway", code: "closed" };
     if (this.deviceRows(req.space).length >= req.maxDevices) return { error: `this space already has ${req.maxDevices} paired devices; revoke one with \`npx @celador/weft viewers revoke <id>\` first`, code: "quota" };
     if (this.sql.exec(`DELETE FROM pairings WHERE id = ?`, hit).rowsWritten !== 1) return { error: "that pairing code is not valid or has expired", code: "invalid" };
     this.sql.exec(`DELETE FROM pairings WHERE expires_at <= ?`, nowIso);
-    return { token, device: this.insertDevice(req.space, tokenHash, cleanLabel(req.label, "browser")) };
+    return { token, device: this.insertDevice(req.space, tokenHash, cleanLabel(req.label, "browser"), member ?? undefined) };
+  }
+
+  // ------------------------------------------------------------------ team members (invite codes -> member keys)
+  //
+  // The owner mints a one-time invite code (`inviteCreate`); a teammate on another machine trades it, with no other
+  // credential (`inviteExchange`, POST /v1/join, rate limited in spaces.ts), for a *member key*. A member key reads the
+  // space and sets up checkouts: it mints agent keys whose id ends in `.<handle>` (unique per member in the space, so
+  // two people's agents are always checked against each other), a read session for its own CLI and pairing codes for
+  // its own browsers. It cannot add repos, mint landing keys, invite, list or remove anyone, touch billing or erase the
+  // space. Removing a member revokes its key and everything it minted, in one step.
+
+  /** Whether `id` is a live member key of `space`. Synchronous, so callers can check and write in one step. */
+  private memberActive(space: string, id: string): boolean {
+    return this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM tokens WHERE id = ? AND space = ? AND kind = 'member' AND revoked_at IS NULL`, id, space).one().n > 0;
+  }
+
+  private memberRows(space: string): MemberInfo[] {
+    return this.sql
+      .exec<{ id: string; label: string | null; grant_json: string; created_at: string; last_seen_at: string | null }>(
+        `SELECT id, label, grant_json, created_at, last_seen_at FROM tokens WHERE space = ? AND kind = 'member' AND revoked_at IS NULL ORDER BY created_at`,
+        space,
+      )
+      .toArray()
+      .map((r) => ({ id: r.id, label: r.label ?? "", handle: (JSON.parse(r.grant_json) as SpaceGrant).handle ?? "", created_at: r.created_at, last_seen_at: r.last_seen_at ?? r.created_at }));
+  }
+
+  /** The space's members (owner view): id, label, handle, joined, last used. */
+  async members(space: string): Promise<MemberInfo[]> {
+    this.ensureSpaces();
+    return this.activeSpace(space) ? this.memberRows(space) : [];
+  }
+
+  /** One member, for `GET /v1/space` asked with that member's key. */
+  async memberInfo(space: string, id: string): Promise<MemberInfo | undefined> {
+    this.ensureSpaces();
+    return this.activeSpace(space) ? this.memberRows(space).find((m) => m.id === id) : undefined;
+  }
+
+  /**
+   * Remove a member (or every member, with `*`): its key, and every agent key, CLI read session and paired browser it
+   * minted, are revoked in this one step, and its open pairing codes are dropped. Returns the number of keys revoked
+   * (0 = no such member).
+   */
+  async memberRevoke(space: string, id: string): Promise<number> {
+    this.ensureSpaces();
+    const ids = id === "*" ? this.memberRows(space).map((m) => m.id) : this.memberActive(space, id) ? [id] : [];
+    const now = new Date().toISOString();
+    let n = 0;
+    for (const m of ids) {
+      n += this.sql.exec(`UPDATE tokens SET revoked_at = ? WHERE space = ? AND revoked_at IS NULL AND (id = ? OR json_extract(grant_json, '$.member') = ?)`, now, space, m, m).rowsWritten;
+      this.sql.exec(`DELETE FROM pairings WHERE space = ? AND member = ?`, space, m);
+    }
+    return n;
+  }
+
+  /** A fresh one-time invite code (INVITE_TTL_MS, one use). At most MAX_OPEN_INVITES are open; minting another retires the oldest. */
+  async inviteCreate(space: string): Promise<{ code: string; expires_at: string; expires_in: number } | { error: string; code: "gone" }> {
+    const code = pairingCode();
+    const hash = await sha256Hex(inviteSaltText(this.claimSalt(), space, normalizeCode(code)));
+    this.ensureSpaces();
+    if (!this.activeSpace(space)) return { error: "space not found", code: "gone" };
+    const now = Date.now();
+    this.sql.exec(`DELETE FROM invites WHERE expires_at <= ?`, new Date(now).toISOString());
+    const open = this.sql.exec<{ id: string }>(`SELECT id FROM invites WHERE space = ? ORDER BY created_at DESC, rowid DESC`, space).toArray();
+    for (const old of open.slice(MAX_OPEN_INVITES - 1)) this.sql.exec(`DELETE FROM invites WHERE id = ?`, old.id);
+    const expires_at = new Date(now + INVITE_TTL_MS).toISOString();
+    this.sql.exec(`INSERT INTO invites (id, space, code_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`, `inv_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`, space, hash, new Date(now).toISOString(), expires_at);
+    return { code, expires_at, expires_in: INVITE_TTL_MS / 1000 };
+  }
+
+  /** Drop every open invite code of a space. */
+  async inviteCancelAll(space: string): Promise<number> {
+    this.ensureSpaces();
+    return this.sql.exec(`DELETE FROM invites WHERE space = ?`, space).rowsWritten;
+  }
+
+  /**
+   * Trade an invite code for a member key. Like pairingExchange: the code is compared in constant time against every
+   * open invite of the space (no early exit) and consumed in the same synchronous step that found it, so two requests
+   * can never both win it; every failure looks the same; a full space does not burn the code.
+   */
+  async inviteExchange(req: { space: string; code: string; label: string; handle?: string; maxMembers: number; maxTokens: number }): Promise<{ token: string; member: MemberInfo } | { error: string; code: "invalid" | "quota" | "closed" }> {
+    const salt = this.claimSalt();
+    const hash = await sha256Hex(inviteSaltText(salt, req.space, normalizeCode(req.code)));
+    const token = randomToken(); // minted whether or not the code matches: same work either way
+    const tokenHash = await sha256Hex(token);
+    // ---- no await below this line: select, compare, consume and insert happen in one step
+    this.ensureSpaces();
+    const nowIso = new Date().toISOString();
+    const rows = this.sql.exec<{ id: string; code_hash: string }>(`SELECT id, code_hash FROM invites WHERE space = ? AND expires_at > ?`, req.space, nowIso).toArray();
+    let hit: string | undefined;
+    for (const r of rows.length ? rows : [{ id: "", code_hash: "0".repeat(64) }]) if (constantTimeEqual(r.code_hash, hash) && r.id) hit = r.id;
+    const invalid = { error: "that invite code is not valid or has expired; ask the space's owner for a new one (npx @celador/weft invite)", code: "invalid" as const };
+    if (!hit || !this.activeSpace(req.space)) return invalid;
+    if (this.hostedModeNow() === "off") return { error: "hosted spaces are switched off on this gateway", code: "closed" };
+    if (this.memberRows(req.space).length >= req.maxMembers) return { error: `this space already has ${req.maxMembers} members; its owner can remove one with \`npx @celador/weft members revoke <id>\``, code: "quota" };
+    const active = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM tokens WHERE space = ? AND revoked_at IS NULL AND kind IS NOT 'device'`, req.space).one().n;
+    if (active >= req.maxTokens) return { error: `this space holds at most ${req.maxTokens} active keys; its owner can free some with \`npx @celador/weft uninstall\` in checkouts no longer used`, code: "quota" };
+    if (this.sql.exec(`DELETE FROM invites WHERE id = ?`, hit).rowsWritten !== 1) return invalid;
+    this.sql.exec(`DELETE FROM invites WHERE expires_at <= ?`, nowIso);
+    const label = cleanLabel(req.label, "teammate");
+    const handle = this.uniqueHandle(req.space, cleanHandle(req.handle || label));
+    const id = `mem_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const grant: SpaceGrant = { id, principal: `space:${req.space}:member:${handle}`, scopes: [], repos: [], space: req.space, role: "member", handle };
+    this.sql.exec(
+      `INSERT INTO tokens (id, hash, grant_json, label, created_at, space, kind, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, 'member', ?)`,
+      id,
+      tokenHash,
+      JSON.stringify(grant),
+      label,
+      nowIso,
+      req.space,
+      nowIso,
+    );
+    return { token, member: { id, label, handle, created_at: nowIso, last_seen_at: nowIso } };
+  }
+
+  /** `base`, or `base-2`, `base-3`, ...: never a handle any member of the space has had (removed ones included), so history stays unambiguous. */
+  private uniqueHandle(space: string, base: string): string {
+    const taken = new Set(
+      this.sql
+        .exec<{ h: string | null }>(`SELECT json_extract(grant_json, '$.handle') AS h FROM tokens WHERE space = ? AND kind = 'member'`, space)
+        .toArray()
+        .map((r) => r.h)
+        .filter((h): h is string => !!h),
+    );
+    if (!taken.has(base)) return base;
+    for (let i = 2; ; i++) {
+      const h = `${base.slice(0, HANDLE_MAX - String(i).length - 1)}-${i}`;
+      if (!taken.has(h)) return h;
+    }
   }
 }
 
@@ -1232,10 +1410,18 @@ export type SignupLimits = { perIpDay: number; perDay: number; maxSpaces: number
 export type SpaceInfo = { id: string; status: "active" | "deleted" | "suspended" | "erasing" | "erased"; label?: string; created_at: string };
 /** What an erasure removed. After it, the Registry keeps only the tombstone: space id, status 'erased', deleted_at, created_at (date only). */
 export type EraseReport = { space: string; status: "erased"; already_erased: boolean; erased: { repos: string[]; events: number; tokens: number } };
-/** A grant minted for a hosted space. `role` owner = the space API only (no WCP scopes). */
-export type SpaceGrant = Grant & { space?: string; role?: "owner" | "agent" | "system" | "viewer" | "device"; over_allowance?: boolean };
-/** A paired device (a browser, or the owner's CLI): what `weft viewers` lists. */
-export type DeviceInfo = { id: string; label: string; created_at: string; last_seen_at: string; expires_at: string; hard_expires_at: string };
+/**
+ * A grant minted for a hosted space. `role` owner = the space API only (no WCP scopes); member = a teammate's key, a
+ * subset of the space API (no WCP scopes either), with its `handle`. `member` on an agent key or device session = the
+ * member key that minted it (it is revoked with that member).
+ */
+export type SpaceGrant = Grant & { space?: string; role?: "owner" | "member" | "agent" | "system" | "viewer" | "device"; over_allowance?: boolean; handle?: string; member?: string };
+/** A paired device (a browser, or a CLI's read session): what `weft viewers` lists. `by` = the member who paired it. */
+export type DeviceInfo = { id: string; label: string; created_at: string; last_seen_at: string; expires_at: string; hard_expires_at: string; by?: string };
+/** A teammate who joined the space with an invite code: what `weft members` lists. */
+export type MemberInfo = { id: string; label: string; handle: string; created_at: string; last_seen_at: string };
+/** Who is asking, when a member key calls the space API. */
+export type MemberRef = { id: string; handle: string };
 
 /** A device session lives this long after its last use (sliding)... */
 export const SESSION_TTL_MS = 7 * 86_400_000;
@@ -1268,6 +1454,25 @@ export function normalizeCode(s: string): string {
 }
 
 const pairingSalt = (space: string, normalized: string) => `weft-pairing:${space}:${normalized}`;
+
+/** Invite codes (team join): the pairing code's format (10 symbols, ~2^49), 30 minutes, single use, at most 5 open per space. */
+export const INVITE_TTL_MS = 30 * 60_000;
+const MAX_OPEN_INVITES = 5;
+/** The hashed text of an invite code: the per-Registry random salt, the space, and the normalized code. */
+const inviteSaltText = (salt: string, space: string, normalized: string) => `weft-invite:${salt}:${space}:${normalized}`;
+
+/** A member's handle: lowercase letters, digits and '-', at most HANDLE_MAX, from what the teammate sent (or their label). */
+const HANDLE_MAX = 20;
+export function cleanHandle(s: unknown): string {
+  const t = typeof s === "string" ? s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, HANDLE_MAX).replace(/-+$/, "") : "";
+  return t || "member";
+}
+
+/** `base` as a member's agent id: `<base>.<handle>`, cut to the 64-char agent id limit. */
+export function slugAgent(base: string, handle: string): string {
+  const b = base.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[^A-Za-z0-9]+/, "") || "agent";
+  return `${b.slice(0, 63 - handle.length)}.${handle}`;
+}
 
 /** Claim codes (web purchases): 12 symbols of the same alphabet (~2^59), one hour, single use, at most 3 open per purchase. */
 export const CLAIM_TTL_MS = 60 * 60_000;
