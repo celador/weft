@@ -1,0 +1,48 @@
+tree-sitter grammars (packages/analyzer/grammars/*.wasm)
+
+The WebAssembly grammars that Weft's analyzer loads are compiled from these projects, each under
+the MIT License (versions and checksums: docs/languages.md):
+
+- tree-sitter-python.wasm: tree-sitter-python 0.25.0, https://github.com/tree-sitter/tree-sitter-python
+    Copyright (c) 2016 Max Brunsfeld
+- tree-sitter-c.wasm: tree-sitter-c 0.24.1, https://github.com/tree-sitter/tree-sitter-c
+    Copyright (c) 2014 Max Brunsfeld
+- tree-sitter-cpp.wasm: tree-sitter-cpp 0.23.4, https://github.com/tree-sitter/tree-sitter-cpp
+    Copyright (c) 2014 Max Brunsfeld
+- tree-sitter-swift.wasm: tree-sitter-swift 0.7.3, https://github.com/alex-pinkus/tree-sitter-swift
+    Copyright (c) 2021 alex-pinkus
+- tree-sitter-c_sharp.wasm: tree-sitter-c-sharp 0.23.5, https://github.com/tree-sitter/tree-sitter-c-sharp
+    Copyright (c) 2014-2023 Max Brunsfeld, Damien Guard, Amaan Qureshi, and contributors.
+- tree-sitter-ruby.wasm: tree-sitter-ruby 0.23.1, https://github.com/tree-sitter/tree-sitter-ruby
+    Copyright (c) 2016 Rob Rix
+- tree-sitter-php.wasm: tree-sitter-php 0.24.2, https://github.com/tree-sitter/tree-sitter-php
+    Copyright (c) 2017 Josh Vera, GitHub
+    Copyright (c) 2019 Max Brunsfeld, Amaan Qureshi, Christian Frøystad, Caleb White
+- tree-sitter-go.wasm: tree-sitter-go 0.25.0, https://github.com/tree-sitter/tree-sitter-go
+    Copyright (c) 2014 Max Brunsfeld
+- tree-sitter-rust.wasm: tree-sitter-rust 0.24.0, https://github.com/tree-sitter/tree-sitter-rust
+    Copyright (c) 2017 Maxim Sokolov
+- tree-sitter-java.wasm: tree-sitter-java 0.23.5, https://github.com/tree-sitter/tree-sitter-java
+    Copyright (c) 2017 Ayman Nadeem
+- tree-sitter-kotlin.wasm: @tree-sitter-grammars/tree-sitter-kotlin 1.1.0, https://github.com/tree-sitter-grammars/tree-sitter-kotlin
+    Copyright (c) 2024 Amaan Qureshi <amaanq12@gmail.com>
+
+MIT License, as it applies to each of the projects above:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

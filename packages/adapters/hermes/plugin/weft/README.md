@@ -135,3 +135,11 @@ The live E2E uses two real Hermes session identities and `model_tools.handle_fun
 a real throwaway local gateway, with no model inference: a cross-file stale-signature edit is blocked
 before disk write, and a same-file in-flight overlap receives its soft-claim diagnostic. It uses
 isolated Hermes/Weft homes and does not enable, replace or restart your installed plugin.
+
+## License
+
+MIT; see `LICENSE` in this folder. The plugin is a client of the Weft protocol and runs other Weft
+software only as separate processes: `/weft setup` runs the `@celador/weft` npm package, which is
+free for personal use and needs a Weft commercial license or Weft Pro at work
+(<https://weft.mx/license/>), and the optional `analyzer` setting runs a Weft analyzer bundle you
+build from the AGPL-3.0 source.

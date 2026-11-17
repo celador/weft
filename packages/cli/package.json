@@ -3,7 +3,7 @@
   "version": "0.5.0",
   "description": "Red squiggles for teams of coding agents. `npx @celador/weft` in any git repo: a gateway on your machine (hosted is opt-in), hooks for Claude Code, Codex, Copilot, Cursor, OpenCode, Gemini and Antigravity, an MCP server for the rest, and a live feed.",
   "mcpName": "io.github.celador/weft",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "homepage": "https://github.com/celador/weft#readme",
   "repository": { "type": "git", "url": "git+https://github.com/celador/weft.git", "directory": "packages/cli" },

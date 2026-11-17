@@ -56,6 +56,6 @@ Open questions:
 - **Hosted or self-hosted?** A Weft-run service, a deploy-to-your-own-Cloudflare kit (the stack already deploys per account), or both?
 - **What is the paid part?** Coordination itself, or the layer around it: evidence, best-of-N selection, landing queue, auto-revert, policies, history?
 - **Pricing unit?** Per seat, per repo, per agent, per landed change, or usage (sandbox minutes, model calls)?
-- **What stays open source?** Today everything is MIT: specs, coordinator, adapters, analyzer, web UI, Cloudflare apps. Does it all stay that way, and if not, where is the line?
+- **What stays open source?** Decided 2026-11-17: the source stays open, in two parts. The product (gateway, sequencer, analyzer, adapters, CLI, MCP server, feed, web UI, VS Code extension) is AGPL-3.0-only; the protocol specs and schema, the conformance suite and the agent plugins stay MIT so anyone can implement WCP and catalogs keep listing the plugins. The builds Weft distributes are free for personal use and need a commercial license or Pro at work ([commercial-license.md](commercial-license.md)). Everything up to 0.3.0 stays MIT.
 - **Where does Otto fit?** Part of the product, or a separate app that happens to be a good Weft client?
 - **First customers?** None yet; onboarding outside teams by hand is the stated next step (qa.md #13).

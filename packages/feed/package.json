@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "One Weft feed model + DOM view for every UI: ObserverClient (paging, streams with resume, actions), reducers ported from Otto (feed rows, Editing now, squiggles with cause links, actions, repo summary), text rendering, and a CSP-safe DOM component.",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "exports": {
     ".": "./src/index.ts",
     "./view": "./src/view/index.ts",

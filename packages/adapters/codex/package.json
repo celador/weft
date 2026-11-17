@@ -1,6 +1,7 @@
 {
   "name": "@weft/adapter-codex",
   "version": "0.0.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "WCP v0.1 adapter for Codex apply_patch hooks (L2): preflight checks, post-edit accounting, and files shell commands write.",

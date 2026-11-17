@@ -65,3 +65,23 @@ jobs:
         with:
           node-version: 24
       - run: pnpm audit --prod --audit-level high
+
+  # Production dependency licenses: permissive only (MIT, ISC, BSD, Apache-2.0, ...), because the
+  # builds Weft distributes are offered under commercial terms as well as the AGPL and cannot carry
+  # copyleft or source-available third-party code. Bundled devDependencies are checked by the CLI
+  # build (the `gate` job) when it generates the package LICENSE: scripts/third-party-notices.mjs.
+  licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/license-check.mjs

@@ -13,4 +13,6 @@ Short version:
 7. Public hostnames are `<worker>.elier.ai` (Workers custom domains, `workers_dev = false`). Never use or
    publish `*.workers.dev` URLs: this account's workers.dev subdomain is a customer's company name.
 
-License: MIT.
+License: AGPL-3.0-only for the product; MIT for docs/protocol, packages/protocol, packages/conformance,
+plugins/weft and the Hermes catalog plugin (see LICENSE). Builds we distribute also carry the commercial
+terms in docs/commercial-license.md. Outside contributions need the CLA (CLA.md).

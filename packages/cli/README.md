@@ -101,5 +101,9 @@ when the space has more people than seats.
 - **Your Cloudflare (`deploy`):** logs in with wrangler (browser OAuth) and deploys the gateway
   Worker with two Durable Objects to your account. Only you can create spaces on it.
 
-Requires Node.js 22 or newer and git. MIT licensed.
+Requires Node.js 22 or newer and git.
+
+License: this package is free for personal use; using it at work needs a Weft commercial license or
+Weft Pro (https://weft.mx/license/). The source code is AGPL-3.0-only (protocol and plugins MIT), and
+builds you make from it are under the AGPL only. Versions up to 0.3.0 are MIT. See `LICENSE`.
 Source and docs: https://github.com/celador/weft
