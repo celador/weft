@@ -33,8 +33,7 @@ export default defineWorkersConfig(async () => {
               STRIPE_PRICE_PRO_YEAR: "price_pro_year",
               // Pro fair use: 5 events per seat per month (tiny, so a test can pass it)
               WEFT_PRO_FAIR_USE_EVENTS: "5",
-              WEFT_WELCOME_URL: "https://site.test/welcome/",
-              WEFT_PRICING_URL: "https://site.test/pricing/",
+              WEFT_ACCOUNT_URL: "https://site.test/account/",
               WEFT_SITE_ORIGINS: "https://site.test",
               STRIPE_METER_EVENT_NAME: "weft_agent_events",
             },

@@ -1,7 +1,9 @@
-// Hosted spaces (`npx weft`): anonymous, free tenants on a shared gateway. No login and no
-// third-party identity: POST /v1/spaces returns a space owner token, which is the only key.
+// Hosted spaces (`npx weft`): tenants on a shared gateway. A space's owner token is its key. On a gateway with
+// accounts (CLERK_ISSUER set: the hosted one), new spaces are made by `weft login` (accounts.ts) and belong to an
+// account; spaces created anonymously before accounts keep working, and `weft login` attaches them.
 //
-//   POST   /v1/spaces                  create a space (open signups, or the admin token)
+//   POST   /v1/spaces                  create a space (open signups without accounts, or the admin token)
+//   POST   /v1/space/logout            revoke this owner key (spaces on an account only: logging in again gets a new one)
 //   GET    /v1/space                   the space, its repos, token count, limits
 //   POST   /v1/space/repos             {name} -> repo `<space>-<name>` (idempotent)
 //   POST   /v1/space/tokens            {kind: agent|system, repo, agent?, label?}
@@ -15,7 +17,7 @@
 //   POST   /v1/space/viewers           {label} a device session for the owner's own CLI (token returned once)
 //   DELETE /v1/space/viewers[/{id}]    revoke one paired device, or all of them
 //   POST   /v1/pair                    {space, code, label?} no auth: trade a code for a device session cookie
-//   POST   /v1/space/billing/{checkout,portal,claim}   Weft Pro (billing.ts)
+//   POST   /v1/space/billing/{checkout,portal}   Weft Pro for the space's account (billing.ts)
 //   POST   /v1/space/invites           a one-time invite code (30 min, single use) for a teammate on another machine
 //   DELETE /v1/space/invites           drop every open invite code
 //   GET    /v1/space/members           the members (label, handle, joined, last used)
@@ -41,14 +43,14 @@ import type { DeviceInfo, EraseReport, MemberInfo, MemberRef, Registry, SpaceGra
 import { FEED_HTML } from "./feed-page";
 import { spaceBilling } from "./billing";
 import { stripeConfig, type StripeEnv } from "./stripe";
+import { clerkConfig, type ClerkEnv } from "./clerk";
 
-export interface SpacesEnv extends StripeEnv {
+export interface SpacesEnv extends StripeEnv, ClerkEnv {
   /** Free agent events per space per month (default 5000, docs/pricing.md). */
   WEFT_FREE_EVENTS?: string;
   /** Weft Pro fair use per seat per month (default 50000): flagged for the operator, never cut off. */
   WEFT_PRO_FAIR_USE_EVENTS?: string;
-  WEFT_WELCOME_URL?: string;
-  WEFT_PRICING_URL?: string;
+  WEFT_ACCOUNT_URL?: string;
   WEFT_SITE_ORIGINS?: string;
   WEFT_REGISTRY: DurableObjectNamespace<Registry>;
   WEFT_ADMIN_TOKEN?: string;
@@ -207,8 +209,8 @@ async function throttlePairing(env: SpacesEnv, k: Pick<SpacesKit, "fail">, net: 
 }
 
 /**
- * Throttle an unauthenticated (or cheaply authenticated) money-adjacent route by the caller's network: GET /buy,
- * POST /v1/billing/claim, POST /v1/space/billing/claim. Same budget as pairing (WEFT_PAIR_RATE, 10 a minute), keyed
+ * Throttle an unauthenticated (or cheaply authenticated) route by the caller's network: POST /v1/login, POST
+ * /v1/login/approve (also per account). Same budget as pairing (WEFT_PAIR_RATE, 10 a minute), keyed
  * `<bucket>:net:<daily network key>` plus any extra keys (e.g. `space:<id>`). Every attempt counts, right or wrong.
  */
 export async function throttleNetwork(env: SpacesEnv, k: Pick<SpacesKit, "fail">, req: Request, bucket: string, extraKeys: string[] = []): Promise<void> {
@@ -296,6 +298,8 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
     if (!admin) {
       if (env.WEFT_HOSTED_OFF === "1") k.fail("unavailable", "hosted spaces are switched off on this gateway");
       if (env.WEFT_SIGNUPS !== "open") k.fail("forbidden", "this gateway does not offer free spaces; ask its operator, or run your own with `npx @celador/weft deploy`");
+      // With accounts, a new hosted space comes from `weft login` (it belongs to the signed-in account).
+      if (clerkConfig(env)) k.fail("forbidden", "new hosted spaces need a Weft account: run `npx @celador/weft login` (sign up free on weft.mx), or stay local: `npx @celador/weft use local`", { reason: "login_required", login: "npx @celador/weft login" });
       const ok = env.WEFT_SIGNUP_RATE ? (await env.WEFT_SIGNUP_RATE.limit({ key: net })).success : localLimit(`signup:${net}`, 10);
       if (!ok) k.fail("rate_limited", "too many new spaces from your network; wait a minute");
     }
@@ -330,10 +334,19 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
       limits: { repos: L.maxRepos, tokens: L.maxTokens, requests_per_minute: L.rpm },
       usage: await reg.spaceUsage(space),
       billing: { enabled: stripeConfig(env) !== null },
+      // The Clerk user id the space belongs to (null: an anonymous space); `accounts` says whether this gateway has them.
+      account: await reg.spaceAccount(space),
+      accounts: clerkConfig(env) !== null,
     });
   }
-  const bm = /^\/v1\/space\/billing\/(checkout|portal|claim)$/.exec(path);
-  if (bm && m === "POST") return spaceBilling(req, env, { ...k, throttle: (r, bucket, extra) => throttleNetwork(env, k, r, bucket, extra) }, space, bm[1] as "checkout" | "portal" | "claim");
+  const bm = /^\/v1\/space\/billing\/(checkout|portal)$/.exec(path);
+  if (bm && m === "POST") return spaceBilling(req, env, { ...k, throttle: (r, bucket, extra) => throttleNetwork(env, k, r, bucket, extra) }, space, bm[1] as "checkout" | "portal");
+  if (path === "/v1/space/logout" && m === "POST") {
+    const r = await reg.spaceLogout(space, g.id);
+    if ("error" in r) k.fail(r.code === "gone" ? "unauthorized" : "forbidden", r.error, { reason: r.code });
+    k.dropGrants();
+    return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
+  }
   if (path === "/v1/space" && m === "DELETE") {
     // Real erasure: every repo Durable Object of the space is emptied and its Registry rows are deleted.
     const r = await reg.eraseSpace(space);

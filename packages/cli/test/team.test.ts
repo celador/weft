@@ -150,7 +150,7 @@ describe("parseArgs / parseJoin / plan for team join", () => {
     expect(parseArgs(["members", "revoke", "alice"]).o.positional).toEqual(["revoke", "alice"]);
     expect(() => parseArgs(["--join", "nope"])).toThrow(/<space>:<code>/);
     expect(() => parseArgs(["--local", "--join", "sp0abc1def2g:K7M2P-9XQ4T"])).toThrow(/shared gateway/);
-    expect(() => parseArgs(["--claim", "AAAA-BBBB-CCCC", "--join", "sp0abc1def2g:K7M2P-9XQ4T"])).toThrow(/separate steps/);
+    expect(() => parseArgs(["--claim", "AAAA-BBBB-CCCC", "--join", "sp0abc1def2g:K7M2P-9XQ4T"])).toThrow(/unknown option --claim/);
   });
 
   it("a member's agent ids carry the handle, unique per checkout and at most 64 chars", () => {

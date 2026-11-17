@@ -25,7 +25,9 @@
         <a href="/pricing/" aria-current="page">Pricing</a>
         <a href="https://github.com/celador/weft#readme">Docs</a>
         <a href="https://github.com/celador/weft?utm_source=weft-site&amp;utm_medium=web&amp;utm_campaign=launch&amp;utm_content=repo">GitHub</a>
+        <a href="/sign-in/">Sign in</a>
       </nav>
+      <a class="btn btn-small btn-ghost nav-signup" href="/sign-up/">Sign up</a>
       <a class="btn btn-small" href="/#start">Get started</a>
     </div>
   </header>
@@ -72,8 +74,8 @@
           </div>
         </div>
         <p class="total" data-pro-total aria-live="polite">1 user × $98 = $98 a year</p>
-        <a class="btn btn-block" href="https://weft-hosted.elier.ai/buy?interval=year&amp;seats=1" data-buy-pro>Get Pro</a>
-        <p class="plan-fine">Pay with Stripe. Your claim code shows on the next page.</p>
+        <a class="btn btn-block" href="/account/?buy=year&amp;seats=1" data-buy-pro>Get Pro</a>
+        <p class="plan-fine">Sign up free, then pay with Stripe.</p>
         <ul class="ticks">
           <li>Everything in Free</li>
           <li>No monthly event limit</li>
@@ -122,17 +124,17 @@
     <section class="faq doc" aria-labelledby="faq-h">
       <h2 id="faq-h">Questions</h2>
       <h3>What counts as a user?</h3>
-      <p>One person whose coding agents work in the space. Agents don't count: one person running five agents is one user. Weft has no accounts, so you pick the number, and you can change it any time with <code>npx @celador/weft billing</code>.</p>
+      <p>One person whose coding agents work in your hosted space. Agents don't count: one person running five agents is one user. You pick the number and can change it any time under Manage billing on <a href="/account/">your account</a>.</p>
       <h3>Can teammates on other machines join my space?</h3>
-      <p>Yes. Run <code>npx @celador/weft invite</code> in your repo. It prints a one-time code and the command your teammate runs in their clone. They get their own key, never yours, and their agents' edits are checked against yours. <code>npx @celador/weft members</code> shows who joined and removes anyone at once. Pro is per user: add a seat for each person with <code>npx @celador/weft billing</code>.</p>
+      <p>Yes. Run <code>npx @celador/weft invite</code> in your repo. It prints a one-time code and the command your teammate runs in their clone. They get their own key, never yours, and their agents' edits are checked against yours. <code>npx @celador/weft members</code> shows who joined and removes anyone at once. Pro is per user: add a seat for each person on <a href="/account/">your account page</a>. Each of your own machines connects with <code>npx @celador/weft login</code>.</p>
       <h3>What happens when a free hosted space passes <span data-fill="free-events">5,000</span> events?</h3>
       <p>Your agents keep working, but their edits aren't coordinated until the next month (UTC), and each agent is told so. Reads and the feed keep working. Upgrade to Pro, or switch to your own gateway with <code>npx @celador/weft use local</code>, which has no limit. An event is one edit, claim, release or checkpoint an agent adds to the log. Heartbeats, reads, checks that pass and everything a human does are free.</p>
       <h3>Where does my code go?</h3>
-      <p>On Free it stays on your machine; self-hosted and Pilot send edit events to a Worker in your Cloudflare account. On Pro, edit events (file paths, diffs, symbol names) go to Weft's gateway on Cloudflare and stay there until you erase the space with <code>npx @celador/weft uninstall --space</code>. Stripe holds your email and card; Weft keeps the Stripe customer id, the plan and the number of users. <a href="/privacy/">Privacy policy</a>.</p>
+      <p>On Free it stays on your machine; self-hosted and Pilot send edit events to a Worker in your Cloudflare account. On Pro, edit events (file paths, diffs, symbol names) go to Weft's gateway on Cloudflare and stay there until you erase the space with <code>npx @celador/weft uninstall --space</code>. Clerk holds your sign-in (email, password or code); Stripe holds your card and billing email; Weft's gateway keeps only your account id, the Stripe customer id, the plan and the number of users. <a href="/privacy/">Privacy policy</a>.</p>
       <h3>Does Weft stop agents from conflicting?</h3>
       <p>It catches conflicts while the agents are still editing: an agent whose edit relies on code another agent just changed gets a diagnostic in its tool result and fixes its own edit. You choose whether such an edit is blocked or only flagged (enforce or advise mode).</p>
       <h3>Can I cancel?</h3>
-      <p>Yes, any time. <code>npx @celador/weft billing</code> opens Stripe's billing page, where you change the number of users, update your card or cancel. When Pro ends, the space goes back to Free. Nothing is deleted.</p>
+      <p>Yes, any time. Manage billing on <a href="/account/">your account</a> (or <code>npx @celador/weft billing</code>) opens Stripe's billing page, where you change the number of users, update your card or cancel. When Pro ends, the space goes back to Free. Nothing is deleted.</p>
       <h3>Who bills me?</h3>
       <p>Stripe, as &quot;Atelier&quot;, in US dollars, at the start of each month or year.</p>
       <h3>Is it open source?</h3>

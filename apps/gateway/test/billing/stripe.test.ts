@@ -120,13 +120,14 @@ describe("intentOf: which Stripe events change a plan", () => {
     expect(intentOf({ id: "e", type: "invoice.payment_failed", created: 1 })).toBeNull();
   });
 
-  it("a /buy checkout (no space yet) is a web purchase with its session, customer and subscription", () => {
-    const web = { id: "evt", type: "checkout.session.completed", created: 1, data: { object: { id: "cs_test_abc12345", mode: "subscription", metadata: { weft_purchase: "web" }, customer: "cus_9", subscription: "sub_9", payment_status: "paid" } } };
-    expect(intentOf(web)).toEqual({ customer: "cus_9", plan: "paid", checkout: true, subscription: "sub_9", purchase: "cs_test_abc12345" });
-    const o = web.data.object as Record<string, unknown>;
-    expect(intentOf({ ...web, data: { object: { ...o, subscription: undefined } } })).toBeNull();
-    expect(intentOf({ ...web, data: { object: { ...o, payment_status: "unpaid", amount_total: 1200 } } })).toBeNull();
-    expect(intentOf({ ...web, data: { object: { ...o, metadata: {} } } })).toBeNull();
+  it("an account's checkout (client_reference_id = Clerk user id, same id in metadata) is the account's", () => {
+    const acc = { id: "evt", type: "checkout.session.completed", created: 1, data: { object: { id: "cs_test_abc12345", mode: "subscription", client_reference_id: "user_2abcdefGHIJ", metadata: { weft_account: "user_2abcdefGHIJ", weft_plan: "pro" }, customer: "cus_9", subscription: "sub_9", payment_status: "paid" } } };
+    expect(intentOf(acc)).toEqual({ account: "user_2abcdefGHIJ", customer: "cus_9", plan: "paid", checkout: true, subscription: "sub_9" });
+    const o = acc.data.object as Record<string, unknown>;
+    // the metadata must name the same account; an old anonymous /buy session is not ours any more
+    expect(intentOf({ ...acc, data: { object: { ...o, metadata: { weft_account: "user_2someoneELSE" } } } })).toBeNull();
+    expect(intentOf({ ...acc, data: { object: { ...o, client_reference_id: null, metadata: { weft_purchase: "web" } } } })).toBeNull();
+    expect(intentOf({ ...acc, data: { object: { ...o, payment_status: "unpaid", amount_total: 1200 } } })).toBeNull();
   });
 
   it("a subscription event carries the Pro seats when the subscription is Pro", () => {

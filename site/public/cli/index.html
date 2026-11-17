@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b0d12">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Connect a machine · Weft</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/assets/img/weft-mark-180.png">
+  <link rel="stylesheet" href="/assets/site.css">
+</head>
+<body data-page="cli">
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/" aria-label="Weft home"><img src="/favicon.svg" alt="" width="22" height="22">weft</a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="/#how">How it works</a>
+        <a href="/pricing/">Pricing</a>
+        <a href="https://github.com/celador/weft#readme">Docs</a>
+        <a href="/support/">Support</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap doc cli" aria-live="polite">
+    <section data-state="loading"><h1>Connect a machine</h1><p class="meta">Loading…</p></section>
+    <section data-state="error" hidden><h1>Connect a machine</h1><p class="meta">Something went wrong: <span data-error></span></p></section>
+    <section data-state="nocode" hidden><h1>Connect a machine</h1><p class="meta">This page confirms the code <code>npx @celador/weft login</code> prints. Run that in a terminal and open the address it shows.</p></section>
+    <section data-state="confirm" hidden>
+      <h1>Connect this machine to your account?</h1>
+      <p class="meta">Check that the code matches the one in your terminal.</p>
+      <p class="code" data-code></p>
+      <div class="panel">
+        <p>Signed in as <strong data-email></strong>. The terminal that showed this code gets a key for your hosted space. Only confirm a code you started yourself.</p>
+        <div class="row"><button class="btn" type="button" data-approve>Connect</button><a class="btn btn-ghost" href="/account/">Cancel</a></div>
+        <p class="err" data-approve-error></p>
+      </div>
+    </section>
+    <section data-state="done" hidden><h1>Connected.</h1><p class="meta">Go back to your terminal. You can close this tab.</p><p>Your plan and spaces: <a href="/account/">your account</a>.</p></section>
+    <noscript><p>This page needs JavaScript.</p></noscript>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <span class="brand"><img src="/favicon.svg" alt="" width="18" height="18">weft</span>
+      <nav aria-label="Footer">
+        <a href="/pricing/">Pricing</a>
+        <a href="/privacy/">Privacy</a>
+        <a href="/terms/">Terms</a>
+        <a href="/support/">Support</a>
+      </nav>
+    </div>
+  </footer>
+  <script src="/weft-config.js"></script>
+  <script src="/assets/account.js" defer></script>
+</body>
+</html>

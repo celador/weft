@@ -17,7 +17,7 @@
 //   weft use hosted|local|URL   choose the default gateway
 //   weft usage                  the hosted space's plan (Free or Weft Pro with its seats) and events this month
 //   weft upgrade [--seats N] [--year]   Weft Pro, per user (Stripe Checkout); `weft billing` manages it (Stripe portal)
-//   weft --hosted --claim CODE  a purchase made on weft.mx (the welcome page's code) makes this repo's space Pro
+//   weft login | logout | whoami   a Weft account for the hosted gateway (sign up free on weft.mx; local needs none)
 //   weft invite                 (owner) a one-time code + the command a teammate on another machine runs to join
 //   weft --hosted --join SPACE:CODE [--repo NAME] [--as NAME]   join a teammate's space with your own member key
 //   weft members [revoke <id|handle>|--all]   (owner) who joined; remove one or all (their keys stop working)
@@ -53,7 +53,8 @@ import {
   type HermesPointer,
   type RepoPointer,
 } from "./gateways";
-import { billing as billingPage, claim as claimPurchase, looksLikeClaimCode, upgrade as upgradePage, usage as showUsage } from "./billing";
+import { billing as billingPage, upgrade as upgradePage, usage as showUsage } from "./billing";
+import { login, logout, whoami } from "./login";
 import { ask, c, configDir, git, info, mainCheckout, ok, openUrl, readJson, readSecret, slug, tilde, tryGit, VERSION, warn, WeftError, worktrees, writeJson } from "./util";
 
 type Opts = {
@@ -73,8 +74,6 @@ type Opts = {
   /** `weft upgrade`: Weft Pro seats (default 1) and yearly billing. */
   seats?: number;
   year: boolean;
-  /** A claim code from the weft.mx welcome page. */
-  claim?: string;
   /** `--join <space>:<code>`: join a teammate's space with an invite code. */
   join?: { space: string; code: string };
   /** `--as NAME`: how a joining teammate is shown to the owner (default: git's user.name). */
@@ -85,7 +84,7 @@ type Opts = {
 export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
   const o: Opts = { local: false, hosted: false, yes: false, open: true, space: false, all: false, year: false, positional: [] };
   let cmd = "init";
-  const known = new Set(["init", "demo", "add", "status", "pair", "viewers", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "usage", "upgrade", "billing", "invite", "members", "help", "version"]);
+  const known = new Set(["init", "demo", "add", "status", "pair", "viewers", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "usage", "upgrade", "billing", "invite", "members", "login", "logout", "whoami", "help", "version"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     const val = () => {
@@ -109,7 +108,6 @@ export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
     else if (a === "--seats") o.seats = Number(val());
     else if (a === "--year" || a === "--yearly") o.year = true;
     else if (a === "--month" || a === "--monthly") o.year = false;
-    else if (a === "--claim") o.claim = val();
     else if (a === "--join") {
       const v = val();
       const j = parseJoin(v);
@@ -124,15 +122,8 @@ export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
   }
   if (o.local && o.hosted) throw new WeftError("--local and --hosted contradict each other", "Local is the default; add --hosted only to use a hosted space.");
   if (o.seats !== undefined && (!Number.isInteger(o.seats) || o.seats < 1 || o.seats > 999)) throw new WeftError("--seats must be a whole number from 1 to 999");
-  if (o.claim !== undefined) {
-    if (o.local) throw new WeftError("a claim code is for a hosted space", "Run: npx @celador/weft --hosted --claim <code>");
-    if (!looksLikeClaimCode(o.claim)) throw new WeftError("that does not look like a claim code (XXXX-XXXX-XXXX)", "Copy it from the welcome page you saw after paying.");
-    // A purchase made on weft.mx is for the hosted gateway: --claim implies --hosted unless another gateway is named.
-    if (!o.url) o.hosted = true;
-  }
   if (o.join) {
     if (o.local) throw new WeftError("--join is for a shared gateway (hosted, or your team's own)", "Run: npx @celador/weft --hosted --join <space>:<code>");
-    if (o.claim) throw new WeftError("--join and --claim are separate steps", "Join first; the space's owner manages Weft Pro (npx @celador/weft billing).");
     // An invite is for the hosted gateway unless the owner's command names another one with --url.
     if (!o.url) o.hosted = true;
   }
@@ -176,7 +167,8 @@ ${c.bold("npx @celador/weft")}            in a git repo: a gateway on this machi
   upgrade [--seats N] [--year]
                               Weft Pro for the hosted space, per user, monthly or yearly (Stripe Checkout)
   billing                     change seats, payment method, invoices or cancel (Stripe portal)
-  --hosted --claim CODE       bought Weft Pro on weft.mx? this makes the repo's hosted space Pro (code from the welcome page)
+  login                       sign in to your Weft account (free, weft.mx) for hosted spaces; keeps this repo's space
+  logout                      this machine forgets its hosted key       whoami   which space and account this machine uses
 
 Teams (a hosted space, or your own gateway):
   invite                      a one-time code (30 min, single use) and the command a teammate runs on their machine
@@ -365,12 +357,7 @@ async function init(o: Opts, addName?: string | true, fresh = false): Promise<st
     acc = { space: gw.space!, key: gw.owner!, role: "owner" };
     const where = kindOf(url!) === "hosted" ? "hosted space on Cloudflare" : kindOf(url!) === "local" ? "local space" : "space";
     ok(`${created ? "created your" : "using your"} ${where} ${c.bold(gw.space!)} ${host}`);
-    if (kindOf(url!) === "hosted" && !o.claim) info(`Hosted plan: Free, a monthly allowance of agent events ${c.dim("(npx @celador/weft usage)")}; Weft Pro has no cap, per user ${c.dim("(npx @celador/weft upgrade)")}`);
-  }
-  if (o.claim) {
-    if (acc.role === "member") throw new WeftError("only the space's owner can attach a purchase to it", "Claim it in a repo with a space of your own, or send the code to the owner.");
-    const p = await claimPurchase(api, url!, acc.key, o.claim);
-    ok(`Weft Pro: ${p.seats} ${p.seats === 1 ? "seat" : "seats"}, billed ${p.interval === "year" ? "yearly" : "monthly"} ${c.dim("(no event cut-off; manage it: npx @celador/weft billing)")}`);
+    if (kindOf(url!) === "hosted") info(`Hosted plan: Free, a monthly allowance of agent events ${c.dim("(npx @celador/weft usage)")}; Weft Pro has no cap, per user ${c.dim("(npx @celador/weft upgrade, or weft.mx/account)")}`);
   }
   let r;
   try {
@@ -1007,6 +994,22 @@ function use(o: Opts): void {
   ok(`default gateway: ${target === "local" ? `local (${url})` : target === "hosted" ? `hosted (${url}); your edits go there` : url}. Run npx @celador/weft in a repo to move it there.`);
 }
 
+// ------------------------------------------------------------------ accounts
+
+/** Accounts live on the hosted gateway (or the one --url / WEFT_URL names). */
+function accountUrlFor(o: Opts): string {
+  return (o.url ?? process.env.WEFT_URL ?? HOSTED_URL).replace(/\/+$/, "");
+}
+
+/** This checkout's git root, or undefined outside a repo (login works anywhere). */
+function hereRoot(o: Opts): string | undefined {
+  try {
+    return gitRoot(resolve(o.dir ?? process.cwd()));
+  } catch {
+    return undefined;
+  }
+}
+
 // ------------------------------------------------------------------ entry
 
 export async function main(argv: string[]): Promise<number> {
@@ -1083,9 +1086,21 @@ export async function main(argv: string[]): Promise<number> {
     case "upgrade": {
       const s = spaceHere(o);
       ownerOnly(s, "change its plan");
-      await upgradePage(s.ptr.url, s.owner, o.open, { seats: o.seats ?? 1, interval: o.year ? "year" : "month" });
+      await upgradePage(s.ptr.url, s.owner, o.open, { seats: o.seats ?? 1, interval: o.year ? "year" : "month" }, hereRoot(o));
       return 0;
     }
+    case "login": {
+      const url = accountUrlFor(o);
+      await login(url, { open: o.open, ...(hereRoot(o) ? { root: hereRoot(o)! } : {}) });
+      console.log(c.dim("Your plan and spaces: https://weft.mx/account/   In a repo: npx @celador/weft --hosted"));
+      return 0;
+    }
+    case "logout":
+      await logout(accountUrlFor(o), hereRoot(o));
+      return 0;
+    case "whoami":
+      await whoami(accountUrlFor(o), hereRoot(o));
+      return 0;
     case "billing": {
       const s = spaceHere(o);
       ownerOnly(s, "manage its billing");

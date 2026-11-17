@@ -25,7 +25,9 @@
         <a href="/pricing/">Pricing</a>
         <a href="https://github.com/celador/weft#readme">Docs</a>
         <a href="https://github.com/celador/weft?utm_source=weft-site&amp;utm_medium=web&amp;utm_campaign=launch&amp;utm_content=repo">GitHub</a>
+        <a href="/sign-in/">Sign in</a>
       </nav>
+      <a class="btn btn-small btn-ghost nav-signup" href="/sign-up/">Sign up</a>
       <a class="btn btn-small" href="/#start">Get started</a>
     </div>
   </header>
@@ -40,16 +42,19 @@
     <h2>The hosted space</h2>
     <p>The hosted gateway at <code>weft-hosted.elier.ai</code> is an optional service. We may change it, limit it (see the limits in the <a href="https://github.com/celador/weft/blob/main/docs/hosted.md">hosted docs</a>), pause new spaces, or end it. On the Free plan it is best effort, with no uptime guarantee and no support obligation. When the gateway is unreachable, Weft&#39;s adapters let your agents keep working without coordination. You can run the same gateway on your machine or in your own Cloudflare account at any time.</p>
 
+    <h2>Your account</h2>
+    <p>Hosted spaces need a free Weft account, made on weft.mx with your email address; sign-in is run for us by Clerk. Keep your sign-in to yourself, and only confirm a <code>weft login</code> code you started: confirming gives that terminal a key to your hosted spaces. You can delete your account at any time on your account page; that cancels Pro and erases your hosted spaces. We may suspend an account that breaks the acceptable-use rules below.</p>
+
     <h2>Plans</h2>
     <p>Current prices are on <a href="/pricing/">the pricing page</a>.</p>
     <ul>
       <li><strong>Free.</strong> The software on your machine or your Cloudflare account, at no cost. A free hosted space gets 5,000 agent events a month (UTC). Above that, its agents keep working without coordination until the next month. You are never charged on Free.</li>
-      <li><strong>Pro.</strong> A subscription for one hosted space, priced per user and billed in advance each month or each year through Stripe, where the charge shows as &quot;Atelier&quot;. A user is one person whose coding agents work in the space. Weft has no accounts, so you choose the number of users; it should cover everyone who uses the space. Pro has no monthly event limit. Fair use is 50,000 agent events per user per month; a space far above that may hear from us, and it is not cut off.</li>
+      <li><strong>Pro.</strong> A subscription for your Weft account, priced per user and billed in advance each month or each year through Stripe, where the charge shows as &quot;Atelier&quot;. Every hosted space of the account is Pro. A user is one person whose coding agents work in the account&#39;s spaces; you choose the number of users, and it should cover everyone who uses them. Pro has no monthly event limit. Fair use is 50,000 agent events per user per month; a space far above that may hear from us, and it is not cut off.</li>
       <li><strong>Pilot.</strong> A one-time fee for setting Weft up on your Cloudflare account and 30 days of support, agreed by email before we start.</li>
     </ul>
 
     <h2>Buying, changing and cancelling Pro</h2>
-    <p>You buy Pro on <a href="/pricing/">weft.mx/pricing</a> or with <code>npx @celador/weft upgrade</code>. A purchase made on the website comes with a one-time claim code; running <code>npx @celador/weft --hosted --claim &lt;code&gt;</code> attaches Pro to a hosted space. Keep the code private until you use it. Change the number of users, update your card, see invoices or cancel with <code>npx @celador/weft billing</code>, which opens Stripe&#39;s billing page. When you cancel, Pro stays on until the end of the period you paid for, then the space goes back to Free and nothing in it is deleted. We don&#39;t refund partial periods. If something went wrong with a charge, email <a href="mailto:john@elier.ai">john@elier.ai</a>.</p>
+    <p>You buy Pro signed in to your Weft account, on <a href="/account/">your account page</a> (or from <a href="/pricing/">pricing</a>, or with <code>npx @celador/weft upgrade</code>, which asks you to sign in first). Change the number of users, update your card, see invoices or cancel with Manage billing on your account page (or <code>npx @celador/weft billing</code>), which opens Stripe&#39;s billing page. When you cancel, Pro stays on until the end of the period you paid for, then the space goes back to Free and nothing in it is deleted. We don&#39;t refund partial periods. If something went wrong with a charge, email <a href="mailto:john@elier.ai">john@elier.ai</a>.</p>
 
     <h2>Acceptable use</h2>
     <p>Don&#39;t use the hosted space to store or share illegal content, to attack, overload or probe the service or other users, to get around its limits, or to read spaces whose keys you weren&#39;t given. We may suspend or delete a space that breaks these rules.</p>

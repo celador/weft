@@ -46,13 +46,14 @@ export function stripeConfig(env: StripeEnv): StripeConfig | null {
 }
 
 /** What the gateway needs from a Stripe subscription: status, and the Pro seats and interval when it is a Pro one. */
-export type SubscriptionFacts = { id: string; customer?: string; status: string; seats?: number; interval?: "month" | "year"; pro: boolean };
+export type SubscriptionFacts = { id: string; customer?: string; status: string; seats?: number; interval?: "month" | "year"; pro: boolean; periodEnd?: number };
 
 type StripeSubscription = {
   id?: unknown;
   status?: unknown;
   customer?: unknown;
-  items?: { data?: Array<{ quantity?: unknown; price?: { id?: unknown; recurring?: { interval?: unknown; usage_type?: unknown } } }> };
+  current_period_end?: unknown;
+  items?: { data?: Array<{ quantity?: unknown; current_period_end?: unknown; price?: { id?: unknown; recurring?: { interval?: unknown; usage_type?: unknown } } }> };
 };
 
 /**
@@ -77,6 +78,8 @@ export function subscriptionFacts(o: unknown, prices?: { month: string; year: st
     pro,
     ...(pro && typeof q === "number" && Number.isInteger(q) && q > 0 ? { seats: q } : {}),
     ...(pro ? { interval: interval as "month" | "year" } : {}),
+    // The renewal date: on the item since Stripe API 2025-03-31, on the subscription before.
+    ...(typeof item?.current_period_end === "number" ? { periodEnd: item.current_period_end } : typeof s.current_period_end === "number" ? { periodEnd: s.current_period_end } : {}),
   };
 }
 

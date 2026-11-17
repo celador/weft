@@ -87,9 +87,11 @@ export class Api {
       j = undefined;
     }
     if (!r.ok) {
-      const err = new WeftError(`${j?.error?.message ?? text.slice(0, 200) ?? r.statusText} (${r.status}${j?.error?.code ? ` ${j.error.code}` : ""})`);
-      (err as WeftError & { status?: number; code?: string }).status = r.status;
-      (err as WeftError & { status?: number; code?: string }).code = j?.error?.code;
+      const e = j?.error as { code?: string; message?: string; details?: Record<string, unknown> } | undefined;
+      const err = new WeftError(`${e?.message ?? text.slice(0, 200) ?? r.statusText} (${r.status}${e?.code ? ` ${e.code}` : ""})`) as WeftError & { status?: number; code?: string; details?: Record<string, unknown> };
+      err.status = r.status;
+      err.code = e?.code;
+      if (e?.details && typeof e.details === "object") err.details = e.details;
       throw err;
     }
     return j as T;
@@ -105,7 +107,19 @@ export class Api {
   }
   /** The space, asked with its owner key or a member key (`role` says which; older gateways omit it: owner). */
   space(key: string) {
-    return this.call<{ role?: "owner" | "member"; member?: Member; space: { id: string; repos: Array<{ name: string; repo: string }>; tokens: number; members?: number }; usage?: SpaceUsage; billing?: { enabled: boolean } }>("GET", "/v1/space", key);
+    return this.call<{ role?: "owner" | "member"; member?: Member; space: { id: string; repos: Array<{ name: string; repo: string }>; tokens: number; members?: number }; usage?: SpaceUsage; billing?: { enabled: boolean }; account?: string | null; accounts?: boolean }>("GET", "/v1/space", key);
+  }
+  /** `weft login` step 1 (no auth): the polling secret and the code the person confirms on weft.mx/cli/. Not retried. */
+  loginStart() {
+    return this.once<{ device_code: string; user_code: string; verification_url: string; expires_in: number; interval: number }>("POST", "/v1/login", undefined, {});
+  }
+  /** `weft login` polls; `owner` (optional) is this machine's current owner key, so that space joins the account. */
+  loginPoll(device: string, owner: string | undefined, label: string) {
+    return this.call<{ type: "login.pending" } | { type: "login.approved"; space: string; attached: boolean; created: boolean; token?: string }>("POST", "/v1/login/poll", owner, { device_code: device, label });
+  }
+  /** Revoke this owner key (spaces on an account only). */
+  logout(owner: string) {
+    return this.once<void>("POST", "/v1/space/logout", owner, {});
   }
   // ----- team join: invite codes, members (owner key); join and leave (a teammate)
   /** A one-time invite code (30 minutes, single use) a teammate trades for their own member key. */
@@ -135,10 +149,6 @@ export class Api {
   // Billing calls are not retried: a 503 here means "billing is off" or "Stripe is down", and the person is waiting.
   checkout(owner: string, choice: { seats: number; interval: "month" | "year" }) {
     return this.once<{ url: string }>("POST", "/v1/space/billing/checkout", owner, choice);
-  }
-  /** Bind a web purchase (the welcome page's one-time claim code) to this space. */
-  claim(owner: string, code: string) {
-    return this.once<{ plan: "paid"; seats: number; interval: "month" | "year" }>("POST", "/v1/space/billing/claim", owner, { code });
   }
   portal(owner: string) {
     return this.once<{ url: string }>("POST", "/v1/space/billing/portal", owner, {});

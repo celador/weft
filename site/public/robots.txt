@@ -1,4 +1,7 @@
 User-agent: *
 Allow: /
-Disallow: /welcome/
+Disallow: /account/
+Disallow: /cli/
+Disallow: /sign-in/
+Disallow: /sign-up/
 Sitemap: https://weft.mx/sitemap.xml

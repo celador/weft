@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b0d12">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Your account · Weft</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/assets/img/weft-mark-180.png">
+  <link rel="stylesheet" href="/assets/site.css">
+</head>
+<body data-page="account">
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/" aria-label="Weft home"><img src="/favicon.svg" alt="" width="22" height="22">weft</a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="/#how">How it works</a>
+        <a href="/pricing/">Pricing</a>
+        <a href="https://github.com/celador/weft#readme">Docs</a>
+        <a href="/support/">Support</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap doc account" aria-live="polite">
+    <section data-state="loading"><h1>Your account</h1><p class="meta">Loading…</p></section>
+    <section data-state="error" hidden><h1>Your account</h1><p class="meta">Something went wrong: <span data-error></span></p><p>Reload the page in a minute. If it keeps failing, email <a href="mailto:john@elier.ai">john@elier.ai</a>.</p></section>
+    <section data-state="deleted" hidden><h1>Your account is deleted.</h1><p class="meta">Your subscription is cancelled, your hosted spaces and everything in them are erased, and your sign-in is removed.</p><p>Stripe keeps your invoices, as the law requires. Local Weft keeps working without an account: <code>npx @celador/weft</code>.</p></section>
+    <section data-state="ok" hidden>
+      <div class="who"><h1>Your account</h1><button class="btn btn-small btn-ghost" type="button" data-sign-out>Sign out</button></div>
+      <p class="meta">Signed in as <strong data-email></strong></p>
+      <p class="notice" data-notice hidden></p>
+
+      <div class="panel">
+        <h2>Plan</h2>
+        <p class="plan-name" data-plan>Free</p>
+        <p class="meta" data-plan-detail></p>
+        <div data-get-pro hidden>
+          <div class="row">
+            <div class="toggle" role="group" aria-label="Billing period" style="margin-top:0">
+              <button type="button" data-interval="month" aria-pressed="false">Monthly</button>
+              <button type="button" data-interval="year" aria-pressed="true">Yearly <span class="save">save <span data-fill="save">32%</span></span></button>
+            </div>
+            <div class="stepper">
+              <button type="button" data-seat-minus aria-label="One user fewer">−</button>
+              <input type="number" inputmode="numeric" min="1" max="999" value="1" data-seats aria-label="Users">
+              <button type="button" data-seat-plus aria-label="One user more">+</button>
+            </div>
+          </div>
+          <p class="meta" data-pro-total>1 user × $98 = $98 a year</p>
+          <div class="row"><button class="btn" type="button" data-checkout>Get Pro</button></div>
+          <p class="err" data-pro-error></p>
+        </div>
+        <div data-manage hidden>
+          <div class="row"><button class="btn btn-ghost" type="button" data-portal>Manage billing</button><span class="meta">Users, card, invoices or cancel, on Stripe.</span></div>
+          <p class="err" data-manage-error></p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Connect a machine</h2>
+        <p>Run this once on each machine. It shows a code to confirm here, then your repos there use your hosted space.</p>
+        <div class="cmd-block" data-placement="account" data-no-track>
+          <div class="cmd-bar"><span>In a terminal</span><button class="copy" type="button" data-copy aria-label="Copy the command">Copy</button></div>
+          <pre><code>npx @celador/weft login</code></pre>
+        </div>
+        <p class="meta">Then in a repo: <code>npx @celador/weft --hosted</code>. Local Weft (<code>npx @celador/weft</code>) needs no account and sends nothing.</p>
+        <p class="meta">To add a teammate on another machine, run <code>npx @celador/weft invite</code> in this repo and send them the command it prints. It works once, for 30 minutes, and gives them their own key. See or remove teammates with <code>npx @celador/weft members</code>.</p>
+      </div>
+
+      <div class="panel">
+        <h2>Hosted spaces</h2>
+        <ul class="spaces" data-spaces></ul>
+      </div>
+
+      <div class="panel danger">
+        <h2>Delete account</h2>
+        <p>Cancels your subscription, erases every hosted space with all its events, diffs and keys, and removes your sign-in. This cannot be undone.</p>
+        <form class="row" data-delete>
+          <input type="text" autocomplete="off" placeholder='Type "delete"' aria-label='Type delete to confirm' data-delete-confirm>
+          <button class="btn btn-danger" type="submit">Delete my account</button>
+        </form>
+        <p class="err" data-delete-result></p>
+      </div>
+    </section>
+    <noscript><p>Your account page needs JavaScript.</p></noscript>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <span class="brand"><img src="/favicon.svg" alt="" width="18" height="18">weft</span>
+      <nav aria-label="Footer">
+        <a href="/pricing/">Pricing</a>
+        <a href="/privacy/">Privacy</a>
+        <a href="/terms/">Terms</a>
+        <a href="/support/">Support</a>
+      </nav>
+    </div>
+  </footer>
+  <script src="/weft-config.js"></script>
+  <script src="/assets/account.js" defer></script>
+</body>
+</html>
