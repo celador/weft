@@ -18,6 +18,7 @@
 //   weft usage                  the hosted space's plan (Free or Weft Pro with its seats) and events this month
 //   weft upgrade [--seats N] [--year]   Weft Pro, per user (Stripe Checkout); `weft billing` manages it (Stripe portal)
 //   weft login | logout | whoami   a Weft account for the hosted gateway (sign up free on weft.mx; local needs none)
+//   weft license [KEY]          the commercial license: the account's when signed in, or record a key (checked once)
 //   weft invite                 (owner) a one-time code + the command a teammate on another machine runs to join
 //   weft --hosted --join SPACE:CODE [--repo NAME] [--as NAME]   join a teammate's space with your own member key
 //   weft members [revoke <id|handle>|--all]   (owner) who joined; remove one or all (their keys stop working)
@@ -55,6 +56,7 @@ import {
 } from "./gateways";
 import { billing as billingPage, upgrade as upgradePage, usage as showUsage } from "./billing";
 import { login, logout, whoami } from "./login";
+import { license as licenseCmd, licenseHint } from "./license";
 import { ask, c, configDir, git, info, mainCheckout, ok, openUrl, readJson, readSecret, slug, tilde, tryGit, VERSION, warn, WeftError, worktrees, writeJson } from "./util";
 
 type Opts = {
@@ -84,7 +86,7 @@ type Opts = {
 export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
   const o: Opts = { local: false, hosted: false, yes: false, open: true, space: false, all: false, year: false, positional: [] };
   let cmd = "init";
-  const known = new Set(["init", "demo", "add", "status", "pair", "viewers", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "usage", "upgrade", "billing", "invite", "members", "login", "logout", "whoami", "help", "version"]);
+  const known = new Set(["init", "demo", "add", "status", "pair", "viewers", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "usage", "upgrade", "billing", "invite", "members", "login", "logout", "whoami", "license", "help", "version"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     const val = () => {
@@ -169,6 +171,8 @@ ${c.bold("npx @celador/weft")}            in a git repo: a gateway on this machi
   billing                     change seats, payment method, invoices or cancel (Stripe portal)
   login                       sign in to your Weft account (free, weft.mx) for hosted spaces; keeps this repo's space
   logout                      this machine forgets its hosted key       whoami   which space and account this machine uses
+  license [KEY]               your commercial license (signed in: your account's), or record a key from
+                              weft.mx/account/ on a machine that never signs in (checked once with weft.mx)
 
 Teams (a hosted space, or your own gateway):
   invite                      a one-time code (30 min, single use) and the command a teammate runs on their machine
@@ -178,7 +182,8 @@ Teams (a hosted space, or your own gateway):
   members revoke <id|handle>|--all
                               remove a teammate: their key and every agent key and session it made stop working
 
-Docs: https://github.com/celador/weft/blob/main/docs/try-it.md`;
+Docs: https://github.com/celador/weft/blob/main/docs/try-it.md
+License: free for personal use; at work you need a commercial license or Pro (https://weft.mx/license/). Source: AGPL-3.0-only at https://github.com/celador/weft (builds from source: AGPL only).`;
 
 // ------------------------------------------------------------------ setup
 
@@ -403,6 +408,12 @@ async function init(o: Opts, addName?: string | true, fresh = false): Promise<st
   console.log(c.bold("Next:") + (checkouts.length > 1 ? " start one agent per checkout, each in its own terminal:" : " start your agent here:"));
   for (const co of checkouts) console.log(`  ${c.dim("$")} cd ${tilde(co.root)} && ${first.run}`);
   console.log(nextNotes(order, checkouts.map((co) => co.root)));
+  // One line, only here, only without a license or Pro on record. Local mode sends nothing for it; on a shared gateway
+  // the plan comes from the space this run already talks to.
+  let pro = false;
+  if (kindOf(url!) !== "local" && acc.role === "owner") pro = await api.space(acc.key).then((s) => s.usage?.plan === "paid" || s.license?.active === true, () => false);
+  const hint = addName === undefined ? licenseHint(pro) : undefined;
+  if (hint) console.log(c.dim(hint));
   if (o.open) openUrl(link);
   return checkouts.map((co) => co.root);
 }
@@ -1100,6 +1111,9 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     case "whoami":
       await whoami(accountUrlFor(o), hereRoot(o));
+      return 0;
+    case "license":
+      await licenseCmd(accountUrlFor(o), o.positional[0], { ...(hereRoot(o) ? { root: hereRoot(o)! } : {}) });
       return 0;
     case "billing": {
       const s = spaceHere(o);

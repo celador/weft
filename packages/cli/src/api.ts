@@ -107,7 +107,7 @@ export class Api {
   }
   /** The space, asked with its owner key or a member key (`role` says which; older gateways omit it: owner). */
   space(key: string) {
-    return this.call<{ role?: "owner" | "member"; member?: Member; space: { id: string; repos: Array<{ name: string; repo: string }>; tokens: number; members?: number }; usage?: SpaceUsage; billing?: { enabled: boolean }; account?: string | null; accounts?: boolean }>("GET", "/v1/space", key);
+    return this.call<{ role?: "owner" | "member"; member?: Member; space: { id: string; repos: Array<{ name: string; repo: string }>; tokens: number; members?: number }; usage?: SpaceUsage; billing?: { enabled: boolean }; account?: string | null; accounts?: boolean; license?: import("./license").LicenseState | null }>("GET", "/v1/space", key);
   }
   /** `weft login` step 1 (no auth): the polling secret and the code the person confirms on weft.mx/cli/. Not retried. */
   loginStart() {
