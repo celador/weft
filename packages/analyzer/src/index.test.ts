@@ -14,6 +14,26 @@ describe("@weft/analyzer", () => {
     ["type alias contract", "export type User = { id: string };", "export type User = { id: string; name: string };", [["src/math.ts#User", "signature"]]],
     ["variable initializer is signature-level", "export const limit = 10;", "export const limit = 20;", [["src/math.ts#limit", "signature"]]],
     ["class method body", "export class Box { value() { return 1; } }", "export class Box { value() { return 2; } }", [["src/math.ts#Box", "body"], ["src/math.ts#Box.value", "body"]]],
+    // vercel/ms `parse` (cold run 2026-11): a destructuring declaration in the body has no name of its
+    // own, so it used to take the enclosing function's key and hide the function's signature change.
+    [
+      "signature change of a function that destructures in its body",
+      "export function parse(str: string): number { const { value } = JSON.parse(str) as { value: number }; return value; }",
+      "export function parse(str: string, opts: { strict: boolean }): number { const { value } = JSON.parse(str) as { value: number }; return value; }",
+      [["src/math.ts#parse", "signature"]],
+    ],
+    [
+      "array destructuring keeps the enclosing function's body change",
+      "export function pair(s: string) { const [a, b] = s.split(','); return a + b; }",
+      "export function pair(s: string) { const [a, b] = s.split(','); return b + a; }",
+      [["src/math.ts#pair", "body"]],
+    ],
+    [
+      "computed method name does not stand in for its class",
+      "export class Bag { size(): number { return 0; } [Symbol.iterator]() { return [].values(); } }",
+      "export class Bag { size(n: number): number { return n; } [Symbol.iterator]() { return [].values(); } }",
+      [["src/math.ts#Bag", "body"], ["src/math.ts#Bag.size", "signature"]],
+    ],
   ] as const;
 
   it.each(corpus)("classifies %s", (_name, before, after, writes) => {
