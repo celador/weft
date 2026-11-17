@@ -69,6 +69,11 @@ export function header(node: SyntaxNode, end: number = node.endIndex): string {
   return out + node.text.slice(at - node.startIndex, Math.max(at, end) - node.startIndex);
 }
 
+/** A declaration's extent (`Definition.start`/`end`), for scoping an edit's reads. */
+export function span(node: SyntaxNode): { start: number; end: number } {
+  return { start: node.startIndex, end: node.endIndex };
+}
+
 /** The text of `node` from `start` to its end. */
 export function tail(node: SyntaxNode, start: number): string {
   return node.text.slice(start - node.startIndex);

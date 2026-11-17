@@ -74,9 +74,7 @@
           "kind": "deleted"
         }
       ],
-      "reads": [
-        "include/pricing.h#Item"
-      ],
+      "reads": [],
       "intent": "rename format_price to format_money",
       "after": {
         "include/pricing.h": "#ifndef PRICING_H\n#define PRICING_H\n\ntypedef struct {\n  int price;\n  int qty;\n} Item;\n\nint calc_total(const Item *items, int n);\nint format_money(int amount, char *out, int size);\n\n#endif\n",

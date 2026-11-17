@@ -10,6 +10,7 @@ import { Language, Parser, type Tree } from "web-tree-sitter";
 import { findGrammar, findRuntimeWasm } from "./assets.js";
 import type { Analysis, AnalyzeOptions, Definition, ImportBinding, Reference, SyntaxNode, TreeSitterLanguage, Write } from "./language.js";
 import { type IndexHit, longestDefined, ModuleLookup } from "./moduleindex.js";
+import { editScope, type EditScope, type Span, WHOLE_FILE } from "./scope.js";
 
 let runtime: Promise<void> | undefined;
 const parsers = new Map<string, Promise<Parser>>();
@@ -172,10 +173,16 @@ export async function analyzeTreeSitter(
 
   const beforeTree = before ? parseTree(parser, before) : undefined;
   const beforeRoot = beforeTree?.rootNode as unknown as SyntaxNode | undefined;
-  const oldDefs = definitionMap(beforeRoot ? language.definitions(beforeRoot) : []);
+  const oldList = beforeRoot ? language.definitions(beforeRoot) : [];
+  const oldDefs = definitionMap(oldList);
+  // Imports the edit adds (the others are read only when an in-scope reference uses them).
+  const bindingId = (b: ImportBinding): string => `${b.local}\0${b.module}\0${b.name ?? ""}`;
+  const oldBindings = new Set((beforeRoot ? language.imports(beforeRoot) : []).map(bindingId));
   const afterTree = after ? parseTree(parser, after, beforeTree && markEdit(beforeTree, before, after)) : undefined;
   const afterRoot = afterTree?.rootNode as unknown as SyntaxNode | undefined;
-  const newDefs = definitionMap(afterRoot ? language.definitions(afterRoot) : []);
+  const newList = afterRoot ? language.definitions(afterRoot) : [];
+  const newDefs = definitionMap(newList);
+  const inScope = scopeOf(before, after, oldList, newList);
 
   // C/C++: declarations of included headers, and which of this file's definitions they own.
   const scopeRoot = afterRoot ?? beforeRoot;
@@ -226,9 +233,9 @@ export async function analyzeTreeSitter(
       return resolved.get(module);
     };
     const packages = packageIndexer(language, parser, path, after, opts);
-    let bindings = language
-      .imports(afterRoot)
-      .filter((b) => !b.all)
+    const own = language.imports(afterRoot).filter((b) => !b.all);
+    const added = own.map((b) => inScope === WHOLE_FILE || !oldBindings.has(bindingId(b)));
+    let bindings = own
       .map((b): ImportBinding => {
         if (b.name === undefined || !language.memberModule || !opts.exists) return b;
         const sub = language.memberModule(b.module, b.name);
@@ -250,10 +257,11 @@ export async function analyzeTreeSitter(
         return name ? { ...b, local: name } : b;
       });
     }
-    // Every imported member that resolves into the checkout is an assumption of this file
-    // (the TypeScript adapter does the same for named imports).
-    for (const b of bindings) {
-      if (b.name === undefined) continue;
+    // Every imported member the edit adds that resolves into the checkout is an assumption of
+    // the edit (the TypeScript adapters do the same for named imports); an import the edit did
+    // not add is read when an in-scope reference uses it (below).
+    for (const [i, b] of bindings.entries()) {
+      if (b.name === undefined || !added[i]) continue;
       const file = resolve(b.module);
       if (file) reads.add(key(file, b.name));
     }
@@ -318,6 +326,7 @@ export async function analyzeTreeSitter(
     };
 
     for (const first of language.references(afterRoot)) {
+      if (first.pos !== undefined && !inScope(first.pos)) continue;
       // `ref.or`: alternatives tried in order when a reference resolves nowhere (Swift/C# implicit `self`).
       for (let ref: Reference | undefined = first; ref; ref = ref.or) {
         // 1. This file's own declarations: the longest defined prefix (`Cart.tax`, else `Cart`).
@@ -349,6 +358,37 @@ export async function analyzeTreeSitter(
     }
   }
   return { reads: [...reads].sort(), writes: writes.sort((a, b) => a.key.localeCompare(b.key)) };
+}
+
+/**
+ * The edit's scope (docs/languages.md, "Reads are scoped to the edit") from the spec's
+ * declaration spans; the whole file when the spec does not give every declaration a span.
+ */
+function scopeOf(before: string, after: string, oldList: Definition[], newList: Definition[]): EditScope {
+  const spans = (defs: Definition[]): Span[] | undefined => {
+    const out: Span[] = [];
+    for (const d of defs) {
+      if (d.start === undefined || d.end === undefined) return undefined;
+      out.push({ name: d.name, start: d.start, end: d.end });
+    }
+    return out;
+  };
+  const a = spans(oldList);
+  const b = spans(newList);
+  return a && b ? editScope(before, after, a, b) : WHOLE_FILE;
+}
+
+/**
+ * Wraps a spec's reference walker so every reference it emits records where it is (`pos`): the
+ * start of the innermost visited node that emitted it. `out` is the walker's result list.
+ */
+export function positioned<A extends unknown[], R>(out: Reference[], visit: (node: SyntaxNode, ...rest: A) => R): (node: SyntaxNode, ...rest: A) => R {
+  return (node, ...rest) => {
+    const mark = out.length;
+    const result = visit(node, ...rest);
+    for (let i = mark; i < out.length; i++) out[i].pos ??= node.startIndex;
+    return result;
+  };
 }
 
 /** Checkout-relative directory of `rel` (`""` for the root). */

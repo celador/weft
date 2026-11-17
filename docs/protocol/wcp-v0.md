@@ -151,7 +151,11 @@ A **write** is `{key, kind}` with `kind`:
 | `body` | only the implementation changed | no |
 | `new` | declaration introduced | no (nobody can depend on it yet) |
 
-**Reads** are keys the event's code references (calls, imports, types).
+**Reads** are keys the event's code references (calls, imports, types). *(Informative.)* For
+an `edit`, "the event's code" is the declarations the edit adds or changes, plus the imports it
+adds, not the whole file: an edit to one function does not read what an untouched function of
+the same file calls. Adapters derive this; the coordinator does not parse code and is unaffected.
+The reference rule is in [docs/languages.md](../languages.md#reads-are-scoped-to-the-edit).
 
 ### 4.2 Events
 
@@ -1065,3 +1069,8 @@ Proposed for `docs/design.md` (rule 7 of agent-rules):
   owner's own land passes R1. New scenario `contract-change-after-use`; updated
   `signature-read-error`, `open-errors-persist`, `negotiation`, `negotiation-overload-dues`,
   `escalation-human`.
+- 0.1 editorial (2026-11-17; no wire or coordinator change): §4.1 says which code an `edit`'s
+  reads cover — the declarations it adds or changes and the imports it adds. The bundled
+  analyzer used to read the whole edited file, so an accepted edit anywhere in a file cleared
+  open errors on keys only another function of that file used (§6.5 rule 1); see
+  docs/languages.md, "Reads are scoped to the edit".

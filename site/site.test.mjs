@@ -181,3 +181,16 @@ test("deleteAccount: the gateway erases first, then only the caller's own Clerk 
   assert.equal((await deleteAccount(new Request(`${ORIGIN}/api/account/delete`), env, { fetchFn: gwDown, origin: ORIGIN, jwks })).status, 405);
   assert.deepEqual(calls, []);
 });
+
+test("team join: the pricing FAQ and the account page say how a teammate on another machine joins", () => {
+  const pricing = readFileSync(join(PUB, "pricing", "index.html"), "utf8");
+  const welcome = readFileSync(join(PUB, "account", "index.html"), "utf8");
+  assert.doesNotMatch(pricing, /Not with a command yet|We're building a join command/);
+  assert.match(pricing, /Can teammates on other machines join my space\?<\/h3>\s*<p>Yes\. Run <code>npx @celador\/weft invite<\/code>/);
+  assert.match(pricing, /<li>Teammates on other machines join with their own key<\/li>/);
+  for (const page of [pricing, welcome]) {
+    assert.match(page, /npx @celador\/weft members/);
+    assert.doesNotMatch(page, /--join sp/); // no code or space id in copy
+  }
+  assert.match(welcome, /run <code>npx @celador\/weft invite<\/code> in this repo/);
+});

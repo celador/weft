@@ -47,9 +47,7 @@
           "kind": "deleted"
         }
       ],
-      "reads": [
-        "app/pricing.py#Item"
-      ],
+      "reads": [],
       "intent": "rename format_price to format_money",
       "after": {
         "app/pricing.py": "from dataclasses import dataclass\n\n\n@dataclass\nclass Item:\n    price: float\n    qty: int\n\n\ndef calc_total(items: list[Item]) -> float:\n    return sum(i.price * i.qty for i in items)\n\n\ndef format_money(amount: float) -> str:\n    return f\"${amount:.2f}\"\n"

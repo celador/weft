@@ -18,6 +18,17 @@
 //   DELETE /v1/space/viewers[/{id}]    revoke one paired device, or all of them
 //   POST   /v1/pair                    {space, code, label?} no auth: trade a code for a device session cookie
 //   POST   /v1/space/billing/{checkout,portal}   Weft Pro for the space's account (billing.ts)
+//   POST   /v1/space/invites           a one-time invite code (30 min, single use) for a teammate on another machine
+//   DELETE /v1/space/invites           drop every open invite code
+//   GET    /v1/space/members           the members (label, handle, joined, last used)
+//   DELETE /v1/space/members[/{id}]    remove one member, or all: its key and everything it minted are revoked
+//   DELETE /v1/space/members/me        (member key) leave the space
+//   POST   /v1/join                    {space, code, label?, handle?} no auth: trade an invite code for a member key
+//
+// Who may call what: the owner key, everything under /v1/space. A member key (a teammate's, from /v1/join) only
+// MEMBER_ROUTES: read the space, use its existing repos, mint agent keys for its own agent ids (`<name>.<handle>`), a
+// read session for its CLI, pairing codes for its own browsers, revoke what it minted, leave. Never billing, invites,
+// members, devices, landing keys, new repos or erasure.
 //   GET    /v1/viewer                  who this browser is paired as (refreshes the cookie); 401 = pair again
 //   POST   /v1/viewer/logout           this browser leaves
 //   GET    /feed                       the live feed page: asks for a pairing code once, no credential in the URL
@@ -28,7 +39,7 @@
 // switch: WEFT_HOSTED_OFF=1 (deploy-time, refuses every space request without a DO call) or
 // POST /v1/admin/hosted {"mode": "open" | "no-signups" | "off"} (instant, no redeploy).
 
-import type { DeviceInfo, EraseReport, Registry, SpaceGrant } from "./registry";
+import type { DeviceInfo, EraseReport, MemberInfo, MemberRef, Registry, SpaceGrant } from "./registry";
 import { FEED_HTML } from "./feed-page";
 import { spaceBilling } from "./billing";
 import { stripeConfig, type StripeEnv } from "./stripe";
@@ -57,6 +68,8 @@ export interface SpacesEnv extends StripeEnv, ClerkEnv {
   WEFT_SPACE_RPM?: string;
   /** Paired devices (feed sessions) per space. */
   WEFT_SPACE_MAX_DEVICES?: string;
+  /** Members (teammates who joined with an invite code) per space. */
+  WEFT_SPACE_MAX_MEMBERS?: string;
   /** Pairing attempts per minute, per space and per network (fallback when WEFT_PAIR_RATE is not bound). */
   WEFT_PAIR_PER_MIN?: string;
   /** Workers Rate Limiting binding for POST /v1/pair, keyed `space:<id>` and `net:<key>` (optional). */
@@ -93,6 +106,7 @@ export function limits(env: SpacesEnv) {
     maxTokens: num(env.WEFT_SPACE_MAX_TOKENS, 200),
     rpm: num(env.WEFT_SPACE_RPM, 1200),
     maxDevices: num(env.WEFT_SPACE_MAX_DEVICES, 20),
+    maxMembers: num(env.WEFT_SPACE_MAX_MEMBERS, 50),
     pairPerMin: num(env.WEFT_PAIR_PER_MIN, 10),
   };
 }
@@ -209,7 +223,16 @@ export async function throttleNetwork(env: SpacesEnv, k: Pick<SpacesKit, "fail">
   }
 }
 
-const deviceView = (d: DeviceInfo) => ({ id: d.id, label: d.label, created_at: d.created_at, last_seen_at: d.last_seen_at, expires_at: d.expires_at });
+const deviceView = (d: DeviceInfo) => ({ id: d.id, label: d.label, created_at: d.created_at, last_seen_at: d.last_seen_at, expires_at: d.expires_at, ...(d.by ? { by: d.by } : {}) });
+const memberView = (m: MemberInfo) => ({ id: m.id, label: m.label, handle: m.handle, created_at: m.created_at, last_seen_at: m.last_seen_at });
+
+/** The space API routes a member key may call (allow-list: anything else is the owner's). */
+function memberRoute(m: string, path: string): boolean {
+  if (m === "GET") return path === "/v1/space";
+  if (m === "POST") return path === "/v1/space/repos" || path === "/v1/space/tokens" || path === "/v1/space/pairings" || path === "/v1/space/viewers";
+  if (m === "DELETE") return path === "/v1/space/members/me" || /^\/v1\/space\/tokens\/[^/]+$/.test(path);
+  return false;
+}
 
 /** Routes under /v1/spaces, /v1/space and /feed; null when the path is not one of them. */
 export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, path: string): Promise<Response | null> {
@@ -230,6 +253,25 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
     const ok = r as { token: string; device: DeviceInfo };
     const secs = (Date.parse(ok.device.expires_at) - Date.now()) / 1000;
     return k.json({ type: "viewer.paired", device: deviceView(ok.device) }, 200, { "set-cookie": sessionCookie(req, ok.token, secs) });
+  }
+  // ----- team join: a teammate trades an invite code for a member key (no other credential)
+  if (path === "/v1/join" && m === "POST") {
+    const body = ((await k.readJson(req, true)) ?? {}) as { space?: unknown; code?: unknown; label?: unknown; handle?: unknown };
+    await throttleNetwork(env, k, req, "join", [`space:${typeof body.space === "string" ? body.space.slice(0, 40) : ""}`]);
+    if (typeof body.space !== "string" || !SPACE_ID.test(body.space) || typeof body.code !== "string" || !body.code || body.code.length > 64)
+      k.fail("invalid_message", "space and code are required", { issues: [{ path: "", message: "space, code" }] });
+    const L = limits(env);
+    const r = await registry(env).inviteExchange({
+      space: body.space as string,
+      code: body.code as string,
+      label: typeof body.label === "string" ? body.label : "",
+      ...(typeof body.handle === "string" ? { handle: body.handle } : {}),
+      maxMembers: L.maxMembers,
+      maxTokens: L.maxTokens,
+    });
+    if ("error" in r) k.fail(r.code === "quota" ? "rate_limited" : r.code === "closed" ? "unavailable" : "unauthorized", r.error);
+    const ok = r as { token: string; member: MemberInfo };
+    return k.json({ type: "space.member", space: { id: body.space }, role: "member", token: ok.token, member: memberView(ok.member) }, 201);
   }
   if (path === "/v1/viewer" && m === "GET") {
     const g = await k.authenticate(req);
@@ -270,17 +312,24 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
   if (path !== "/v1/space" && !path.startsWith("/v1/space/")) return null;
 
   const g = await k.authenticate(req);
-  if (g.role !== "owner" || !g.space) k.fail("forbidden", "the space API needs the space's owner token");
+  if ((g.role !== "owner" && g.role !== "member") || !g.space) k.fail("forbidden", "the space API needs the space's owner key or a member key");
   const space = g.space!;
+  // A member key: the allow-listed routes only, each scoped to what this member minted.
+  const by: MemberRef | undefined = g.role === "member" ? { id: g.id, handle: g.handle ?? "" } : undefined;
+  if (by && !memberRoute(m, path)) k.fail("forbidden", "only the space's owner can do this; a member key sets up checkouts and reads the feed");
   const reg = registry(env);
   const L = limits(env);
   if (path === "/v1/space" && m === "GET") {
     const info = await reg.spaceInfo(space);
     if (!info) k.fail("unauthorized", "space not found");
+    const me = by ? await reg.memberInfo(space, by.id) : undefined;
+    if (by && !me) k.fail("unauthorized", "this member key was removed from the space");
     // Usage this month against the free allowance. `billing.enabled` is whether this gateway sells anything: when
     // false nothing is ever refused for being over the allowance.
     return k.json({
       type: "space",
+      role: by ? "member" : "owner",
+      ...(me ? { member: memberView(me) } : {}),
       space: info,
       limits: { repos: L.maxRepos, tokens: L.maxTokens, requests_per_minute: L.rpm },
       usage: await reg.spaceUsage(space),
@@ -309,8 +358,8 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
   if (path === "/v1/space/repos" && m === "POST") {
     const body = (await k.readJson(req)) as { name?: unknown };
     if (typeof body?.name !== "string") k.fail("invalid_message", "name required", { issues: [{ path: "/name", message: "string" }] });
-    const r = await reg.spaceCreateRepo(space, body.name as string, L.maxRepos);
-    if ("error" in r) k.fail(r.code === "quota" ? "rate_limited" : r.code === "gone" ? "unauthorized" : "invalid_message", r.error, { issues: [{ path: "/name", message: r.error }] });
+    const r = await reg.spaceCreateRepo(space, body.name as string, L.maxRepos, by !== undefined);
+    if ("error" in r) k.fail(r.code === "quota" ? "rate_limited" : r.code === "gone" ? "unauthorized" : r.code === "forbidden" ? "forbidden" : "invalid_message", r.error, { issues: [{ path: "/name", message: r.error }] });
     const ok = r as { created: boolean };
     return k.json({ type: "space.repo", ...ok }, ok.created ? 201 : 200);
   }
@@ -328,13 +377,15 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
         ...(typeof body.label === "string" ? { label: body.label } : {}),
       },
       L.maxTokens,
+      by,
     );
-    if ("error" in r) k.fail(r.code === "quota" ? "rate_limited" : r.code === "repo" ? "repo_not_found" : r.code === "gone" ? "unauthorized" : "invalid_message", r.error, { issues: [{ path: "", message: r.error }] });
+    if ("error" in r)
+      k.fail(r.code === "quota" ? "rate_limited" : r.code === "repo" ? "repo_not_found" : r.code === "gone" ? "unauthorized" : r.code === "forbidden" ? "forbidden" : "invalid_message", r.error, { issues: [{ path: "", message: r.error }] });
     return k.json({ type: "space.token", ...(r as object) }, 201);
   }
   // ----- paired devices: pairing codes, the device list, revocation
   if (path === "/v1/space/pairings" && m === "POST") {
-    const r = await reg.pairingCreate(space);
+    const r = await reg.pairingCreate(space, by);
     if ("error" in r) k.fail("unauthorized", r.error);
     const p = r as { code: string; expires_at: string; expires_in: number };
     return k.json({ type: "space.pairing", space, ...p, url: `${new URL(req.url).origin}/feed?space=${space}` }, 201);
@@ -342,7 +393,7 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
   if (path === "/v1/space/viewers" && m === "GET") return k.json({ type: "space.viewers", viewers: await reg.devices(space) });
   if (path === "/v1/space/viewers" && m === "POST") {
     const body = ((await k.readJson(req, true)) ?? {}) as { label?: unknown };
-    const r = await reg.deviceCreate(space, typeof body.label === "string" ? body.label : "", L.maxDevices);
+    const r = await reg.deviceCreate(space, typeof body.label === "string" ? body.label : "", L.maxDevices, by);
     if ("error" in r) k.fail(r.code === "quota" ? "rate_limited" : "unauthorized", r.error);
     const ok = r as { token: string; device: DeviceInfo };
     return k.json({ type: "space.viewer", token: ok.token, device: deviceView(ok.device) }, 201);
@@ -360,8 +411,37 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
   }
   const tm = /^\/v1\/space\/tokens\/([^/]+)$/.exec(path);
   if (tm && m === "DELETE") {
-    if (!(await reg.spaceRevoke(space, decodeURIComponent(tm[1]!)))) k.fail("not_found", "no such active token in this space");
+    if (!(await reg.spaceRevoke(space, decodeURIComponent(tm[1]!), by))) k.fail("not_found", "no such active token in this space");
+    k.dropGrants();
     return new Response(null, { status: 204 });
+  }
+  // ----- team members: invite codes, the member list, removal (owner); leaving (member)
+  if (path === "/v1/space/members/me" && m === "DELETE") {
+    if (!by) k.fail("invalid_message", "the owner key is not a member; to delete the space use DELETE /v1/space");
+    const revoked = await reg.memberRevoke(space, by!.id);
+    k.dropGrants();
+    return k.json({ type: "space.member.left", member: by!.id, revoked });
+  }
+  if (path === "/v1/space/invites" && m === "POST") {
+    const r = await reg.inviteCreate(space);
+    if ("error" in r) k.fail("unauthorized", r.error);
+    const p = r as { code: string; expires_at: string; expires_in: number };
+    return k.json({ type: "space.invite", space, ...p }, 201);
+  }
+  if (path === "/v1/space/invites" && m === "DELETE") return k.json({ type: "space.invites.cancelled", cancelled: await reg.inviteCancelAll(space) });
+  if (path === "/v1/space/members" && m === "GET") return k.json({ type: "space.members", members: (await reg.members(space)).map(memberView) });
+  if (path === "/v1/space/members" && m === "DELETE") {
+    const revoked = await reg.memberRevoke(space, "*");
+    k.dropGrants();
+    return k.json({ type: "space.members.removed", revoked });
+  }
+  const mm = /^\/v1\/space\/members\/([^/]+)$/.exec(path);
+  if (mm && m === "DELETE") {
+    const id = decodeURIComponent(mm[1]!);
+    const revoked = id.startsWith("mem_") ? await reg.memberRevoke(space, id) : 0;
+    if (!revoked) k.fail("not_found", "no such member in this space");
+    k.dropGrants();
+    return k.json({ type: "space.member.removed", member: id, revoked });
   }
   k.fail("not_found", `no route ${m} ${path}`);
 }

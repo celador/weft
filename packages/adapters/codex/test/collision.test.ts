@@ -182,6 +182,7 @@ describe("Codex negotiation from the shell (spec §7.4, §8.4)", () => {
     const b1 = await applyPatch(B, "sb", rootB, "b1", stale);
     expect(b1.applied).toBe(false);
     expect(b1.pre.hookSpecificOutput.permissionDecisionReason).toContain("/w/b/.weft/bin/weft negotiate propose overload");
+    expect(b1.pre.hookSpecificOutput.permissionDecisionReason).toContain("--to codex-a --keys src/pricing.ts#calcTotal --wait 240");
 
     const sent = await B.negotiate("sb", parseNegotiate(["propose", "overload", "keep calcTotal(items)"]));
     expect(sent.code).toBe(0);

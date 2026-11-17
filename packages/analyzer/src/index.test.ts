@@ -14,6 +14,26 @@ describe("@weft/analyzer", () => {
     ["type alias contract", "export type User = { id: string };", "export type User = { id: string; name: string };", [["src/math.ts#User", "signature"]]],
     ["variable initializer is signature-level", "export const limit = 10;", "export const limit = 20;", [["src/math.ts#limit", "signature"]]],
     ["class method body", "export class Box { value() { return 1; } }", "export class Box { value() { return 2; } }", [["src/math.ts#Box", "body"], ["src/math.ts#Box.value", "body"]]],
+    // vercel/ms `parse` (cold run 2026-11): a destructuring declaration in the body has no name of its
+    // own, so it used to take the enclosing function's key and hide the function's signature change.
+    [
+      "signature change of a function that destructures in its body",
+      "export function parse(str: string): number { const { value } = JSON.parse(str) as { value: number }; return value; }",
+      "export function parse(str: string, opts: { strict: boolean }): number { const { value } = JSON.parse(str) as { value: number }; return value; }",
+      [["src/math.ts#parse", "signature"]],
+    ],
+    [
+      "array destructuring keeps the enclosing function's body change",
+      "export function pair(s: string) { const [a, b] = s.split(','); return a + b; }",
+      "export function pair(s: string) { const [a, b] = s.split(','); return b + a; }",
+      [["src/math.ts#pair", "body"]],
+    ],
+    [
+      "computed method name does not stand in for its class",
+      "export class Bag { size(): number { return 0; } [Symbol.iterator]() { return [].values(); } }",
+      "export class Bag { size(n: number): number { return n; } [Symbol.iterator]() { return [].values(); } }",
+      [["src/math.ts#Bag", "body"], ["src/math.ts#Bag.size", "signature"]],
+    ],
   ] as const;
 
   it.each(corpus)("classifies %s", (_name, before, after, writes) => {
@@ -22,11 +42,65 @@ describe("@weft/analyzer", () => {
 
   it("finds local call and type reads", () => {
     const result = analyze(
-      "function helper() { return 1; } type Token = string; export function f(x: Token) { return helper(); }",
+      "function helper() { return 1; } type Token = string; export function f(x: string) { return 0; }",
       "function helper() { return 1; } type Token = string; export function f(x: Token) { return helper(); }",
       path,
     );
     expect(result.reads).toEqual(["src/math.ts#Token", "src/math.ts#helper"]);
+  });
+
+  describe("reads are scoped to the declarations the edit adds or changes (docs/languages.md)", () => {
+    // vercel/ms (cold run 2026-11): an edit to one function was told it "started using" a
+    // function another, untouched function of the same file calls.
+    const before = [
+      "export function g(n: number): number { return n * 2; }",
+      "export function format(ms: number): string { return String(ms); }",
+      "export function long(ms: number): string {",
+      "  return format(ms) + ' ms';",
+      "}",
+      "export const UNITS = ['ms', 's'];",
+      "",
+    ].join("\n");
+
+    it("an edit to one declaration does not read what the others call", () => {
+      const after = before.replace("['ms', 's']", "['ms', 's', 'm']");
+      expect(analyze(before, after, path)).toEqual({ reads: [], writes: [{ key: "src/math.ts#UNITS", kind: "signature" }] });
+    });
+
+    it("an edit adding f() that calls g reads g", () => {
+      const after = `${before}export function f(n: number): number {\n  return g(n) + 1;\n}\n`;
+      expect(analyze(before, after, path)).toEqual({ reads: ["src/math.ts#g"], writes: [{ key: "src/math.ts#f", kind: "new" }] });
+    });
+
+    it("changing one line of a declaration re-reads the whole declaration", () => {
+      const after = before.replace("export function long(ms: number): string {", "export function long(ms: number, unit = 'ms'): string {").replace("+ ' ms'", "+ ' ' + unit");
+      expect(analyze(before, after, path).reads).toEqual(["src/math.ts#format"]);
+      const bodyOnly = before.replace("export function long(ms: number): string {", "export function long(ms: number): string { // long form");
+      expect(analyze(before, bodyOnly, path).reads).toEqual(["src/math.ts#format"]);
+    });
+
+    it("a method edit reads the method's references, not its class's other methods'", () => {
+      const cls = [
+        "function a() { return 1; }",
+        "function b() { return 2; }",
+        "export class Box {",
+        "  one() { return a(); }",
+        "  two() { return b(); }",
+        "}",
+        "",
+      ].join("\n");
+      expect(analyze(cls, cls.replace("return b();", "return b() + 1;"), path).reads).toEqual(["src/math.ts#b"]);
+    });
+
+    it("removing lines from a declaration still reads what it calls", () => {
+      const withLog = before.replace("  return format(ms) + ' ms';", "  console.log(ms);\n  return format(ms) + ' ms';");
+      expect(analyze(withLog, before, path).reads).toEqual(["src/math.ts#format"]);
+    });
+
+    it("module-level statements are read only on the lines the edit adds", () => {
+      const main = `${before}g(1);\n`;
+      expect(analyze(main, `${main}format(2);\n`, path).reads).toEqual(["src/math.ts#format"]);
+    });
   });
 
   it("analyzes a modified file from a unified diff and current checkout contents", () => {

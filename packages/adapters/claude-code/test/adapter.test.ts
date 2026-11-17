@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { analyzeChanges, unifiedDiff, importReads } from "../src/analysis";
 import { ADVISORY_CAPABILITIES, CAPABILITIES, ClaudeAdapter, type HookInput } from "../src/hooks";
 import { proposedText, isGitCommit } from "../src/edits";
-import { locateUse, locateDeclaration, quoteDiff } from "../src/render";
+import { locateUse, locateDeclaration, optionsHint, quoteDiff } from "../src/render";
 import { mergeSettings, weftAllowRules } from "../src/cli";
 import type { Loaded } from "../src/config";
 import { CART_V1, PRICING_V1, PRICING_V2, checkout, refTransport, serve } from "./helpers";
@@ -60,6 +60,30 @@ describe("analysis", () => {
     expect(sig.writes).toEqual(expect.arrayContaining([{ key: "src/pricing.ts#calcTotal", kind: "signature" }, { key: "src/pricing.ts#PriceOptions", kind: "new" }]));
     expect(importReads(`import * as p from "./pricing"; p.calcTotal([]);`, "src/x.ts", root)).toEqual(["src/pricing.ts#calcTotal"]);
     expect(analyzeChanges([{ rel: "README.md", before: null, after: "hi" }]).writes).toEqual([{ key: "README.md#*", kind: "new" }]);
+  });
+
+  it("cross-file import reads are scoped to the edit like same-file reads (docs/languages.md)", () => {
+    const root = checkout("scoped");
+    const text = [
+      'import { calcTotal, type Item } from "./pricing";',
+      'import * as p from "./pricing";',
+      "export function total(items: Item[]): number {",
+      "  return calcTotal(items);",
+      "}",
+      "export function label(): string {",
+      "  return 'cart';",
+      "}",
+      "",
+    ].join("\n");
+    // An edit to label() uses no import: it reads none of them.
+    expect(importReads(text.replace("'cart'", "'basket'"), "src/x.ts", root, "", text)).toEqual([]);
+    // An edit to total() reads what total() uses.
+    expect(importReads(text.replace("calcTotal(items)", "calcTotal(items) + 0"), "src/x.ts", root, "", text).sort()).toEqual(["src/pricing.ts#Item", "src/pricing.ts#calcTotal"]);
+    // An added import is read; a namespace member is read where the edit uses it.
+    const added = text.replace("'cart'", "p.label()").replace('import * as p from "./pricing";', 'import * as p from "./pricing";\nimport { fmt } from "./pricing";');
+    expect(importReads(added, "src/x.ts", root, "", text).sort()).toEqual(["src/pricing.ts#fmt", "src/pricing.ts#label"]);
+    // Through analyzeChanges (what the hooks call).
+    expect(analyzeChanges([{ rel: "src/x.ts", before: text, after: text.replace("'cart'", "'basket'") }], root, "").reads).toEqual([]);
   });
 
   it("unifiedDiff round-trips through the analyzer's diff reader", () => {
@@ -432,7 +456,9 @@ export function calcTotal(items: Item[], opts: PriceOptions = { taxRate: 0 }): n
     expect(deny).toContain("stale_assumption");
     expect(deny).toContain("Your options: retreat");
     expect(deny).toContain('/w/b/.weft/bin/weft negotiate propose overload');
-    expect(deny).toContain("negotiate escalate");
+    // the hint names the counterpart and the symbol, so it works even with no open error to default from
+    expect(deny).toContain('"<what claude-a should keep working for you>" --to claude-a --keys src/pricing.ts#calcTotal --wait 240');
+    expect(deny).toContain('negotiate escalate "<why>" --to claude-a --keys src/pricing.ts#calcTotal');
 
     // B proposes without naming the target: it defaults to the agent behind its open error.
     const sent = await B.negotiate("sb", parseNegotiate(["propose", "overload", "Keep calcTotal(items) compiling as an overload"]));
@@ -538,5 +564,17 @@ export function calcTotal(items: Item[], opts: PriceOptions = { taxRate: 0 }): n
     });
     expect(() => parseNegotiate(["propose", "bribe", "x"])).toThrow(/terms kind/);
     expect(() => parseNegotiate(["accept", "x"])).toThrow(/event number/);
+  });
+});
+
+describe("optionsHint", () => {
+  it("names the counterpart and symbols, and leaves out anything that is not shell-safe", () => {
+    const h = optionsHint("weft", "claude-a", ["src/a.ts#f", "src/a.ts#f", "src/b.py#Cart.total"]);
+    expect(h).toContain('negotiate propose overload "<what claude-a should keep working for you>" --to claude-a --keys src/a.ts#f,src/b.py#Cart.total --wait 240');
+    expect(h).toContain('negotiate escalate "<why>" --to claude-a --keys src/a.ts#f,src/b.py#Cart.total');
+    expect(optionsHint("weft", "a", ["src/$(rm -rf).ts#x"])).toContain("--to a --wait 240");
+    expect(optionsHint("weft", "a b", [])).toContain('for you>" --wait 240');
+    // the printed command parses
+    expect(parseNegotiate(["propose", "overload", "x", "--to", "claude-a", "--keys", "src/a.ts#f,src/b.py#Cart.total"])).toMatchObject({ cmd: "propose", keys: ["src/a.ts#f", "src/b.py#Cart.total"] });
   });
 });

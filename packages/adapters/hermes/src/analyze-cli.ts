@@ -18,7 +18,7 @@
 //
 // Request paths are repository-relative (the checkout's `prefix` included); `root` is the
 // checkout directory, so `root/<path minus prefix>` is the file on disk.
-import { analyze, analyzeSource, treeSitterLanguageFor, treeSitterLanguages, contractReads, type Analysis, type Write } from "@weft/analyzer";
+import { analyze, analyzeSource, treeSitterLanguageFor, treeSitterLanguages, contractReads, scopedImports, type Analysis, type Write } from "@weft/analyzer";
 import ts from "typescript";
 import { existsSync, readFileSync } from "node:fs";
 import { posix, join } from "node:path";
@@ -39,8 +39,10 @@ const RESOLVE_SUFFIXES = ["", ".ts", ".tsx", ".mts", ".cts", "/index.ts", "/inde
  * (`./a.js` -> `./a.ts`, extensionless, `/index.ts`). Without `root` (no checkout to look at)
  * the first candidate with a TS extension is assumed.
  */
-export function importReads(text: string, path: string, root?: string, prefix = ""): string[] {
+export function importReads(text: string, path: string, root?: string, prefix = "", before?: string | null): string[] {
   const source = ts.createSourceFile("/entry.ts", text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+  // With `before`, only imports the edit adds or its touched declarations use (docs/languages.md).
+  const scope = scopedImports(before, text);
   const found = new Set<string>();
   const dir = posix.dirname(path);
   const resolve = (spec: string): string | undefined => {
@@ -61,10 +63,14 @@ export function importReads(text: string, path: string, root?: string, prefix = 
     const target = resolve(statement.moduleSpecifier.text);
     const clause = statement.importClause;
     if (!target || !clause) continue;
-    if (clause.name) found.add(`${target}#default`);
+    const spec = statement.moduleSpecifier.text;
+    if (clause.name && scope.keep(spec, "default", clause.name.text)) found.add(`${target}#default`);
     const bindings = clause.namedBindings;
     if (bindings && ts.isNamedImports(bindings)) {
-      for (const element of bindings.elements) found.add(`${target}#${(element.propertyName ?? element.name).text}`);
+      for (const element of bindings.elements) {
+        const imported = (element.propertyName ?? element.name).text;
+        if (scope.keep(spec, imported, element.name.text)) found.add(`${target}#${imported}`);
+      }
     } else if (bindings && ts.isNamespaceImport(bindings)) {
       namespaces.set(bindings.name.text, target);
     }
@@ -73,10 +79,10 @@ export function importReads(text: string, path: string, root?: string, prefix = 
     const visit = (node: ts.Node): void => {
       if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) {
         const target = namespaces.get(node.expression.text);
-        if (target) found.add(`${target}#${node.name.text}`);
+        if (target && scope.inScope(node.getStart(source))) found.add(`${target}#${node.name.text}`);
       } else if (ts.isQualifiedName(node) && ts.isIdentifier(node.left)) {
         const target = namespaces.get(node.left.text);
-        if (target) found.add(`${target}#${node.right.text}`);
+        if (target && scope.inScope(node.getStart(source))) found.add(`${target}#${node.right.text}`);
       }
       ts.forEachChild(node, visit);
     };
@@ -119,7 +125,7 @@ export function handle(request: Request): Response {
       const result: Analysis = analyze(String(file.before ?? ""), String(file.after ?? ""), file.path);
       analyzed.push(file.path);
       for (const key of result.reads) reads.add(key);
-      const imported = importReads(String(file.after ?? ""), file.path, request.root, request.prefix);
+      const imported = importReads(String(file.after ?? ""), file.path, request.root, request.prefix, String(file.before ?? ""));
       for (const key of imported) reads.add(key);
       // The contract types of what this file uses (`PriceOptions` of `calcTotal(opts: PriceOptions)`).
       const root = request.root;

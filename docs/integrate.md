@@ -52,7 +52,7 @@ at the bundle in your Weft clone (`pnpm --filter <package> build` first).
 | Claude Code | `@weft/adapter-claude-code` (`dist/weft-claude.mjs`) | L3 | verified with real runs |
 | OpenCode | `@weft/adapter-opencode` (generated plugin) | L3 | verified with real runs |
 | Hermes Agent | `@weft/adapter-hermes` (Python plugin) | L3 | used on Weft's own build |
-| Codex CLI | `@weft/adapter-codex` (`apply_patch` hooks) | L2 | L0 verified, rest documented |
+| Codex CLI | `@weft/adapter-codex` (`apply_patch` + shell-write hooks) | L2 | L0 verified, rest documented |
 | Cursor CLI | `@weft/adapter-cursor` | L3 (documented) | fixture-tested |
 | Gemini CLI | `@weft/adapter-gemini` | L3 (documented) | fixture-tested only |
 | GitHub Copilot (CLI, VS Code agent mode, cloud agent) | `@weft/adapter-copilot` (`.github/hooks/weft.json`) | L3 | CLI and VS Code verified with real runs; cloud agent not yet (needs a paid plan) |

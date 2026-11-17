@@ -41,7 +41,9 @@ export type Checkout = { exists?: Exists; read?: ReadCheckoutFile; list?: ListCh
  * One declaration in one file. `name` is qualified within the file (`Cart.total`). The optional
  * offsets (JS string indices into the parsed text) let the `lsp` backend map a server location
  * back to the declaration that contains it: `start`/`end` span the whole declaration (decorators
- * included), `nameStart`/`nameEnd` its name.
+ * included), `nameStart`/`nameEnd` its name. With `start`/`end` on every declaration (and `pos`
+ * on references), the engine scopes an edit's reads to the declarations it touches; a spec
+ * that leaves any declaration without them gets whole-file reads.
  */
 export type Definition = { name: string; signature: string; body: string; start?: number; end?: number; nameStart?: number; nameEnd?: number };
 
@@ -62,6 +64,13 @@ export type Reference = string[] & {
    * `Cart` is `["Cart", "tax"]` (exact) or else the free function `["tax"]`.
    */
   or?: Reference;
+  /**
+   * Where the use is: a JS string offset into the parsed text (the node it was read from). The
+   * engine reads only references inside the declarations the edit adds or changes
+   * (docs/languages.md, "Reads are scoped to the edit"); a reference without `pos` is always read.
+   * (Not `at`: that is `Array.prototype.at`.)
+   */
+  pos?: number;
 };
 
 /**

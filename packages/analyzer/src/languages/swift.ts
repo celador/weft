@@ -25,6 +25,7 @@
 // adds `Sources/Other` (SwiftPM) or the `Other/` folder next to the project.
 import { posix } from "node:path";
 import type { CheckoutFs, Definition, ImportBinding, ModuleIndex, Reference, SyntaxNode, TreeSitterLanguage } from "../language.js";
+import { positioned } from "../treesitter.js";
 import { cut, isFieldOf, named, nodeId, same, scoped } from "./lexical.js";
 
 const TYPE_DECL = new Set(["class_declaration", "protocol_declaration"]);
@@ -70,11 +71,14 @@ function functionSignature(node: SyntaxNode, body: SyntaxNode | null): string {
 
 function definitions(root: SyntaxNode): Definition[] {
   const out: Definition[] = [];
+  /** The declaration `add` records (set per child before any `add`; spans scope an edit's reads). */
+  let current: SyntaxNode = root;
   const add = (scope: string[], name: string, signature: string, body: string): void => {
-    out.push({ name: [...scope, name].join("."), signature, body });
+    out.push({ name: [...scope, name].join("."), signature, body, start: current.startIndex, end: current.endIndex });
   };
   const walk = (node: SyntaxNode, scope: string[]): void => {
     for (const child of named(node)) {
+      current = child;
       const body = child.childForFieldName("body");
       switch (child.type) {
         case "class_declaration":
@@ -86,7 +90,7 @@ function definitions(root: SyntaxNode): Definition[] {
             break;
           }
           const q = [...scope, ...names];
-          out.push({ name: q.join("."), signature: body ? child.text.slice(0, body.startIndex - child.startIndex) : child.text, body: body?.text ?? "" });
+          out.push({ name: q.join("."), signature: body ? child.text.slice(0, body.startIndex - child.startIndex) : child.text, body: body?.text ?? "", start: child.startIndex, end: child.endIndex });
           if (body) walk(body, q);
           break;
         }
@@ -235,7 +239,7 @@ function references(root: SyntaxNode): Reference[] {
     } else out.push(scoped(path, ctx.scope));
   };
 
-  const visit = (node: SyntaxNode, ctx: Ctx): void => {
+  const visit = positioned(out, (node: SyntaxNode, ctx: Ctx): void => {
     const parent = ctx.stack[ctx.stack.length - 1];
     switch (node.type) {
       case "import_declaration":
@@ -265,7 +269,7 @@ function references(root: SyntaxNode): Reference[] {
     const childCtx = inner === ctx ? ctx : { ...inner, stack: ctx.stack };
     for (const c of named(node)) visit(c, childCtx);
     ctx.stack.pop();
-  };
+  });
   visit(root, { stack: [], scope: [], locals: [] });
   return out;
 }
