@@ -67,6 +67,8 @@ export type PendingEdit = {
   before: Record<string, string | null>;
   /** Context already shown to the model by PreToolUse for this call (avoid repeats). */
   shown: string[];
+  /** Bash snapshot: dirty files that could not be read before the call (never submitted by it). */
+  unreadable?: string[];
   at: number;
 };
 
