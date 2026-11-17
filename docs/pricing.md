@@ -39,13 +39,14 @@ Modelled on cap.so: a free tier, and one paid tier priced per user.
 
 ### Two ways to buy
 
-1. **CLI first** (someone already using a hosted space): `npx @celador/weft upgrade [--seats N] [--year]` opens
-   Stripe Checkout for that space. The webhook makes the space Pro with the seats bought.
-2. **Web first** (a stranger on weft.mx): the pricing page links to `https://weft-hosted.elier.ai/buy?interval=year&seats=2`.
-   The buyer pays on Stripe Checkout, lands on `https://weft.mx/welcome/?session_id=...`, and the page shows a
-   one-time claim code and the command `npx @celador/weft --hosted --claim XXXX-XXXX-XXXX`. Running it in a repo creates
-   the hosted space (or reuses the one that repo already has) as Pro. The exact contract the site uses is in
-   [hosted.md](hosted.md#weft-pro-on-the-web-the-contract-the-site-uses).
+Pro belongs to a **Weft account** (free sign-up on weft.mx; [hosted.md](hosted.md#accounts-weftmx-clerk)), and every
+hosted space of the account is Pro.
+
+1. **Web first** (a stranger on weft.mx): pricing page "Get Pro" -> sign up (or sign in) -> straight into Stripe
+   Checkout -> back on weft.mx/account/, which shows the plan and the one command to connect a machine:
+   `npx @celador/weft login`.
+2. **CLI first** (someone already using a hosted space): `npx @celador/weft upgrade [--seats N] [--year]`. If the space
+   has no account yet, the CLI runs `weft login` first (the space joins the account), then opens Checkout.
 
 ### Margin check (from the cost model in section H1)
 

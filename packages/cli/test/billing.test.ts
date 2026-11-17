@@ -185,6 +185,9 @@ describe("weft usage / upgrade / billing", () => {
     expect(out).toContain("sp0000000001");
     expect(out).toContain("user_2abcdEFGH");
     expect(out).toContain("Weft Pro, 2 seats");
+    // a key that no longer works (logged out elsewhere, space or account deleted) says what to run
+    reply = { "GET /v1/space": { status: 401, body: { type: "error", error: { code: "unauthorized", message: "invalid token" } } } };
+    await expect(main(["whoami", "--url", url, "--dir", repo])).rejects.toThrow(/no longer works/);
     reply = { "POST /v1/space/logout": { status: 204 } };
     logs.length = 0;
     const tmp = mkdtempSync(join(tmpdir(), "weft-cli-nogit-"));

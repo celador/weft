@@ -3,5 +3,5 @@
 /early-access /#start 301
 /early-access/ /#start 301
 # The anonymous web purchase is gone (accounts, t_4fe570cd): paying happens signed in, on /account/.
-/welcome/* /account/ 301
 /welcome /account/ 301
+/welcome/* /account/ 301

@@ -366,10 +366,10 @@ section { padding-block: 96px; }
 @media (max-width: 767px) { .nav-inner .nav-signup { margin-left: auto; } .nav-inner .nav-signup + .btn-small { margin-left: 8px; } }
 .auth { display: grid; place-items: center; padding-block: 56px 96px; min-height: 60vh; }
 .auth .lede { color: var(--muted); text-align: center; margin-bottom: 24px; max-width: 46ch; }
-.account .panel { margin-top: 32px; padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-2); }
+.account .panel, .cli .panel { margin-top: 32px; padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-2); }
 .account .panel h2 { margin-top: 0; font-size: 20px; }
 .account .plan-name { font-size: 28px; font-weight: 650; letter-spacing: -0.02em; margin-top: 8px; }
-.account .row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 16px; }
+.account .row, .cli .row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 16px; }
 .account .spaces { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 10px; }
 .account .spaces li { color: #c9cdd8; }
 .account .who { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }

@@ -146,6 +146,7 @@
       $("[data-notice]").textContent = "Payment received. Your plan updates in a few seconds.";
       $("[data-notice]").hidden = false;
       for (let i = 0; i < 10 && info.plan !== "paid"; i++) { await new Promise((r) => setTimeout(r, 1500)); await load().catch(() => {}); }
+      if (info.plan === "paid") $("[data-notice]").textContent = "Payment received. Weft Pro is on for every hosted space of this account.";
       history.replaceState(null, "", "/account/");
     }
     render(clerk, info);
@@ -163,7 +164,7 @@
     $("[data-manage]").hidden = !info.has_billing_account;
     const list = $("[data-spaces]");
     list.textContent = "";
-    if (!info.spaces.length) list.innerHTML = '<li class="meta">No hosted space yet. Connect a machine below and run <code>npx @celador/weft --hosted</code> in a repo.</li>';
+    if (!info.spaces.length) list.innerHTML = '<li class="meta">No hosted space yet. Connect a machine (above), then run <code>npx @celador/weft --hosted</code> in a repo.</li>';
     for (const s of info.spaces) {
       const li = document.createElement("li");
       li.innerHTML = `<code></code> <span class="meta"></span>`;

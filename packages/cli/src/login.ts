@@ -103,7 +103,13 @@ export async function whoami(url: string, root?: string): Promise<void> {
     console.log(`not signed in to ${new URL(url).host} ${c.dim("(local Weft needs no account; hosted: npx @celador/weft login)")}`);
     return;
   }
-  const r = await new Api(url).space(owner);
+  let r;
+  try {
+    r = await new Api(url).space(owner);
+  } catch (e) {
+    if ((e as { status?: number }).status !== 401) throw e;
+    throw new WeftError(`this machine's key for ${new URL(url).host} no longer works (logged out, or the space or account was deleted)`, "Run: npx @celador/weft login");
+  }
   const plan = r.usage ? (r.usage.plan === "paid" && typeof r.usage.seats === "number" ? `Weft Pro, ${r.usage.seats} ${r.usage.seats === 1 ? "seat" : "seats"}` : r.usage.plan === "paid" ? "paid" : "Free") : "-";
   console.log(`${c.bold("gateway")}  ${url}`);
   console.log(`${c.bold("space")}    ${r.space.id}`);
