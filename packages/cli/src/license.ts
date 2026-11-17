@@ -69,6 +69,11 @@ export async function license(url: string, key: string | undefined, o: { root?: 
     try {
       r = await api.call<{ license: LicenseState }>("POST", "/v1/license/verify", undefined, { key });
     } catch (e) {
+      if (statusOf(e) === 404) {
+        // The key this machine had recorded was replaced or its account deleted: it no longer covers this machine.
+        const prev = readLocalLicense();
+        if (prev?.key === key) save({ ...prev, checked_at: new Date().toISOString(), license: null });
+      }
       if (statusOf(e) === 404) throw new WeftError("that license key is not valid (a newer key may have replaced it)", "Copy the current key from https://weft.mx/account/.");
       if ((e as { network?: boolean }).network) {
         save({ key, hint: key.slice(-4), source: "key", checked_at: new Date().toISOString(), gateway: url, license: null });

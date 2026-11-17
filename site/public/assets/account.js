@@ -114,6 +114,10 @@
     return m < 2 ? "just now" : m < 120 ? `${m} minutes ago` : m < 48 * 60 ? `${Math.round(m / 60)} hours ago` : `${Math.round(m / 1440)} days ago`;
   };
   const attr = () => { try { return JSON.parse(sessionStorage.getItem("weft.attr") || "null") || {}; } catch { return {}; } };
+  // How many license purchases the account had when Checkout began, so the page back from Checkout knows when the new
+  // one has arrived (the webhook can take a few seconds). Kept for this tab only.
+  const rememberPurchases = (n) => { try { sessionStorage.setItem("weft.licensePurchases", String(n)); } catch {} };
+  const purchasesBefore = () => { try { const v = sessionStorage.getItem("weft.licensePurchases"); return v === null ? null : Number(v); } catch { return null; } };
 
   async function accountPage() {
     show("loading");
@@ -137,6 +141,7 @@
       try {
         const seats = Math.min(999, Math.max(1, Number(q.get("seats")) || 1));
         const body = buy.startsWith("license-") ? { product: "license", term: buy.slice(8), seats } : { interval: buy, seats };
+        if (body.product === "license") rememberPurchases((await gw(clerk, "GET", "/v1/account")).account?.license?.purchases?.length ?? 0);
         const r = await gw(clerk, "POST", "/v1/account/billing/checkout", { ...body, utm_source: a.utm_source, utm_campaign: a.utm_campaign });
         track("checkout_start", `${buy}-${seats}`);
         location.assign(r.url);
@@ -152,12 +157,16 @@
     try { await load(); } catch (e) { $("[data-error]").textContent = e.message; show("error"); return; }
     // Back from Checkout: the webhook may take a few seconds to make the account Pro.
     if (q.get("checkout") === "done" && q.get("product") === "license") {
-      // A license purchase shows up as a purchase made in the last few minutes.
-      const fresh = () => (info.license?.purchases ?? []).some((p) => Date.now() - Date.parse(p.created_at) < 15 * 60_000);
+      // The new purchase has arrived when the account has more of them than when Checkout began (without that
+      // number: a purchase made in the last few minutes).
+      const before = purchasesBefore();
+      const bought = () => info.license?.purchases ?? [];
+      const fresh = () => (before !== null ? bought().length > before : bought().some((p) => Date.now() - Date.parse(p.created_at) < 15 * 60_000));
       $("[data-notice]").textContent = "Payment received. Your license shows up in a few seconds.";
       $("[data-notice]").hidden = false;
       for (let i = 0; i < 10 && !fresh(); i++) { await new Promise((r) => setTimeout(r, 1500)); await load().catch(() => {}); }
       if (fresh()) $("[data-notice]").textContent = "Payment received. Your commercial license is active. Thank you.";
+      try { sessionStorage.removeItem("weft.licensePurchases"); } catch {}
       history.replaceState(null, "", "/account/");
     } else if (q.get("checkout") === "done") {
       $("[data-notice]").textContent = "Payment received. Your plan updates in a few seconds.";
@@ -193,7 +202,9 @@
   }
 
   // The Commercial License panel: what the account holds, buying (more), and the license key.
+  let lastInfo = null;
   function renderLicense(info) {
+    lastInfo = info;
     const L = info.license || { active: false, included_in_pro: false, seats: 0, lifetime_seats: 0, year_seats: 0, term: null, valid_until: null, renews: false, purchases: [], key: null };
     const bought = L.purchases ?? [];
     let name;
@@ -251,6 +262,7 @@
       ev.target.disabled = true;
       try {
         const a = attr();
+        rememberPurchases(lastInfo?.license?.purchases?.length ?? 0);
         const r = await gw(clerk, "POST", "/v1/account/billing/checkout", { product: "license", term: state.term, seats: state.seats, utm_source: a.utm_source, utm_campaign: a.utm_campaign });
         track("checkout_start", `license-${state.term}-${state.seats}`);
         location.assign(r.url);

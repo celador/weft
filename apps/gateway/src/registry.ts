@@ -1291,7 +1291,7 @@ export class Registry extends DurableObject<RegistryEnv> {
       term: lifetime > 0 && year > 0 ? "mixed" : lifetime > 0 ? "lifetime" : year > 0 ? "year" : null,
       valid_until: year > 0 && until !== null ? new Date(until * 1000).toISOString() : null,
       renews: yearly.some((r) => r.status === "active"),
-      purchases: rows.map((r) => ({ term: r.term, seats: r.seats, status: r.active ? (r.term === "year" && r.status === "canceling" ? "ends" : r.status === "past_due" ? "past_due" : "active") : "ended", valid_until: r.valid_until === null ? null : new Date(r.valid_until * 1000).toISOString(), created_at: r.created_at })),
+      purchases: rows.map((r) => ({ term: r.term, seats: r.seats, status: r.active ? (r.term === "year" && (r.status === "canceling" || r.status === "canceled") ? "ends" : r.status === "past_due" ? "past_due" : "active") : "ended", valid_until: r.valid_until === null ? null : new Date(r.valid_until * 1000).toISOString(), created_at: r.created_at })),
       key: key ? { hint: key.hint, created_at: key.created_at } : null,
     };
   }

@@ -134,7 +134,7 @@ describe("the Commercial License: buying it", () => {
     expect(await license(user)).toMatchObject({ active: true, seats: 2, renews: false, purchases: [{ status: "ends" }] });
     // the subscription ends at period end (ended_at = the end of the paid year): it stays valid until then
     expect(await webhook(evt("customer.subscription.deleted", licSub(sub.id, customer, 2, { end, status: "canceled", ended: end }), now() + 6))).toBe("applied");
-    expect(await license(user)).toMatchObject({ active: true, seats: 2, renews: false, valid_until: new Date(end * 1000).toISOString() });
+    expect(await license(user)).toMatchObject({ active: true, seats: 2, renews: false, valid_until: new Date(end * 1000).toISOString(), purchases: [{ status: "ends" }] });
     // an older event arriving late changes nothing
     expect(await webhook(evt("customer.subscription.updated", licSub(sub.id, customer, 9, { end }), now() - 100))).toBe("stale");
 

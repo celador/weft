@@ -91,6 +91,11 @@ describe("weft license", () => {
     expect(strip(logs.join("\n"))).toContain("key      …Ab3_");
     // and setup stays quiet about licenses on this machine
     expect(licenseHint(false)).toBeUndefined();
+    // the key is replaced on weft.mx (or the account deleted): checking it again says so, and it stops counting here
+    reply = {};
+    await expect(main(["license", KEY, "--url", url])).rejects.toThrow(/not valid/);
+    expect(readLocalLicense()).toMatchObject({ key: KEY, license: null });
+    expect(licenseHint(false)).toBe(LICENSE_HINT);
   });
 
   it("a wrong or replaced key is refused and nothing is recorded; a malformed one never leaves the machine", async () => {
