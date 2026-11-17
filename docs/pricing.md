@@ -24,7 +24,9 @@ Modelled on cap.so: a free tier, and one paid tier priced per user.
 | Fair use | | 50,000 agent events per seat per month: passing it cuts nothing off; the month is flagged for the operator | same |
 
 - **Seats are an honor system**, like Cap's license counter. Weft has no accounts, so nothing checks who the users
-  are; the buyer says how many people use the space.
+  are; the buyer says how many people use the space. Teammates on other machines join with `npx @celador/weft invite`
+  and get their own member key ([hosted.md](hosted.md#teammates-on-other-machines-team-join)); `invite` and `members`
+  say when the owner plus members outnumber the seats, and nothing is refused.
 - **Fair use** is a flag, not a limit: when a Pro space's events this month pass `seats x 50,000`, the Registry records
   the time (`fair_use_exceeded_at` in `GET /v1/admin/spaces`, `node site/hosted-admin.mjs spaces`) and
   `GET /v1/admin/billing` counts it. We reach out; we do not cut off.
