@@ -6,16 +6,16 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0b0d12">
   <title>Pricing · Weft</title>
-  <meta name="description" content="Weft pricing: free and open source locally, usage-based hosted spaces (5,000 events a month free, then $1 per 1,000), and a $500 pilot on your own Cloudflare account. No per-seat fees.">
+  <meta name="description" content="Weft is free and open source on your machine. Pro is a hosted space with no event limit, $12 per user a month or $98 per user a year. A $500 pilot sets Weft up on your own Cloudflare account.">
   <link rel="canonical" href="https://weft.mx/pricing/">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Pricing · Weft">
-  <meta property="og:description" content="Weft pricing: free and open source locally, usage-based hosted spaces (5,000 events a month free, then $1 per 1,000), and a $500 pilot on your own Cloudflare account. No per-seat fees.">
+  <meta property="og:description" content="Free on your machine. Pro: a hosted space with no event limit, $12 per user a month or $98 per user a year.">
   <meta property="og:url" content="https://weft.mx/pricing/">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/site.css">
 </head>
-<body>
+<body data-page="pricing">
   <header class="nav">
     <div class="wrap nav-inner">
       <a class="brand" href="/" aria-label="Weft home"><img src="/favicon.svg" alt="" width="22" height="22">weft</a>
@@ -30,55 +30,115 @@
     </div>
   </header>
 
-  <main class="wrap doc">
-    <h1>Pricing</h1>
-    <p class="meta">Pay for what your agents use, never per developer. There is no per-seat, per-developer or per-agent fee anywhere.</p>
+  <main class="wrap pricing">
+    <header class="pricing-head">
+      <h1>Pricing</h1>
+      <p class="section-sub">Weft is free on your machine. Pro runs it for you: a hosted space with no event limit, and nothing to keep running.</p>
+      <div class="toggle" role="group" aria-label="Billing period">
+        <button type="button" data-interval="month" aria-pressed="false">Monthly</button>
+        <button type="button" data-interval="year" aria-pressed="true">Yearly <span class="save">save <span data-fill="save">32%</span></span></button>
+      </div>
+    </header>
 
-    <section class="plan">
-      <h2>Free</h2>
-      <p class="price">$0</p>
-      <p>Run Weft on your machine or on your own Cloudflare account.</p>
-      <ul>
-        <li>Open source (MIT). Nothing leaves your machine by default.</li>
-        <li>Local: <code>npx @celador/weft</code></li>
-        <li>Self-hosted: <code>npx @celador/weft deploy</code> runs the gateway as a Worker in your Cloudflare account.</li>
-        <li>No Weft limit on repos, agents or developers.</li>
-      </ul>
+    <div class="plans">
+      <section class="plan-card" aria-labelledby="free-h">
+        <h2 id="free-h">Free</h2>
+        <p class="plan-price"><span class="amount">$0</span></p>
+        <p class="plan-unit">forever, open source (MIT)</p>
+        <p class="plan-desc">Weft on your machine, or on your own Cloudflare account.</p>
+        <div class="cmd-block" data-placement="pricing">
+          <div class="cmd-bar"><span>Start free: run this in your repo</span><button class="copy" type="button" data-copy aria-label="Copy the command">Copy</button></div>
+          <pre><code data-weft-cmd>npx @celador/weft</code></pre>
+        </div>
+        <ul class="ticks">
+          <li>Edit-time checks for every coding agent you run</li>
+          <li>No limit on repos, agents or events on your own gateway</li>
+          <li>Your own Cloudflare account: <code>npx @celador/weft deploy</code></li>
+          <li>Try hosted: one space, <span data-fill="free-events">5,000</span> agent events a month</li>
+        </ul>
+      </section>
+
+      <section class="plan-card plan-pro" aria-labelledby="pro-h" data-pro>
+        <h2 id="pro-h">Pro</h2>
+        <p class="plan-price"><span class="amount" data-pro-price>$8.16</span></p>
+        <p class="plan-unit" data-pro-unit>per user a month, billed $98 a year</p>
+        <p class="plan-desc">A hosted space with no event limit. We run the gateway.</p>
+        <div class="seats">
+          <label for="seats">Users</label>
+          <div class="stepper">
+            <button type="button" data-seat-minus aria-label="One user fewer">−</button>
+            <input id="seats" type="number" inputmode="numeric" min="1" max="999" value="1" data-seats>
+            <button type="button" data-seat-plus aria-label="One user more">+</button>
+          </div>
+        </div>
+        <p class="total" data-pro-total aria-live="polite">1 user × $98 = $98 a year</p>
+        <a class="btn btn-block" href="https://weft-hosted.elier.ai/buy?interval=year&amp;seats=1" data-buy-pro>Get Pro</a>
+        <p class="plan-fine">Pay with Stripe. Your claim code shows on the next page.</p>
+        <ul class="ticks">
+          <li>Everything in Free</li>
+          <li>No monthly event limit</li>
+          <li>No gateway to run or keep up</li>
+          <li>Live feed in the browser and on your phone</li>
+          <li>Add users or cancel any time</li>
+        </ul>
+      </section>
+
+      <section class="plan-card" aria-labelledby="pilot-h">
+        <h2 id="pilot-h">Pilot</h2>
+        <p class="plan-price"><span class="amount" data-fill="pilot">$500</span></p>
+        <p class="plan-unit">one time</p>
+        <p class="plan-desc">We set Weft up on your Cloudflare account and support you for 30 days.</p>
+        <a class="btn btn-ghost btn-block" href="https://calendly.com/john-johnaaronnelson/chat" data-pilot-call>Book a 15-minute call</a>
+        <p class="plan-fine">Or email <a href="mailto:john@elier.ai" data-support>john@elier.ai</a>.</p>
+        <ul class="ticks">
+          <li>Deployed with <code>npx @celador/weft deploy</code>. Your code never touches our servers.</li>
+          <li>Hooks wired for every agent you run, and a live collision on your own repo during setup</li>
+          <li>30 days of support and a day-30 review</li>
+          <li>Weft keeps running on your account afterward</li>
+        </ul>
+      </section>
+    </div>
+
+    <section class="compare" aria-labelledby="compare-h">
+      <h2 id="compare-h">Compare plans</h2>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th scope="col"></th><th scope="col">Free</th><th scope="col">Pro</th><th scope="col">Pilot</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Price</th><td>$0</td><td><span data-fill="month">$12</span> per user a month, or <span data-fill="year">$98</span> per user a year</td><td><span data-fill="pilot">$500</span> once</td></tr>
+            <tr><th scope="row">Where the gateway runs</th><td>Your machine, or your Cloudflare account</td><td>Weft's hosted gateway on Cloudflare</td><td>Your Cloudflare account</td></tr>
+            <tr><th scope="row">Who runs it</th><td>You</td><td>We do</td><td>You, after we set it up</td></tr>
+            <tr><th scope="row">Agent events a month</th><td>No limit on your gateway; <span data-fill="free-events">5,000</span> on a hosted space</td><td>No limit (fair use: <span data-fill="fair-use">50,000</span> per user)</td><td>No limit</td></tr>
+            <tr><th scope="row">Declaration-level checks in 12 languages</th><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+            <tr><th scope="row">Claude Code, Codex, Copilot CLI, OpenCode, Antigravity, Hermes, any MCP agent</th><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+            <tr><th scope="row">Your code leaves your machine</th><td>No (local). Self-hosted: to your Cloudflare account</td><td>Yes, to Weft's gateway</td><td>Only to your Cloudflare account</td></tr>
+            <tr><th scope="row">Setup and 30 days of support</th><td>—</td><td>—</td><td>Yes</td></tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
-    <section class="plan">
-      <h2>Hosted</h2>
-      <p class="price">5,000 events a month free, then $1 per 1,000</p>
-      <p>We run the gateway. Opt in with <code>npx @celador/weft --hosted</code>. Each space gets the free allowance every month (UTC); you pay only for events above it, billed monthly in arrears through Stripe. You are never charged unless you subscribe.</p>
-      <ul>
-        <li>An event is one edit, claim, release or checkpoint an agent adds to the log. Heartbeats, reads, checks that pass and everything a human does are free.</li>
-        <li>Over the allowance without a subscription, agents keep working uncoordinated and are told so. Nothing is billed.</li>
-        <li>Every repo, agent and developer in the space is included.</li>
-        <li>See your count: <code>npx @celador/weft usage</code>. Subscribe: <code>npx @celador/weft upgrade</code>. Cards, invoices and cancelling (immediate): <code>npx @celador/weft billing</code>.</li>
-        <li>No account or login: a space is a key on your machine. Erase it for good with <code>npx @celador/weft uninstall --space</code>.</li>
-      </ul>
+    <section class="faq doc" aria-labelledby="faq-h">
+      <h2 id="faq-h">Questions</h2>
+      <h3>What counts as a user?</h3>
+      <p>One person whose coding agents work in the space. Agents don't count: one person running five agents is one user. Weft has no accounts, so you pick the number, and you can change it any time with <code>npx @celador/weft billing</code>.</p>
+      <h3>Can teammates on other machines join my space?</h3>
+      <p>Not with a command yet. A Pro space's key stays on the machine that claimed it, and every checkout and worktree on that machine shares the space. We're building a join command that gives each teammate their own key.</p>
+      <h3>What happens when a free hosted space passes <span data-fill="free-events">5,000</span> events?</h3>
+      <p>Your agents keep working, but their edits aren't coordinated until the next month (UTC), and each agent is told so. Reads and the feed keep working. Upgrade to Pro, or switch to your own gateway with <code>npx @celador/weft use local</code>, which has no limit. An event is one edit, claim, release or checkpoint an agent adds to the log. Heartbeats, reads, checks that pass and everything a human does are free.</p>
+      <h3>Where does my code go?</h3>
+      <p>On Free it stays on your machine; self-hosted and Pilot send edit events to a Worker in your Cloudflare account. On Pro, edit events (file paths, diffs, symbol names) go to Weft's gateway on Cloudflare and stay there until you erase the space with <code>npx @celador/weft uninstall --space</code>. Stripe holds your email and card; Weft keeps the Stripe customer id, the plan and the number of users. <a href="/privacy/">Privacy policy</a>.</p>
+      <h3>Does Weft stop agents from conflicting?</h3>
+      <p>It catches conflicts while the agents are still editing: an agent whose edit relies on code another agent just changed gets a diagnostic in its tool result and fixes its own edit. You choose whether such an edit is blocked or only flagged (enforce or advise mode).</p>
+      <h3>Can I cancel?</h3>
+      <p>Yes, any time. <code>npx @celador/weft billing</code> opens Stripe's billing page, where you change the number of users, update your card or cancel. When Pro ends, the space goes back to Free. Nothing is deleted.</p>
+      <h3>Who bills me?</h3>
+      <p>Stripe, as &quot;Atelier&quot;, in US dollars, at the start of each month or year.</p>
+      <h3>Is it open source?</h3>
+      <p>Yes, MIT, at <a href="https://github.com/celador/weft">github.com/celador/weft</a>. Pro pays for the hosted service. The code is the same.</p>
+      <h3>What if Weft goes down?</h3>
+      <p>Agents keep working. After 5 seconds the adapter lets the edit through and tells the agent it was not coordinated.</p>
     </section>
-
-    <section class="plan">
-      <h2>Pilot</h2>
-      <p class="price">$500, one time</p>
-      <p>We set Weft up on your Cloudflare account and support you for 30 days.</p>
-      <ul>
-        <li>Deployed to your account with <code>npx @celador/weft deploy</code>. Your code never touches our servers.</li>
-        <li>Hooks wired for every agent you run, and a live collision on your own repo during setup.</li>
-        <li>30 days of support and a day-30 review. Weft keeps running on your account afterward.</li>
-      </ul>
-      <p>For teams already running several coding agents in parallel.</p>
-      <p><a class="btn" href="https://calendly.com/john-johnaaronnelson/chat">Book a 15-minute call</a> <a class="btn btn-ghost" href="mailto:john@elier.ai">Email John</a></p>
-    </section>
-
-    <h2>Questions</h2>
-    <p><strong>Do you charge per developer?</strong> No. Hosted is billed on usage, the pilot is a flat $500, and Free costs nothing.</p>
-    <p><strong>Where does my code go?</strong> Local: it stays on your machine. Self-hosted and Pilot: edit events go to a Worker in your Cloudflare account. Hosted: edit events (file paths, diffs, symbol names) go to Weft&#39;s gateway on Cloudflare and are kept until you erase the space. Stripe handles the email and card of a paid space; we keep only its customer id. <a href="/privacy/">Details in the privacy page</a>.</p>
-    <p><strong>What if Weft goes down?</strong> Agents keep working. After 5 seconds the adapter lets the edit through and tells the agent it was uncoordinated.</p>
-    <p><strong>Is it open source?</strong> Yes, MIT, at <a href="https://github.com/celador/weft">github.com/celador/weft</a>. Hosted adds the service, not a different codebase.</p>
-    <p><strong>Can I move between Free and Hosted?</strong> <code>npx @celador/weft use hosted</code> and <code>use local</code> switch the default. Each gateway keeps its own event log, so history stays where it was written.</p>
-    <p><strong>Who bills me?</strong> Stripe, as &quot;Atelier&quot;, monthly in arrears, in US dollars.</p>
   </main>
 
   <footer class="footer">
@@ -96,6 +156,7 @@
       <p>Built by <a href="https://johnaaronnelson.com">John Aaron Nelson</a>.</p>
     </div>
   </footer>
+  <script src="/assets/site.js"></script>
   <!-- Cloudflare Web Analytics (cookieless). The token is public by design. -->
   <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "f2a2e8db7c3c44a3aff0a5ddd425ef2f"}'></script>
 </body>

@@ -2,6 +2,9 @@
 // Weft launch funnel, one report (docs/launch/README.md):
 //   1. site visits      Cloudflare Web Analytics (RUM), site weft.mx
 //   2. command copies   Workers Analytics Engine dataset weft_site_events (site/worker.js)
+//      + sales path     same dataset: pricing page views, buy clicks (Get Pro on /pricing/), paid
+//                       (back on /welcome/ from Stripe Checkout with a session) and claimed (the
+//                       welcome page got a claim code), per day and per utm_campaign
 //   3. npm downloads    api.npmjs.org, @celador/weft, per day
 //   4. first runs       new hosted spaces per day, GET weft-hosted.elier.ai/v1/admin/stats
 //      + retention      active (7d/30d) and retained hosted spaces, events per day, from the same call
@@ -39,10 +42,13 @@ const WRANGLER_CONFIGS = [
   `${HOME}/.config/.wrangler/config/default.toml`,
 ];
 export const STATE_FILE = process.env.WEFT_FUNNEL_STATE || `${HOME}/.config/weft/funnel-alert-state.json`;
-export const METRICS = ["visits", "copies", "downloads", "firstRuns"];
-const LABEL = { visits: "site visits", copies: "command copies", downloads: "npm downloads", firstRuns: "first runs" };
+export const METRICS = ["visits", "copies", "buyClicks", "paid", "downloads", "firstRuns"];
+const LABEL = { visits: "site visits", copies: "command copies", buyClicks: "Pro buy clicks", paid: "paid checkouts", downloads: "npm downloads", firstRuns: "first runs" };
 // A spike also needs at least this many on the day, so 1 -> 3 on a quiet week stays silent.
-export const SPIKE_FLOOR = { visits: 50, copies: 10, downloads: 50, firstRuns: 5 };
+export const SPIKE_FLOOR = { visits: 50, copies: 10, buyClicks: 10, paid: 5, downloads: 50, firstRuns: 5 };
+// Site events (site/worker.js) -> report columns. welcome_view "paid" etc. = one per checkout session;
+// "no-session" is someone opening /welcome/ without paying, so it is not counted as paid.
+export const SALES = ["pricingViews", "buyClicks", "paid", "claimed"];
 export const FIRST_RUN_MILESTONES = [25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
 export const RETAINED_MILESTONES = [1, 3, 10, 25, 50, 100, 250, 500, 1000];
 
@@ -88,11 +94,17 @@ export function detectAlerts(report, state = {}) {
 
 export function formatReport(r) {
   const n = (x) => (x === null || x === undefined ? "-" : String(x));
-  const lines = [`Weft launch funnel, last ${r.days}d (UTC days)`, "", "day         visits  copies  npm  first-runs"];
-  for (const d of r.daily) lines.push(`${d.day}  ${n(d.visits).padStart(6)}  ${n(d.copies).padStart(6)}  ${n(d.downloads).padStart(3)}  ${n(d.firstRuns).padStart(10)}`);
+  const lines = [`Weft launch funnel, last ${r.days}d (UTC days)`, "", "day         visits  copies  pricing  buys  paid  claimed  npm  first-runs"];
+  for (const d of r.daily) lines.push(`${d.day}  ${n(d.visits).padStart(6)}  ${n(d.copies).padStart(6)}  ${n(d.pricingViews).padStart(7)}  ${n(d.buyClicks).padStart(4)}  ${n(d.paid).padStart(4)}  ${n(d.claimed).padStart(7)}  ${n(d.downloads).padStart(3)}  ${n(d.firstRuns).padStart(10)}`);
   const t = r.totals;
   const pct = (a, b, of) => (a && b ? ` (${((100 * a) / b).toFixed(1)}% of ${of})` : "");
   lines.push("", `totals: ${n(t.visits)} visits -> ${n(t.copies)} copies${pct(t.copies, t.visits, "visits")} -> ${n(t.downloads)} npm downloads -> ${n(t.firstRuns)} first runs${pct(t.firstRuns, t.visits, "visits")}`);
+  if (SALES.some((m) => typeof t[m] === "number")) lines.push(`sales: ${n(t.visits)} visits -> ${n(t.pricingViews)} pricing views -> ${n(t.buyClicks)} buy clicks${pct(t.buyClicks, t.pricingViews, "pricing views")} -> ${n(t.paid)} paid -> ${n(t.claimed)} claimed`);
+  const camps = Object.entries(r.byCampaign ?? {});
+  if (camps.length) {
+    lines.push("", "by utm_campaign  views  copies  pricing  buys  paid  claimed");
+    for (const [k, c] of camps) lines.push(`${k.slice(0, 16).padEnd(16)}  ${n(c.views).padStart(5)}  ${n(c.copies).padStart(6)}  ${n(c.pricingViews).padStart(7)}  ${n(c.buyClicks).padStart(4)}  ${n(c.paid).padStart(4)}  ${n(c.claimed).padStart(7)}`);
+  }
   if (Object.keys(r.copiesBy).length) lines.push(`copies by source/placement: ${Object.entries(r.copiesBy).map(([k, v]) => `${k} ${v}`).join(", ")}`);
   if (Object.keys(r.viewsBySource).length) lines.push(`page views (AE) by source: ${Object.entries(r.viewsBySource).map(([k, v]) => `${k} ${v}`).join(", ")}`);
   if (typeof t.hostedSpacesAllTime === "number") lines.push(`hosted spaces all-time: ${t.hostedSpacesAllTime}`);
@@ -157,9 +169,9 @@ async function cloudflare(notes) {
 }
 
 async function aeRows(cf, days) {
-  const sql = `SELECT toDate(timestamp) AS day, blob1 AS event, blob2 AS placement, blob3 AS source, SUM(_sample_interval) AS n
+  const sql = `SELECT toDate(timestamp) AS day, blob1 AS event, blob2 AS placement, blob3 AS source, blob5 AS campaign, SUM(_sample_interval) AS n
 FROM weft_site_events WHERE timestamp > NOW() - INTERVAL '${days}' DAY AND blob3 != 'playwright'
-GROUP BY day, event, placement, source ORDER BY day`;
+GROUP BY day, event, placement, source, campaign ORDER BY day`;
   const r = await fetch(`${CF}/accounts/${ACCOUNT}/analytics_engine/sql`, { method: "POST", headers: { authorization: `Bearer ${cf.token}` }, body: sql });
   const text = await r.text();
   if (!r.ok) throw new Error(`Analytics Engine HTTP ${r.status}: ${text.slice(0, 200)}`);
@@ -266,28 +278,54 @@ export function parseRetention(x) {
   };
 }
 
+/** Analytics Engine rows -> per-day and per-campaign counts of the site events. Pure. */
+export function siteEvents(rows) {
+  const copiesBy = {}, viewsBySource = {}, byDay = {}, byCampaign = {};
+  const bump = (o, k, m, n) => { o[k] ??= {}; o[k][m] = (o[k][m] ?? 0) + n; };
+  for (const x of rows) {
+    const day = String(x.day).slice(0, 10);
+    const camp = x.campaign || "(none)";
+    let m = null;
+    if (x.event === "copy") {
+      m = "copies";
+      const k = `${x.source || "direct"}/${x.placement || "?"}`;
+      copiesBy[k] = (copiesBy[k] ?? 0) + x.n;
+    } else if (x.event === "view") {
+      const k = x.source || "unknown";
+      viewsBySource[k] = (viewsBySource[k] ?? 0) + x.n;
+      bump(byCampaign, camp, "views", x.n);
+    } else if (x.event === "pricing_view") {
+      m = "pricingViews";
+      bump(byCampaign, camp, "views", x.n);
+    } else if (x.event === "buy_click") m = "buyClicks";
+    else if (x.event === "welcome_view" && x.placement !== "no-session") m = "paid";
+    else if (x.event === "claim_ok") m = "claimed";
+    if (!m) continue;
+    bump(byDay, day, m, x.n);
+    bump(byCampaign, camp, m, x.n);
+  }
+  // Busiest campaign first; "(none)" (no utm_campaign) last.
+  const ordered = Object.entries(byCampaign).sort((a, b) => (a[0] === "(none)") - (b[0] === "(none)") || (b[1].views ?? 0) - (a[1].views ?? 0));
+  return {
+    copiesBy: Object.fromEntries(Object.entries(copiesBy).sort((a, b) => b[1] - a[1])),
+    viewsBySource: Object.fromEntries(Object.entries(viewsBySource).sort((a, b) => b[1] - a[1])),
+    byDay,
+    byCampaign: Object.fromEntries(ordered.map(([k, c]) => [k, { views: c.views ?? 0, copies: c.copies ?? 0, pricingViews: c.pricingViews ?? 0, buyClicks: c.buyClicks ?? 0, paid: c.paid ?? 0, claimed: c.claimed ?? 0 }])),
+  };
+}
+
 export async function buildReport(days) {
   const notes = [];
   const list = dayList(days);
   const since = list[0], until = list[list.length - 1];
   const cf = await cloudflare(notes);
   const [ae, rum, npm, hosted] = await Promise.all([aeRows(cf, days), rumVisits(cf, list), npmDaily(since, until, notes), hostedStats(notes)]);
-  const copiesBy = {}, viewsBySource = {}, copiesDay = {};
-  for (const x of ae) {
-    const day = String(x.day).slice(0, 10);
-    if (x.event === "copy") {
-      copiesDay[day] = (copiesDay[day] ?? 0) + x.n;
-      const k = `${x.source || "direct"}/${x.placement || "?"}`;
-      copiesBy[k] = (copiesBy[k] ?? 0) + x.n;
-    } else if (x.event === "view") {
-      const k = x.source || "unknown";
-      viewsBySource[k] = (viewsBySource[k] ?? 0) + x.n;
-    }
-  }
+  const { copiesBy, viewsBySource, byDay, byCampaign } = siteEvents(ae);
   const daily = list.map((day) => ({
     day,
     visits: rum[day] ?? 0,
-    copies: copiesDay[day] ?? 0,
+    copies: byDay[day]?.copies ?? 0,
+    ...Object.fromEntries(SALES.map((m) => [m, byDay[day]?.[m] ?? 0])),
     downloads: npm.end && day > npm.end ? null : (npm.by[day] ?? 0), // null = npm hasn't published that day yet
     firstRuns: hosted ? (hosted.by[day] ?? 0) : null,
   }));
@@ -295,10 +333,11 @@ export async function buildReport(days) {
   return {
     days, generatedAt: new Date().toISOString(), cloudflareAuth: cf.source,
     daily,
-    totals: { visits: sum("visits"), copies: sum("copies"), downloads: sum("downloads"), firstRuns: sum("firstRuns"), hostedSpacesAllTime: hosted?.total ?? null },
+    totals: { visits: sum("visits"), copies: sum("copies"), ...Object.fromEntries(SALES.map((m) => [m, sum(m)])), downloads: sum("downloads"), firstRuns: sum("firstRuns"), hostedSpacesAllTime: hosted?.total ?? null },
+    byCampaign,
     retention: hosted?.retention ?? null,
-    copiesBy: Object.fromEntries(Object.entries(copiesBy).sort((a, b) => b[1] - a[1])),
-    viewsBySource: Object.fromEntries(Object.entries(viewsBySource).sort((a, b) => b[1] - a[1])),
+    copiesBy,
+    viewsBySource,
     notes,
   };
 }

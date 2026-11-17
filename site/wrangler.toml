@@ -21,3 +21,16 @@ run_worker_first = true   # worker redirects old hosts to weft.mx, then serves a
 [[analytics_engine_datasets]]
 binding = "EVENTS"
 dataset = "weft_site_events"
+
+# Preview of the site (card t_77ce8f6b): same code and assets, its own Worker and hostname, a banner,
+# noindex, and its own events dataset so preview clicks never reach the weft.mx funnel.
+#   unset CLOUDFLARE_API_TOKEN; npx wrangler@latest deploy --env preview
+[env.preview]
+name = "weft-site-preview"
+workers_dev = false
+routes = [{ pattern = "weft-site-preview.elier.ai", custom_domain = true }]
+vars = { CANONICAL_HOST = "weft-site-preview.elier.ai", PREVIEW = "1" }
+
+[[env.preview.analytics_engine_datasets]]
+binding = "EVENTS"
+dataset = "weft_site_events_preview"
