@@ -226,6 +226,10 @@ describe("team join end to end: two machines, one space", () => {
     expect(out()).toContain(`joined space ${space} as alice`);
     expect(ptr(aliceRepo)).toMatchObject({ url, space, repo: `${space}-shop`, name: "shop", role: "member", handle: "alice", agent: "shop.alice" });
     expect(JSON.parse(readFileSync(join(aliceRepo, ".weft/claude.json"), "utf8"))).toMatchObject({ agent: "shop.alice", repo: `${space}-shop` });
+    // Both clones are on `main`: the task ids differ too, or the sequencer would take the two changes for alternatives
+    // of one task (best-of-N, spec §7.7) and never check them against each other.
+    expect(ptr(ownerRepo).task).toBe("T-main");
+    expect(ptr(aliceRepo).task).toBe("T-main.alice");
     const key = readFileSync(join(aliceRepo, ".weft/space-token"), "utf8").trim();
     expect(key).toMatch(/^weft_member_/);
     expect(key).not.toBe(readFileSync(join(ownerRepo, ".weft/space-token"), "utf8").trim());

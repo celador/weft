@@ -258,7 +258,10 @@ async function setupCheckout(api: Api, url: string, acc: Access, repo: string, n
     token = t.token;
     tokenId = t.info.id;
   }
-  const task = meta.task ?? `T-${slug(co.branch && co.branch !== "HEAD" ? co.branch : co.agent, 48)}`;
+  // The task id carries a teammate's handle too: two people both on `main` would otherwise share `T-main`, and the
+  // sequencer treats different changes of one task as alternatives (best-of-N, spec §7.7) that are never checked
+  // against each other.
+  const task = meta.task ?? `T-${slug(co.branch && co.branch !== "HEAD" ? co.branch : co.agent, 48)}${acc.role === "member" ? `.${acc.handle}` : ""}`;
   const change = meta.change ?? changeId();
   const title = `${co.agent} (${co.branch ?? "detached"})`;
   for (const h of harnesses) installAdapter(rt, h, { root: co.root, url, repo, agent: co.agent, task, title, change, token });
