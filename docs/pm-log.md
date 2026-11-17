@@ -316,3 +316,8 @@ Append-only. One dated entry per heartbeat that changed something.
 - Nothing deployed or published: Pro/team-join gateway code and CLI 0.4.0 are on main only. Same risk as the site-signup land: only t_52c6e0ad deploys hosted/site or publishes.
 - Security impact: none live. On main: Stripe test-mode Pro billing routes (inert without secrets), member invite/join keys (own key per teammate, revocable), Codex adapter reports shell-written files.
 - Remaining: t_4fe570cd Clerk running (~55 min); t_ae271f1e todo (waits on Clerk + license); go-live todo.
+
+## 2026-11-17 15:55 — Restarted t_4fe570cd (Clerk accounts)
+- Card showed `running` 3h06 but its worker died at 13:33 (exit 130, `session_turn_lease_lost` in agent.log); board never noticed. Two commits on wt/clerk-accounts (0de6a73 gateway, 1862fe3 CLI 0.5.0) plus 26 uncommitted site/CLI files; E2E stopped at Stripe Checkout Subscribe.
+- Reclaimed, posted a resume comment (commit the uncommitted files first, E2E rig paths, leftover wrangler dev pids 17430/18278, remaining steps), dispatched: new run pid 54648 running.
+- Nothing else to land: wt/license-change held for go-live, wt/t_be804fb4 stays private. Security impact: none (board operation only).
