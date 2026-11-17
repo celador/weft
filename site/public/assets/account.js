@@ -63,13 +63,18 @@
   async function gw(clerk, method, path, body) {
     const token = await clerk.session?.getToken();
     if (!token) throw Object.assign(new Error("signed out"), { status: 401 });
-    const r = await fetch(`${CFG.gateway}${path}`, {
-      method,
-      headers: { authorization: `Bearer ${token}`, ...(body !== undefined ? { "content-type": "application/json" } : {}) },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      credentials: "omit",
-      referrerPolicy: "no-referrer",
-    });
+    let r;
+    try {
+      r = await fetch(`${CFG.gateway}${path}`, {
+        method,
+        headers: { authorization: `Bearer ${token}`, ...(body !== undefined ? { "content-type": "application/json" } : {}) },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+      });
+    } catch {
+      throw Object.assign(new Error("could not reach Weft's server (a network problem, or it is being updated)"), { status: 0 });
+    }
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw Object.assign(new Error(j?.error?.message || `HTTP ${r.status}`), { status: r.status, code: j?.error?.code });
     return j;
