@@ -2,9 +2,9 @@
 // Weft launch funnel, one report (docs/launch/README.md):
 //   1. site visits      Cloudflare Web Analytics (RUM), site weft.mx
 //   2. command copies   Workers Analytics Engine dataset weft_site_events (site/worker.js)
-//      + sales path     same dataset: pricing page views, buy clicks (Get Pro on /pricing/), paid
-//                       (back on /welcome/ from Stripe Checkout with a session) and claimed (the
-//                       welcome page got a claim code), per day and per utm_campaign
+//      + sales path     same dataset: pricing page views and buy clicks (Get Pro on /pricing/); then
+//                       account sign-ups and paid accounts (Weft Pro) per day and per utm_campaign from
+//                       GET weft-hosted.elier.ai/v1/admin/accounts (the campaign of the account's first visit)
 //   3. npm downloads    api.npmjs.org, @celador/weft, per day
 //   4. first runs       new hosted spaces per day, GET weft-hosted.elier.ai/v1/admin/stats
 //      + retention      active (7d/30d) and retained hosted spaces, events per day, from the same call
@@ -42,13 +42,13 @@ const WRANGLER_CONFIGS = [
   `${HOME}/.config/.wrangler/config/default.toml`,
 ];
 export const STATE_FILE = process.env.WEFT_FUNNEL_STATE || `${HOME}/.config/weft/funnel-alert-state.json`;
-export const METRICS = ["visits", "copies", "buyClicks", "paid", "downloads", "firstRuns"];
-const LABEL = { visits: "site visits", copies: "command copies", buyClicks: "Pro buy clicks", paid: "paid checkouts", downloads: "npm downloads", firstRuns: "first runs" };
+export const METRICS = ["visits", "copies", "buyClicks", "signups", "paid", "downloads", "firstRuns"];
+const LABEL = { visits: "site visits", copies: "command copies", buyClicks: "Pro buy clicks", signups: "account sign-ups", paid: "paid accounts", downloads: "npm downloads", firstRuns: "first runs" };
 // A spike also needs at least this many on the day, so 1 -> 3 on a quiet week stays silent.
-export const SPIKE_FLOOR = { visits: 50, copies: 10, buyClicks: 10, paid: 5, downloads: 50, firstRuns: 5 };
-// Site events (site/worker.js) -> report columns. welcome_view "paid" etc. = one per checkout session;
-// "no-session" is someone opening /welcome/ without paying, so it is not counted as paid.
-export const SALES = ["pricingViews", "buyClicks", "paid", "claimed"];
+export const SPIKE_FLOOR = { visits: 50, copies: 10, buyClicks: 10, signups: 10, paid: 5, downloads: 50, firstRuns: 5 };
+// Report columns of the sales path: pricing views and buy clicks (site events, site/worker.js), sign-ups and paid
+// accounts (the gateway's accounts: created_at and paid_at days).
+export const SALES = ["pricingViews", "buyClicks", "signups", "paid"];
 export const FIRST_RUN_MILESTONES = [25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
 export const RETAINED_MILESTONES = [1, 3, 10, 25, 50, 100, 250, 500, 1000];
 
@@ -94,16 +94,16 @@ export function detectAlerts(report, state = {}) {
 
 export function formatReport(r) {
   const n = (x) => (x === null || x === undefined ? "-" : String(x));
-  const lines = [`Weft launch funnel, last ${r.days}d (UTC days)`, "", "day         visits  copies  pricing  buys  paid  claimed  npm  first-runs"];
-  for (const d of r.daily) lines.push(`${d.day}  ${n(d.visits).padStart(6)}  ${n(d.copies).padStart(6)}  ${n(d.pricingViews).padStart(7)}  ${n(d.buyClicks).padStart(4)}  ${n(d.paid).padStart(4)}  ${n(d.claimed).padStart(7)}  ${n(d.downloads).padStart(3)}  ${n(d.firstRuns).padStart(10)}`);
+  const lines = [`Weft launch funnel, last ${r.days}d (UTC days)`, "", "day         visits  copies  pricing  buys  signups  paid  npm  first-runs"];
+  for (const d of r.daily) lines.push(`${d.day}  ${n(d.visits).padStart(6)}  ${n(d.copies).padStart(6)}  ${n(d.pricingViews).padStart(7)}  ${n(d.buyClicks).padStart(4)}  ${n(d.signups).padStart(7)}  ${n(d.paid).padStart(4)}  ${n(d.downloads).padStart(3)}  ${n(d.firstRuns).padStart(10)}`);
   const t = r.totals;
   const pct = (a, b, of) => (a && b ? ` (${((100 * a) / b).toFixed(1)}% of ${of})` : "");
   lines.push("", `totals: ${n(t.visits)} visits -> ${n(t.copies)} copies${pct(t.copies, t.visits, "visits")} -> ${n(t.downloads)} npm downloads -> ${n(t.firstRuns)} first runs${pct(t.firstRuns, t.visits, "visits")}`);
-  if (SALES.some((m) => typeof t[m] === "number")) lines.push(`sales: ${n(t.visits)} visits -> ${n(t.pricingViews)} pricing views -> ${n(t.buyClicks)} buy clicks${pct(t.buyClicks, t.pricingViews, "pricing views")} -> ${n(t.paid)} paid -> ${n(t.claimed)} claimed`);
+  if (SALES.some((m) => typeof t[m] === "number")) lines.push(`sales: ${n(t.visits)} visits -> ${n(t.pricingViews)} pricing views -> ${n(t.buyClicks)} buy clicks${pct(t.buyClicks, t.pricingViews, "pricing views")}; ${n(t.signups)} sign-ups -> ${n(t.paid)} paid${pct(t.paid, t.signups, "sign-ups")}`);
   const camps = Object.entries(r.byCampaign ?? {});
   if (camps.length) {
-    lines.push("", "by utm_campaign  views  copies  pricing  buys  paid  claimed");
-    for (const [k, c] of camps) lines.push(`${k.slice(0, 16).padEnd(16)}  ${n(c.views).padStart(5)}  ${n(c.copies).padStart(6)}  ${n(c.pricingViews).padStart(7)}  ${n(c.buyClicks).padStart(4)}  ${n(c.paid).padStart(4)}  ${n(c.claimed).padStart(7)}`);
+    lines.push("", "by utm_campaign  views  copies  pricing  buys  signups  paid");
+    for (const [k, c] of camps) lines.push(`${k.slice(0, 16).padEnd(16)}  ${n(c.views).padStart(5)}  ${n(c.copies).padStart(6)}  ${n(c.pricingViews).padStart(7)}  ${n(c.buyClicks).padStart(4)}  ${n(c.signups).padStart(7)}  ${n(c.paid).padStart(4)}`);
   }
   if (Object.keys(r.copiesBy).length) lines.push(`copies by source/placement: ${Object.entries(r.copiesBy).map(([k, v]) => `${k} ${v}`).join(", ")}`);
   if (Object.keys(r.viewsBySource).length) lines.push(`page views (AE) by source: ${Object.entries(r.viewsBySource).map(([k, v]) => `${k} ${v}`).join(", ")}`);
@@ -298,8 +298,6 @@ export function siteEvents(rows) {
       m = "pricingViews";
       bump(byCampaign, camp, "views", x.n);
     } else if (x.event === "buy_click") m = "buyClicks";
-    else if (x.event === "welcome_view" && x.placement !== "no-session") m = "paid";
-    else if (x.event === "claim_ok") m = "claimed";
     if (!m) continue;
     bump(byDay, day, m, x.n);
     bump(byCampaign, camp, m, x.n);
@@ -310,8 +308,39 @@ export function siteEvents(rows) {
     copiesBy: Object.fromEntries(Object.entries(copiesBy).sort((a, b) => b[1] - a[1])),
     viewsBySource: Object.fromEntries(Object.entries(viewsBySource).sort((a, b) => b[1] - a[1])),
     byDay,
-    byCampaign: Object.fromEntries(ordered.map(([k, c]) => [k, { views: c.views ?? 0, copies: c.copies ?? 0, pricingViews: c.pricingViews ?? 0, buyClicks: c.buyClicks ?? 0, paid: c.paid ?? 0, claimed: c.claimed ?? 0 }])),
+    byCampaign: Object.fromEntries(ordered.map(([k, c]) => [k, { views: c.views ?? 0, copies: c.copies ?? 0, pricingViews: c.pricingViews ?? 0, buyClicks: c.buyClicks ?? 0, signups: c.signups ?? 0, paid: c.paid ?? 0 }])),
   };
+}
+
+/** GET /v1/admin/accounts -> the account list, or null (no admin key, or a gateway from before accounts). */
+export async function hostedAccounts(notes, { readToken = readHostedAdminToken, fetchFn = fetch, base = HOSTED } = {}) {
+  const key = readToken()?.token;
+  if (!key) return null;
+  const r = await fetchFn(`${base}/v1/admin/accounts`, { headers: { authorization: `Bearer ${key}` } });
+  if (r.status === 404) { notes.push("sign-ups: the hosted gateway has no accounts yet (deploy the accounts release)"); return null; }
+  if (!r.ok) { notes.push(`sign-ups: ${base}/v1/admin/accounts HTTP ${r.status}`); return null; }
+  return (await r.json()).accounts ?? [];
+}
+
+/** Accounts -> sign-ups (created_at day) and paid accounts (paid_at day), per day and per first-visit utm_campaign. Pure. */
+export function accountCounts(accounts) {
+  const byDay = {}, byCampaign = {};
+  const bump = (o, k, m) => { o[k] ??= {}; o[k][m] = (o[k][m] ?? 0) + 1; };
+  for (const a of accounts ?? []) {
+    const camp = a.utm_campaign || "(none)";
+    if (a.created_at) { bump(byDay, a.created_at.slice(0, 10), "signups"); bump(byCampaign, camp, "signups"); }
+    if (a.paid_at) { bump(byDay, a.paid_at.slice(0, 10), "paid"); bump(byCampaign, camp, "paid"); }
+  }
+  return { byDay, byCampaign };
+}
+
+/** Site campaign counts plus account counts, busiest first, "(none)" last. Pure. */
+export function mergeCampaigns(site, accounts) {
+  const out = {};
+  for (const [k, c] of Object.entries(site ?? {})) out[k] = { ...c };
+  for (const [k, c] of Object.entries(accounts ?? {})) out[k] = { views: 0, copies: 0, pricingViews: 0, buyClicks: 0, ...(out[k] ?? {}), signups: c.signups ?? 0, paid: c.paid ?? 0 };
+  for (const c of Object.values(out)) { c.signups ??= 0; c.paid ??= 0; }
+  return Object.fromEntries(Object.entries(out).sort((a, b) => (a[0] === "(none)") - (b[0] === "(none)") || (b[1].views ?? 0) - (a[1].views ?? 0) || (b[1].signups ?? 0) - (a[1].signups ?? 0)));
 }
 
 export async function buildReport(days) {
@@ -319,13 +348,18 @@ export async function buildReport(days) {
   const list = dayList(days);
   const since = list[0], until = list[list.length - 1];
   const cf = await cloudflare(notes);
-  const [ae, rum, npm, hosted] = await Promise.all([aeRows(cf, days), rumVisits(cf, list), npmDaily(since, until, notes), hostedStats(notes)]);
-  const { copiesBy, viewsBySource, byDay, byCampaign } = siteEvents(ae);
+  const [ae, rum, npm, hosted, accounts] = await Promise.all([aeRows(cf, days), rumVisits(cf, list), npmDaily(since, until, notes), hostedStats(notes), hostedAccounts(notes)]);
+  const { copiesBy, viewsBySource, byDay, byCampaign: siteCampaigns } = siteEvents(ae);
+  const acc = accounts ? accountCounts(accounts) : null;
+  const byCampaign = mergeCampaigns(siteCampaigns, acc?.byCampaign);
   const daily = list.map((day) => ({
     day,
     visits: rum[day] ?? 0,
     copies: byDay[day]?.copies ?? 0,
-    ...Object.fromEntries(SALES.map((m) => [m, byDay[day]?.[m] ?? 0])),
+    pricingViews: byDay[day]?.pricingViews ?? 0,
+    buyClicks: byDay[day]?.buyClicks ?? 0,
+    signups: acc ? (acc.byDay[day]?.signups ?? 0) : null,
+    paid: acc ? (acc.byDay[day]?.paid ?? 0) : null,
     downloads: npm.end && day > npm.end ? null : (npm.by[day] ?? 0), // null = npm hasn't published that day yet
     firstRuns: hosted ? (hosted.by[day] ?? 0) : null,
   }));

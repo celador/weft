@@ -359,3 +359,26 @@ section { padding-block: 96px; }
   .start-head h1 { font-size: 30px; }
   .start-body .lede { font-size: 16px; }
 }
+
+/* Accounts: sign-in/up, /account/, /cli/ (Clerk components themed in assets/account.js) */
+.nav-signup { margin-left: 4px; }
+.nav-inner .nav-signup + .btn-small { margin-left: 8px; }
+@media (max-width: 767px) { .nav-inner .nav-signup { margin-left: auto; } .nav-inner .nav-signup + .btn-small { margin-left: 8px; } }
+.auth { display: grid; place-items: center; padding-block: 56px 96px; min-height: 60vh; }
+.auth .lede { color: var(--muted); text-align: center; margin-bottom: 24px; max-width: 46ch; }
+.account .panel { margin-top: 32px; padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-2); }
+.account .panel h2 { margin-top: 0; font-size: 20px; }
+.account .plan-name { font-size: 28px; font-weight: 650; letter-spacing: -0.02em; margin-top: 8px; }
+.account .row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 16px; }
+.account .spaces { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 10px; }
+.account .spaces li { color: #c9cdd8; }
+.account .who { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+.account .err, .cli .err { color: var(--err); font-size: 14px; margin-top: 10px; min-height: 1em; }
+.account .notice { margin-top: 16px; padding: 12px 16px; border: 1px solid #2e3d2f; border-radius: 10px; color: var(--add); background: #0f1a14; }
+.account .danger { border-color: #4a2328; }
+.account .danger input { height: 40px; padding: 0 12px; border: 1px solid #343b4a; border-radius: 10px; background: #07080c; color: var(--text); font: 500 15px var(--sans); }
+.btn-danger { background: transparent; color: var(--err); border-color: #6b2a31; }
+.btn-danger:hover { background: #1d0f12; }
+.cli .code { font: 650 clamp(34px, 7vw, 52px) var(--mono); letter-spacing: 0.08em; margin-top: 20px; color: var(--text); }
+.cli .panel { margin-top: 28px; padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-2); }
+.account [hidden], .cli [hidden] { display: none !important; }

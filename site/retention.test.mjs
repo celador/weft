@@ -155,3 +155,34 @@ test("hosted-admin: billing lists paid spaces with seats, interval, events and t
   assert.match(lines[1], /^spaaaaaaaaaa\s+2\s+year\s+120001\s+2026-11-17T10:00:00.000Z$/);
   assert.match(lines[3], /2 paid space\(s\), 7 Pro seat\(s\), 1 past fair use this month/);
 });
+
+test("hosted-admin: users joins Clerk users (email, created, last sign-in) with gateway accounts; the Clerk key goes only to api.clerk.com", async () => {
+  const lines = [];
+  const seen = [];
+  const users = [
+    { id: "user_2aaaaaaaaaa", primary_email_address_id: "e1", email_addresses: [{ id: "e1", email_address: "ana@example.com" }], created_at: Date.parse("2026-11-17T10:00:00Z"), last_sign_in_at: Date.parse("2026-11-17T12:00:00Z") },
+    { id: "user_2bbbbbbbbbb", primary_email_address_id: "e2", email_addresses: [{ id: "e2", email_address: "bo@example.com" }], created_at: Date.parse("2026-11-16T10:00:00Z"), last_sign_in_at: null },
+  ];
+  const accounts = { accounts: [
+    { id: "user_2aaaaaaaaaa", created_at: "2026-11-17T10:00:01Z", plan: "paid", seats: 2, interval: "month", spaces: 1, events_7d: 40, utm_campaign: "vid1" },
+    { id: "user_2ccccccccccc", created_at: "2026-11-15T10:00:01Z", plan: "free", spaces: 0, events_7d: 0 },
+  ] };
+  const fetchFn = async (url, init) => {
+    seen.push(`${url} ${init.headers.authorization}`);
+    if (url.startsWith("https://api.clerk.com/")) return new Response(JSON.stringify(users));
+    return new Response(JSON.stringify(accounts));
+  };
+  const code = await run(["users"], { base: "https://gw.test", readToken: () => ({ token: "admin-k" }), readClerk: () => "sk_test_clerk", fetchFn, out: (l) => lines.push(l), err: () => {} });
+  assert.equal(code, 0);
+  assert.match(lines[1], /^ana@example\.com\s+2026-11-17\s+2026-11-17\s+Pro x2\/mo\s+1\s+40\s+vid1$/);
+  assert.match(lines[2], /^bo@example\.com\s+2026-11-16\s+-\s+-\s+0\s+0\s+$/);
+  assert.match(lines[3], /^\(no Clerk user\)/);
+  assert.match(lines.at(-1), /3 user\(s\), 1 on Pro/);
+  assert.deepEqual(seen.sort(), ["https://api.clerk.com/v1/users?limit=100&offset=0&order_by=-created_at Bearer sk_test_clerk", "https://gw.test/v1/admin/accounts Bearer admin-k"]);
+  assert.doesNotMatch(lines.join("\n"), /sk_test_clerk|admin-k/);
+  const csv = [];
+  await run(["users", "--csv"], { base: "https://gw.test", readToken: () => ({ token: "admin-k" }), readClerk: () => "sk_test_clerk", fetchFn, out: (l) => csv.push(l), err: () => {} });
+  assert.equal(csv[0], "email,created,last_sign_in,plan,spaces,events_7d,utm_campaign,clerk_user_id");
+  assert.match(csv[1], /^"ana@example\.com","2026-11-17T10:00:00\.000Z"/);
+  assert.equal(await run(["users"], { base: "https://gw.test", readToken: () => ({ token: "admin-k" }), readClerk: () => null, fetchFn, out: () => {}, err: () => {} }), 1);
+});

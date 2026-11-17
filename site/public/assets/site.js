@@ -1,13 +1,12 @@
 // weft.mx: one config object, then the page behaviour. No build step, no dependencies.
 //
 // EVERY price, limit and gateway URL a visitor sees comes from WEFT below; the HTML only holds
-// fallbacks for readers without JavaScript (site/site.test.mjs checks the two agree). Prices are a
-// PROPOSAL until John approves them (go-live card t_5408b767); a price change is a one-line edit here
-// plus the HTML fallbacks the test points at.
+// fallbacks for readers without JavaScript (site/site.test.mjs checks the two agree). Prices were
+// approved by John on 2026-11-17; a price change is a one-line edit here plus the HTML fallbacks the
+// test points at (and the Stripe prices). Accounts and checkout live in assets/account.js.
 const WEFT = {
   command: "npx @celador/weft",                 // the start command (Free, runs locally)
-  claimCommand: "npx @celador/weft --hosted --claim",
-  hosted: "https://weft-hosted.elier.ai",       // gateway: GET /buy, POST /v1/billing/claim
+  account: "/account/",                         // signed in: plan, Checkout (?buy=month|year&seats=N), spaces
   prices: { month: 12, year: 98, pilot: 500 },  // USD. Pro is per user: `month` a month, `year` a year
   freeHostedEvents: 5000,                       // agent events per hosted space per month on Free
   fairUsePerSeat: 50000,                        // Pro fair use: agent events per seat per month (never a cut-off)
@@ -62,7 +61,7 @@ function track(e, w = "", extra = {}) {
   fetch("/e", { method: "POST", body, keepalive: true }).catch(() => {});
 }
 if (PAGE === "pricing") track("pricing_view", "pricing");
-else if (PAGE !== "welcome") track("view", PAGE); // the welcome page tracks once it knows the outcome
+else track("view", PAGE);
 
 // ---------- copy buttons ----------
 let copying = false;
@@ -86,7 +85,6 @@ for (const btn of document.querySelectorAll("[data-copy]")) {
       const r = document.createRange(); r.selectNodeContents(code);
       getSelection().removeAllRanges(); getSelection().addRange(r);
     }
-    // The claim command holds a one-time code; copying it is not a start-command copy.
     if (!block.hasAttribute("data-no-track")) track("copy", block.dataset.placement || "");
     setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("done"); }, 2000);
   });
@@ -100,12 +98,10 @@ document.addEventListener("copy", () => {
 });
 
 // ---------- buy link ----------
+// Paying happens signed in: /account/?buy=... starts Stripe Checkout at once for a signed-in visitor, and sends a
+// signed-out one through sign-up first, straight back into Checkout. The utm tags ride in sessionStorage (ATTR).
 function buyUrl(interval, seats) {
-  const u = new URL("/buy", WEFT.hosted);
-  u.searchParams.set("interval", interval);
-  u.searchParams.set("seats", String(seats));
-  for (const k of UTM_KEYS) if (ATTR[k]) u.searchParams.set(k, ATTR[k]);
-  return u.toString();
+  return `${WEFT.account}?buy=${interval}&seats=${seats}`;
 }
 // Every "Get Pro" outside the pricing page goes to /pricing/ (seats are picked there); clicks on it
 // are not buy clicks. On the pricing page the Pro button is the buy link.
@@ -135,65 +131,6 @@ function buyUrl(interval, seats) {
   input.addEventListener("blur", () => { state.seats = clamp(input.value); render(); });
   buy.addEventListener("click", () => track("buy_click", `${state.interval}-${state.seats}`));
   render();
-})();
-
-// ---------- welcome: trade the Checkout session for a one-time claim code ----------
-(() => {
-  if (PAGE !== "welcome") return;
-  // Until it is claimed, the session id is enough to get the code: take it out of the address bar
-  // at once (so it isn't in history, bookmarks or screenshots); a reload in this tab still finds it.
-  const q = new URLSearchParams(location.search);
-  let sid = q.get("session_id");
-  if (sid) {
-    try { sessionStorage.setItem("weft.checkout", sid); } catch {}
-    history.replaceState(null, "", location.pathname);
-  } else {
-    try { sid = sessionStorage.getItem("weft.checkout"); } catch {}
-  }
-  const show = (state) => { for (const el of document.querySelectorAll("[data-state]")) el.hidden = el.dataset.state !== state; };
-  // One welcome_view per checkout session (a reload doesn't count twice).
-  const once = (w, then) => {
-    let seen = null; try { seen = sessionStorage.getItem("weft.welcomed"); } catch {}
-    if (seen === `${sid}:${w}`) return;
-    try { sessionStorage.setItem("weft.welcomed", `${sid}:${w}`); } catch {}
-    track("welcome_view", w); then?.();
-  };
-  if (!sid || !/^cs_[A-Za-z0-9_]{8,200}$/.test(sid)) { show("none"); track("welcome_view", "no-session"); return; }
-  show("loading");
-  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-  (async () => {
-    // Stripe can send the buyer back before its webhook reaches the gateway, so "not found" and
-    // "not paid yet" are retried for about 9 seconds before the page says so.
-    for (let attempt = 0; attempt < 4; attempt++) {
-      let r, j = {};
-      try {
-        r = await fetch(new URL("/v1/billing/claim", WEFT.hosted), {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ session_id: sid }), credentials: "omit", referrerPolicy: "no-referrer",
-        });
-        j = await r.json().catch(() => ({}));
-      } catch { once("network"); show("network"); return; }
-      const code = typeof (j.code ?? j.claim_code) === "string" ? (j.code ?? j.claim_code) : "";
-      if (r.ok && /^[A-Za-z0-9-]{4,64}$/.test(code)) {
-        document.querySelector("[data-claim-cmd]").textContent = `${WEFT.claimCommand} ${code}`;
-        const seats = Number(j.seats);
-        const billed = j.interval === "year" ? ", billed yearly" : j.interval === "month" ? ", billed monthly" : "";
-        if (seats > 0) document.querySelector("[data-claim-seats]").textContent = `Weft Pro for ${seats} ${seats === 1 ? "user" : "users"}${billed}.`;
-        show("ok");
-        const s = clean(j.utm_source, 64), k = clean(j.utm_campaign, 64);
-        once("paid", () => track("claim_ok", j.interval === "year" ? "year" : j.interval === "month" ? "month" : "", { s, k }));
-        return;
-      }
-      // The gateway's errors are {type: "error", error: {code, message, details}} (docs/hosted.md).
-      const err = String(j.error?.code ?? j.error ?? "");
-      if (r.status === 409 && err === "already_claimed") { once("claimed"); show("claimed"); return; }
-      const pending = r.status === 404 || r.status === 402 || (r.status === 409 && /pending|not_paid/.test(err));
-      if (pending && attempt < 3) { await wait(2000 + attempt * 1000); continue; }
-      once(pending ? "not-found" : r.status === 429 ? "rate-limited" : `http-${r.status}`);
-      show(pending ? "notfound" : "network");
-      return;
-    }
-  })();
 })();
 
 // Fade sections in as they enter the viewport (CSS skips this under prefers-reduced-motion).
