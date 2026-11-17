@@ -133,7 +133,8 @@ export async function setup(request, cfg, log = () => {}) {
     invoice_history: { enabled: true },
     customer_update: { enabled: true, allowed_updates: ["email", "address", "tax_id"] },
   };
-  const configs = await request("GET", "/v1/billing_portal/configurations", { limit: 100, active: true });
+  // `products` is only in the answer when expanded; without it every run would look out of date.
+  const configs = await request("GET", "/v1/billing_portal/configurations", { limit: 100, active: true, "expand[0]": "data.features.subscription_update.products" });
   let portal = configs.data.find((c) => c.metadata?.weft === "pro");
   const current = (c) => {
     const u = c.features?.subscription_update;
