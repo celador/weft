@@ -10,6 +10,11 @@
 //   PostToolUse apply_patch
 //                      real before/after -> submit mode:"commit" with diff,
 //                      inject verdict + inbox as additionalContext           (L1)
+//   PreToolUse  Bash   snapshot the checkout's dirty files (for the reconcile below)
+//   PostToolUse Bash   files the command changed (vs. the snapshot, or HEAD for files that
+//                      were clean) -> one edit, mode:"commit": `cat > f <<EOF`, `sed -i`,
+//                      `python -` and other shell writes reach the log like apply_patch does
+//                      (an apply_patch sent through the shell is routed as apply_patch instead)
 //   PostToolUse (other) drain inbox (throttled); Bash HEAD move -> checkpoint
 //   Stop               gate stop -> decision "block" while errors are open   (L3)
 //   SessionEnd         bye (unless errors are open: then the session stays for the git gate)
@@ -29,8 +34,9 @@ import { notWaiting } from "@weft/protocol";
 import { WcpError, PROTOCOL, type Transport } from "./client";
 import { readState, stateDir, withLock, writeState, type Loaded, type SessionState } from "./config";
 import type { BeatResult } from "../../claude-code/src/heartbeat";
+import { readCheckoutFile } from "../../claude-code/src/safe-read";
 import { EDIT_TOOLS, isGitCommit, patchPaths, proposedFiles, shellPatch } from "./edits";
-import { renderDues, renderForModel, type EditedFile, type RenderCtx } from "./render";
+import { locateUse, renderDues, renderForModel, type EditedFile, type RenderCtx } from "./render";
 import type { Sets, FileChange } from "./analysis";
 
 export const ADAPTER_VERSION = "0.1.0";
@@ -60,6 +66,11 @@ export const ADVISORY_CAPABILITIES: Capabilities = {
 const SKIP_PARTS = new Set([".git", ".weft", ".codex", "node_modules", ".wrangler", "dist", ".turbo"]);
 const DRAIN_MIN_INTERVAL_MS = 2000;
 const MAX_FILE_BYTES = 1 << 20;
+/** A Bash call in a checkout with more dirty files than this is not reconciled (logged). Same caps as Claude Code. */
+const MAX_BASH_SNAPSHOT_FILES = 500;
+const MAX_BASH_SNAPSHOT_BYTES = 4 << 20;
+/** A Bash snapshot whose PostToolUse never came (denied by another hook, interrupted) is dropped after this. */
+const BASH_SNAPSHOT_TTL_MS = 30 * 60_000;
 
 export type HookInput = {
   hook_event_name: string;
@@ -153,6 +164,72 @@ export class CodexAdapter {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * A checkout file's text for the Bash reconcile; never through a symlink, never outside the
+   * checkout. null = nothing at the path; undefined = something is there that may not be read
+   * (it must not count as a deletion).
+   */
+  private readSafe(abs: string): string | null | undefined {
+    return readCheckoutFile(this.root, abs, MAX_FILE_BYTES);
+  }
+
+  /**
+   * A file's text at HEAD. null = not in HEAD (a new file); undefined = in HEAD but not usable as a
+   * baseline (over the size cap, or git failed).
+   */
+  private headText(rel: string): string | null | undefined {
+    // `rev-parse --verify -q` exits 1 only when HEAD names no commit yet (an unborn branch).
+    try {
+      execFileSync("git", ["-C", this.root, "rev-parse", "--verify", "-q", "HEAD"], { stdio: "ignore", timeout: 5000 });
+    } catch (err) {
+      return (err as { status?: number }).status === 1 ? null : undefined;
+    }
+    const listed = this.git(["ls-tree", "-z", "HEAD", "--", rel]);
+    if (listed === undefined) return undefined;
+    if (!listed) return null;
+    const size = Number(this.git(["cat-file", "-s", `HEAD:${rel}`])?.trim());
+    if (!Number.isFinite(size) || size > MAX_FILE_BYTES) return undefined;
+    return this.git(["show", `HEAD:${rel}`]);
+  }
+
+  /** Repo-relative paths git reports as changed or untracked in the working tree. */
+  private dirtyFiles(): string[] | undefined {
+    const out = this.git(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"]);
+    if (out === undefined) return undefined;
+    const files: string[] = [];
+    for (const entry of out.split("\0")) if (entry.length > 3) files.push(entry.slice(3));
+    return files;
+  }
+
+  /** Snapshot (text) of the checkout's dirty files before a Bash call; undefined = do not reconcile. */
+  private snapshotDirty(): { before: Record<string, string | null>; unreadable: string[] } | undefined {
+    const files = this.dirtyFiles();
+    if (!files) return undefined;
+    if (files.length > MAX_BASH_SNAPSHOT_FILES) {
+      this.log(`bash snapshot skipped: ${files.length} dirty files`);
+      return undefined;
+    }
+    const snap: Record<string, string | null> = {};
+    const unreadable: string[] = [];
+    let bytes = 0;
+    for (const rel of files) {
+      const t = this.target(rel, this.root);
+      if (!t) continue;
+      const text = this.readSafe(t.abs);
+      if (text === undefined) {
+        unreadable.push(t.rel); // no baseline: this call never submits it
+        continue;
+      }
+      bytes += text?.length ?? 0;
+      if (bytes > MAX_BASH_SNAPSHOT_BYTES) {
+        this.log(`bash snapshot skipped: dirty files exceed ${MAX_BASH_SNAPSHOT_BYTES} bytes`);
+        return undefined;
+      }
+      snap[t.rel] = text;
+    }
+    return { before: snap, unreadable };
   }
 
   private async fetchEvent(seq: number): Promise<EventRecord | undefined> {
@@ -316,11 +393,11 @@ export class CodexAdapter {
       ? { ...input, tool_name: "apply_patch", tool_input: { command: viaShell.patch }, cwd: viaShell.cd ? resolve(input.cwd ?? this.root, viaShell.cd) : input.cwd }
       : input;
     const flushed = await this.flushPending(st, input.hook_event_name === "PostToolUse" ? input.tool_use_id : undefined);
-    const out = await this.route(call, st);
-    return flushed ? withContext(out, call.hook_event_name, flushed) : out;
+    const out = await this.route(call, st, flushed.files);
+    return flushed.text ? withContext(out, call.hook_event_name, flushed.text) : out;
   }
 
-  private async route(input: HookInput, st: SessionState): Promise<HookOutput> {
+  private async route(input: HookInput, st: SessionState, flushed: ReadonlySet<string> = new Set()): Promise<HookOutput> {
     switch (input.hook_event_name) {
       case "SessionStart":
         return this.sessionStart(input, st);
@@ -332,6 +409,7 @@ export class CodexAdapter {
         return undefined;
       case "PostToolUse":
         if (EDIT_TOOLS.has(input.tool_name ?? "")) return this.postEdit(input, st);
+        if (input.tool_name === "Bash") return this.postBash(input, st, flushed);
         return this.postOther(input, st);
       case "Stop":
       case "SubagentStop":
@@ -347,12 +425,22 @@ export class CodexAdapter {
    * Commit edits whose PostToolUse never came. Codex fires no PostToolUse for an apply_patch
    * sent through the shell, so a pending pre-edit whose files changed on disk (or that is
    * older than a minute) is committed from the real filesystem at the next hook. Returns the
-   * text for the model (verdict + inbox), if any.
+   * text for the model (verdict + inbox), if any, and the files those edits covered (a Bash
+   * reconcile in the same hook must not submit them again).
    */
-  private async flushPending(st: SessionState, except?: string): Promise<string> {
+  private async flushPending(st: SessionState, except?: string): Promise<{ text: string; files: Set<string> }> {
     const texts: string[] = [];
+    const files = new Set<string>();
     for (const [callId, pend] of Object.entries(st.pending)) {
       if (callId === except) continue;
+      if (pend.tool === "Bash") {
+        // A shell snapshot is reconciled by its own PostToolUse; the command may still be running.
+        if (this.now() - pend.at > BASH_SNAPSHOT_TTL_MS) {
+          this.log(`no PostToolUse for Bash ${callId}; snapshot dropped`);
+          delete st.pending[callId];
+        }
+        continue;
+      }
       const changed = Object.entries(pend.before).some(([rel, before]) => {
         const abs = join(this.root, rel);
         return (existsSync(abs) ? this.readText(abs) : null) !== before;
@@ -363,11 +451,12 @@ export class CodexAdapter {
         continue;
       }
       this.log(`no PostToolUse for ${callId}; committing its edit from disk`);
+      for (const rel of Object.keys(pend.before)) files.add(rel);
       const out = await this.postEdit({ hook_event_name: "PostToolUse", session_id: st.codexSession, tool_name: pend.tool, tool_use_id: callId, tool_input: {}, cwd: this.root }, st, Object.keys(pend.before));
       const text = (out as { hookSpecificOutput?: { additionalContext?: string } } | undefined)?.hookSpecificOutput?.additionalContext;
       if (text) texts.push(text);
     }
-    return texts.join("\n");
+    return { text: texts.join("\n"), files };
   }
 
   // ------------------------------------------------------------------ hooks
@@ -467,9 +556,18 @@ export class CodexAdapter {
   private async preBash(input: HookInput, st: SessionState): Promise<HookOutput> {
     const command = typeof input.tool_input?.command === "string" ? input.tool_input.command : "";
     st.head = this.git(["rev-parse", "HEAD"])?.trim() ?? st.head;
+    // Snapshot the dirty files so PostToolUse can tell what this command wrote (Codex sends the
+    // same tool_use_id, `exec-<uuid>`, to both hooks). An apply_patch through the shell never
+    // gets here: dispatch routes it as apply_patch.
+    const callId = input.tool_use_id;
+    if (callId) {
+      const snap = this.snapshotDirty();
+      if (snap) st.pending[callId] = { tool: "Bash", before: snap.before, shown: [], unreadable: snap.unreadable, at: this.now() };
+    }
     if (!isGitCommit(command) || !st.wcpSession || !this.enforce) return undefined;
     const result = await this.call(st, (s) => this.deps.transport.gate(s, "commit"));
     if (result.allow) return undefined;
+    if (callId) delete st.pending[callId];
     const errors = await renderForModel(result.open_errors, [], this.ctx());
     this.log(`commit gate refused (${result.open_errors.length} open errors)`);
     return {
@@ -521,6 +619,68 @@ export class CodexAdapter {
         ? `[weft] Your edit to ${shownPaths} was applied in your checkout but REJECTED by the coordinator (log #${verdict.seq}); it stays an open error until you rework it:\n`
         : "[weft diagnostics]\n";
     const text = this.delivered(st, fresh ? header + fresh : "", verdict.delivered_through, verdict.inbox);
+    return text ? { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: text } } : undefined;
+  }
+
+  /**
+   * After a Bash call: submit the files it changed as one edit (Codex models also write files
+   * with `cat > f <<'EOF'`, `sed -i`, `python -`). A file counts when its text differs from the
+   * pre-call snapshot (dirty then) or from HEAD (clean then). Files an apply_patch flushed in
+   * this same hook are left to that edit; edits the command also committed show up as the
+   * checkpoint instead. Port of the Claude Code adapter's postBash.
+   */
+  private async postBash(input: HookInput, st: SessionState, flushed: ReadonlySet<string>): Promise<HookOutput> {
+    const callId = input.tool_use_id ?? "";
+    const pend = callId ? st.pending[callId] : undefined;
+    if (callId) delete st.pending[callId];
+    let editText = "";
+    const now = pend?.tool === "Bash" ? this.dirtyFiles() : undefined;
+    if (pend && now) {
+      const rels = [...new Set([...Object.keys(pend.before), ...now])].sort();
+      const changes: FileChange[] = [];
+      for (const r of rels) {
+        const t = this.target(r, this.root);
+        if (!t || flushed.has(t.rel)) continue;
+        const after = this.readSafe(t.abs);
+        if (pend.unreadable?.includes(t.rel) || after === undefined) {
+          this.log(`unreadable ${t.rel} around the Bash call; not submitted`);
+          continue;
+        }
+        const before = t.rel in pend.before ? pend.before[t.rel]! : this.headText(t.rel);
+        if (before === undefined) {
+          this.log(`unreadable ${t.rel} at HEAD; not submitted`);
+          continue;
+        }
+        if (before !== after) changes.push({ rel: t.rel, before, after });
+      }
+      const sets = changes.length ? await this.deps.analyze(changes, this.root, this.prefix) : undefined;
+      if (sets?.writes.length) {
+        const diffs: string[] = [];
+        for (const ch of changes) diffs.push(await this.deps.diff(this.prefix + ch.rel, ch.before, ch.after));
+        let diff = diffs.join("");
+        if (Buffer.byteLength(diff) > 900_000) diff = "";
+        const shownPaths = changes.map((c) => this.prefix + c.rel).join(", ");
+        const event = this.draft(st, "edit", {
+          files: changes.map((c) => this.prefix + c.rel),
+          reads: sets.reads,
+          writes: sets.writes,
+          ...(diff ? { diff } : {}),
+          tool: { name: "Bash", call_id: callId.slice(0, 200), harness_event: "PostToolUse" },
+        });
+        const verdict = await this.submit(st, "commit", event, callId);
+        st.lastContact = this.now();
+        this.log(`bash commit ${shownPaths} base #${event.base_seq} -> ${verdict.verdict} #${verdict.seq} (${verdict.diagnostics.map((d) => d.code).join(",") || "clean"})`);
+        const full = await renderForModel(verdict.diagnostics, verdict.inbox, this.ctx(callSite(changes, verdict.diagnostics)));
+        const header =
+          verdict.verdict === "reject"
+            ? `[weft] Files your shell command changed (${shownPaths}) were applied in your checkout but REJECTED by the coordinator (log #${verdict.seq}); they stay open errors until you rework them:\n`
+            : "[weft diagnostics]\n";
+        editText = this.delivered(st, full ? header + full : "", verdict.delivered_through, verdict.inbox);
+      }
+    }
+    const other = await this.postOther(input, st);
+    const otherText = (other?.hookSpecificOutput as { additionalContext?: string } | undefined)?.additionalContext ?? "";
+    const text = [editText, otherText].filter(Boolean).join("\n");
     return text ? { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: text } } : undefined;
   }
 
@@ -795,6 +955,21 @@ export class CodexAdapter {
 }
 
 export type { Target };
+
+const READ_DIAGNOSTICS = new Set(["stale_assumption", "stale_read"]);
+
+/**
+ * The changed file to locate read diagnostics in (`src/total.ts:3:10`) when one shell command
+ * wrote several files: the one whose new lines use the first read diagnostic's symbol.
+ */
+export function callSite(changes: FileChange[], diagnostics: Diagnostic[]): EditedFile | undefined {
+  const d = diagnostics.find((x) => READ_DIAGNOSTICS.has(x.code));
+  const hash = d?.symbol.indexOf("#") ?? -1;
+  const name = d && hash >= 0 ? d.symbol.slice(hash + 1).split(".").pop() : undefined;
+  const hit = name ? changes.find((c) => c.after !== null && locateUse(c.after, c.before, name)) : undefined;
+  const pick = hit ?? (changes.length === 1 ? changes[0] : undefined);
+  return pick ? { rel: pick.rel, before: pick.before, after: pick.after } : undefined;
+}
 
 const CONTEXT_EVENTS = new Set(["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse"]);
 
