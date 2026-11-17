@@ -184,7 +184,8 @@ function buyUrl(interval, seats) {
         once("paid", () => track("claim_ok", j.interval === "year" ? "year" : j.interval === "month" ? "month" : "", { s, k }));
         return;
       }
-      const err = String(j.error || "");
+      // The gateway's errors are {type: "error", error: {code, message, details}} (docs/hosted.md).
+      const err = String(j.error?.code ?? j.error ?? "");
       if (r.status === 409 && err === "already_claimed") { once("claimed"); show("claimed"); return; }
       const pending = r.status === 404 || r.status === 402 || (r.status === 409 && /pending|not_paid/.test(err));
       if (pending && attempt < 3) { await wait(2000 + attempt * 1000); continue; }

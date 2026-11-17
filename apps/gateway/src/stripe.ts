@@ -12,9 +12,11 @@ export interface StripeEnv {
   STRIPE_SECRET_KEY?: string;
   /** Signing secret of the webhook endpoint (whsec_...). */
   STRIPE_WEBHOOK_SECRET?: string;
-  /** The metered price (price_...) created by scripts/stripe-setup.mjs. */
-  STRIPE_PRICE_ID?: string;
-  /** Name of the Billing Meter's event (default weft_agent_events). */
+  /** Weft Pro, per seat, billed monthly (price_...; scripts/stripe-setup.mjs prints it). */
+  STRIPE_PRICE_PRO_MONTH?: string;
+  /** Weft Pro, per seat, billed yearly. */
+  STRIPE_PRICE_PRO_YEAR?: string;
+  /** Name of the Billing Meter's event (default weft_agent_events): legacy usage-plan subscriptions only. */
   STRIPE_METER_EVENT_NAME?: string;
   /** Optional Customer Portal configuration (bpc_...); the account default is used when unset. */
   STRIPE_PORTAL_CONFIG_ID?: string;
@@ -22,23 +24,64 @@ export interface StripeEnv {
   WEFT_PUBLIC_URL?: string;
 }
 
-export type StripeConfig = { key: string; webhookSecret: string; price: string; meterEvent: string; portalConfig?: string };
+export type StripeConfig = { key: string; webhookSecret: string; prices: { month: string; year: string }; meterEvent: string; portalConfig?: string };
 
 /**
- * The billing configuration, or null when billing is off. All three secrets must be present and
- * look right; anything less is "off", so a half-configured gateway never enforces an allowance it
- * cannot sell its way out of.
+ * The billing configuration, or null when billing is off. The key, the webhook secret and both Pro
+ * prices must be present and look right; anything less is "off", so a half-configured gateway never
+ * enforces an allowance it cannot sell its way out of. (STRIPE_PRICE_ID, the legacy metered price, is
+ * no longer read: a gateway that has only it is off until the Pro prices are set.)
  */
 export function stripeConfig(env: StripeEnv): StripeConfig | null {
   const key = env.STRIPE_SECRET_KEY?.trim();
   const webhookSecret = env.STRIPE_WEBHOOK_SECRET?.trim();
-  const price = env.STRIPE_PRICE_ID?.trim();
+  const month = env.STRIPE_PRICE_PRO_MONTH?.trim();
+  const year = env.STRIPE_PRICE_PRO_YEAR?.trim();
   if (!key || !/^(sk|rk)_(test|live)_/.test(key)) return null;
   if (!webhookSecret || !webhookSecret.startsWith("whsec_")) return null;
-  if (!price || !price.startsWith("price_")) return null;
+  if (!month || !month.startsWith("price_") || !year || !year.startsWith("price_")) return null;
   const meterEvent = env.STRIPE_METER_EVENT_NAME?.trim() || DEFAULT_METER_EVENT;
   const portalConfig = env.STRIPE_PORTAL_CONFIG_ID?.trim();
-  return { key, webhookSecret, price, meterEvent, ...(portalConfig ? { portalConfig } : {}) };
+  return { key, webhookSecret, prices: { month, year }, meterEvent, ...(portalConfig ? { portalConfig } : {}) };
+}
+
+/** What the gateway needs from a Stripe subscription: status, and the Pro seats and interval when it is a Pro one. */
+export type SubscriptionFacts = { id: string; customer?: string; status: string; seats?: number; interval?: "month" | "year"; pro: boolean };
+
+type StripeSubscription = {
+  id?: unknown;
+  status?: unknown;
+  customer?: unknown;
+  items?: { data?: Array<{ quantity?: unknown; price?: { id?: unknown; recurring?: { interval?: unknown; usage_type?: unknown } } }> };
+};
+
+/**
+ * Read a subscription object (from the API or from a `customer.subscription.*` event). It is Pro when its
+ * item is one of our Pro prices; the seats are that item's quantity. A legacy metered subscription has no
+ * quantity and is not Pro.
+ */
+export function subscriptionFacts(o: unknown, prices?: { month: string; year: string }): SubscriptionFacts | null {
+  const s = o as StripeSubscription;
+  if (!s || typeof s !== "object" || typeof s.id !== "string" || typeof s.status !== "string") return null;
+  const customer = typeof s.customer === "string" ? s.customer : typeof (s.customer as { id?: unknown })?.id === "string" ? (s.customer as { id: string }).id : undefined;
+  const item = s.items?.data?.[0];
+  const priceId = typeof item?.price?.id === "string" ? item.price.id : undefined;
+  const interval = item?.price?.recurring?.interval;
+  const licensed = item?.price?.recurring?.usage_type !== "metered";
+  const pro = Boolean(item && licensed && (prices ? priceId === prices.month || priceId === prices.year : true) && (interval === "month" || interval === "year"));
+  const q = item?.quantity;
+  return {
+    id: s.id,
+    status: s.status,
+    ...(customer ? { customer } : {}),
+    pro,
+    ...(pro && typeof q === "number" && Number.isInteger(q) && q > 0 ? { seats: q } : {}),
+    ...(pro ? { interval: interval as "month" | "year" } : {}),
+  };
+}
+
+export async function fetchSubscription(cfg: StripeConfig, id: string): Promise<SubscriptionFacts | null> {
+  return subscriptionFacts(await stripeRequest<unknown>(cfg.key, "GET", `/v1/subscriptions/${encodeURIComponent(id)}`), cfg.prices);
 }
 
 /** Stripe error text sometimes quotes a (masked) key; never let one reach a log or a response. */

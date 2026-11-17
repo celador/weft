@@ -8,15 +8,24 @@ import { describe, expect, it } from "vitest";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const SCRIPT = join(ROOT, "scripts", "stripe-setup.mjs");
 const load = () => import(/* @vite-ignore */ SCRIPT) as Promise<{
-  parsePricingConfig(md: string): Record<string, unknown> & { usd_per_1000_events: number; free_events_per_month: number; meter_event_name: string; currency: string; product_name: string; meter_display_name: string };
+  parsePricingConfig(md: string): Record<string, unknown> & Cfg;
   centsPerEvent(usd: number): string;
-  setup(request: unknown, cfg: unknown, log?: (l: string) => void): Promise<{ meter: string; product: string; price: string; portal: string }>;
+  cents(usd: number): number;
+  setup(request: unknown, cfg: unknown, log?: (l: string) => void): Promise<{ product: string; prices: { month: string; year: string }; portal: string }>;
+  setupLegacyUsage(request: unknown, cfg: unknown, log?: (l: string) => void): Promise<{ meter: string; product: string; price: string; portal: string }>;
   ensureWebhook(request: unknown, url: string, log?: (l: string) => void): Promise<{ id: string; secret?: string }>;
   stripeClient(key: string, f: typeof fetch): (m: string, p: string, params?: Record<string, unknown>) => Promise<any>;
   STRIPE_VERSION: string;
   PRICE_LOOKUP_KEY: string;
   PRODUCT_ID: string;
+  PRO_LOOKUP_KEYS: { month: string; year: string };
 }>;
+type Cfg = {
+  currency: string;
+  free_events_per_month: number;
+  pro: { product_id: string; product_name: string; usd_per_user_month: number; usd_per_user_year: number; fair_use_events_per_seat_month: number; max_seats: number };
+  legacy_usage: { usd_per_1000_events: number; meter_event_name: string; product_name: string; meter_display_name: string };
+};
 
 /** An in-memory Stripe: just enough of meters, products, prices, portal configurations and webhook endpoints. */
 function fakeStripe() {
@@ -34,12 +43,13 @@ function fakeStripe() {
       if (method === "GET" && path === "/v1/prices") return { data: db.prices.filter((p) => p.active && p.lookup_key === params["lookup_keys[0]"]) };
       if (method === "POST" && path === "/v1/prices") {
         if (params.transfer_lookup_key) for (const p of db.prices) if (p.lookup_key === params.lookup_key) p.lookup_key = null;
-        const price = { id: id("price"), active: true, product: params.product, currency: params.currency, recurring: params.recurring, unit_amount_decimal: params.unit_amount_decimal, lookup_key: params.lookup_key };
+        const price = { id: id("price"), active: true, product: params.product, currency: params.currency, recurring: params.recurring, unit_amount: params.unit_amount, unit_amount_decimal: params.unit_amount_decimal, lookup_key: params.lookup_key };
         db.prices.push(price);
         return price;
       }
       if (method === "GET" && path === "/v1/billing_portal/configurations") return { data: db.portals };
       if (method === "POST" && path === "/v1/billing_portal/configurations") return db.portals[db.portals.push({ id: id("bpc"), metadata: params.metadata, features: params.features }) - 1];
+      if (method === "POST" && path.startsWith("/v1/products/")) return Object.assign(db.products.get(path.split("/").pop()!), params);
       if (method === "POST" && path.startsWith("/v1/billing_portal/configurations/")) return Object.assign(db.portals.find((c) => path.endsWith(c.id)), { features: params.features });
       if (method === "GET" && path === "/v1/webhook_endpoints") return { data: db.hooks };
       if (method === "POST" && path === "/v1/webhook_endpoints") return db.hooks[db.hooks.push({ id: id("we"), url: params.url, status: "enabled", secret: "whsec_fake", enabled_events: params.enabled_events }) - 1];
@@ -49,31 +59,43 @@ function fakeStripe() {
 }
 
 describe("scripts/stripe-setup.mjs", () => {
+  const readCfg = async () => (await load()).parsePricingConfig(readFileSync(join(ROOT, "docs", "pricing.md"), "utf8"));
+
   it("reads its values from the pricing-config block in docs/pricing.md", async () => {
     const m = await load();
-    const cfg = m.parsePricingConfig(readFileSync(join(ROOT, "docs", "pricing.md"), "utf8"));
-    expect(cfg).toMatchObject({ meter_event_name: "weft_agent_events", currency: "usd" });
-    expect(cfg.usd_per_1000_events).toBeGreaterThan(0);
+    const cfg = await readCfg();
+    expect(cfg).toMatchObject({ currency: "usd", pro: { product_id: "weft_pro", product_name: "Weft Pro" }, legacy_usage: { meter_event_name: "weft_agent_events" } });
+    expect(cfg.pro.usd_per_user_month).toBeGreaterThan(0);
+    expect(cfg.pro.usd_per_user_year).toBeGreaterThan(0);
     expect(() => m.parsePricingConfig("no block here")).toThrow(/pricing-config/);
+    expect(() => m.parsePricingConfig('```json pricing-config\n{"currency":"usd","free_events_per_month":1}\n```')).toThrow(/pro/);
   });
 
-  it("converts dollars per 1,000 events to Stripe's cents-per-event decimal", async () => {
+  it("converts dollars to Stripe amounts", async () => {
     const m = await load();
+    expect(m.cents(12)).toBe(1200);
+    expect(m.cents(98)).toBe(9800);
+    expect(m.cents(19.99)).toBe(1999);
     expect(m.centsPerEvent(1)).toBe("0.1");
-    expect(m.centsPerEvent(0.5)).toBe("0.05");
     expect(m.centsPerEvent(2.5)).toBe("0.25");
   });
 
-  it("creates the meter, product, metered price and portal once; a second run creates nothing", async () => {
+  it("creates Weft Pro (product, a monthly and a yearly per-seat price, a portal that changes seats) once; a second run creates nothing", async () => {
     const m = await load();
-    const cfg = m.parsePricingConfig(readFileSync(join(ROOT, "docs", "pricing.md"), "utf8"));
+    const cfg = await readCfg();
     const s = fakeStripe();
     const log1: string[] = [];
     const ids = await m.setup(s.request, cfg, (l) => log1.push(l));
     expect(log1.every((l) => /created/.test(l))).toBe(true);
-    const price = s.db.prices[0];
-    expect(price).toMatchObject({ product: "weft_hosted", currency: "usd", lookup_key: "weft_hosted_agent_events", unit_amount_decimal: m.centsPerEvent(cfg.usd_per_1000_events) });
-    expect(price.recurring).toMatchObject({ interval: "month", usage_type: "metered", meter: ids.meter });
+    expect(s.db.products.get("weft_pro")).toMatchObject({ name: "Weft Pro" });
+    const [month, year] = s.db.prices;
+    expect(month).toMatchObject({ id: ids.prices.month, product: "weft_pro", currency: "usd", lookup_key: m.PRO_LOOKUP_KEYS.month, unit_amount: m.cents(cfg.pro.usd_per_user_month), recurring: { interval: "month", usage_type: "licensed" } });
+    expect(year).toMatchObject({ id: ids.prices.year, lookup_key: m.PRO_LOOKUP_KEYS.year, unit_amount: m.cents(cfg.pro.usd_per_user_year), recurring: { interval: "year", usage_type: "licensed" } });
+    const portal = s.db.portals[0];
+    expect(portal.metadata).toEqual({ weft: "pro" });
+    expect(portal.features.subscription_update).toMatchObject({ enabled: true, default_allowed_updates: ["quantity", "price"], products: [{ product: "weft_pro", prices: [ids.prices.month, ids.prices.year] }] });
+    expect(portal.features.subscription_cancel).toMatchObject({ enabled: true, mode: "at_period_end" });
+    expect(s.db.meters).toHaveLength(0); // Pro has no meter
     const postsAfterFirst = s.db.posts.length;
     const log2: string[] = [];
     const again = await m.setup(s.request, cfg, (l) => log2.push(l));
@@ -82,28 +104,33 @@ describe("scripts/stripe-setup.mjs", () => {
     expect(s.db.posts.length).toBe(postsAfterFirst); // not a single write
   });
 
-  it("an older portal configuration is updated to cancel immediately, once", async () => {
+  it("a changed price makes a new price that takes over the lookup key, and the portal is updated to offer it", async () => {
     const m = await load();
-    const cfg = m.parsePricingConfig(readFileSync(join(ROOT, "docs", "pricing.md"), "utf8"));
-    const s = fakeStripe();
-    await m.setup(s.request, cfg);
-    s.db.portals[0].features = { subscription_cancel: { mode: "at_period_end" } };
-    const log: string[] = [];
-    await m.setup(s.request, cfg, (l) => log.push(l));
-    expect(log.find((l) => l.startsWith("portal"))).toContain("updated");
-    expect(s.db.portals[0].features.subscription_cancel).toMatchObject({ mode: "immediately", proration_behavior: "none" });
-    expect(s.db.portals).toHaveLength(1);
-  });
-
-  it("a changed price makes a new price that takes over the lookup key", async () => {
-    const m = await load();
-    const cfg = m.parsePricingConfig(readFileSync(join(ROOT, "docs", "pricing.md"), "utf8"));
+    const cfg = await readCfg();
     const s = fakeStripe();
     const first = await m.setup(s.request, cfg);
-    const second = await m.setup(s.request, { ...cfg, usd_per_1000_events: cfg.usd_per_1000_events * 2 });
-    expect(second.price).not.toBe(first.price);
-    expect(second.meter).toBe(first.meter);
-    expect(s.db.prices.filter((p) => p.lookup_key === "weft_hosted_agent_events")).toHaveLength(1);
+    const log: string[] = [];
+    const second = await m.setup(s.request, { ...cfg, pro: { ...cfg.pro, usd_per_user_month: cfg.pro.usd_per_user_month + 3 } }, (l) => log.push(l));
+    expect(second.prices.month).not.toBe(first.prices.month);
+    expect(second.prices.year).toBe(first.prices.year);
+    expect(s.db.prices.filter((p) => p.lookup_key === m.PRO_LOOKUP_KEYS.month)).toHaveLength(1);
+    expect(log.find((l) => l.startsWith("portal"))).toContain("updated");
+    expect(s.db.portals).toHaveLength(1);
+    expect(s.db.portals[0].features.subscription_update.products[0].prices).toEqual([second.prices.month, second.prices.year]);
+  });
+
+  it("--legacy-usage still finds or creates the superseded usage objects (meter, metered price, immediate-cancel portal)", async () => {
+    const m = await load();
+    const cfg = await readCfg();
+    const s = fakeStripe();
+    const ids = await m.setupLegacyUsage(s.request, cfg);
+    const price = s.db.prices[0];
+    expect(price).toMatchObject({ product: "weft_hosted", lookup_key: "weft_hosted_agent_events", unit_amount_decimal: m.centsPerEvent(cfg.legacy_usage.usd_per_1000_events) });
+    expect(price.recurring).toMatchObject({ interval: "month", usage_type: "metered", meter: ids.meter });
+    expect(s.db.portals[0].features.subscription_cancel.mode).toBe("immediately");
+    const n = s.db.posts.length;
+    await m.setupLegacyUsage(s.request, cfg);
+    expect(s.db.posts.length).toBe(n);
   });
 
   it("registers the webhook endpoint once, with the four events the gateway reads", async () => {

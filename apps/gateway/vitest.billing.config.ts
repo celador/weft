@@ -25,11 +25,17 @@ export default defineWorkersConfig(async () => {
               WEFT_SPACE_MAX_REPOS: "5",
               WEFT_SPACE_MAX_TOKENS: "20",
               WEFT_SPACE_RPM: "10000",
-              // billing on: fake test-mode secrets (Stripe is mocked with fetchMock) and a free allowance of 6 events
+              // billing on: fake test-mode secrets and Pro prices (Stripe is mocked with fetchMock) and a free allowance of 6 events
               WEFT_FREE_EVENTS: "6",
               STRIPE_SECRET_KEY: "sk_test_unit_key",
               STRIPE_WEBHOOK_SECRET: "whsec_unit_secret",
-              STRIPE_PRICE_ID: "price_unit",
+              STRIPE_PRICE_PRO_MONTH: "price_pro_month",
+              STRIPE_PRICE_PRO_YEAR: "price_pro_year",
+              // Pro fair use: 5 events per seat per month (tiny, so a test can pass it)
+              WEFT_PRO_FAIR_USE_EVENTS: "5",
+              WEFT_WELCOME_URL: "https://site.test/welcome/",
+              WEFT_PRICING_URL: "https://site.test/pricing/",
+              WEFT_SITE_ORIGINS: "https://site.test",
               STRIPE_METER_EVENT_NAME: "weft_agent_events",
             },
           },

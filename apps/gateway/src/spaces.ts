@@ -15,6 +15,7 @@
 //   POST   /v1/space/viewers           {label} a device session for the owner's own CLI (token returned once)
 //   DELETE /v1/space/viewers[/{id}]    revoke one paired device, or all of them
 //   POST   /v1/pair                    {space, code, label?} no auth: trade a code for a device session cookie
+//   POST   /v1/space/billing/{checkout,portal,claim}   Weft Pro (billing.ts)
 //   GET    /v1/viewer                  who this browser is paired as (refreshes the cookie); 401 = pair again
 //   POST   /v1/viewer/logout           this browser leaves
 //   GET    /feed                       the live feed page: asks for a pairing code once, no credential in the URL
@@ -33,6 +34,11 @@ import { stripeConfig, type StripeEnv } from "./stripe";
 export interface SpacesEnv extends StripeEnv {
   /** Free agent events per space per month (default 5000, docs/pricing.md). */
   WEFT_FREE_EVENTS?: string;
+  /** Weft Pro fair use per seat per month (default 50000): flagged for the operator, never cut off. */
+  WEFT_PRO_FAIR_USE_EVENTS?: string;
+  WEFT_WELCOME_URL?: string;
+  WEFT_PRICING_URL?: string;
+  WEFT_SITE_ORIGINS?: string;
   WEFT_REGISTRY: DurableObjectNamespace<Registry>;
   WEFT_ADMIN_TOKEN?: string;
   /** "open" = anyone may create a space (the hosted gateway). Anything else: admin token only. */
@@ -186,6 +192,21 @@ async function throttlePairing(env: SpacesEnv, k: Pick<SpacesKit, "fail">, net: 
   if (!(await hit(`net:${net}`)) || !(await hit(`space:${space}`))) k.fail("rate_limited", "too many pairing attempts; wait a minute and try again");
 }
 
+/**
+ * Throttle an unauthenticated (or cheaply authenticated) money-adjacent route by the caller's network: GET /buy,
+ * POST /v1/billing/claim, POST /v1/space/billing/claim. Same budget as pairing (WEFT_PAIR_RATE, 10 a minute), keyed
+ * `<bucket>:net:<daily network key>` plus any extra keys (e.g. `space:<id>`). Every attempt counts, right or wrong.
+ */
+export async function throttleNetwork(env: SpacesEnv, k: Pick<SpacesKit, "fail">, req: Request, bucket: string, extraKeys: string[] = []): Promise<void> {
+  if (env.WEFT_HOSTED_OFF === "1") k.fail("unavailable", "hosted spaces are switched off on this gateway");
+  const net = await networkKey(req.headers.get("cf-connecting-ip") ?? "local", signupSecret(env), new Date().toISOString().slice(0, 10));
+  const perMin = limits(env).pairPerMin;
+  for (const key of [`${bucket}:net:${net}`, ...extraKeys.map((x) => `${bucket}:${x}`)]) {
+    const ok = env.WEFT_PAIR_RATE ? (await env.WEFT_PAIR_RATE.limit({ key })).success : localLimit(`pair:${key}`, perMin);
+    if (!ok) k.fail("rate_limited", "too many attempts; wait a minute and try again");
+  }
+}
+
 const deviceView = (d: DeviceInfo) => ({ id: d.id, label: d.label, created_at: d.created_at, last_seen_at: d.last_seen_at, expires_at: d.expires_at });
 
 /** Routes under /v1/spaces, /v1/space and /feed; null when the path is not one of them. */
@@ -262,8 +283,8 @@ export async function spacesRoute(req: Request, env: SpacesEnv, k: SpacesKit, pa
       billing: { enabled: stripeConfig(env) !== null },
     });
   }
-  const bm = /^\/v1\/space\/billing\/(checkout|portal)$/.exec(path);
-  if (bm && m === "POST") return spaceBilling(req, env, k, space, bm[1] as "checkout" | "portal");
+  const bm = /^\/v1\/space\/billing\/(checkout|portal|claim)$/.exec(path);
+  if (bm && m === "POST") return spaceBilling(req, env, { ...k, throttle: (r, bucket, extra) => throttleNetwork(env, k, r, bucket, extra) }, space, bm[1] as "checkout" | "portal" | "claim");
   if (path === "/v1/space" && m === "DELETE") {
     // Real erasure: every repo Durable Object of the space is emptied and its Registry rows are deleted.
     const r = await reg.eraseSpace(space);

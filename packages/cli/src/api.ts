@@ -21,8 +21,18 @@ export type FeedEvent = {
   diagnostics?: Array<{ severity: string; code: string; file?: string; message: string; caused_by_agent?: string; range?: { start: { line: number } } }>;
 };
 
-/** `GET /v1/space` -> usage: agent events this month against the free allowance (docs/pricing.md). */
-export type SpaceUsage = { month: string; events: number; allowance: number; plan: "free" | "paid"; has_billing_account: boolean };
+/** `GET /v1/space` -> usage: agent events this month, the free allowance, and Weft Pro's seats (docs/pricing.md). Older gateways omit the Pro fields. */
+export type SpaceUsage = {
+  month: string;
+  events: number;
+  allowance: number;
+  plan: "free" | "paid";
+  has_billing_account: boolean;
+  seats?: number | null;
+  interval?: "month" | "year" | null;
+  fair_use_events?: number | null;
+  over_fair_use?: boolean;
+};
 
 export class Api {
   constructor(
@@ -93,8 +103,12 @@ export class Api {
     return this.call<{ space: { id: string; repos: Array<{ name: string; repo: string }>; tokens: number }; usage?: SpaceUsage; billing?: { enabled: boolean } }>("GET", "/v1/space", owner);
   }
   // Billing calls are not retried: a 503 here means "billing is off" or "Stripe is down", and the person is waiting.
-  checkout(owner: string) {
-    return this.once<{ url: string }>("POST", "/v1/space/billing/checkout", owner, {});
+  checkout(owner: string, choice: { seats: number; interval: "month" | "year" }) {
+    return this.once<{ url: string }>("POST", "/v1/space/billing/checkout", owner, choice);
+  }
+  /** Bind a web purchase (the welcome page's one-time claim code) to this space. */
+  claim(owner: string, code: string) {
+    return this.once<{ plan: "paid"; seats: number; interval: "month" | "year" }>("POST", "/v1/space/billing/claim", owner, { code });
   }
   portal(owner: string) {
     return this.once<{ url: string }>("POST", "/v1/space/billing/portal", owner, {});
