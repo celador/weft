@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0b0d12">
   <title>Weft: red squiggles for teams of coding agents</title>
-  <meta name="description" content="Weft checks every coding-agent edit against what the other agents just changed, and tells the agent before the conflict exists. Open protocol, MIT, runs on Cloudflare.">
+  <meta name="description" content="Weft checks every coding-agent edit against what the other agents just changed, and tells the agent while it is still editing. Free and open source (MIT).">
   <link rel="canonical" href="https://weft.mx/">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Weft: red squiggles for teams of coding agents">
@@ -19,7 +19,7 @@
   <link rel="preload" href="/assets/img/live.webp" as="image" type="image/webp">
   <link rel="stylesheet" href="/assets/site.css">
 </head>
-<body>
+<body data-page="home">
   <header class="nav">
     <div class="wrap nav-inner">
       <a class="brand" href="/" aria-label="Weft home"><img src="/favicon.svg" alt="" width="22" height="22">weft</a>
@@ -38,18 +38,17 @@
     <section id="start" class="hero wrap">
       <div class="hero-copy">
         <h1>Red squiggles for teams of coding <span class="squiggle">agents</span>.</h1>
-        <p class="lede">Weft checks every agent edit against what the other agents just changed, and tells the agent before the conflict exists.</p>
-        <p class="free">Runs on your machine by default: your code never leaves it. Free and open source (MIT).</p>
+        <p class="lede">Weft checks every agent edit against what the other agents just changed, and tells the agent while it is still editing.</p>
+        <p class="free">Free and open source (MIT). Runs on your machine by default, so your code stays there.</p>
         <div class="cmd-block" data-placement="hero">
-          <div class="cmd-bar"><span data-weft-label>Terminal</span><button class="copy" type="button" data-copy aria-label="Copy the command">Copy</button></div>
-          <pre><code data-weft-cmd></code></pre>
+          <div class="cmd-bar"><span>Start free: run this in your repo</span><button class="copy" type="button" data-copy aria-label="Copy the command">Copy</button></div>
+          <pre><code data-weft-cmd>npx @celador/weft</code></pre>
         </div>
-        <p class="cmd-note" data-weft-note></p>
-        <noscript><p class="cmd-note">See the <a href="https://github.com/celador/weft/blob/main/docs/try-it.md?utm_source=weft-site&amp;utm_medium=web&amp;utm_campaign=launch&amp;utm_content=blob-main-docs-try-it-md">quickstart</a>.</p></noscript>
         <div class="ctas">
-          <a class="btn btn-ghost" href="https://github.com/celador/weft?utm_source=weft-site&amp;utm_medium=web&amp;utm_campaign=launch&amp;utm_content=hero-star"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><path fill="currentColor" d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>Star on GitHub</a>
-          <a class="link-quiet" href="https://weft-media.elier.ai/weft-demo.mp4">Watch the 7-minute demo</a>
+          <a class="btn btn-ghost" href="/pricing/">Get Pro</a>
+          <a class="link-quiet" href="/start/">Watch the 3-minute demo</a>
         </div>
+        <p class="cmd-note">Pro is a hosted space with no event limit: <span data-fill="month">$12</span> per user a month.</p>
       </div>
       <figure class="hero-shot">
         <img src="/assets/img/live.webp" width="1600" height="1000" alt="Weft's web UI: a live change log of agent edits on the left, and squiggles on the right, including a stale_assumption error telling codex-b that SessionStore.refreshToken changed under it.">
@@ -77,8 +76,8 @@
     <section id="how" class="how wrap reveal">
       <h2>How it works</h2>
       <ol class="steps">
-        <li><span class="n">1</span><p data-weft-step1>Run <code>npx @celador/weft</code> in your repo. It starts a Weft gateway on your machine.</p></li>
-        <li><span class="n">2</span><p>Your coding agents (Claude Code, Codex, Copilot, Cursor, OpenCode, Gemini, Antigravity, or any agent with MCP) get <span class="sq">red squiggles</span> before they collide with each other.</p></li>
+        <li><span class="n">1</span><p>Run <code data-weft-cmd>npx @celador/weft</code> in your repo. It starts a Weft gateway on your machine.</p></li>
+        <li><span class="n">2</span><p>Your coding agents (Claude Code, Codex, Copilot, Cursor, OpenCode, Gemini, Antigravity, or any agent with MCP) get a <span class="sq">red squiggle</span> when an edit relies on code another agent just changed.</p></li>
         <li><span class="n">3</span><p>Watch every edit live, and approve or undo.</p></li>
       </ol>
     </section>
@@ -139,7 +138,7 @@
       <div class="protocol-copy">
         <h2>An open protocol, not a walled garden.</h2>
         <p>Every agent runtime has hooks, and none of them are interoperable. Weft runs on two small specs anyone can implement: Agent Hooks Core for the hook semantics, and WCP for coordination on top.</p>
-        <p class="fine">WCP v0.1 is a draft and Weft is a research prototype. The analyzer understands TypeScript today.</p>
+        <p class="fine">WCP v0.1 is a draft. The analyzer checks declarations in 12 languages: TypeScript and JavaScript, Python, Go, Rust, Java, Kotlin, Swift, C#, Ruby, PHP, C and C++. Edits to other files are checked file by file. <a href="https://github.com/celador/weft/blob/main/docs/languages.md?utm_source=weft-site&amp;utm_medium=web&amp;utm_campaign=launch&amp;utm_content=languages">Language support</a>.</p>
       </div>
       <ul class="spec-list">
         <li><a href="https://github.com/celador/weft/blob/main/docs/protocol/hooks-core-v0.md?utm_source=weft-site&amp;utm_medium=web&amp;utm_campaign=launch&amp;utm_content=blob-main-docs-protocol-hooks-core-v0-md"><strong>Agent Hooks Core v0.1</strong><span>Capability levels L0 to L3, lifecycle events, the allow/advise/deny envelope.</span></a></li>
@@ -187,12 +186,13 @@
 
     <section class="closing wrap reveal">
       <h2>Two agents, one repo, five minutes.</h2>
-      <p>Free, open source, runs locally, and no account needed. Hosted team spaces are an option: 5,000 events a month free, then $1 per 1,000, never per seat. <a href="/pricing/">See pricing</a>.</p>
+      <p>Weft is free and open source, runs on your machine, and needs no account. Pro runs it for you on a hosted space with no monthly event limit, for <span data-fill="month">$12</span> per user a month. <a href="/pricing/">See pricing</a>.</p>
       <div class="cmd-block" data-placement="closing">
-        <div class="cmd-bar"><span data-weft-label>Terminal</span><button class="copy" type="button" data-copy aria-label="Copy the command">Copy</button></div>
-        <pre><code data-weft-cmd></code></pre>
+        <div class="cmd-bar"><span>Start free: run this in your repo</span><button class="copy" type="button" data-copy aria-label="Copy the command">Copy</button></div>
+        <pre><code data-weft-cmd>npx @celador/weft</code></pre>
       </div>
       <div class="ctas">
+        <a class="btn btn-ghost" href="/pricing/">Get Pro</a>
         <a class="btn btn-ghost" href="https://github.com/celador/weft?utm_source=weft-site&amp;utm_medium=web&amp;utm_campaign=launch&amp;utm_content=closing-star">Star on GitHub</a>
         <a class="btn btn-ghost" href="https://github.com/celador/weft/discussions?utm_source=weft-site&amp;utm_medium=web&amp;utm_campaign=launch&amp;utm_content=closing-discussions">Join the discussion</a>
       </div>

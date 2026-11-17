@@ -6,11 +6,11 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0b0d12">
   <title>Terms of service · Weft</title>
-  <meta name="description" content="Terms for the Weft software (MIT) and the optional hosted space.">
+  <meta name="description" content="Terms for the Weft software (MIT), the optional hosted space and the Pro subscription.">
   <link rel="canonical" href="https://weft.mx/terms/">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Terms of service · Weft">
-  <meta property="og:description" content="Terms for the Weft software (MIT) and the optional hosted space.">
+  <meta property="og:description" content="Terms for the Weft software (MIT), the optional hosted space and the Pro subscription.">
   <meta property="og:url" content="https://weft.mx/terms/">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/site.css">
@@ -32,13 +32,24 @@
 
   <main class="wrap doc">
     <h1>Terms of service</h1>
-    <p class="meta">Effective November 3, 2026. Operator: Weft (celador), John Nelson. Contact: <a href="mailto:john@elier.ai">john@elier.ai</a>.</p>
+    <p class="meta">Effective <!-- GO-LIVE (card t_5408b767): replace the placeholder with the day Pro opens. --><span class="golive">[go-live date]</span>. The previous version (November 3, 2026) is in the <a href="https://github.com/celador/weft/commits/main/site/public/terms/index.html">repository history</a>. Operator: Weft (celador), John Nelson. Contact: <a href="mailto:john@elier.ai">john@elier.ai</a>.</p>
 
     <h2>The software</h2>
     <p>Weft&#39;s software (the CLI, adapters, plugin, VS Code extension and gateway) is open source under the <a href="https://github.com/celador/weft/blob/main/LICENSE">MIT license</a>. It is provided as is, without warranty of any kind. The license, not these terms, governs your use of the code.</p>
 
     <h2>The hosted space</h2>
-    <p>The hosted gateway at <code>weft-hosted.elier.ai</code> is an optional, best-effort service. There is no uptime guarantee and no support obligation. We may change it, limit it (see the limits in the <a href="https://github.com/celador/weft/blob/main/docs/hosted.md">hosted docs</a>), pause new spaces, or end it, with or without notice. Each hosted space gets 5,000 agent events a month free (UTC). Above that, a space on the free plan is not coordinated (its agents keep working), and a space that subscribes through Stripe is billed $1.00 per 1,000 events above the allowance, monthly in arrears, with no per-seat fee; <a href="/pricing/">the pricing page</a> has the details. You are never charged unless you subscribe, and you can cancel at once. When the gateway is unreachable, Weft&#39;s adapters let your agents keep working without coordination. You can run the same gateway on your machine or in your own Cloudflare account at any time.</p>
+    <p>The hosted gateway at <code>weft-hosted.elier.ai</code> is an optional service. We may change it, limit it (see the limits in the <a href="https://github.com/celador/weft/blob/main/docs/hosted.md">hosted docs</a>), pause new spaces, or end it. On the Free plan it is best effort, with no uptime guarantee and no support obligation. When the gateway is unreachable, Weft&#39;s adapters let your agents keep working without coordination. You can run the same gateway on your machine or in your own Cloudflare account at any time.</p>
+
+    <h2>Plans</h2>
+    <p>Current prices are on <a href="/pricing/">the pricing page</a>.</p>
+    <ul>
+      <li><strong>Free.</strong> The software on your machine or your Cloudflare account, at no cost. A free hosted space gets 5,000 agent events a month (UTC). Above that, its agents keep working without coordination until the next month. You are never charged on Free.</li>
+      <li><strong>Pro.</strong> A subscription for one hosted space, priced per user and billed in advance each month or each year through Stripe, where the charge shows as &quot;Atelier&quot;. A user is one person whose coding agents work in the space. Weft has no accounts, so you choose the number of users; it should cover everyone who uses the space. Pro has no monthly event limit. Fair use is 50,000 agent events per user per month; a space far above that may hear from us, and it is not cut off.</li>
+      <li><strong>Pilot.</strong> A one-time fee for setting Weft up on your Cloudflare account and 30 days of support, agreed by email before we start.</li>
+    </ul>
+
+    <h2>Buying, changing and cancelling Pro</h2>
+    <p>You buy Pro on <a href="/pricing/">weft.mx/pricing</a> or with <code>npx @celador/weft upgrade</code>. A purchase made on the website comes with a one-time claim code; running <code>npx @celador/weft --hosted --claim &lt;code&gt;</code> attaches Pro to a hosted space. Keep the code private until you use it. Change the number of users, update your card, see invoices or cancel with <code>npx @celador/weft billing</code>, which opens Stripe&#39;s billing page. When you cancel, Pro stays on until the end of the period you paid for, then the space goes back to Free and nothing in it is deleted. We don&#39;t refund partial periods. If something went wrong with a charge, email <a href="mailto:john@elier.ai">john@elier.ai</a>.</p>
 
     <h2>Acceptable use</h2>
     <p>Don&#39;t use the hosted space to store or share illegal content, to attack, overload or probe the service or other users, to get around its limits, or to read spaces whose keys you weren&#39;t given. We may suspend or delete a space that breaks these rules.</p>

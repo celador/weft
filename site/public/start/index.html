@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b0d12">
+  <title>Weft: red squiggles for teams of coding agents</title>
+  <meta name="description" content="A 3-minute demo of Weft: two coding agents in one repo, and the red squiggle one gets when it edits code the other just changed. Free and open source.">
+  <link rel="canonical" href="https://weft.mx/start/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Weft: red squiggles for teams of coding agents">
+  <meta property="og:description" content="A 3-minute demo: two coding agents, one repo, and the red squiggle one gets when it edits code the other just changed.">
+  <meta property="og:url" content="https://weft.mx/start/">
+  <meta property="og:image" content="https://weft.mx/assets/img/live.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="/assets/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/assets/site.css">
+</head>
+<body data-page="start">
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/" aria-label="Weft home"><img src="/favicon.svg" alt="" width="22" height="22">weft</a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="/">Home</a>
+        <a href="/pricing/">Pricing</a>
+        <a href="https://github.com/celador/weft?utm_source=weft-site&amp;utm_medium=web&amp;utm_campaign=launch&amp;utm_content=start-repo">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap start">
+    <div class="start-head">
+      <h1>Red squiggles for teams of coding <span class="squiggle">agents</span>.</h1>
+    </div>
+    <figure class="start-video">
+      <video controls playsinline preload="metadata" poster="/assets/img/live.webp" width="1920" height="1080">
+        <source src="https://weft-media.elier.ai/weft-demo-short.mp4" type="video/mp4">
+        <a href="https://weft-media.elier.ai/weft-demo-short.mp4">Watch the 3-minute demo</a>
+      </video>
+    </figure>
+    <div class="start-body">
+      <p class="lede">Weft checks every agent edit against what the other agents just changed, and tells the agent while it is still editing.</p>
+      <div class="cmd-block" data-placement="start">
+        <div class="cmd-bar"><span>Start free: run this in your repo</span><button class="copy" type="button" data-copy aria-label="Copy the command">Copy</button></div>
+        <pre><code data-weft-cmd>npx @celador/weft</code></pre>
+      </div>
+      <div class="ctas">
+        <a class="btn btn-ghost" href="/pricing/">Get Pro</a>
+        <a class="link-quiet" href="/">How it works</a>
+      </div>
+      <p class="cmd-note">Free and open source (MIT). Runs on your machine by default. Pro is a hosted space with no event limit, <span data-fill="month">$12</span> per user a month.</p>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <span class="brand"><img src="/favicon.svg" alt="" width="18" height="18">weft</span>
+      <nav aria-label="Footer">
+        <a href="/pricing/">Pricing</a>
+        <a href="/privacy/">Privacy</a>
+        <a href="/terms/">Terms</a>
+        <a href="/support/">Support</a>
+      </nav>
+    </div>
+  </footer>
+  <script src="/assets/site.js"></script>
+  <!-- Cloudflare Web Analytics (cookieless). The token is public by design. -->
+  <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "f2a2e8db7c3c44a3aff0a5ddd425ef2f"}'></script>
+</body>
+</html>
