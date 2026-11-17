@@ -2,7 +2,8 @@
 
 `npx @celador/weft` talks to one Weft gateway. **It runs locally by default: your code and diffs
 stay on your machine.** Hosted team spaces are an option you choose; they are free up to 5,000 agent events a
-month, then $1.00 per 1,000 events (usage-based, never per seat). There are three kinds:
+month, and Weft Pro (per user, monthly or yearly; numbers in [pricing.md](pricing.md), a PROPOSAL until John
+approves them) removes the cap. There are three kinds:
 
 | | Where it runs | Who can create a space | Command |
 |---|---|---|---|
@@ -22,9 +23,9 @@ default for new projects: npx @celador/weft use local".
 
 The hosted gateway is a separate Worker, `weft-hosted` (`[env.hosted]` in
 `apps/gateway/wrangler.toml`), with its own Durable Objects. It shares no storage with any team
-gateway. Each space gets 5,000 agent events a month free (UTC); above that, a subscribed space pays $1.00 per 1,000
-events, billed monthly in arrears through Stripe (see [pricing.md](pricing.md) and weft.mx/pricing). Nothing is charged
-unless you run `npx @celador/weft upgrade` and subscribe.
+gateway. Each space gets 5,000 agent events a month free (UTC); a Weft Pro space has no event cap and pays per user
+through Stripe (see [pricing.md](pricing.md)). Nothing is charged unless you subscribe, with `npx @celador/weft upgrade`
+or on weft.mx.
 
 **No account.** `POST /v1/spaces` (no auth) creates a space and returns its *owner key*. That key
 is the only credential: there is no login and no third-party identity. The CLI keeps it in
@@ -169,28 +170,95 @@ Set as vars in `[env.hosted.vars]`; the per-minute ones also use Workers Rate Li
 Over a limit, the gateway answers `429 rate_limited` with a message; the adapters fail open, so
 an agent keeps working (uncoordinated) and is told so.
 
-### Usage-based billing (live since 2026-11-03)
+### Billing: Free and Weft Pro
 
-Hosted pricing is usage-based, never per seat, per developer or per agent: a free monthly allowance of agent
-events per space, then a price per 1,000 events. The numbers (approved 2026-11-01) are in [pricing.md](pricing.md). Billing is on for `weft-hosted`: the Stripe
-secrets are set. A gateway without them (local, your own) never limits or charges, its billing routes answer `503`, and
-usage is only counted.
+Hosted plans are Free (5,000 agent events per space per month) and Weft Pro (per user, monthly or yearly, no event
+cut-off, a fair-use flag at 50,000 events per seat per month). The numbers and how billing works are in
+[pricing.md](pricing.md). (From 2026-11-03 until the Pro go-live the live gateway charged $1.00 per 1,000 events above
+the allowance; that model is kept there as history.) Billing is on only where the Stripe secrets are set. A gateway
+without them (local, your own) never limits or charges, its billing routes answer `503`, and usage is only counted.
 
 | | |
 |---|---|
-| `GET /v1/space` | adds `usage` (this month's events, the allowance, `plan` = `free` or `paid`) and `billing.enabled`; `npx @celador/weft usage` prints it |
-| over the allowance (free plan, billing enabled) | submits answer `429 over_allowance` with a one-line upgrade message; the adapters fail open and tell the agent its edit was not coordinated. Hello, heartbeat, inbox, gate and every read keep working. The paid plan is never cut off by the allowance |
-| `POST /v1/space/billing/checkout` | owner key: a Stripe Checkout Session (a subscription on a metered price, `client_reference_id` = the space id); `npx @celador/weft upgrade` prints the URL |
-| `POST /v1/space/billing/portal` | owner key: a Stripe Customer Portal session (plan, card, invoices, cancel); `npx @celador/weft billing` |
+| `GET /v1/space` | adds `usage` (this month's events, the allowance, `plan` = `free` or `paid`, and for Pro `seats`, `interval`, `fair_use_events`, `over_fair_use`) and `billing.enabled`; `npx @celador/weft usage` prints it |
+| over the allowance (free plan, billing enabled) | submits answer `429 over_allowance` with a one-line upgrade message; the adapters fail open and tell the agent its edit was not coordinated. Hello, heartbeat, inbox, gate and every read keep working. Pro is never cut off |
+| `POST /v1/space/billing/checkout {"interval": "month"\|"year", "seats": N}` | owner key: a Stripe Checkout Session for Weft Pro, `seats` (1-500, default 1) of the monthly or yearly per-seat price, adjustable on the page, `client_reference_id` = the space id; `npx @celador/weft upgrade [--seats N] [--year]` prints the URL |
+| `POST /v1/space/billing/portal` | owner key: a Stripe Customer Portal session (seats, monthly/yearly, card, invoices, cancel); `npx @celador/weft billing` |
+| `POST /v1/space/billing/claim {"code"}` | owner key: bind a web purchase to this space (below); `npx @celador/weft --hosted --claim <code>` |
+| `GET /buy`, `POST /v1/billing/claim` | the web-first purchase (below) |
 | `POST /v1/billing/stripe/webhook` | Stripe only: signature verified (constant-time, 5-minute tolerance), idempotent on event id, ignores events about other products |
 
-The Registry stores per space only the plan, an optional allowance override, the Stripe customer id and a monthly
-event count; Stripe Checkout collects and keeps the email and card. Overage goes to Stripe as meter events from the
-Registry's hourly alarm (no cron trigger), one event per window with a fixed identifier, so a retry is never billed
-twice. Erasing a space reports its last usage and cancels its subscription first. While billing is enabled, agents on
-a hosted space submit over HTTP (the adapters do); the agent WebSocket is not offered, because its submits would not be
-metered. An allowance is enforced from a cache that lasts up to 10 seconds per Worker isolate, so a space can overshoot
-it by the few events sent in that window.
+The Registry stores per space the plan, Pro's seats and interval, an optional allowance override, the Stripe customer id
+and a monthly event count; Stripe Checkout collects and keeps the email and card. Erasing a space cancels its
+subscription first. While billing is enabled, agents on a hosted space submit over HTTP (the adapters do); the agent
+WebSocket is not offered, because its submits would not be counted. An allowance is enforced from a cache that lasts up
+to 10 seconds per Worker isolate, so a free space can overshoot it by the few events sent in that window.
+
+### Weft Pro on the web: the contract the site uses
+
+A stranger who has never run Weft can buy Pro on weft.mx and attach it to a space later. There is no account: the
+purchase is bound to a space by a one-time claim code. All URLs below are on the hosted gateway,
+`https://weft-hosted.elier.ai` (call it `$GW`).
+
+**1. Buy button** (pricing page): a plain link, no JavaScript needed.
+
+```
+$GW/buy?interval=month&seats=1
+$GW/buy?interval=year&seats=2&utm_source=youtube&utm_campaign=launch
+```
+
+| parameter | values | default |
+|---|---|---|
+| `interval` | `month` or `year` | `month` |
+| `seats` | 1 to 500 | `1` (the buyer can change it on the Checkout page) |
+| `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `ref` | optional; letters, digits, `. _ ~ -` and spaces, up to 100 characters (anything else is dropped) | none |
+
+The gateway answers `303` to a Stripe Checkout page for Weft Pro (promotion codes allowed). The `utm_*` / `ref`
+values go into the Checkout Session's metadata in Stripe; the gateway does not keep them. A bad `interval` or `seats`
+gets a `400` HTML page, more than 10 checkouts a minute from one network a `429` page, and a gateway without billing a
+`503` page. Back-out goes to `https://weft.mx/pricing/` (`WEFT_PRICING_URL`).
+
+**2. Welcome page**: after paying, Stripe sends the buyer to
+
+```
+https://weft.mx/welcome/?session_id=cs_live_...        (WEFT_WELCOME_URL)
+```
+
+The page reads `session_id` from its own address and calls, from the browser:
+
+```
+POST $GW/v1/billing/claim
+content-type: application/json
+
+{"session_id": "cs_live_..."}
+```
+
+CORS allows the origins in `WEFT_SITE_ORIGINS` (`https://weft.mx`, `https://www.weft.mx`), no credentials. Answers:
+
+| status | body | what the page shows |
+|---|---|---|
+| `201` | `{"type": "billing.claim", "code": "K7M2-9XQ4-TPRA", "expires_at": "...", "seats": 2, "interval": "year", "command": "npx @celador/weft --hosted --claim K7M2-9XQ4-TPRA"}` | the command, with a copy button; "run it in your repo; the code works once, for an hour" |
+| `404`, `error.details.status = "unknown"` | Stripe has not confirmed the payment yet | "Finishing your payment..." and retry every 2-3 seconds for about a minute |
+| `400`, `error.details.status = "claimed"` | the purchase is already bound to a space | "Already set up. Manage it with `npx @celador/weft billing` in that repo" |
+| `400`, `error.details.status = "inactive"` | the subscription was cancelled or is unpaid | "This subscription is not active" |
+| `429` | more than 10 requests a minute from this network | retry after a minute |
+
+Every reload of the welcome page gives a fresh code (at most 3 are open at a time; older ones stop working) until
+the purchase is claimed. The page must send `Referrer-Policy: no-referrer` (the `session_id` is in its address)
+and must not put the code in any URL, analytics event or log.
+
+**3. Claim**: in a git repo, `npx @celador/weft --hosted --claim K7M2-9XQ4-TPRA` creates the hosted space (or reuses
+the one this repo or machine already has), then calls `POST /v1/space/billing/claim {"code"}` with the space's owner
+key. The space becomes Pro with the purchase's seats and interval; Stripe's subscription is labelled with the space id.
+A space that already pays refuses a claim (the code stays good for another space). Codes are case-insensitive and
+ignore separators.
+
+**Security of the flow.** The Checkout Session id in the welcome address is the only thing that turns into a code,
+and only while the purchase is unclaimed; it is a long random id chosen by Stripe. A claim code is 12 symbols from
+a 31-symbol alphabet (~2^59), single use, valid for an hour, stored only as SHA-256 of a per-Registry random salt plus
+the code, and compared in constant time against every open code. Both `POST /v1/billing/claim` and
+`POST /v1/space/billing/claim` are rate limited (10 a minute per network, and per space for redeeming), and every bad
+code gets the same `401`. Neither the owner key nor a claim code is ever put in a URL.
 
 ### Operator controls (kill switch)
 
@@ -242,8 +310,10 @@ The hard stop, without the Registry: set `WEFT_HOSTED_OFF = "1"` in `[env.hosted
 `GET /v1/admin/stats` is the last step of the launch funnel (views → site visits → command
 copies → first runs): one new space = one first run of `npx @celador/weft`.
 
-Billing (with the admin key): `GET /v1/admin/billing` (enabled, plan counts, events this month, spaces over their
-allowance), `POST /v1/admin/billing/report` (send overage to Stripe now; `{"space": "<id>"}` for one space),
+Billing (with the admin key): `GET /v1/admin/billing` (enabled, plan counts, Pro spaces and seats, Pro spaces past fair
+use, unclaimed web purchases, events this month, free spaces over their allowance), `GET /v1/admin/spaces` (per space:
+`plan`, `events_this_month`, and for Pro `seats`, `interval`, `fair_use_exceeded_at`; `node site/hosted-admin.mjs billing`
+prints the paid ones), `POST /v1/admin/billing/report` (send legacy usage-plan overage to Stripe now; `{"space": "<id>"}` for one space),
 `POST /v1/admin/billing/reset-usage {"month": "YYYY-MM"}` (zero a month's counters, for go-live) and
 `POST /v1/admin/spaces/<id>/allowance {"events": 20000}` (a different allowance for one space; `null` restores the default).
 

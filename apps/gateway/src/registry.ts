@@ -6,12 +6,14 @@ import { DurableObject } from "cloudflare:workers";
 import { claimsPolicyError, type RepoSummary, type Scope } from "@weft/protocol";
 import type { CoordinatorConfig, CoordinatorInit, Grant, RepoCoordinator, Result } from "@weft/sequencer";
 import { cancelCustomerSubscriptions, StripeError, stripeConfig, stripeRequest, type StripeEnv } from "./stripe";
-import { freeEvents, monthKey, type Plan, type UsageState } from "./usage";
+import { fairUsePerSeat, freeEvents, isInterval, monthKey, type Interval, type Plan, type UsageState } from "./usage";
 
 export interface RegistryEnv extends StripeEnv {
   WEFT_REPO: DurableObjectNamespace<RepoCoordinator>;
   /** Free events per space per month (default 5000, docs/pricing.md). */
   WEFT_FREE_EVENTS?: string;
+  /** Weft Pro fair use, events per seat per month (default 50000): passing it is flagged, never cut off. */
+  WEFT_PRO_FAIR_USE_EVENTS?: string;
 }
 
 export type RepoEntry = { repo: string; config: CoordinatorInit; created_at: string };
@@ -265,6 +267,24 @@ export class Registry extends DurableObject<RegistryEnv> {
     );
     // Stripe event ids already applied (idempotency); nothing else from the event is kept.
     this.sql.exec(`CREATE TABLE IF NOT EXISTS stripe_events (id TEXT PRIMARY KEY, at INTEGER NOT NULL)`);
+    // Weft Pro (per user): which product the space pays for ('pro'; NULL = the legacy usage plan), its seats and interval;
+    // and the month a Pro space first went past fair use (flagged for the operator, never cut off).
+    const billingCols = this.sql.exec<{ name: string }>(`PRAGMA table_info(space_billing)`).toArray().map((c) => c.name);
+    if (!billingCols.includes("product")) this.sql.exec(`ALTER TABLE space_billing ADD COLUMN product TEXT`);
+    if (!billingCols.includes("seats")) this.sql.exec(`ALTER TABLE space_billing ADD COLUMN seats INTEGER`);
+    if (!billingCols.includes("interval")) this.sql.exec(`ALTER TABLE space_billing ADD COLUMN interval TEXT`);
+    if (!this.sql.exec<{ name: string }>(`PRAGMA table_info(usage)`).toArray().some((c) => c.name === "fair_use_at")) this.sql.exec(`ALTER TABLE usage ADD COLUMN fair_use_at TEXT`);
+    // Web-first purchases (GET /buy): a paid Pro subscription not yet bound to a space. Keyed by the Checkout Session id
+    // (the welcome page has it); holds Stripe ids, seats, interval and plan, nothing about the person. Bound to a space
+    // with a one-time claim code (claim_codes: salted hashes only, one hour, single use), then kept as `claimed` so the
+    // same purchase can never be claimed twice. Deleted with the space it was claimed for.
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS entitlements (session TEXT PRIMARY KEY, customer TEXT, subscription TEXT, seats INTEGER NOT NULL, interval TEXT NOT NULL, plan TEXT NOT NULL, billing_event_at INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, claimed_space TEXT, claimed_at TEXT)`,
+    );
+    this.sql.exec(`CREATE INDEX IF NOT EXISTS entitlements_customer ON entitlements(customer)`);
+    this.sql.exec(`CREATE INDEX IF NOT EXISTS entitlements_space ON entitlements(claimed_space)`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS claim_codes (id TEXT PRIMARY KEY, session TEXT NOT NULL, code_hash TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)`);
+    this.sql.exec(`CREATE INDEX IF NOT EXISTS claim_codes_session ON claim_codes(session)`);
 
     this.retireViewerLinks();
     this.spacesReady = true;
@@ -502,6 +522,9 @@ export class Registry extends DurableObject<RegistryEnv> {
     // Billing rows (plan, Stripe customer id, monthly usage) go too. The Stripe customer record itself stays with Stripe (it holds invoices).
     this.sql.exec(`DELETE FROM usage WHERE space = ?`, space);
     this.sql.exec(`DELETE FROM space_billing WHERE space = ?`, space);
+    // A web purchase claimed for this space goes too (its subscription was cancelled above, so it cannot be claimed again).
+    this.sql.exec(`DELETE FROM claim_codes WHERE session IN (SELECT session FROM entitlements WHERE claimed_space = ?)`, space);
+    this.sql.exec(`DELETE FROM entitlements WHERE claimed_space = ?`, space);
     this.sql.exec(`UPDATE spaces SET status = 'erased', label = NULL, created_at = substr(created_at, 1, 10), deleted_at = ? WHERE id = ?`, new Date().toISOString(), space);
     return { space, status: "erased", already_erased: false, erased: { repos: repos.map((r) => r.slice(space.length + 1)), events, tokens } };
   }
@@ -517,18 +540,41 @@ export class Registry extends DurableObject<RegistryEnv> {
     if (more) await this.scheduleAlarmAt(Date.now() + 60_000);
   }
 
-  async listSpaces(): Promise<Array<SpaceInfo & { repos: number; tokens: number; internal?: true }>> {
+  /**
+   * Every space for the operator. Billing columns: `plan`, `events_this_month`, and for Pro `seats`, `interval` and
+   * `fair_use_exceeded_at` (when this month's events first passed seats x fair use; nothing is cut off, it is a flag).
+   */
+  async listSpaces(): Promise<Array<SpaceInfo & { repos: number; tokens: number; internal?: true; plan: Plan; events_this_month: number; seats?: number; interval?: Interval; fair_use_exceeded_at?: string }>> {
     this.ensureSpaces();
+    const month = monthKey();
     return this.sql
-      .exec<{ id: string; status: string; label: string | null; created_at: string; repos: number; tokens: number; internal: number }>(
+      .exec<{ id: string; status: string; label: string | null; created_at: string; repos: number; tokens: number; internal: number; plan: string | null; product: string | null; seats: number | null; interval: string | null; events: number | null; fair_use_at: string | null }>(
         `SELECT s.id, s.status, s.label, s.created_at,
            (SELECT COUNT(*) FROM repos r WHERE r.space = s.id) AS repos,
            (SELECT COUNT(*) FROM tokens t WHERE t.space = s.id AND t.revoked_at IS NULL) AS tokens,
-           COALESCE((SELECT internal FROM space_tags g WHERE g.space = s.id), 0) AS internal
-         FROM spaces s ORDER BY s.created_at`,
+           COALESCE((SELECT internal FROM space_tags g WHERE g.space = s.id), 0) AS internal,
+           b.plan, b.product, b.seats, b.interval, u.events, u.fair_use_at
+         FROM spaces s LEFT JOIN space_billing b ON b.space = s.id LEFT JOIN usage u ON u.space = s.id AND u.month = ?
+         ORDER BY s.created_at`,
+        month,
       )
       .toArray()
-      .map((r) => ({ id: r.id, status: r.status as SpaceInfo["status"], created_at: r.created_at, ...(r.label ? { label: r.label } : {}), repos: r.repos, tokens: r.tokens, ...(r.internal ? { internal: true } : {}) }));
+      .map((r) => {
+        const pro = r.plan === "paid" && r.product === "pro" && r.seats !== null;
+        return {
+          id: r.id,
+          status: r.status as SpaceInfo["status"],
+          created_at: r.created_at,
+          ...(r.label ? { label: r.label } : {}),
+          repos: r.repos,
+          tokens: r.tokens,
+          ...(r.internal ? { internal: true as const } : {}),
+          plan: r.plan === "paid" ? ("paid" as const) : ("free" as const),
+          events_this_month: r.events ?? 0,
+          ...(pro ? { seats: r.seats!, interval: (r.interval === "year" ? "year" : "month") as Interval } : {}),
+          ...(pro && r.fair_use_at ? { fair_use_exceeded_at: r.fair_use_at } : {}),
+        };
+      });
   }
 
   /** First runs per day (spaces created, internal spaces excluded), the last `days` days: the funnel's last step. */
@@ -631,26 +677,53 @@ export class Registry extends DurableObject<RegistryEnv> {
     return out;
   }
 
-  // ------------------------------------------------------------------ usage-based billing
+  // ------------------------------------------------------------------ billing (docs/pricing.md)
   //
-  // docs/pricing.md. The meter is agent events per space per UTC month. A `free` space is held at
-  // its allowance (the gateway answers 429 over_allowance); a `paid` one is not, and the overage
-  // above its allowance goes to Stripe as meter events. The Registry stores a Stripe customer id
-  // and nothing else about the customer.
+  // The meter is agent events per space per UTC month. A `free` space is held at its allowance (the gateway
+  // answers 429 over_allowance). A `paid` space is never held. Paid is Weft Pro (product 'pro': seats x a
+  // per-user price, no event cut-off, a fair-use flag for the operator) or, for subscriptions from before
+  // Pro, the legacy usage plan (product NULL: the overage above the allowance goes to a Stripe meter). The
+  // Registry stores Stripe ids, seats and interval, and nothing else about the customer.
 
-  private billingRow(space: string): { plan: Plan; allowance: number | null; customer: string | null } {
+  private billingRow(space: string): { plan: Plan; allowance: number | null; customer: string | null; pro: boolean; seats: number | null; interval: Interval | null } {
     this.ensureSpaces();
-    const r = this.sql.exec<{ plan: string; allowance: number | null; stripe_customer_id: string | null }>(`SELECT plan, allowance, stripe_customer_id FROM space_billing WHERE space = ?`, space).toArray()[0];
-    return { plan: r?.plan === "paid" ? "paid" : "free", allowance: r?.allowance ?? null, customer: r?.stripe_customer_id ?? null };
+    const r = this.sql
+      .exec<{ plan: string; allowance: number | null; stripe_customer_id: string | null; product: string | null; seats: number | null; interval: string | null }>(
+        `SELECT plan, allowance, stripe_customer_id, product, seats, interval FROM space_billing WHERE space = ?`,
+        space,
+      )
+      .toArray()[0];
+    const pro = r?.product === "pro";
+    return {
+      plan: r?.plan === "paid" ? "paid" : "free",
+      allowance: r?.allowance ?? null,
+      customer: r?.stripe_customer_id ?? null,
+      pro,
+      seats: pro ? (r?.seats ?? null) : null,
+      interval: pro && isInterval(r?.interval) ? (r!.interval as Interval) : null,
+    };
   }
 
-  /** The space's usage this month against its allowance. `over` is only acted on while billing is enabled. */
+  /** The space's usage this month against its allowance (free) or fair use (Pro). `over` is only acted on while billing is enabled. */
   usageState(space: string, now = Date.now()): UsageState {
     const month = monthKey(now);
     const b = this.billingRow(space);
     const events = this.sql.exec<{ events: number }>(`SELECT events FROM usage WHERE space = ? AND month = ?`, space, month).toArray()[0]?.events ?? 0;
     const allowance = b.allowance ?? freeEvents(this.env);
-    return { month, events, allowance, plan: b.plan, over: b.plan === "free" && events >= allowance, has_billing_account: b.customer !== null };
+    const pro = b.plan === "paid" && b.pro && b.seats !== null;
+    const fair = pro ? b.seats! * fairUsePerSeat(this.env) : null;
+    return {
+      month,
+      events,
+      allowance,
+      plan: b.plan,
+      over: b.plan === "free" && events >= allowance,
+      has_billing_account: b.customer !== null,
+      seats: pro ? b.seats : null,
+      interval: pro ? b.interval : null,
+      fair_use_events: fair,
+      over_fair_use: fair !== null && events > fair,
+    };
   }
 
   /** `GET /v1/space`: usage for an active space. */
@@ -660,7 +733,8 @@ export class Registry extends DurableObject<RegistryEnv> {
 
   /**
    * Add metered events (the gateway coalesces them). Unknown or deleted spaces are ignored. Returns each
-   * space's state so the gateway can start refusing at once instead of when its grant cache expires.
+   * space's state so the gateway can start refusing at once instead of when its grant cache expires. A Pro
+   * space that goes past fair use this month is flagged once (fair_use_at); nothing is refused.
    */
   async recordUsage(items: Array<[string, number]>, now = Date.now()): Promise<Record<string, UsageState>> {
     this.ensureSpaces();
@@ -670,8 +744,11 @@ export class Registry extends DurableObject<RegistryEnv> {
     for (const [space, n] of items) {
       if (!Number.isInteger(n) || n <= 0 || !this.activeSpace(space)) continue;
       this.sql.exec(`INSERT INTO usage (space, month, events) VALUES (?, ?, ?) ON CONFLICT(space, month) DO UPDATE SET events = events + excluded.events`, space, month, n);
-      out[space] = this.usageState(space, now);
-      if (out[space]!.has_billing_account) wantReport = true;
+      const st = this.usageState(space, now);
+      out[space] = st;
+      if (st.over_fair_use) this.sql.exec(`UPDATE usage SET fair_use_at = ? WHERE space = ? AND month = ? AND fair_use_at IS NULL`, new Date(now).toISOString(), space, month);
+      // Only the legacy usage plan reports overage to a Stripe meter; Pro is a flat per-seat price.
+      if (st.has_billing_account && !this.billingRow(space).pro) wantReport = true;
     }
     if (this.prunedMonth !== month) {
       this.prunedMonth = month;
@@ -695,10 +772,10 @@ export class Registry extends DurableObject<RegistryEnv> {
   }
 
   /**
-   * Before an erase: report what the space owes and cancel its subscription (invoicing what is metered). Returns an
-   * error text if Stripe could not do it (the erase then retries from the alarm), undefined when done or when there is
-   * nothing to settle. A subscription is usage-only (no flat fee), so one left running by a gateway that has no Stripe
-   * secrets bills nothing; that case is logged and the erase goes on, because erasure must not wait for billing.
+   * Before an erase: report what a legacy usage plan owes and cancel the subscription (Pro has nothing metered to
+   * report). Returns an error text if Stripe could not do it (the erase then retries from the alarm), undefined when
+   * done or when there is nothing to settle. Without Stripe secrets on this gateway nothing can be cancelled: that is
+   * logged and the erase goes on, because erasure must not wait for billing.
    */
   private async settleBilling(space: string): Promise<string | undefined> {
     const customer = this.billingRow(space).customer;
@@ -719,15 +796,43 @@ export class Registry extends DurableObject<RegistryEnv> {
   }
 
   /** Operator: where billing stands. */
-  billingSummary(): { month: string; plans: { free: number; paid: number }; with_billing_account: number; events_this_month: number; active_this_month: number; over_allowance: number } {
+  billingSummary(): {
+    month: string;
+    plans: { free: number; paid: number };
+    pro: { spaces: number; seats: number; over_fair_use: number };
+    with_billing_account: number;
+    events_this_month: number;
+    active_this_month: number;
+    over_allowance: number;
+    purchases_unclaimed: number;
+  } {
     this.ensureSpaces();
     const month = monthKey();
     const active = this.sql.exec<{ id: string }>(`SELECT id FROM spaces WHERE status = 'active'`).toArray();
     const paid = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM space_billing b JOIN spaces s ON s.id = b.space WHERE b.plan = 'paid' AND s.status = 'active'`).one().n;
     const withAccount = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM space_billing b JOIN spaces s ON s.id = b.space WHERE b.stripe_customer_id IS NOT NULL AND s.status = 'active'`).one().n;
+    const pro = this.sql
+      .exec<{ n: number; seats: number }>(`SELECT COUNT(*) AS n, COALESCE(SUM(b.seats), 0) AS seats FROM space_billing b JOIN spaces s ON s.id = b.space WHERE b.plan = 'paid' AND b.product = 'pro' AND s.status = 'active'`)
+      .one();
     const u = this.sql.exec<{ n: number; e: number }>(`SELECT COUNT(*) AS n, COALESCE(SUM(events), 0) AS e FROM usage WHERE month = ?`, month).one();
-    const over = active.filter((s) => this.usageState(s.id).over).length;
-    return { month, plans: { free: active.length - paid, paid }, with_billing_account: withAccount, events_this_month: u.e, active_this_month: u.n, over_allowance: over };
+    const states = active.map((s) => this.usageState(s.id));
+    const unclaimed = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM entitlements WHERE claimed_space IS NULL AND plan = 'paid'`).one().n;
+    return {
+      month,
+      plans: { free: active.length - paid, paid },
+      pro: { spaces: pro.n, seats: pro.seats, over_fair_use: states.filter((s) => s.over_fair_use).length },
+      with_billing_account: withAccount,
+      events_this_month: u.e,
+      active_this_month: u.n,
+      over_allowance: states.filter((s) => s.over).length,
+      purchases_unclaimed: unclaimed,
+    };
+  }
+
+  /** Whether a Stripe event id was already applied (lets the webhook skip a Stripe read for a replay). */
+  billingEventSeen(id: string): boolean {
+    this.ensureSpaces();
+    return this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM stripe_events WHERE id = ?`, id).one().n > 0;
   }
 
   /** The Stripe customer attached to a space, if any (for the portal and for cancelling). */
@@ -736,32 +841,180 @@ export class Registry extends DurableObject<RegistryEnv> {
   }
 
   /**
-   * Apply one verified Stripe event to the plan table, once. `space` is set for checkout sessions (the
+   * Apply one verified Stripe event, once. `space` is set for checkout sessions started from a space (the
    * client_reference_id we put on them); other events carry only a customer, which must be one we attached to a
-   * space. Idempotent on the event id; an event older than the last applied one changes nothing (Stripe does not
-   * promise ordering). Runs in one synchronous step, so the id and the change cannot be separated.
+   * space or to an unclaimed web purchase. `pro` (seats, interval) is set when the event says what the
+   * subscription now is. Idempotent on the event id; an event older than the last applied one changes nothing
+   * (Stripe does not promise ordering). Runs in one synchronous step, so the id and the change cannot be separated.
    */
-  applyBillingEvent(e: { id: string; created: number; space?: string; customer?: string; plan: Plan }): { result: "applied" | "duplicate" | "ignored" | "stale"; space?: string } {
+  applyBillingEvent(e: { id: string; created: number; space?: string; customer?: string; plan: Plan; pro?: { seats: number; interval: Interval } }): {
+    result: "applied" | "duplicate" | "ignored" | "stale";
+    space?: string;
+    purchase?: true;
+  } {
     this.ensureSpaces();
     let space = e.space;
     if (space !== undefined) {
       if (!this.activeSpace(space)) return { result: "ignored" };
     } else if (e.customer) {
       space = this.sql.exec<{ space: string }>(`SELECT space FROM space_billing WHERE stripe_customer_id = ?`, e.customer).toArray()[0]?.space;
-      if (!space || !this.activeSpace(space)) return { result: "ignored" };
+      if (!space) {
+        // A web purchase that nobody has claimed yet: keep its plan and seats current until it is.
+        const ent = this.sql.exec<{ session: string }>(`SELECT session FROM entitlements WHERE customer = ? AND claimed_space IS NULL`, e.customer).toArray()[0];
+        if (!ent) return { result: "ignored" };
+        if (this.sql.exec(`INSERT OR IGNORE INTO stripe_events (id, at) VALUES (?, ?)`, e.id, Math.floor(Date.now() / 1000)).rowsWritten === 0) return { result: "duplicate", purchase: true };
+        const moved = this.sql.exec(
+          `UPDATE entitlements SET plan = ?, seats = COALESCE(?, seats), interval = COALESCE(?, interval), billing_event_at = ? WHERE session = ? AND billing_event_at <= ?`,
+          e.plan,
+          e.pro?.seats ?? null,
+          e.pro?.interval ?? null,
+          e.created,
+          ent.session,
+          e.created,
+        ).rowsWritten;
+        return { result: moved > 0 ? "applied" : "stale", purchase: true };
+      }
+      if (!this.activeSpace(space)) return { result: "ignored" };
     } else return { result: "ignored" };
     if (this.sql.exec(`INSERT OR IGNORE INTO stripe_events (id, at) VALUES (?, ?)`, e.id, Math.floor(Date.now() / 1000)).rowsWritten === 0) return { result: "duplicate", space };
     this.sql.exec(`INSERT OR IGNORE INTO space_billing (space) VALUES (?)`, space);
     if (e.space !== undefined && e.customer) this.sql.exec(`UPDATE space_billing SET stripe_customer_id = ? WHERE space = ?`, e.customer, space);
-    const moved = this.sql.exec(`UPDATE space_billing SET plan = ?, billing_event_at = ? WHERE space = ? AND billing_event_at <= ?`, e.plan, e.created, space, e.created).rowsWritten;
+    const moved = e.pro
+      ? this.sql.exec(
+          `UPDATE space_billing SET plan = ?, product = 'pro', seats = ?, interval = ?, billing_event_at = ? WHERE space = ? AND billing_event_at <= ?`,
+          e.plan,
+          e.pro.seats,
+          e.pro.interval,
+          e.created,
+          space,
+          e.created,
+        ).rowsWritten
+      : this.sql.exec(`UPDATE space_billing SET plan = ?, billing_event_at = ? WHERE space = ? AND billing_event_at <= ?`, e.plan, e.created, space, e.created).rowsWritten;
     return { result: moved > 0 ? "applied" : "stale", space };
   }
 
+  // ------------------------------------------------------------------ web-first purchases and claim codes
+  //
+  // GET /buy sells Weft Pro before there is a space. Stripe's `checkout.session.completed` (or the welcome page,
+  // if it gets there first) records the purchase here as an entitlement. The welcome page trades the Checkout
+  // Session id for a one-time claim code, and `npx @celador/weft --hosted --claim <code>` binds the purchase to a
+  // space. A claimed purchase stays as a row so it can never be claimed again; the code itself is stored only as
+  // a salted hash, expires in an hour, and is single use.
+
   /**
-   * Send the overage of every space with a Stripe customer to its meter (all of them, or just `only`). Each
-   * space's window (from, to] is written down BEFORE the call and reused until Stripe accepts it, and the meter
-   * event's identifier is built from the window, so a retry after a lost answer is the same event to Stripe
-   * (it drops duplicates of an identifier for 24 hours) and the cursor only moves on success.
+   * Record a paid web purchase (idempotent on the session id; with `eventId`, also on the Stripe event). A newer
+   * report of the same purchase updates plan and seats while it is unclaimed; a claimed one is not touched here
+   * (later changes reach it through its customer, applyBillingEvent).
+   */
+  recordPurchase(p: { session: string; customer: string; subscription: string; seats: number; interval: Interval; plan: Plan; created: number; eventId?: string }): { result: "applied" | "duplicate" | "stale" } {
+    this.ensureSpaces();
+    if (p.eventId && this.sql.exec(`INSERT OR IGNORE INTO stripe_events (id, at) VALUES (?, ?)`, p.eventId, Math.floor(Date.now() / 1000)).rowsWritten === 0) return { result: "duplicate" };
+    const n = this.sql.exec(
+      `INSERT INTO entitlements (session, customer, subscription, seats, interval, plan, billing_event_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(session) DO UPDATE SET plan = excluded.plan, seats = excluded.seats, interval = excluded.interval, billing_event_at = excluded.billing_event_at
+       WHERE entitlements.claimed_space IS NULL AND entitlements.billing_event_at <= excluded.billing_event_at`,
+      p.session,
+      p.customer,
+      p.subscription,
+      p.seats,
+      p.interval,
+      p.plan,
+      p.created,
+      new Date().toISOString(),
+    ).rowsWritten;
+    return { result: n > 0 ? "applied" : "stale" };
+  }
+
+  /** Where a web purchase stands, by its Checkout Session id. Never returns Stripe ids or the space. */
+  purchase(session: string): { status: "unknown" | "claimed" | "inactive" | "claimable"; seats?: number; interval?: Interval } {
+    this.ensureSpaces();
+    const r = this.sql.exec<{ seats: number; interval: string; plan: string; claimed_space: string | null }>(`SELECT seats, interval, plan, claimed_space FROM entitlements WHERE session = ?`, session).toArray()[0];
+    if (!r) return { status: "unknown" };
+    const facts = { seats: r.seats, interval: (r.interval === "year" ? "year" : "month") as Interval };
+    if (r.claimed_space) return { status: "claimed", ...facts };
+    return { status: r.plan === "paid" ? "claimable" : "inactive", ...facts };
+  }
+
+  private claimSalt(): string {
+    this.ensureSpaces();
+    const row = this.sql.exec<{ value: string }>(`SELECT value FROM settings WHERE key = 'claim_salt'`).toArray()[0];
+    if (row) return row.value;
+    const salt = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    this.sql.exec(`INSERT OR IGNORE INTO settings (key, value) VALUES ('claim_salt', ?)`, salt);
+    return this.sql.exec<{ value: string }>(`SELECT value FROM settings WHERE key = 'claim_salt'`).one().value;
+  }
+
+  /** A fresh one-time claim code for an unclaimed, paid purchase (one hour, one use; at most 3 open per purchase). */
+  async claimCodeCreate(session: string): Promise<{ code: string; expires_at: string; seats: number; interval: Interval } | { error: string; code: "unknown" | "claimed" | "inactive" }> {
+    const st = this.purchase(session);
+    if (st.status === "unknown") return { error: "no paid Weft Pro checkout with that id (yet): if you just paid, try again in a few seconds", code: "unknown" };
+    if (st.status === "claimed") return { error: "this purchase is already claimed by a space; manage it with `npx @celador/weft billing` in that repo", code: "claimed" };
+    if (st.status === "inactive") return { error: "this purchase's subscription is not active (cancelled or unpaid)", code: "inactive" };
+    const code = claimCode();
+    const hash = await sha256Hex(claimSaltText(this.claimSalt(), normalizeCode(code)));
+    const now = Date.now();
+    this.sql.exec(`DELETE FROM claim_codes WHERE expires_at <= ?`, new Date(now).toISOString());
+    const open = this.sql.exec<{ id: string }>(`SELECT id FROM claim_codes WHERE session = ? ORDER BY created_at DESC`, session).toArray();
+    for (const old of open.slice(MAX_OPEN_CLAIMS - 1)) this.sql.exec(`DELETE FROM claim_codes WHERE id = ?`, old.id);
+    const expires_at = new Date(now + CLAIM_TTL_MS).toISOString();
+    this.sql.exec(`INSERT INTO claim_codes (id, session, code_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`, `cc_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`, session, hash, new Date(now).toISOString(), expires_at);
+    return { code, expires_at, seats: st.seats!, interval: st.interval! };
+  }
+
+  /**
+   * Bind the purchase behind a claim code to `space`: the space becomes Pro with the purchase's seats. The code is
+   * compared in constant time against every open code (no early exit) and consumed in the same synchronous step that
+   * found it, so two requests can never both win it. Every bad or expired code gets the same answer.
+   */
+  async claimRedeem(
+    space: string,
+    code: string,
+  ): Promise<
+    | { space: string; seats: number; interval: Interval; customer: string; subscription: string | null }
+    | { error: string; code: "invalid" | "gone" | "already_paid" | "inactive" }
+  > {
+    const hash = await sha256Hex(claimSaltText(this.claimSalt(), normalizeCode(code)));
+    // ---- no await below this line
+    this.ensureSpaces();
+    const nowIso = new Date().toISOString();
+    const rows = this.sql.exec<{ id: string; session: string; code_hash: string }>(`SELECT id, session, code_hash FROM claim_codes WHERE expires_at > ? LIMIT 5000`, nowIso).toArray();
+    let hit: { id: string; session: string } | undefined;
+    for (const r of rows.length ? rows : [{ id: "", session: "", code_hash: "0".repeat(64) }]) if (constantTimeEqual(r.code_hash, hash) && r.id) hit = r;
+    const invalid = { error: "that claim code is not valid or has expired; get a new one from the welcome page", code: "invalid" as const };
+    if (!hit) return invalid;
+    if (!this.activeSpace(space)) return { error: "space not found", code: "gone" };
+    const ent = this.sql
+      .exec<{ customer: string | null; subscription: string | null; seats: number; interval: string; plan: string; billing_event_at: number; claimed_space: string | null }>(
+        `SELECT customer, subscription, seats, interval, plan, billing_event_at, claimed_space FROM entitlements WHERE session = ?`,
+        hit.session,
+      )
+      .toArray()[0];
+    if (!ent || ent.claimed_space || !ent.customer) return invalid;
+    if (ent.plan !== "paid") return { error: "this purchase's subscription is not active (cancelled or unpaid)", code: "inactive" };
+    const b = this.billingRow(space);
+    if (b.plan === "paid") return { error: "this space already has a paid plan; claim the purchase from another repo, or manage this one with `npx @celador/weft billing`", code: "already_paid" };
+    if (this.sql.exec(`DELETE FROM claim_codes WHERE id = ?`, hit.id).rowsWritten !== 1) return invalid;
+    this.sql.exec(`DELETE FROM claim_codes WHERE session = ?`, hit.session);
+    this.sql.exec(`UPDATE entitlements SET claimed_space = ?, claimed_at = ? WHERE session = ?`, space, nowIso, hit.session);
+    const interval: Interval = ent.interval === "year" ? "year" : "month";
+    this.sql.exec(
+      `INSERT INTO space_billing (space, plan, stripe_customer_id, billing_event_at, product, seats, interval) VALUES (?, 'paid', ?, ?, 'pro', ?, ?)
+       ON CONFLICT(space) DO UPDATE SET plan = 'paid', stripe_customer_id = excluded.stripe_customer_id, billing_event_at = MAX(space_billing.billing_event_at, excluded.billing_event_at), product = 'pro', seats = excluded.seats, interval = excluded.interval`,
+      space,
+      ent.customer,
+      ent.billing_event_at,
+      ent.seats,
+      interval,
+    );
+    return { space, seats: ent.seats, interval, customer: ent.customer, subscription: ent.subscription };
+  }
+
+  /**
+   * Send the overage of every legacy usage-plan space with a Stripe customer to its meter (all of them, or just
+   * `only`). Pro spaces are never metered. Each space's window (from, to] is written down BEFORE the call and reused
+   * until Stripe accepts it, and the meter event's identifier is built from the window, so a retry after a lost
+   * answer is the same event to Stripe (it drops duplicates of an identifier for 24 hours) and the cursor only
+   * moves on success.
    */
   async reportUsage(only?: string): Promise<{ sent: number; events: number; failed: number }> {
     const cfg = stripeConfig(this.env);
@@ -772,7 +1025,7 @@ export class Registry extends DurableObject<RegistryEnv> {
       .exec<{ space: string; month: string; events: number; reported: number; pending_from: number | null; pending_to: number | null; customer: string; allowance: number | null }>(
         `SELECT u.space, u.month, u.events, u.reported, u.pending_from, u.pending_to, b.stripe_customer_id AS customer, b.allowance
          FROM usage u JOIN space_billing b ON b.space = u.space
-         WHERE b.stripe_customer_id IS NOT NULL ${only ? "AND u.space = ?" : ""} ORDER BY u.space, u.month`,
+         WHERE b.stripe_customer_id IS NOT NULL AND b.product IS NULL ${only ? "AND u.space = ?" : ""} ORDER BY u.space, u.month`,
         ...(only ? [only] : []),
       )
       .toArray();
@@ -812,18 +1065,25 @@ export class Registry extends DurableObject<RegistryEnv> {
     return res;
   }
 
-  /** Counters of months more than ~2 months old that carry nothing left to bill. */
+  /**
+   * Counters of months more than ~2 months old that carry nothing left to bill: everything except a legacy
+   * usage-plan space's unreported overage. Unclaimed web purchases whose subscription ended go after 30 days.
+   */
   private pruneUsage(now = Date.now()): void {
     this.sql.exec(
-      `DELETE FROM usage WHERE month < ? AND pending_to IS NULL AND reported >= events - COALESCE((SELECT allowance FROM space_billing b WHERE b.space = usage.space), ?)`,
+      `DELETE FROM usage WHERE month < ? AND pending_to IS NULL AND (
+         NOT EXISTS (SELECT 1 FROM space_billing b WHERE b.space = usage.space AND b.stripe_customer_id IS NOT NULL AND b.product IS NULL)
+         OR reported >= events - COALESCE((SELECT allowance FROM space_billing b WHERE b.space = usage.space), ?))`,
       monthKey(now - 62 * 86_400_000),
       freeEvents(this.env),
     );
+    this.sql.exec(`DELETE FROM entitlements WHERE claimed_space IS NULL AND plan != 'paid' AND created_at < ?`, new Date(now - 30 * 86_400_000).toISOString());
+    this.sql.exec(`DELETE FROM claim_codes WHERE expires_at <= ?`, new Date(now).toISOString());
   }
 
   private prunedMonth = "";
 
-  /** Alarm work: report usage, drop old Stripe event ids and fully reported months, and arm the next run. */
+  /** Alarm work: report legacy usage, drop old Stripe event ids and fully reported months, and arm the next run. */
   private async maintainBilling(): Promise<void> {
     this.sql.exec(`DELETE FROM stripe_events WHERE at < ?`, Math.floor(Date.now() / 1000) - 45 * 86_400);
     this.pruneUsage();
@@ -835,7 +1095,7 @@ export class Registry extends DurableObject<RegistryEnv> {
     }
     const left = this.sql.exec<{ n: number }>(
       `SELECT COUNT(*) AS n FROM usage u JOIN space_billing b ON b.space = u.space
-       WHERE b.stripe_customer_id IS NOT NULL AND (u.pending_to IS NOT NULL OR u.events - COALESCE(b.allowance, ?) > u.reported)`,
+       WHERE b.stripe_customer_id IS NOT NULL AND b.product IS NULL AND (u.pending_to IS NOT NULL OR u.events - COALESCE(b.allowance, ?) > u.reported)`,
       freeEvents(this.env),
     ).one().n;
     if (left > 0) await this.scheduleAlarmAt(Date.now() + REPORT_EVERY_MS);
@@ -1008,6 +1268,26 @@ export function normalizeCode(s: string): string {
 }
 
 const pairingSalt = (space: string, normalized: string) => `weft-pairing:${space}:${normalized}`;
+
+/** Claim codes (web purchases): 12 symbols of the same alphabet (~2^59), one hour, single use, at most 3 open per purchase. */
+export const CLAIM_TTL_MS = 60 * 60_000;
+const CLAIM_LEN = 12;
+const MAX_OPEN_CLAIMS = 3;
+
+/** `XXXX-XXXX-XXXX`, uniform over the alphabet. */
+function claimCode(): string {
+  let out = "";
+  const limit = 256 - (256 % CODE_ALPHABET.length);
+  while (out.length < CLAIM_LEN) {
+    for (const b of crypto.getRandomValues(new Uint8Array(24))) {
+      if (b < limit && out.length < CLAIM_LEN) out += CODE_ALPHABET[b % CODE_ALPHABET.length];
+    }
+  }
+  return `${out.slice(0, 4)}-${out.slice(4, 8)}-${out.slice(8)}`;
+}
+
+/** The hashed text of a claim code: a per-Registry random salt (settings.claim_salt) and the normalized code. */
+const claimSaltText = (salt: string, normalized: string) => `weft-claim:${salt}:${normalized}`;
 
 function constantTimeEqual(a: string, b: string): boolean {
   let d = a.length ^ b.length;

@@ -17,7 +17,7 @@ import {
   type Result,
 } from "@weft/sequencer";
 import { REPO_NAME, Registry, sha256Hex, type SpaceGrant, type TokenSpec } from "./registry";
-import { readSessionCookie, spacesAdmin, spacesRoute, throttleSpace, type SpacesEnv, type SpacesKit } from "./spaces";
+import { readSessionCookie, spacesAdmin, spacesRoute, throttleNetwork, throttleSpace, type SpacesEnv, type SpacesKit } from "./spaces";
 import { artifactsAdmin, artifactsRoute, forwardApproval, handleArtifactsBatch, startRevert, type ArtifactsEnv, type Kit } from "./artifacts";
 import { billingAdmin, billingRoute, meterEvent, overAllowance, type BillingKit } from "./billing";
 import { stripeConfig } from "./stripe";
@@ -146,13 +146,20 @@ function spacesKit(env: Env): SpacesKit {
 }
 
 /** What the billing module needs (docs/pricing.md): the same error mapping and JSON helpers as everything else. */
-const billingKit: BillingKit = {
-  fail(code, message, details) {
-    throw new HttpError(code, message, details);
-  },
-  json,
-  readJson,
-};
+function billingKit(env: Env): BillingKit {
+  return {
+    fail(code, message, details) {
+      throw new HttpError(code, message, details);
+    },
+    json,
+    readJson,
+    throttle: (req, bucket, extra) => throttleNetwork(env, spacesKit(env), req, bucket, extra),
+    respond(e) {
+      if (e instanceof HttpError) return errorResponse(e.code, e.message, e.details);
+      throw e;
+    },
+  };
+}
 
 /** Scope + repo check. A repo outside the token's list is 404 (do not leak existence). */
 function authorize(g: Grant, scope: "agent" | "observe" | "human" | "system", repo?: string): void {
@@ -253,7 +260,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   if (path.startsWith("/v1/admin")) return admin(req, env, path, m);
 
   // ----- hosted usage billing: Stripe webhook and Checkout return pages (off without Stripe secrets)
-  const bl = await billingRoute(req, env, billingKit, path);
+  const bl = await billingRoute(req, env, billingKit(env), path);
   if (bl) return bl;
 
   // ----- hosted spaces (`npx weft`): signup, space API, private feed page
@@ -573,7 +580,7 @@ async function admin(req: Request, env: Env, path: string, m: string): Promise<R
     if (!ok) throw new HttpError("not_found", "no such active token");
     return new Response(null, { status: 204 });
   }
-  const ba = await billingAdmin(req, env, billingKit, path);
+  const ba = await billingAdmin(req, env, billingKit(env), path);
   if (ba) return ba;
   const sa = await spacesAdmin(req, env, spacesKit(env), path);
   if (sa) return sa;
