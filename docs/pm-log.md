@@ -332,3 +332,8 @@ Append-only. One dated entry per heartbeat that changed something.
 - t_4fe570cd run 444 finished everything except the production Clerk app "Weft": code + gate green (1,421 tests + 35 site) + E2E on the dev instance; wt/clerk-accounts head fa13772. Creating the app needs `clerk auth login` (browser OAuth on John's account); weekday rule forbids driving his browser. Marked needs_input; reported to John.
 - Decision: unlinked t_4fe570cd -> t_ae271f1e so the Commercial License card runs now against the dev Clerk instance (it merges wt/clerk-accounts + wt/license-change itself). Go-live t_52c6e0ad still gated on both. Dispatched: run 445 running.
 - Security impact: none (board operations only).
+
+## 2026-11-17 19:05 — Re-dispatched t_ae271f1e (Commercial License purchase)
+- Run 445 crashed at 18:14 on a transient expired Anthropic OAuth token (401); `hermes auth status anthropic` now logged in. Work kept: 8a0a24a (gateway license purchases) + 4 uncommitted CLI files.
+- Unblocked with a resume note (commit the CLI files, finish pricing//license pages, test-mode E2E, gate), dispatched: run 446 running (pid 81591).
+- t_4fe570cd stays parked on John's `clerk auth login`; go-live t_52c6e0ad gated on both. Security impact: none (board operation only).
