@@ -327,3 +327,8 @@ Append-only. One dated entry per heartbeat that changed something.
 - Verified state: E2E passed at 16:17 (~/Documents/Weft/clerk-accounts/e2e/e2e-pass.log: sign-up, account, Pro 2 seats, space, delete; Stripe sub canceled, Clerk user 404, test customer deleted). Commits through b603893 on wt/clerk-accounts; one uncommitted file (site/public/assets/account.js). Gate log was cut off by the reboot.
 - Unblocked with a resume note (commit account.js, rerun gate, deliverables, complete; don't rerun E2E) and dispatched: run 444 running.
 - Security impact: none (board operation only).
+
+## 2026-11-17 18:05 — Clerk card parked on John; license purchase started early
+- t_4fe570cd run 444 finished everything except the production Clerk app "Weft": code + gate green (1,421 tests + 35 site) + E2E on the dev instance; wt/clerk-accounts head fa13772. Creating the app needs `clerk auth login` (browser OAuth on John's account); weekday rule forbids driving his browser. Marked needs_input; reported to John.
+- Decision: unlinked t_4fe570cd -> t_ae271f1e so the Commercial License card runs now against the dev Clerk instance (it merges wt/clerk-accounts + wt/license-change itself). Go-live t_52c6e0ad still gated on both. Dispatched: run 445 running.
+- Security impact: none (board operations only).
