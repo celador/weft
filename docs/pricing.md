@@ -34,8 +34,7 @@ Modelled on cap.so: a free tier, and one paid tier priced per user.
   back to the free plan. **Erasing a Pro space** (`weft uninstall --space`) cancels the subscription at once, with no
   refund for the rest of the period.
 - **The $500 pilot** (`weft deploy` on the customer's own Cloudflare account, fixed fee) is unchanged.
-- **No commercial-license tier.** Weft is MIT, which already allows commercial use; a paid license would need a
-  relicense, which is John's call and is not built.
+- **Pro includes the Commercial License** (below) for every Pro user.
 
 ### Two ways to buy
 
@@ -47,6 +46,36 @@ hosted space of the account is Pro.
    `npx @celador/weft login`.
 2. **CLI first** (someone already using a hosted space): `npx @celador/weft upgrade [--seats N] [--year]`. If the space
    has no account yet, the CLI runs `weft login` first (the space joins the account), then opens Checkout.
+
+### Commercial License: per user, yearly or once (approved 2026-11-17)
+
+For people who run Weft locally or on their own Cloudflare account at work. The source is AGPL-3.0-only; the builds
+we distribute are free for personal use and need a license (or Pro) for commercial use
+([commercial-license.md](commercial-license.md), published at weft.mx/license/).
+
+| | Yearly | Lifetime |
+|---|---|---|
+| Price | **$29 per user per year** | **$58 per user, once** (never renews) |
+| Seats | the quantity the buyer picks in Checkout | same |
+| Ends | cancelled: at the end of the paid year; a failed renewal: at the end of the last paid year | never |
+
+- **Bought signed in**, like Pro: pricing page "Buy a license" -> `/account/?buy=license-year|license-lifetime&seats=N`
+  -> sign up if needed -> Stripe Checkout (`POST /v1/account/billing/checkout {product: "license", term, seats}`).
+  A Pro account is refused (Pro already includes it). Seats add up across purchases.
+- **Nothing is enforced.** Weft never blocks, nags or phones home about a license. Setup prints one line when the
+  machine has no license and no Pro ("Free for personal use. Using Weft at work? weft.mx/pricing"), from local state
+  only; local mode sends nothing for it.
+- **`weft license`** shows the signed-in account's license (it rides on the owner's `GET /v1/space`). **`weft license
+  <key>`** records a license key from weft.mx/account/ on a machine that never signs in and checks it once with
+  `POST /v1/license/verify` (no auth; answers what the key covers, never who owns it). The key is stored in the
+  Registry only as a salted SHA-256 plus its last 4 characters; making a new key stops the old one.
+- **Stripe**: product `weft_license` ("Weft Commercial License"), prices by lookup key `weft_license_user_year`
+  (licensed, yearly) and `weft_license_user_lifetime` (one-time), both made by `scripts/stripe-setup.mjs`. The gateway
+  sells the license only when `STRIPE_PRICE_LICENSE_YEAR` and `STRIPE_PRICE_LICENSE_LIFETIME` are set (on top of the
+  four Pro secrets). Checkout carries `weft_product=license` metadata; the webhook records each purchase in the
+  Registry's `licenses` table (a lifetime purchase by its Checkout Session, a yearly one by its subscription) and never
+  touches the account's Pro plan. Deleting the account cancels the yearly subscription and deletes the licenses and
+  the key.
 
 ### Margin check (from the cost model in section H1)
 

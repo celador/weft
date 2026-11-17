@@ -8,6 +8,8 @@
   const show = (state) => { for (const el of document.querySelectorAll("[data-state]")) el.hidden = el.dataset.state !== state; };
   const money = (n) => (Number.isInteger(n) ? `$${n}` : `$${(Math.floor(n * 100) / 100).toFixed(2)}`);
   const PRICES = { month: 12, year: 98 };
+  const LICENSE = { year: 29, lifetime: 58 }; // the Commercial License, per user: a year, or once (site.js WEFT.license)
+  const users = (n) => `${n} ${n === 1 ? "user" : "users"}`;
   const track = (e, w = "") => { try { navigator.sendBeacon?.("/e", JSON.stringify({ e, w, s: "", k: "", c: "acct" })); } catch {} };
 
   // Where to go after signing in/up: a path on this site only (never another origin).
@@ -128,18 +130,20 @@
     if (a.utm_campaign) utm.set("utm_campaign", a.utm_campaign);
 
     // Pricing page "Get Pro" while signed out comes back here with ?buy=month|year&seats=N: straight into Checkout.
+    // The License card's "Buy a license" comes back with ?buy=license-year|license-lifetime&seats=N.
     const buy = q.get("buy");
-    if ((buy === "month" || buy === "year") && !q.get("checkout")) {
+    if ((buy === "month" || buy === "year" || buy === "license-year" || buy === "license-lifetime") && !q.get("checkout")) {
       history.replaceState(null, "", "/account/");
       try {
         const seats = Math.min(999, Math.max(1, Number(q.get("seats")) || 1));
-        const r = await gw(clerk, "POST", "/v1/account/billing/checkout", { interval: buy, seats, utm_source: a.utm_source, utm_campaign: a.utm_campaign });
+        const body = buy.startsWith("license-") ? { product: "license", term: buy.slice(8), seats } : { interval: buy, seats };
+        const r = await gw(clerk, "POST", "/v1/account/billing/checkout", { ...body, utm_source: a.utm_source, utm_campaign: a.utm_campaign });
         track("checkout_start", `${buy}-${seats}`);
         location.assign(r.url);
         return;
       } catch (e) {
         if (e.status !== 400) { $("[data-error]").textContent = e.message; show("error"); return; }
-        // already on Pro: fall through to the page
+        // already on Pro (or Pro already includes the license): fall through to the page
       }
     }
 
@@ -147,7 +151,15 @@
     const load = async () => (info = (await gw(clerk, "GET", `/v1/account${utm.toString() ? `?${utm}` : ""}`)).account);
     try { await load(); } catch (e) { $("[data-error]").textContent = e.message; show("error"); return; }
     // Back from Checkout: the webhook may take a few seconds to make the account Pro.
-    if (q.get("checkout") === "done") {
+    if (q.get("checkout") === "done" && q.get("product") === "license") {
+      // A license purchase shows up as a purchase made in the last few minutes.
+      const fresh = () => (info.license?.purchases ?? []).some((p) => Date.now() - Date.parse(p.created_at) < 15 * 60_000);
+      $("[data-notice]").textContent = "Payment received. Your license shows up in a few seconds.";
+      $("[data-notice]").hidden = false;
+      for (let i = 0; i < 10 && !fresh(); i++) { await new Promise((r) => setTimeout(r, 1500)); await load().catch(() => {}); }
+      if (fresh()) $("[data-notice]").textContent = "Payment received. Your commercial license is active. Thank you.";
+      history.replaceState(null, "", "/account/");
+    } else if (q.get("checkout") === "done") {
       $("[data-notice]").textContent = "Payment received. Your plan updates in a few seconds.";
       $("[data-notice]").hidden = false;
       for (let i = 0; i < 10 && info.plan !== "paid"; i++) { await new Promise((r) => setTimeout(r, 1500)); await load().catch(() => {}); }
@@ -164,9 +176,10 @@
     $("[data-plan]").textContent = pro ? `Weft Pro, ${info.seats} ${info.seats === 1 ? "user" : "users"}` : info.plan === "paid" ? "Paid" : "Free";
     $("[data-plan-detail]").textContent = pro
       ? `Billed ${info.interval === "year" ? "yearly" : "monthly"}${info.period_end ? `, renews ${fmtDate(info.period_end)}` : ""}. No monthly event limit.`
-      : "Local Weft is free with no limits. A hosted space on Free has a monthly event allowance.";
+      : "Local Weft has no event limits. A hosted space on Free has a monthly event allowance.";
     $("[data-get-pro]").hidden = pro;
     $("[data-manage]").hidden = !info.has_billing_account;
+    renderLicense(info);
     const list = $("[data-spaces]");
     list.textContent = "";
     if (!info.spaces.length) list.innerHTML = '<li class="meta">No hosted space yet. Connect a machine (above), then run <code>npx @celador/weft --hosted</code> in a repo.</li>';
@@ -177,6 +190,100 @@
       li.querySelector(".meta").textContent = `${s.repos} ${s.repos === 1 ? "repo" : "repos"} · ${s.events_this_month.toLocaleString("en-US")} events this month · last activity ${ago(s.last_event_at)}`;
       list.append(li);
     }
+  }
+
+  // The Commercial License panel: what the account holds, buying (more), and the license key.
+  function renderLicense(info) {
+    const L = info.license || { active: false, included_in_pro: false, seats: 0, lifetime_seats: 0, year_seats: 0, term: null, valid_until: null, renews: false, purchases: [], key: null };
+    const bought = L.purchases ?? [];
+    let name;
+    let detail;
+    if (L.included_in_pro) {
+      name = "Included in Weft Pro";
+      detail = "Every Pro user is covered for as long as Pro runs.";
+    } else if (L.active) {
+      name = `${users(L.seats)}, ${L.term === "lifetime" ? "lifetime" : L.term === "year" ? "yearly" : "lifetime and yearly"}`;
+      const yearly = L.year_seats ? `${L.renews ? "Renews" : "Ends"} ${fmtDate(L.valid_until)}.` : "";
+      detail = L.term === "lifetime" ? "Paid once. It never renews and never ends." : L.term === "year" ? yearly : `${users(L.lifetime_seats)} lifetime (never ends), ${users(L.year_seats)} yearly. ${yearly}`;
+    } else if (bought.length) {
+      name = "Ended";
+      detail = "Your yearly license has ended. Buy a new one below to keep using Weft at work.";
+    } else {
+      name = "None";
+      detail = "Weft is free for personal use.";
+    }
+    $("[data-license]").textContent = name;
+    $("[data-license-detail]").textContent = detail;
+    const list = $("[data-license-purchases]");
+    list.textContent = "";
+    list.hidden = bought.length < 2;
+    for (const b of bought) {
+      const li = document.createElement("li");
+      const when = b.term === "lifetime" ? `bought ${fmtDate(b.created_at)}` : b.status === "ended" ? `ended ${fmtDate(b.valid_until)}` : `${b.status === "active" ? "renews" : b.status === "past_due" ? "payment failed, paid through" : "ends"} ${fmtDate(b.valid_until)}`;
+      li.textContent = `${users(b.seats)}, ${b.term === "lifetime" ? "lifetime" : "yearly"}, ${when}`;
+      list.append(li);
+    }
+    $("[data-get-license]").hidden = L.included_in_pro;
+    $("[data-license-why]").hidden = L.active;
+    $("[data-license-checkout]").textContent = L.active ? "Buy more users" : "Buy a license";
+    $("[data-license-key]").hidden = !L.active;
+    $("[data-key-current]").textContent = L.key ? `Current key ends in …${L.key.hint}, made ${fmtDate(L.key.created_at)}. Making a new key stops the old one.` : "No key yet.";
+    $("[data-make-key]").textContent = L.key ? "Make a new key" : "Make a key";
+  }
+
+  function licensePicker(clerk) {
+    const root = $("[data-get-license]");
+    if (!root) return;
+    const state = { term: "lifetime", seats: 1 };
+    const input = $("[data-seats]", root);
+    const draw = () => {
+      for (const b of root.querySelectorAll("[data-term]")) b.setAttribute("aria-pressed", String(b.dataset.term === state.term));
+      const per = LICENSE[state.term];
+      $("[data-license-total]", root).textContent = `${users(state.seats)} × ${money(per)} = ${money(per * state.seats)} ${state.term === "year" ? "a year" : "once"}`;
+      if (document.activeElement !== input) input.value = String(state.seats);
+    };
+    const clamp = (n) => Math.min(999, Math.max(1, Math.floor(Number(n)) || 1));
+    for (const b of root.querySelectorAll("[data-term]")) b.addEventListener("click", () => { state.term = b.dataset.term; draw(); });
+    $("[data-seat-minus]", root).addEventListener("click", () => { state.seats = clamp(state.seats - 1); draw(); });
+    $("[data-seat-plus]", root).addEventListener("click", () => { state.seats = clamp(state.seats + 1); draw(); });
+    input.addEventListener("input", () => { if (input.value !== "") { state.seats = clamp(input.value); draw(); } });
+    $("[data-license-checkout]", root).addEventListener("click", async (ev) => {
+      ev.target.disabled = true;
+      try {
+        const a = attr();
+        const r = await gw(clerk, "POST", "/v1/account/billing/checkout", { product: "license", term: state.term, seats: state.seats, utm_source: a.utm_source, utm_campaign: a.utm_campaign });
+        track("checkout_start", `license-${state.term}-${state.seats}`);
+        location.assign(r.url);
+      } catch (e) { $("[data-license-error]", root).textContent = e.message; ev.target.disabled = false; }
+    });
+    draw();
+  }
+
+  // The license key: made here, shown once (the gateway keeps only a hash and its last 4 characters).
+  function keyMaker(clerk) {
+    const btn = $("[data-make-key]");
+    if (!btn) return;
+    let armed = false;
+    btn.addEventListener("click", async () => {
+      // Replacing a key stops the old one: the first click asks, the second replaces.
+      if (/new key/.test(btn.textContent) && !armed) {
+        armed = true;
+        $("[data-key-note]").textContent = "The old key stops working. Click again to replace it.";
+        return;
+      }
+      armed = false;
+      btn.disabled = true;
+      $("[data-key-note]").textContent = "";
+      $("[data-key-error]").textContent = "";
+      try {
+        const r = await gw(clerk, "POST", "/v1/account/license/key", {});
+        $("[data-key-cmd]").textContent = `npx @celador/weft license ${r.key}`;
+        $("[data-key-shown]").hidden = false;
+        $("[data-key-current]").textContent = `Current key ends in …${r.hint}, made ${fmtDate(r.created_at)}. It is shown once: copy it now.`;
+        btn.textContent = "Make a new key";
+      } catch (e) { $("[data-key-error]").textContent = e.message; }
+      btn.disabled = false;
+    });
   }
 
   function proPicker(clerk) {
@@ -269,6 +376,6 @@
 
   nav();
   if (PAGE === "sign-in" || PAGE === "sign-up") authPage(PAGE);
-  if (PAGE === "account") loadClerk().then((c) => { proPicker(c); manage(c); deletion(c); }).catch(() => {}), accountPage();
+  if (PAGE === "account") loadClerk().then((c) => { proPicker(c); licensePicker(c); keyMaker(c); manage(c); deletion(c); }).catch(() => {}), accountPage();
   if (PAGE === "cli") cliPage();
 })();

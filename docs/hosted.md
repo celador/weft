@@ -272,9 +272,12 @@ origins in `WEFT_SITE_ORIGINS`, no credentials.
 
 | Route | Auth | |
 |---|---|---|
-| `GET /v1/account` | Clerk session | plan, seats, interval, renewal, `has_billing_account`, and the account's spaces (repos, events this month, last activity). The account row is created on first call |
+| `GET /v1/account` | Clerk session | plan, seats, interval, renewal, `has_billing_account`, `license`, and the account's spaces (repos, events this month, last activity). The account row is created on first call |
 | `POST /v1/account/billing/checkout {"interval", "seats", "utm_source"?, "utm_campaign"?}` | Clerk session | Stripe Checkout for Pro, `client_reference_id` = the account id; returns to `WEFT_ACCOUNT_URL?checkout=done`. The webhook makes the **account** Pro, and every space of the account is Pro |
 | `POST /v1/account/billing/portal` | Clerk session | Stripe Customer Portal |
+| `POST /v1/account/billing/checkout {"product": "license", "term": "year"\|"lifetime", "seats"}` | Clerk session | Stripe Checkout for the Commercial License ([pricing.md](pricing.md#commercial-license-per-user-yearly-or-once-approved-2026-11-17)); refused for a Pro account (Pro includes it). `GET /v1/account` then carries `license` (seats, term, `valid_until`, `renews`, purchases, key hint) |
+| `POST /v1/account/license/key` | Clerk session | a new license key, returned once (only a salted SHA-256 and the last 4 characters are kept; the old key stops working). Only for an account with a license or Pro |
+| `POST /v1/license/verify {"key"}` | none (rate-limited) | what a license key covers now (`weft license <key>`); never the account id. Unknown or replaced key: 404 |
 | `DELETE /v1/account` | Clerk session | cancels the subscription at once, erases every space of the account (the erase path below), deletes the account row; answers what was erased |
 | `POST /v1/login` | none | `weft login` starts: a polling secret (`device_code`) and an 8-symbol code to confirm (`ABCD-EFGH`, ~2^39.6, 10 minutes, single use) and `https://weft.mx/cli/?code=...` |
 | `POST /v1/login/approve {"code"}` | Clerk session | the signed-in person confirms the code on `/cli/` |

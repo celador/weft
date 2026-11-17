@@ -8,6 +8,7 @@ const WEFT = {
   command: "npx @celador/weft",                 // the start command (Free, runs locally)
   account: "/account/",                         // signed in: plan, Checkout (?buy=month|year&seats=N), spaces
   prices: { month: 12, year: 98, pilot: 500 },  // USD. Pro is per user: `month` a month, `year` a year
+  license: { year: 29, once: 58 },              // USD. Commercial License per user: `year` a year, `once` paid once
   freeHostedEvents: 5000,                       // agent events per hosted space per month on Free
   fairUsePerSeat: 50000,                        // Pro fair use: agent events per seat per month (never a cut-off)
   maxSeats: 999,
@@ -27,6 +28,8 @@ const FILL = {
   "year-monthly": money(yearMonthly),
   save: `${savePct}%`,
   pilot: money(WEFT.prices.pilot),
+  "license-year": money(WEFT.license.year),
+  "license-once": money(WEFT.license.once),
   "free-events": fmtInt(WEFT.freeHostedEvents),
   "fair-use": fmtInt(WEFT.fairUsePerSeat),
 };
@@ -100,36 +103,66 @@ document.addEventListener("copy", () => {
 // ---------- buy link ----------
 // Paying happens signed in: /account/?buy=... starts Stripe Checkout at once for a signed-in visitor, and sends a
 // signed-out one through sign-up first, straight back into Checkout. The utm tags ride in sessionStorage (ATTR).
+// `interval` is month|year (Pro) or license-year|license-lifetime (the Commercial License).
 function buyUrl(interval, seats) {
   return `${WEFT.account}?buy=${interval}&seats=${seats}`;
+}
+const clampSeats = (n) => Math.min(WEFT.maxSeats, Math.max(1, Math.floor(Number(n)) || 1));
+const usersX = (n) => `${n} ${n === 1 ? "user" : "users"}`;
+// A seat stepper (−, the number, +) that calls render() with the new count.
+function stepper(root, state, render) {
+  const input = root.querySelector("[data-seats]");
+  root.querySelector("[data-seat-minus]").addEventListener("click", () => { state.seats = clampSeats(state.seats - 1); render(); });
+  root.querySelector("[data-seat-plus]").addEventListener("click", () => { state.seats = clampSeats(state.seats + 1); render(); });
+  input.addEventListener("input", () => { if (input.value !== "") { state.seats = clampSeats(input.value); render(); } });
+  input.addEventListener("blur", () => { state.seats = clampSeats(input.value); render(); });
+  return () => {
+    if (document.activeElement !== input || input.value !== "") input.value = String(state.seats);
+    root.querySelector("[data-seat-minus]").disabled = state.seats <= 1;
+  };
 }
 // Every "Get Pro" outside the pricing page goes to /pricing/ (seats are picked there); clicks on it
 // are not buy clicks. On the pricing page the Pro button is the buy link.
 (() => {
   const root = document.querySelector("[data-pro]");
   if (!root) return;
-  const input = root.querySelector("[data-seats]");
   const buy = root.querySelector("[data-buy-pro]");
   const state = { interval: "year", seats: 1 };
-  const clamp = (n) => Math.min(WEFT.maxSeats, Math.max(1, Math.floor(Number(n)) || 1));
+  const seatsDrawn = stepper(root, state, () => render());
   function render() {
     const { interval, seats } = state;
     const perUser = interval === "year" ? WEFT.prices.year : WEFT.prices.month;
-    for (const b of document.querySelectorAll("[data-interval]")) b.setAttribute("aria-pressed", String(b.dataset.interval === interval));
+    for (const b of root.querySelectorAll("[data-interval]")) b.setAttribute("aria-pressed", String(b.dataset.interval === interval));
     root.querySelector("[data-pro-price]").textContent = money(interval === "year" ? yearMonthly : WEFT.prices.month);
     root.querySelector("[data-pro-unit]").textContent = interval === "year" ? `per user a month, billed ${money(WEFT.prices.year)} a year` : "per user a month, billed monthly";
-    root.querySelector("[data-pro-total]").textContent =
-      `${seats} ${seats === 1 ? "user" : "users"} × ${money(perUser)} = ${money(seats * perUser)} ${interval === "year" ? "a year" : "a month"}`;
-    if (document.activeElement !== input || input.value !== "") input.value = String(seats);
-    root.querySelector("[data-seat-minus]").disabled = seats <= 1;
+    root.querySelector("[data-pro-total]").textContent = `${usersX(seats)} × ${money(perUser)} = ${money(seats * perUser)} ${interval === "year" ? "a year" : "a month"}`;
+    seatsDrawn();
     buy.href = buyUrl(interval, seats);
   }
-  for (const b of document.querySelectorAll("[data-interval]")) b.addEventListener("click", () => { state.interval = b.dataset.interval; render(); });
-  root.querySelector("[data-seat-minus]").addEventListener("click", () => { state.seats = clamp(state.seats - 1); render(); });
-  root.querySelector("[data-seat-plus]").addEventListener("click", () => { state.seats = clamp(state.seats + 1); render(); });
-  input.addEventListener("input", () => { if (input.value !== "") { state.seats = clamp(input.value); render(); } });
-  input.addEventListener("blur", () => { state.seats = clamp(input.value); render(); });
+  for (const b of root.querySelectorAll("[data-interval]")) b.addEventListener("click", () => { state.interval = b.dataset.interval; render(); });
   buy.addEventListener("click", () => track("buy_click", `${state.interval}-${state.seats}`));
+  render();
+})();
+
+// The Commercial License card: yearly or lifetime (paid once), per user. Lifetime is shown first.
+(() => {
+  const root = document.querySelector("[data-license]");
+  if (!root) return;
+  const buy = root.querySelector("[data-buy-license]");
+  const state = { term: "lifetime", seats: 1 };
+  const seatsDrawn = stepper(root, state, () => render());
+  function render() {
+    const { term, seats } = state;
+    const perUser = term === "year" ? WEFT.license.year : WEFT.license.once;
+    for (const b of root.querySelectorAll("[data-term]")) b.setAttribute("aria-pressed", String(b.dataset.term === term));
+    root.querySelector("[data-license-price]").textContent = money(perUser);
+    root.querySelector("[data-license-unit]").textContent = term === "year" ? "per user a year" : "per user, paid once";
+    root.querySelector("[data-license-total]").textContent = `${usersX(seats)} × ${money(perUser)} = ${money(seats * perUser)} ${term === "year" ? "a year" : "once"}`;
+    seatsDrawn();
+    buy.href = buyUrl(`license-${term}`, seats);
+  }
+  for (const b of root.querySelectorAll("[data-term]")) b.addEventListener("click", () => { state.term = b.dataset.term; render(); });
+  buy.addEventListener("click", () => track("buy_click", `license-${state.term}-${state.seats}`));
   render();
 })();
 

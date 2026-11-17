@@ -64,7 +64,12 @@ test("every price and limit in the HTML matches the WEFT config in site.js", () 
     month: money(WEFT.prices.month), year: money(WEFT.prices.year), "year-monthly": money(WEFT.prices.year / 12),
     save: `${Math.round(100 * (1 - WEFT.prices.year / (12 * WEFT.prices.month)))}%`, pilot: money(WEFT.prices.pilot),
     "free-events": WEFT.freeHostedEvents.toLocaleString("en-US"), "fair-use": WEFT.fairUsePerSeat.toLocaleString("en-US"),
+    "license-year": money(WEFT.license.year), "license-once": money(WEFT.license.once),
   };
+  // The Commercial License prices John approved (2026-11-17), equal to docs/pricing.md's pricing-config.
+  const cfg = JSON.parse(/```json pricing-config\n([\s\S]*?)```/.exec(readFileSync(join(HERE, "..", "docs", "pricing.md"), "utf8"))[1]);
+  assert.deepEqual(WEFT.license, { year: cfg.commercial_license.usd_per_user_year, once: cfg.commercial_license.usd_per_user_once });
+  assert.deepEqual(WEFT.prices, { month: cfg.pro.usd_per_user_month, year: cfg.pro.usd_per_user_year, pilot: 500 });
   assert.equal(want["year-monthly"], "$8.16");
   assert.equal(want.save, "32%");
   let seen = 0;
@@ -83,6 +88,39 @@ test("every price and limit in the HTML matches the WEFT config in site.js", () 
   // Get Pro goes through the account page (sign up first when signed out), never to an anonymous checkout.
   assert.match(pricing, /href="\/account\/\?buy=year&amp;seats=1" data-buy-pro/);
   assert.equal(WEFT.account, "/account/");
+  // The License card: lifetime first, and its buy link goes through the account page too.
+  assert.match(pricing, new RegExp(`data-license-price>\\${want["license-once"]}<`));
+  assert.match(pricing, /data-license-unit>per user, paid once</);
+  assert.match(pricing, /href="\/account\/\?buy=license-lifetime&amp;seats=1" data-buy-license/);
+  assert.match(accountJs, /buy === "license-year" \|\| buy === "license-lifetime"/);
+});
+
+test("pricing: four plans in cap.so order, a five-column comparison, and the license questions", () => {
+  const pricing = readFileSync(join(PUB, "pricing", "index.html"), "utf8");
+  const plans = [...pricing.matchAll(/<section class="plan-card[^"]*" aria-labelledby="[\w-]+"[^>]*>\s*<h2 id="[\w-]+">([^<]+)<\/h2>/g)].map((m) => m[1]);
+  assert.deepEqual(plans, ["Free", "Commercial License", "Pro", "Pilot"]);
+  const head = /<thead><tr>(.*?)<\/tr><\/thead>/.exec(pricing)[1];
+  assert.deepEqual([...head.matchAll(/<th scope="col">([^<]*)<\/th>/g)].map((m) => m[1]), ["", "Free", "Commercial License", "Pro", "Pilot"]);
+  for (const row of pricing.match(/<tr><th scope="row">.*?<\/tr>/g)) assert.equal((row.match(/<td>/g) || []).length, 4, row.slice(0, 80));
+  assert.match(pricing, /<h3>What is commercial use\?<\/h3>\s*<p>[^]*?<a href="\/license\/">/);
+  assert.match(pricing, /<h3>Do I need a license if I have Pro\?<\/h3>\s*<p>No\./);
+});
+
+test("/license/ is docs/commercial-license.md, and every footer links it instead of the old MIT license", async () => {
+  const { page, SOURCE, TARGET } = await import("./license-page.mjs");
+  assert.equal(readFileSync(TARGET, "utf8"), page(readFileSync(SOURCE, "utf8")), "run: node site/license-page.mjs");
+  const lic = readFileSync(TARGET, "utf8");
+  assert.match(lic, /<h1>Commercial license<\/h1>/);
+  assert.match(lic, /\$29 per user per year, or \$58 per user once/);
+  assert.doesNotMatch(lic, /\{effective date\}|https:\/\/weft\.mx\/pricing/);
+  assert.match(readFileSync(join(PUB, "sitemap.xml"), "utf8"), /https:\/\/weft\.mx\/license\//);
+  for (const p of pages) {
+    const h = readFileSync(p, "utf8");
+    assert.doesNotMatch(h, />MIT license</, p);
+    assert.doesNotMatch(h, /open source \(MIT\)/i, p);
+    const footer = /<footer[\s\S]*<\/footer>/.exec(h)?.[0] ?? "";
+    if (/aria-label="Footer"/.test(footer) && !/data-page="(cli|sign-in|sign-up)"/.test(h) && !p.includes(`${join("public", "start")}`) && !p.endsWith("404.html")) assert.match(footer, /href="\/license\/"/, p);
+  }
 });
 
 test("no stale claims anywhere on the site", () => {

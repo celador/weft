@@ -6,11 +6,11 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0b0d12">
   <title>Terms of service · Weft</title>
-  <meta name="description" content="Terms for the Weft software (MIT), the optional hosted space and the Pro subscription.">
+  <meta name="description" content="Terms for the Weft software, the commercial license, the optional hosted space and the Pro subscription.">
   <link rel="canonical" href="https://weft.mx/terms/">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Terms of service · Weft">
-  <meta property="og:description" content="Terms for the Weft software (MIT), the optional hosted space and the Pro subscription.">
+  <meta property="og:description" content="Terms for the Weft software, the commercial license, the optional hosted space and the Pro subscription.">
   <meta property="og:url" content="https://weft.mx/terms/">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/site.css">
@@ -37,7 +37,7 @@
     <p class="meta">Effective <!-- GO-LIVE (card t_5408b767): replace the placeholder with the day Pro opens. --><span class="golive">[go-live date]</span>. The previous version (November 3, 2026) is in the <a href="https://github.com/celador/weft/commits/main/site/public/terms/index.html">repository history</a>. Operator: Weft (celador), John Nelson. Contact: <a href="mailto:john@elier.ai">john@elier.ai</a>.</p>
 
     <h2>The software</h2>
-    <p>Weft&#39;s software (the CLI, adapters, plugin, VS Code extension and gateway) is open source under the <a href="https://github.com/celador/weft/blob/main/LICENSE">MIT license</a>. It is provided as is, without warranty of any kind. The license, not these terms, governs your use of the code.</p>
+    <p>Weft&#39;s source code is open source under the AGPL-3.0, with the protocol, conformance suite and plugins under MIT (<a href="https://github.com/celador/weft/blob/main/LICENSE">LICENSE</a>). The builds we distribute (the npm package and the VS Code extension) are free for personal use; commercial use needs a commercial license or Pro (<a href="/license/">/license/</a>). Versions up to and including 0.3.0 stay under the MIT license. It is provided as is, without warranty of any kind. The licenses, not these terms, govern your use of the code.</p>
 
     <h2>The hosted space</h2>
     <p>The hosted gateway at <code>weft-hosted.elier.ai</code> is an optional service. We may change it, limit it (see the limits in the <a href="https://github.com/celador/weft/blob/main/docs/hosted.md">hosted docs</a>), pause new spaces, or end it. On the Free plan it is best effort, with no uptime guarantee and no support obligation. When the gateway is unreachable, Weft&#39;s adapters let your agents keep working without coordination. You can run the same gateway on your machine or in your own Cloudflare account at any time.</p>
@@ -50,11 +50,12 @@
     <ul>
       <li><strong>Free.</strong> The software on your machine or your Cloudflare account, at no cost. A free hosted space gets 5,000 agent events a month (UTC). Above that, its agents keep working without coordination until the next month. You are never charged on Free.</li>
       <li><strong>Pro.</strong> A subscription for your Weft account, priced per user and billed in advance each month or each year through Stripe, where the charge shows as &quot;Atelier&quot;. Every hosted space of the account is Pro. A user is one person whose coding agents work in the account&#39;s spaces; you choose the number of users, and it should cover everyone who uses them. Pro has no monthly event limit. Fair use is 50,000 agent events per user per month; a space far above that may hear from us, and it is not cut off.</li>
+      <li><strong>Commercial license.</strong> The right to use the builds we distribute for work, per user: yearly, billed in advance each year through Stripe, or lifetime, paid once and never renewed. What counts as commercial use is on <a href="/license/">the license page</a>. Pro includes it for every Pro user.</li>
       <li><strong>Pilot.</strong> A one-time fee for setting Weft up on your Cloudflare account and 30 days of support, agreed by email before we start.</li>
     </ul>
 
-    <h2>Buying, changing and cancelling Pro</h2>
-    <p>You buy Pro signed in to your Weft account, on <a href="/account/">your account page</a> (or from <a href="/pricing/">pricing</a>, or with <code>npx @celador/weft upgrade</code>, which asks you to sign in first). Change the number of users, update your card, see invoices or cancel with Manage billing on your account page (or <code>npx @celador/weft billing</code>), which opens Stripe&#39;s billing page. When you cancel, Pro stays on until the end of the period you paid for, then the space goes back to Free and nothing in it is deleted. We don&#39;t refund partial periods. If something went wrong with a charge, email <a href="mailto:john@elier.ai">john@elier.ai</a>.</p>
+    <h2>Buying, changing and cancelling Pro or a license</h2>
+    <p>You buy Pro signed in to your Weft account, on <a href="/account/">your account page</a> (or from <a href="/pricing/">pricing</a>, or with <code>npx @celador/weft upgrade</code>, which asks you to sign in first). Change the number of users, update your card, see invoices or cancel with Manage billing on your account page (or <code>npx @celador/weft billing</code>), which opens Stripe&#39;s billing page. When you cancel, Pro stays on until the end of the period you paid for, then the space goes back to Free and nothing in it is deleted. A commercial license is bought the same way, on your account page. A yearly license renews each year until you cancel it with Manage billing; it then covers you to the end of the year you paid for, and if a renewal payment fails it covers you to the end of the last year that was paid. A lifetime license is paid once and never ends. A license key from your account page records your license on a machine that never signs in; keep it to yourself, and make a new one on your account page if it leaks (the old one stops working). We don&#39;t refund partial periods. If something went wrong with a charge, email <a href="mailto:john@elier.ai">john@elier.ai</a>.</p>
 
     <h2>Acceptable use</h2>
     <p>Don&#39;t use the hosted space to store or share illegal content, to attack, overload or probe the service or other users, to get around its limits, or to read spaces whose keys you weren&#39;t given. We may suspend or delete a space that breaks these rules.</p>
@@ -79,7 +80,7 @@
         <a href="/privacy/">Privacy</a>
         <a href="/terms/">Terms</a>
         <a href="/support/">Support</a>
-        <a href="https://github.com/celador/weft/blob/main/LICENSE">MIT license</a>
+        <a href="/license/">License</a>
       </nav>
       <p>Built by <a href="https://johnaaronnelson.com">John Aaron Nelson</a>.</p>
     </div>

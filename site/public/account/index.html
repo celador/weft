@@ -60,6 +60,41 @@
         </div>
       </div>
 
+      <div class="panel" data-license-panel>
+        <h2>Commercial license</h2>
+        <p class="plan-name" data-license>None</p>
+        <p class="meta" data-license-detail></p>
+        <ul class="purchases meta" data-license-purchases hidden></ul>
+        <div data-get-license hidden>
+          <p class="meta" data-license-why>Using Weft at work needs a license for each person, or Pro. <a href="/license/">What counts as work</a></p>
+          <div class="row">
+            <div class="toggle" role="group" aria-label="License term" style="margin-top:0">
+              <button type="button" data-term="year" aria-pressed="false">Yearly</button>
+              <button type="button" data-term="lifetime" aria-pressed="true">Lifetime</button>
+            </div>
+            <div class="stepper">
+              <button type="button" data-seat-minus aria-label="One user fewer">−</button>
+              <input type="number" inputmode="numeric" min="1" max="999" value="1" data-seats aria-label="Users">
+              <button type="button" data-seat-plus aria-label="One user more">+</button>
+            </div>
+          </div>
+          <p class="meta" data-license-total>1 user × $58 = $58 once</p>
+          <div class="row"><button class="btn btn-ghost" type="button" data-license-checkout>Buy a license</button></div>
+          <p class="err" data-license-error></p>
+        </div>
+        <div data-license-key hidden>
+          <h3>License key</h3>
+          <p class="meta">For a machine that never signs in: record the license there with the key. Weft checks it with weft.mx once, when you run the command.</p>
+          <p class="meta" data-key-current></p>
+          <div class="cmd-block" data-placement="license-key" data-no-track data-key-shown hidden>
+            <div class="cmd-bar"><span>Shown once. Run it on that machine</span><button class="copy" type="button" data-copy aria-label="Copy the command">Copy</button></div>
+            <pre><code data-key-cmd></code></pre>
+          </div>
+          <div class="row"><button class="btn btn-ghost btn-small" type="button" data-make-key>Make a key</button><span class="meta" data-key-note></span></div>
+          <p class="err" data-key-error></p>
+        </div>
+      </div>
+
       <div class="panel">
         <h2>Connect a machine</h2>
         <p>Run this once on each machine. It shows a code to confirm here, then your repos there use your hosted space.</p>
@@ -97,6 +132,7 @@
         <a href="/privacy/">Privacy</a>
         <a href="/terms/">Terms</a>
         <a href="/support/">Support</a>
+        <a href="/license/">License</a>
       </nav>
     </div>
   </footer>
