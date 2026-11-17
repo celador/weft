@@ -26,7 +26,7 @@ export interface BillingEnv extends StripeEnv {
   WEFT_WELCOME_URL?: string;
   /** Where Stripe sends a web buyer who backs out (default https://weft.mx/pricing/). */
   WEFT_PRICING_URL?: string;
-  /** Comma-separated origins whose pages may call POST /v1/billing/claim from a browser (default https://weft.mx,https://www.weft.mx). */
+  /** Comma-separated origins whose pages may call POST /v1/billing/claim from a browser (default weft.mx, www.weft.mx and the site preview). */
   WEFT_SITE_ORIGINS?: string;
 }
 
@@ -48,7 +48,7 @@ const SESSION_ID = /^cs_(test|live)_[A-Za-z0-9]{8,250}$/;
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
 const DEFAULT_WELCOME = "https://weft.mx/welcome/";
 const DEFAULT_PRICING = "https://weft.mx/pricing/";
-const DEFAULT_SITE_ORIGINS = "https://weft.mx,https://www.weft.mx";
+const DEFAULT_SITE_ORIGINS = "https://weft.mx,https://www.weft.mx,https://weft-site-preview.elier.ai";
 /** Marketing parameters /buy passes into the Checkout Session's metadata (Stripe keeps them, the gateway does not). */
 const PASSTHROUGH = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "ref"] as const;
 

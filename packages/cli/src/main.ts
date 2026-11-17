@@ -281,7 +281,8 @@ async function init(o: Opts, addName?: string | true, fresh = false): Promise<st
   const name = slug(o.repo ?? basename(main), 48);
   const { gw, created } = await ensureSpace(api, url!, top, name);
   const where = kindOf(url!) === "hosted" ? "hosted space on Cloudflare" : kindOf(url!) === "local" ? "local space" : "space";
-  ok(`${created ? "created your" : "using your"} ${where} ${c.bold(gw.space!)} ${c.dim(`(${new URL(url!).host}${kindOf(url!) === "local" ? "; your edits stay on this machine" : ""})`)}`);
+  ok(`${created ? "created your" : "using your"} ${where} ${c.bold(gw.space!)} ${c.dim(`(${new URL(url!).host}${kindOf(url!) === "local" ? "; your edits stay on this machine" : "; your agents' edits and diffs are sent there"})`)}`);
+  if (kindOf(url!) === "hosted" && !o.claim) info(`Hosted plan: Free, a monthly allowance of agent events ${c.dim("(npx @celador/weft usage)")}; Weft Pro has no cap, per user ${c.dim("(npx @celador/weft upgrade)")}`);
   if (o.claim) {
     const p = await claimPurchase(api, url!, gw.owner!, o.claim);
     ok(`Weft Pro: ${p.seats} ${p.seats === 1 ? "seat" : "seats"}, billed ${p.interval === "year" ? "yearly" : "monthly"} ${c.dim("(no event cut-off; manage it: npx @celador/weft billing)")}`);
