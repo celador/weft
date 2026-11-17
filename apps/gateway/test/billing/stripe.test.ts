@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { intentOf } from "../../src/billing";
-import { formEncode, signStripePayload, stripeConfig, verifyStripeSignature } from "../../src/stripe";
+import { formEncode, signStripePayload, stripeConfig, subscriptionFacts, verifyStripeSignature } from "../../src/stripe";
 
 const SECRET = "whsec_unit_secret";
 const BODY = JSON.stringify({ id: "evt_1", type: "customer.subscription.updated", created: 1_800_000_000, data: { object: { customer: "cus_1", status: "active" } } });
@@ -59,15 +59,31 @@ describe("formEncode", () => {
 });
 
 describe("stripeConfig", () => {
-  const full = { STRIPE_SECRET_KEY: "sk_test_x", STRIPE_WEBHOOK_SECRET: "whsec_x", STRIPE_PRICE_ID: "price_x" };
-  it("is null unless all three secrets are present and shaped right", () => {
+  const full = { STRIPE_SECRET_KEY: "sk_test_x", STRIPE_WEBHOOK_SECRET: "whsec_x", STRIPE_PRICE_PRO_MONTH: "price_m", STRIPE_PRICE_PRO_YEAR: "price_y" };
+  it("is null unless the key, the webhook secret and both Pro prices are present and shaped right", () => {
     expect(stripeConfig({})).toBeNull();
-    expect(stripeConfig(full)).toMatchObject({ key: "sk_test_x", price: "price_x", meterEvent: "weft_agent_events" });
+    expect(stripeConfig(full)).toMatchObject({ key: "sk_test_x", prices: { month: "price_m", year: "price_y" }, meterEvent: "weft_agent_events" });
     expect(stripeConfig({ ...full, STRIPE_SECRET_KEY: "" })).toBeNull();
     expect(stripeConfig({ ...full, STRIPE_WEBHOOK_SECRET: undefined })).toBeNull();
-    expect(stripeConfig({ ...full, STRIPE_PRICE_ID: "prod_x" })).toBeNull();
+    expect(stripeConfig({ ...full, STRIPE_PRICE_PRO_MONTH: "prod_x" })).toBeNull();
+    expect(stripeConfig({ ...full, STRIPE_PRICE_PRO_YEAR: undefined })).toBeNull();
     expect(stripeConfig({ ...full, STRIPE_SECRET_KEY: "pk_test_x" })).toBeNull();
     expect(stripeConfig({ ...full, STRIPE_SECRET_KEY: "rk_live_x" })).not.toBeNull();
+    // the legacy metered price alone no longer switches billing on
+    expect(stripeConfig({ STRIPE_SECRET_KEY: "sk_test_x", STRIPE_WEBHOOK_SECRET: "whsec_x", STRIPE_PRICE_ID: "price_x" } as never)).toBeNull();
+  });
+});
+
+describe("subscriptionFacts", () => {
+  const prices = { month: "price_m", year: "price_y" };
+  const sub = (price: Record<string, unknown>, quantity?: number) => ({ id: "sub_1", status: "active", customer: "cus_1", items: { data: [{ ...(quantity !== undefined ? { quantity } : {}), price }] } });
+  it("reads seats and interval from a Pro subscription", () => {
+    expect(subscriptionFacts(sub({ id: "price_y", recurring: { interval: "year", usage_type: "licensed" } }, 3), prices)).toEqual({ id: "sub_1", status: "active", customer: "cus_1", pro: true, seats: 3, interval: "year" });
+  });
+  it("a legacy metered subscription, or a price that is not ours, is not Pro", () => {
+    expect(subscriptionFacts(sub({ id: "price_old", recurring: { interval: "month", usage_type: "metered" } }), prices)).toMatchObject({ pro: false });
+    expect(subscriptionFacts(sub({ id: "price_other", recurring: { interval: "month", usage_type: "licensed" } }, 2), prices)).toMatchObject({ pro: false });
+    expect(subscriptionFacts({ status: "active" }, prices)).toBeNull();
   });
 });
 
@@ -102,5 +118,20 @@ describe("intentOf: which Stripe events change a plan", () => {
     expect(intentOf(sub("customer.created"))).toBeNull();
     expect(intentOf({ id: "e", type: "invoice.payment_failed", created: 1, data: { object: {} } })).toBeNull();
     expect(intentOf({ id: "e", type: "invoice.payment_failed", created: 1 })).toBeNull();
+  });
+
+  it("a /buy checkout (no space yet) is a web purchase with its session, customer and subscription", () => {
+    const web = { id: "evt", type: "checkout.session.completed", created: 1, data: { object: { id: "cs_test_abc12345", mode: "subscription", metadata: { weft_purchase: "web" }, customer: "cus_9", subscription: "sub_9", payment_status: "paid" } } };
+    expect(intentOf(web)).toEqual({ customer: "cus_9", plan: "paid", checkout: true, subscription: "sub_9", purchase: "cs_test_abc12345" });
+    const o = web.data.object as Record<string, unknown>;
+    expect(intentOf({ ...web, data: { object: { ...o, subscription: undefined } } })).toBeNull();
+    expect(intentOf({ ...web, data: { object: { ...o, payment_status: "unpaid", amount_total: 1200 } } })).toBeNull();
+    expect(intentOf({ ...web, data: { object: { ...o, metadata: {} } } })).toBeNull();
+  });
+
+  it("a subscription event carries the Pro seats when the subscription is Pro", () => {
+    const ev = { id: "e", type: "customer.subscription.updated", created: 1, data: { object: { id: "sub_1", customer: "cus_1", status: "active", items: { data: [{ quantity: 4, price: { id: "price_m", recurring: { interval: "month", usage_type: "licensed" } } }] } } } };
+    expect(intentOf(ev, { month: "price_m", year: "price_y" })).toMatchObject({ customer: "cus_1", plan: "paid", facts: { seats: 4, interval: "month", pro: true } });
+    expect(intentOf({ ...ev, type: "customer.subscription.deleted" }, { month: "price_m", year: "price_y" })?.plan).toBe("free");
   });
 });

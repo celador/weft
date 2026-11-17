@@ -1,21 +1,21 @@
 #!/usr/bin/env node
-// Create (or find) the Stripe objects hosted usage billing needs, idempotently, from the values in
-// docs/pricing.md ("pricing-config" block): the product, the Billing Meter for agent events, the
-// metered monthly price on that meter, a Customer Portal configuration, and (with --webhook) the
-// webhook endpoint. Safe to run again: everything is looked up by a stable key first.
+// Create (or find) the Stripe objects hosted billing needs, idempotently, from the values in docs/pricing.md
+// ("pricing-config" block): the "Weft Pro" product, its two licensed per-seat prices (monthly and yearly, found by
+// lookup key), a Customer Portal configuration that lets a customer change seats and cancel, and (with --webhook)
+// the webhook endpoint. Safe to run again: everything is looked up by a stable key first.
 //
 //   node scripts/stripe-setup.mjs                     # test mode: key from $STRIPE_KEY or keychain `weft-stripe-test-key`
 //   node scripts/stripe-setup.mjs --live              # live mode: key from $STRIPE_KEY or keychain `weft-stripe-live-key`
 //   node scripts/stripe-setup.mjs --webhook https://weft-hosted.elier.ai/v1/billing/stripe/webhook
-//   node scripts/stripe-setup.mjs --webhook URL --wrangler-args "--env hosted"   # also `wrangler secret put` the three secrets
+//   node scripts/stripe-setup.mjs --webhook URL --wrangler-args "--env hosted"   # also `wrangler secret put` the secrets
 //   node scripts/stripe-setup.mjs --delete-webhook URL  # remove an endpoint (E2E clean-up)
+//   node scripts/stripe-setup.mjs --legacy-usage      # also the superseded usage objects (meter, metered price, portal)
 //
 // A test key never creates live objects and a live key needs --live: the mode is printed first.
 // The webhook signing secret exists only at creation; it goes straight into `wrangler secret put` (stdin)
 // or, without --wrangler-args, is not shown at all. Nothing secret is ever printed.
 //
-// Prices are in USD. $1.00 per 1,000 events is 0.1 cent per event: a unit_amount_decimal, which Stripe
-// accepts with up to 12 decimal places on metered prices.
+// Prices are in USD cents (`unit_amount`), per seat: Checkout sells a quantity of them (the seats).
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -24,8 +24,9 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const STRIPE_VERSION = "2025-09-30.clover"; // keep equal to apps/gateway/src/stripe.ts (a test checks)
-export const PRODUCT_ID = "weft_hosted"; // a custom product id makes "find or create" exact, with no search lag
+export const PRODUCT_ID = "weft_hosted"; // legacy usage product; a custom product id makes "find or create" exact, with no search lag
 export const PRICE_LOOKUP_KEY = "weft_hosted_agent_events";
+export const PRO_LOOKUP_KEYS = { month: "weft_pro_user_month", year: "weft_pro_user_year" };
 export const WEBHOOK_EVENTS = ["checkout.session.completed", "customer.subscription.updated", "customer.subscription.deleted", "invoice.payment_failed"];
 
 /** The machine-readable block in docs/pricing.md. */
@@ -33,10 +34,15 @@ export function parsePricingConfig(markdown) {
   const m = /```json pricing-config\n([\s\S]*?)\n```/.exec(markdown);
   if (!m) throw new Error("docs/pricing.md has no ```json pricing-config block");
   const cfg = JSON.parse(m[1]);
-  for (const k of ["product_name", "meter_display_name", "meter_event_name", "free_events_per_month", "usd_per_1000_events", "currency"]) if (cfg[k] === undefined) throw new Error(`pricing-config lacks ${k}`);
-  if (!(cfg.usd_per_1000_events > 0)) throw new Error("usd_per_1000_events must be positive");
+  for (const k of ["currency", "free_events_per_month", "pro"]) if (cfg[k] === undefined) throw new Error(`pricing-config lacks ${k}`);
+  for (const k of ["product_id", "product_name", "usd_per_user_month", "usd_per_user_year", "fair_use_events_per_seat_month", "max_seats"]) if (cfg.pro[k] === undefined) throw new Error(`pricing-config lacks pro.${k}`);
+  if (!(cfg.pro.usd_per_user_month > 0) || !(cfg.pro.usd_per_user_year > 0)) throw new Error("Pro prices must be positive");
+  if (cfg.legacy_usage && !(cfg.legacy_usage.usd_per_1000_events > 0)) throw new Error("legacy_usage.usd_per_1000_events must be positive");
   return cfg;
 }
+
+/** Whole cents for a dollar price (Stripe's `unit_amount`). */
+export const cents = (usd) => Math.round(usd * 100);
 
 /** Cents per single event as the decimal string Stripe wants (`unit_amount_decimal`), at most 12 decimals. */
 export function centsPerEvent(usdPer1000) {
@@ -74,10 +80,84 @@ export function stripeClient(key, fetchFn = fetch) {
 }
 
 /**
- * Find or create the product, meter, price and portal configuration. Returns their ids. `log` gets one line per
- * step ("found" / "created"). Never creates a second of anything: rerunning only reports.
+ * Weft Pro: find or create the product, the two per-seat prices and the portal configuration. Returns their ids.
+ * `log` gets one line per step ("found" / "created" / "updated"). Never creates a second of anything: rerunning
+ * only reports. A changed amount makes a new price that takes over the lookup key (existing subscribers keep theirs).
  */
 export async function setup(request, cfg, log = () => {}) {
+  const pro = cfg.pro;
+  let product = await request("GET", `/v1/products/${pro.product_id}`);
+  if (product && product.active) log(`product  found    ${product.id}`);
+  else {
+    product = product
+      ? await request("POST", `/v1/products/${pro.product_id}`, { active: true })
+      : await request("POST", "/v1/products", { id: pro.product_id, name: pro.product_name, description: "Hosted Weft for teams of coding agents, per user. No event cut-off.", metadata: { weft: "pro" } });
+    log(`product  created  ${product.id}`);
+  }
+  const prices = {};
+  for (const interval of ["month", "year"]) {
+    const amount = cents(interval === "month" ? pro.usd_per_user_month : pro.usd_per_user_year);
+    const key = PRO_LOOKUP_KEYS[interval];
+    const found = await request("GET", "/v1/prices", { "lookup_keys[0]": key, active: true, limit: 10 });
+    let price = found.data.find((p) => p.product === pro.product_id && p.currency === cfg.currency && p.unit_amount === amount && p.recurring?.interval === interval && p.recurring?.usage_type === "licensed");
+    const label = `$${(amount / 100).toFixed(2)} per user per ${interval}`;
+    if (price) log(`price    found    ${price.id} (${label})`);
+    else {
+      price = await request("POST", "/v1/prices", {
+        product: pro.product_id,
+        currency: cfg.currency,
+        unit_amount: amount,
+        billing_scheme: "per_unit",
+        recurring: { interval, usage_type: "licensed" },
+        lookup_key: key,
+        transfer_lookup_key: true,
+        nickname: `Weft Pro, per user, ${interval === "month" ? "monthly" : "yearly"}`,
+        metadata: { weft: "pro", fair_use_events_per_seat_month: String(pro.fair_use_events_per_seat_month) },
+      });
+      log(`price    created  ${price.id} (${label})${found.data.length ? "; the previous price keeps its subscribers but is no longer the lookup key" : ""}`);
+    }
+    prices[interval] = price.id;
+  }
+
+  // Customer Portal: change the number of seats (prorated) or switch monthly/yearly, cancel at the end of the paid period,
+  // update the card, see invoices.
+  const features = {
+    subscription_update: {
+      enabled: true,
+      default_allowed_updates: ["quantity", "price"],
+      proration_behavior: "create_prorations",
+      products: [{ product: pro.product_id, prices: [prices.month, prices.year] }],
+    },
+    subscription_cancel: { enabled: true, mode: "at_period_end" },
+    payment_method_update: { enabled: true },
+    invoice_history: { enabled: true },
+    customer_update: { enabled: true, allowed_updates: ["email", "address", "tax_id"] },
+  };
+  // `products` is only in the answer when expanded; without it every run would look out of date.
+  const configs = await request("GET", "/v1/billing_portal/configurations", { limit: 100, active: true, "expand[0]": "data.features.subscription_update.products" });
+  let portal = configs.data.find((c) => c.metadata?.weft === "pro");
+  const current = (c) => {
+    const u = c.features?.subscription_update;
+    const listed = (u?.products ?? []).find((p) => p.product === pro.product_id)?.prices ?? [];
+    return u?.enabled && (u.default_allowed_updates ?? []).includes("quantity") && listed.includes(prices.month) && listed.includes(prices.year) && c.features?.subscription_cancel?.mode === "at_period_end";
+  };
+  if (portal && !current(portal)) {
+    portal = await request("POST", `/v1/billing_portal/configurations/${portal.id}`, { features });
+    log(`portal   updated  ${portal.id} (seat changes for the current prices, cancel at period end)`);
+  } else if (portal) log(`portal   found    ${portal.id}`);
+  else {
+    portal = await request("POST", "/v1/billing_portal/configurations", { business_profile: { headline: "Weft Pro: change seats, payment method or cancel" }, features, metadata: { weft: "pro" } });
+    log(`portal   created  ${portal.id}`);
+  }
+  return { product: product.id, prices, portal: portal.id };
+}
+
+/**
+ * The superseded usage-based objects (docs/pricing.md, history): meter, product, metered price and its portal
+ * configuration, from `pricing-config.legacy_usage`. Only with --legacy-usage.
+ */
+export async function setupLegacyUsage(request, cfg, log = () => {}) {
+  cfg = { currency: cfg.currency, free_events_per_month: cfg.free_events_per_month, ...cfg.legacy_usage };
   // Meter: by event name.
   const meters = await request("GET", "/v1/billing/meters", { limit: 100 });
   let meter = meters.data.find((m) => m.event_name === cfg.meter_event_name && m.status === "active");
@@ -152,7 +232,7 @@ export async function ensureWebhook(request, url, log = () => {}) {
     log(`webhook  found    ${hit.id} (${hit.status}); its signing secret is shown only at creation: delete it (--delete-webhook) and rerun to get a new one`);
     return { id: hit.id };
   }
-  const w = await request("POST", "/v1/webhook_endpoints", { url, enabled_events: WEBHOOK_EVENTS, api_version: STRIPE_VERSION, description: "Weft hosted usage billing", metadata: { weft: "hosted" } });
+  const w = await request("POST", "/v1/webhook_endpoints", { url, enabled_events: WEBHOOK_EVENTS, api_version: STRIPE_VERSION, description: "Weft hosted billing", metadata: { weft: "hosted" } });
   log(`webhook  created  ${w.id} -> ${url}`);
   return { id: w.id, secret: w.secret };
 }
@@ -206,18 +286,20 @@ async function main(argv) {
   }
   const cfg = parsePricingConfig(readFileSync(join(HERE, "..", "docs", "pricing.md"), "utf8"));
   const ids = await setup(request, cfg, log);
+  if (flag("--legacy-usage")) await setupLegacyUsage(request, cfg, log);
   const wrangler = val("--wrangler-args");
   const hook = val("--webhook");
   let secret;
   if (hook) secret = (await ensureWebhook(request, hook, log)).secret;
   if (wrangler !== undefined) {
     putSecret("STRIPE_SECRET_KEY", key, wrangler);
-    putSecret("STRIPE_PRICE_ID", ids.price, wrangler);
+    putSecret("STRIPE_PRICE_PRO_MONTH", ids.prices.month, wrangler);
+    putSecret("STRIPE_PRICE_PRO_YEAR", ids.prices.year, wrangler);
+    putSecret("STRIPE_PORTAL_CONFIG_ID", ids.portal, wrangler);
     if (secret) putSecret("STRIPE_WEBHOOK_SECRET", secret, wrangler);
     else if (hook) console.log("secret   skipped  STRIPE_WEBHOOK_SECRET (the endpoint already existed; see above)");
-    console.log(`portal   set STRIPE_PORTAL_CONFIG_ID=${ids.portal} as a var or secret if the account has no default portal configuration`);
   } else {
-    console.log(`\nSTRIPE_PRICE_ID=${ids.price}\nSTRIPE_PORTAL_CONFIG_ID=${ids.portal}\n(set STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET and STRIPE_PRICE_ID with wrangler secret put, or rerun with --wrangler-args "--env hosted")`);
+    console.log(`\nSTRIPE_PRICE_PRO_MONTH=${ids.prices.month}\nSTRIPE_PRICE_PRO_YEAR=${ids.prices.year}\nSTRIPE_PORTAL_CONFIG_ID=${ids.portal}\n(set them and STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET with wrangler secret put, or rerun with --wrangler-args "--env hosted")`);
   }
 }
 
