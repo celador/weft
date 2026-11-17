@@ -30,22 +30,32 @@ or on weft.mx.
 is the only credential: there is no login and no third-party identity. The CLI keeps it in
 `~/.config/weft/cli.json` (mode 600) and in each checkout's `.weft/space-token` (git-ignored), so
 running the CLI again in the same repo, even on a machine that lost `~/.config/weft`, finds the
-same space.
+same space. A teammate on another machine never gets the owner key: they join with an invite code and get their own
+*member key* (see "Teammates on other machines" below).
 
 **The space API** (owner key as `Authorization: Bearer`):
 
-| Route | |
-|---|---|
-| `GET /v1/space` | the space, its repos, its key count, its limits |
-| `POST /v1/space/repos {"name"}` | repo `<space>-<name>`; idempotent |
-| `POST /v1/space/tokens {"kind": "agent", "repo", "agent"}` | an agent key (scopes agent + observe) bound to one repo and one agent id |
-| `POST /v1/space/tokens {"kind": "system", "repo"}` | a lander key (system + observe) for one repo |
-| `POST /v1/space/pairings` | a one-time pairing code for the feed page (single use, 10 minutes); at most 3 are open at a time |
-| `GET /v1/space/viewers` | the paired devices: id, label, created, last seen, expiry |
-| `POST /v1/space/viewers {"label"}` | a device session for the owner's own CLI (the token is returned once) |
-| `DELETE /v1/space/viewers/{id}` · `DELETE /v1/space/viewers` | unpair one device, or all of them; immediate on the gateway instance that handles it, within 5 s on others |
-| `DELETE /v1/space/tokens/{id}` | revoke one of the space's keys |
-| `DELETE /v1/space` | **erase** the space (see "Deleting your data"): every repo's stored log is deleted for good, every key, the owner key included, stops working; answers `200` with what was erased |
+| Route | | Member key |
+|---|---|---|
+| `GET /v1/space` | the space, its repos, its key and member counts, its limits; `role` (`owner` or `member`) and, for a member, `member` (id, handle, label) | yes |
+| `POST /v1/space/repos {"name"}` | repo `<space>-<name>`; idempotent | an existing repo only (`403` for a new name) |
+| `POST /v1/space/tokens {"kind": "agent", "repo", "agent"}` | an agent key (scopes agent + observe) bound to one repo and one agent id | only for an agent id ending in `.<handle>` |
+| `POST /v1/space/tokens {"kind": "system", "repo"}` | a lander key (system + observe) for one repo | no |
+| `POST /v1/space/pairings` | a one-time pairing code for the feed page (single use, 10 minutes); at most 3 are open at a time | yes (the browser it pairs is the member's) |
+| `GET /v1/space/viewers` | the paired devices: id, label, created, last seen, expiry, and `by` (the member who paired it) | no |
+| `POST /v1/space/viewers {"label"}` | a device session for the caller's own CLI (the token is returned once) | yes |
+| `DELETE /v1/space/viewers/{id}` · `DELETE /v1/space/viewers` | unpair one device, or all of them; immediate on the gateway instance that handles it, within 5 s on others | no |
+| `DELETE /v1/space/tokens/{id}` | revoke one of the space's keys (a member key: with everything it minted) | only keys it minted |
+| `POST /v1/space/invites` | a one-time invite code for a teammate (single use, 30 minutes); at most 5 are open at a time | no |
+| `DELETE /v1/space/invites` | drop every open invite code | no |
+| `GET /v1/space/members` | the members: id, handle, label, joined, last used | no |
+| `DELETE /v1/space/members/{id}` · `DELETE /v1/space/members` | remove one member, or all: the member key and every agent key, CLI session and paired browser it minted are revoked in one step, and its open pairing codes dropped | no |
+| `DELETE /v1/space/members/me` | leave the space (the same revocation, for the caller) | yes (only this) |
+| `DELETE /v1/space` | **erase** the space (see "Deleting your data"): every repo's stored log is deleted for good, every key, the owner key and member keys included, stops working; answers `200` with what was erased | no |
+| `POST /v1/space/billing/*` | Weft Pro (below) | no |
+
+Everything a member key may call is in an allow-list (`memberRoute` in `apps/gateway/src/spaces.ts`); any other
+route answers `403`.
 
 **The feed.** `GET /feed?space=<id>` is a static page. **There is no credential in its address**,
 so a forwarded link, a screenshot or a screen-share of it gives nobody access. A browser gets in by
@@ -83,6 +93,39 @@ device session, kept in `~/.config/weft/cli.json`; it appears in `weft viewers` 
 and is replaced by the next command if it expires or is revoked. Otto and the VS Code panel read your own
 Hermes-adapter gateway with the shared human token, not this page, and are unaffected.
 
+### Teammates on other machines (team join)
+
+Every checkout and worktree on one machine shares the machine's space. A person on another machine joins with their
+own key:
+
+1. the owner runs `npx @celador/weft invite` (`POST /v1/space/invites`): a one-time code like `K7M2P-9XQ4T`, valid for
+   30 minutes, single use, and the command to send, e.g.
+   `npx @celador/weft --hosted --join sp0abc1def2g:K7M2P-9XQ4T --repo shop`;
+2. the teammate runs it in their clone. The CLI trades the code (`POST /v1/join {space, code, label, handle}`, no other
+   credential) for a **member key**, keeps it in that clone's `.weft/space-token` and in `~/.config/weft/cli.json`
+   under `spaces` (never in place of their own space), and installs the hooks;
+3. the gateway gives the member a **handle** that is unique in the space (from `handle`, else the label; `alice`,
+   then `alice-2`, ...; a removed member's handle is never handed out again). The member's agent ids must end in
+   `.<handle>` (`shop.alice`), and the CLI also puts it in the task id (`T-main.alice`). Two people's agents therefore
+   never share an agent id (an agent is never checked against itself) or a task id (changes of one task are
+   alternatives, spec §7.7, never checked against each other): their edits to the same symbol produce diagnostics;
+4. the owner sees members with `npx @celador/weft members` and removes one with `members revoke <id|handle>`
+   (`--all` for everyone). A member leaves with `npx @celador/weft uninstall --space`.
+
+The `label` (default: git's `user.name` and the short host name, or `--as NAME`) is shown only to the owner. Guessing
+an invite code is as hard as guessing a pairing code (below): 10 symbols from a 31-symbol alphabet, single use, stored
+only as SHA-256 of a per-Registry random salt, the space and the code, compared in constant time against the space's
+open codes, `POST /v1/join` rate limited per network and per space (10 a minute each, the `WEFT_PAIR_RATE` budget),
+and every failure answers the same `401`. A space holds at most 50 members (`WEFT_SPACE_MAX_MEMBERS`), and member keys
+count as active keys. A full space answers `429` without using up the code.
+
+**What a member key can do:** read the space (`GET /v1/space`, its usage included), use the space's existing repos,
+mint agent keys for its own agent ids, a read session for its own CLI and pairing codes for its own browsers, revoke
+keys it minted, and leave. **What it cannot:** add repos, mint landing (system) keys, invite, list or remove members,
+list or unpair devices, attach, start or manage billing, or erase the space. A member key has no WCP scopes itself, so
+it cannot read events directly either. Weft Pro is per user and stays an honor system: `invite` and `members` say when
+the space has more people than seats, nothing is refused.
+
 ### Tenant isolation
 
 The space key is the boundary. Enforced in `apps/gateway/src/registry.ts` and tested in
@@ -95,7 +138,13 @@ The space key is the boundary. Enforced in `apps/gateway/src/registry.ts` and te
 - a repo outside a key's list answers `404 repo_not_found` (its existence is not leaked);
 - a space cannot mint keys for, revoke keys of, or name a repo in another space;
 - a pairing code only opens the space it was minted for, and a device session reads only that space;
-- erasing or suspending a space revokes all its keys and device sessions and drops its open pairing codes;
+- an invite code only opens the space it was minted for; a member key manages nothing outside its space and, inside
+  it, only the allow-listed routes, each scoped to what that member minted. Removing a member (or a member leaving)
+  revokes its key and everything it minted in one Registry step, and a removed member's in-flight request mints
+  nothing (the Registry checks the member in the same step that writes the key). Tested in
+  `apps/gateway/test/members.test.ts`;
+- erasing or suspending a space revokes all its keys (member keys included) and device sessions and drops its open
+  pairing and invite codes;
   cached grants for space keys expire within 5 seconds (and a cached grant reaches an emptied repo,
   which answers `404 repo_not_found`).
 
@@ -159,6 +208,9 @@ Set as vars in `[env.hosted.vars]`; the per-minute ones also use Workers Rate Li
 | new spaces per minute per network | 5 (`WEFT_SIGNUP_RATE`) |
 | pairing attempts per minute, per network and per space | 10 each (`WEFT_PAIR_RATE`) |
 | paired devices per space | 20 |
+| join attempts per minute, per network and per space | 10 each (`WEFT_PAIR_RATE`) |
+| members per space | 50 (`WEFT_SPACE_MAX_MEMBERS`) |
+| open invite codes per space | 5 (minting a 6th retires the oldest) |
 | new spaces per day, whole gateway | 2,000 |
 | active spaces, whole gateway | 20,000 |
 | repos per space | 20 |

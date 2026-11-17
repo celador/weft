@@ -52,15 +52,37 @@ Website: <https://weft.mx> · Source: <https://github.com/celador/weft>
 | `npx @celador/weft upgrade [--seats N] [--year]` | Weft Pro for your hosted space, per user, monthly or yearly: prints a Stripe Checkout link (only where the gateway sells one) |
 | `npx @celador/weft --hosted --claim CODE` | bought Weft Pro on weft.mx? the welcome page's one-time code makes this repo's hosted space Pro |
 | `npx @celador/weft billing` | change seats, payment method, invoices or cancel (Stripe's customer portal) |
+| `npx @celador/weft invite` | (space owner) a one-time invite code (30 minutes, single use) and the one command a teammate on another machine runs to join; `invite cancel` drops open codes |
+| `npx @celador/weft --hosted --join SPACE:CODE --repo NAME` | (teammate) join that space from your own clone, with your own member key; `--as NAME` is how the owner sees you (default: git's `user.name`) |
+| `npx @celador/weft members` | (space owner) who joined: handle, name and host, joined, last used |
+| `npx @celador/weft members revoke <id\|handle>` / `--all` | (space owner) remove a teammate: their key and every agent key and read session it made stop working |
 | `npx @celador/weft deploy [--domain HOST]` | run your own gateway in your Cloudflare account |
 | `npx @celador/weft use local\|hosted\|URL` | choose the default gateway (local unless you chose otherwise; `--local` is still accepted) |
 
 Options for the setup: `--agents N` (checkouts to coordinate), `--harness claude-code,codex`
 (only these), `--yes` (no questions), `--no-open`.
 
+## Teammates on other machines
+
+Every checkout and worktree on one machine shares that machine's space. To add a person on another machine (a hosted
+space, or your own gateway; a local gateway is not reachable from other machines):
+
+1. You, in the repo: `npx @celador/weft invite`. It prints a one-time code and the command to send, e.g.
+   `npx @celador/weft --hosted --join sp0abc1def2g:K7M2P-9XQ4T --repo shop`.
+2. Your teammate runs that command in their clone. They get **their own member key**, never yours, and Weft sets up
+   their hooks. Their agents are named `<checkout>.<their handle>` (`shop.alice`), so your agents and theirs are always
+   checked against each other, even when both checkouts are called `shop` and both are on `main`.
+3. `npx @celador/weft members` lists who joined; `members revoke alice` removes someone at once. A teammate can leave
+   with `npx @celador/weft uninstall --space` (for a member that leaves the space; only the owner can erase it).
+
+A member key reads the space and sets up checkouts for its existing repos. It cannot add repos, invite or remove
+people, see or unpair devices, change billing, or erase the space. Weft Pro is per user: `invite` and `members` say
+when the space has more people than seats.
+
 ## Where things go
 
-- `~/.config/weft/cli.json` (mode 600): per gateway, your space id and its keys.
+- `~/.config/weft/cli.json` (mode 600): per gateway, your space id and its keys; under `spaces`, the spaces you joined
+  as a teammate (member key and read session), kept apart so joining never replaces your own space.
 - `~/.config/weft/runtime/<version>/`: the adapters the hooks run (copied out of npx's cache so
   hooks keep working after it is cleared).
 - In each checkout: `.weft/` (agent key, config, logs) and the harness's local hook file, for

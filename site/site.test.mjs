@@ -99,3 +99,16 @@ test("/start/ is a page, not a redirect; /welcome/ loads no third-party script",
   assert.match(w, /name="referrer" content="no-referrer"/);
   for (const s of ["loading", "ok", "claimed", "notfound", "network", "none"]) assert.match(w, new RegExp(`data-state="${s}"`));
 });
+
+test("team join: the pricing FAQ and the welcome page say how a teammate on another machine joins", () => {
+  const pricing = readFileSync(join(PUB, "pricing", "index.html"), "utf8");
+  const welcome = readFileSync(join(PUB, "welcome", "index.html"), "utf8");
+  assert.doesNotMatch(pricing, /Not with a command yet|We're building a join command/);
+  assert.match(pricing, /Can teammates on other machines join my space\?<\/h3>\s*<p>Yes\. Run <code>npx @celador\/weft invite<\/code>/);
+  assert.match(pricing, /<li>Teammates on other machines join with their own key<\/li>/);
+  for (const page of [pricing, welcome]) {
+    assert.match(page, /npx @celador\/weft members/);
+    assert.doesNotMatch(page, /--join sp/); // no code or space id in copy
+  }
+  assert.match(welcome, /run <code>npx @celador\/weft invite<\/code> in this repo/);
+});

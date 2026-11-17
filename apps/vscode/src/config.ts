@@ -245,6 +245,10 @@ export function tokenCandidates(o: { env?: NodeJS.ProcessEnv; checkout?: Checkou
   const gws = (cli?.gateways ?? {}) as Record<string, Json>;
   const gw = gws[o.url] ?? gws[o.url.replace(/\/+$/, "")];
   push(str(gw?.viewer), "config", "~/.config/weft/cli.json (viewer key)");
+  // Spaces this machine joined as a teammate (`npx @celador/weft --join`) keep their own read session.
+  for (const j of Object.values((cli?.spaces ?? {}) as Record<string, Json>)) {
+    if (str(j?.url)?.replace(/\/+$/, "") === o.url.replace(/\/+$/, "")) push(str(j?.viewer), "config", "~/.config/weft/cli.json (joined space)");
+  }
   if (o.repo) push(readSecret(join(dir, `${o.repo}.token`)), "config", `~/.config/weft/${o.repo}.token`);
   push(readSecret(join(dir, "token")), "config", "~/.config/weft/token");
   push(str(o.secret), "secret", "Weft: Set token (SecretStorage)");
