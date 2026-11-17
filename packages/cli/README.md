@@ -50,7 +50,8 @@ Website: <https://weft.mx> · Source: <https://github.com/celador/weft>
 | `npx @celador/weft --hosted` | opt in to a hosted space on Weft's Cloudflare gateway instead (5,000 agent events a month free; Weft Pro, per user, has no event cap) |
 | `npx @celador/weft usage` | your hosted space's plan (Free, or Weft Pro and its seats) and agent events this month |
 | `npx @celador/weft upgrade [--seats N] [--year]` | Weft Pro for your hosted space, per user, monthly or yearly: prints a Stripe Checkout link (only where the gateway sells one) |
-| `npx @celador/weft --hosted --claim CODE` | bought Weft Pro on weft.mx? the welcome page's one-time code makes this repo's hosted space Pro |
+| `npx @celador/weft login` | sign in to your Weft account (free, on weft.mx) for hosted spaces; an existing hosted space joins the account |
+| `npx @celador/weft logout` / `whoami` | this machine forgets its hosted key / shows which space and account it uses |
 | `npx @celador/weft billing` | change seats, payment method, invoices or cancel (Stripe's customer portal) |
 | `npx @celador/weft deploy [--domain HOST]` | run your own gateway in your Cloudflare account |
 | `npx @celador/weft use local\|hosted\|URL` | choose the default gateway (local unless you chose otherwise; `--local` is still accepted) |
