@@ -1,4 +1,5 @@
 import ts from "typescript";
+import { editScope, type EditScope, type Span } from "./scope.js";
 
 export type WriteKind = "signature" | "body" | "new" | "deleted";
 export type Write = { key: string; kind: WriteKind };
@@ -63,6 +64,7 @@ function declarations(source: ts.SourceFile, path: string): Map<string, Declarat
   const visit = (node: ts.Node): void => {
     // A declaration with no name of its own (`const { a } = …`, `[Symbol.iterator]() {}`) would get
     // its enclosing declaration's key and overwrite that entry, hiding the parent's own changes.
+    // `scopeSpans` skips them by the same rule, so their references belong to the enclosing one.
     if (declarationKinds.has(node.kind) && nameOf(node)) {
       const key = declarationKey(node, source, path);
       if (key) {
@@ -229,14 +231,71 @@ function keyForSymbol(symbol: ts.Symbol, path: string): string | undefined {
   return name && name !== "__export" ? `${path}#${name}` : undefined;
 }
 
-function reads(source: ts.SourceFile, checker: ts.TypeChecker, path: string): string[] {
+/**
+ * Spans of the declarations an edit can touch (docs/languages.md, "Reads are scoped to the
+ * edit"). Declarations inside a function body are part of that function: editing a local
+ * touches the function. Same-key declarations (overloads) share the key's name.
+ */
+function scopeSpans(source: ts.SourceFile, path: string): Span[] {
+  const spans: Span[] = [];
+  const visit = (node: ts.Node): void => {
+    if (declarationKinds.has(node.kind) && nameOf(node) && !isLocal(node)) {
+      const key = declarationKey(node, source, path);
+      if (key) spans.push({ name: key, start: node.getStart(source), end: node.getEnd() });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return spans;
+}
+
+/** The scope of an edit of one TypeScript file: `before` and `after` parsed with `ts`. */
+export function typescriptEditScope(before: string, after: string, beforeSource?: ts.SourceFile, afterSource?: ts.SourceFile): EditScope {
+  const parse = (text: string) => ts.createSourceFile("/entry.tsx", text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+  return editScope(before, after, scopeSpans(beforeSource ?? parse(before), ""), scopeSpans(afterSource ?? parse(after), ""));
+}
+
+/**
+ * Which import bindings of `after` an edit from `before` reads, for the adapters' cross-file
+ * import reads (`importReads`): a binding the edit adds (a new import, or a new name in an
+ * existing one), or one an in-scope reference uses (docs/languages.md, "Reads are scoped to the
+ * edit"). Without `before` (or for a new file) every binding is read. `inScope` takes offsets
+ * into `after`, e.g. a namespace member access `ns.x`.
+ */
+export function scopedImports(before: string | null | undefined, after: string): { keep(spec: string, imported: string, local: string): boolean; inScope: EditScope } {
+  if (!before) return { keep: () => true, inScope: () => true };
+  const parse = (text: string) => ts.createSourceFile("/entry.tsx", text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+  const beforeSource = parse(before);
+  const afterSource = parse(after);
+  const id = (spec: string, imported: string, local: string) => `${spec}\0${imported}\0${local}`;
+  const old = new Set<string>();
+  for (const statement of beforeSource.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const spec = statement.moduleSpecifier.text;
+    const clause = statement.importClause;
+    if (clause?.name) old.add(id(spec, "default", clause.name.text));
+    const bindings = clause?.namedBindings;
+    if (bindings && ts.isNamedImports(bindings)) for (const el of bindings.elements) old.add(id(spec, (el.propertyName ?? el.name).text, el.name.text));
+  }
+  const inScope = typescriptEditScope(before, after, beforeSource, afterSource);
+  const used = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node)) return;
+    if (ts.isIdentifier(node) && inScope(node.getStart(afterSource))) used.add(node.text);
+    ts.forEachChild(node, visit);
+  };
+  visit(afterSource);
+  return { keep: (spec, imported, local) => !old.has(id(spec, imported, local)) || used.has(local), inScope };
+}
+
+function reads(source: ts.SourceFile, checker: ts.TypeChecker, path: string, inScope: EditScope): string[] {
   const found = new Set<string>();
   const visit = (node: ts.Node): void => {
     let candidate: ts.Node | undefined;
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) candidate = node.expression;
     else if (ts.isTypeReferenceNode(node)) candidate = node.typeName;
     else if (ts.isImportSpecifier(node) || ts.isNamespaceImport(node)) candidate = node.name;
-    if (candidate) {
+    if (candidate && inScope(candidate.getStart(source))) {
       let symbol = checker.getSymbolAtLocation(candidate);
       if (symbol?.flags && (symbol.flags & ts.SymbolFlags.Alias)) symbol = checker.getAliasedSymbol(symbol);
       if (symbol) {
@@ -266,7 +325,9 @@ export function analyze(before: string, after: string, path: string): Analysis {
   for (const key of oldDeclarations.keys()) if (!newDeclarations.has(key)) kinds.set(key, "deleted");
   propagateContracts(newDeclarations, path, kinds);
   const writes: Write[] = [...kinds].map(([key, kind]) => ({ key, kind }));
-  return { reads: reads(afterBuild.source, afterBuild.checker, path), writes: writes.sort((a, b) => a.key.localeCompare(b.key)) };
+  // Reads come from the declarations the edit adds or changes, not the whole file.
+  const inScope = typescriptEditScope(before, after, beforeSource, afterBuild.source);
+  return { reads: reads(afterBuild.source, afterBuild.checker, path, inScope), writes: writes.sort((a, b) => a.key.localeCompare(b.key)) };
 }
 
 function diffPath(value: string): string | undefined {

@@ -20,7 +20,7 @@
 // `::Money`. `require_relative "x"` resolves next to the file and `require "x"` under `lib/`.
 import { posix } from "node:path";
 import type { Definition, Exists, ImportBinding, Reference, SyntaxNode, TreeSitterLanguage } from "../language.js";
-import { firstExisting } from "../treesitter.js";
+import { firstExisting, positioned } from "../treesitter.js";
 
 function named(node: SyntaxNode): SyntaxNode[] {
   return node.namedChildren.filter((c): c is SyntaxNode => c !== null);
@@ -70,6 +70,8 @@ function methodDefinition(def: SyntaxNode, scope: string[]): Definition | undefi
     name: [...qualified, nameNode.text].join("."),
     signature: slice(outer, outer.startIndex, sigEnd),
     body: slice(def, sigEnd, def.endIndex),
+    start: outer.startIndex,
+    end: Math.max(outer.endIndex, def.endIndex),
   };
 }
 
@@ -88,7 +90,7 @@ function definitions(root: SyntaxNode): Definition[] {
           if (!nameNode || !path) break;
           const qualified = path.absolute ? path.path : [...scope, ...path.path];
           const sigEnd = child.childForFieldName("superclass")?.endIndex ?? nameNode.endIndex;
-          out.push({ name: qualified.join("."), signature: slice(child, child.startIndex, sigEnd), body: slice(child, sigEnd, child.endIndex) });
+          out.push({ name: qualified.join("."), signature: slice(child, child.startIndex, sigEnd), body: slice(child, sigEnd, child.endIndex), start: child.startIndex, end: child.endIndex });
           const body = child.childForFieldName("body");
           if (body) walk(body, qualified);
           break;
@@ -107,7 +109,7 @@ function definitions(root: SyntaxNode): Definition[] {
         case "assignment": {
           const left = child.childForFieldName("left");
           if (left?.type === "constant") {
-            out.push({ name: [...scope, left.text].join("."), signature: "", body: child.childForFieldName("right")?.text ?? "" });
+            out.push({ name: [...scope, left.text].join("."), signature: "", body: child.childForFieldName("right")?.text ?? "", start: child.startIndex, end: child.endIndex });
             break;
           }
           walk(child, scope);
@@ -117,7 +119,7 @@ function definitions(root: SyntaxNode): Definition[] {
           const method = child.childForFieldName("method")?.text;
           if (method && ATTR.has(method) && !child.childForFieldName("receiver")) {
             for (const arg of named(child.childForFieldName("arguments") ?? child)) {
-              if (arg.type === "simple_symbol") out.push({ name: [...scope, arg.text.slice(1)].join("."), signature: `${method} ${arg.text}`, body: "" });
+              if (arg.type === "simple_symbol") out.push({ name: [...scope, arg.text.slice(1)].join("."), signature: `${method} ${arg.text}`, body: "", start: child.startIndex, end: child.endIndex });
             }
             break;
           }
@@ -224,7 +226,7 @@ function uses(root: SyntaxNode): Uses {
     return true;
   };
   /** `scope`: class/module nesting; `locals`: the enclosing method's locals (undefined outside methods). */
-  const visit = (node: SyntaxNode, scope: string[], locals: Set<string> | undefined): void => {
+  const visit = positioned(refs, (node: SyntaxNode, scope: string[], locals: Set<string> | undefined): void => {
     switch (node.type) {
       case "class":
       case "module": {
@@ -293,7 +295,7 @@ function uses(root: SyntaxNode): Uses {
         return;
     }
     for (const c of named(node)) visit(c, scope, locals);
-  };
+  });
   visit(root, [], undefined);
   const result = { refs, constants, requires };
   usesCache.set(root, result);

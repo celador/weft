@@ -42,11 +42,65 @@ describe("@weft/analyzer", () => {
 
   it("finds local call and type reads", () => {
     const result = analyze(
-      "function helper() { return 1; } type Token = string; export function f(x: Token) { return helper(); }",
+      "function helper() { return 1; } type Token = string; export function f(x: string) { return 0; }",
       "function helper() { return 1; } type Token = string; export function f(x: Token) { return helper(); }",
       path,
     );
     expect(result.reads).toEqual(["src/math.ts#Token", "src/math.ts#helper"]);
+  });
+
+  describe("reads are scoped to the declarations the edit adds or changes (docs/languages.md)", () => {
+    // vercel/ms (cold run 2026-11): an edit to one function was told it "started using" a
+    // function another, untouched function of the same file calls.
+    const before = [
+      "export function g(n: number): number { return n * 2; }",
+      "export function format(ms: number): string { return String(ms); }",
+      "export function long(ms: number): string {",
+      "  return format(ms) + ' ms';",
+      "}",
+      "export const UNITS = ['ms', 's'];",
+      "",
+    ].join("\n");
+
+    it("an edit to one declaration does not read what the others call", () => {
+      const after = before.replace("['ms', 's']", "['ms', 's', 'm']");
+      expect(analyze(before, after, path)).toEqual({ reads: [], writes: [{ key: "src/math.ts#UNITS", kind: "signature" }] });
+    });
+
+    it("an edit adding f() that calls g reads g", () => {
+      const after = `${before}export function f(n: number): number {\n  return g(n) + 1;\n}\n`;
+      expect(analyze(before, after, path)).toEqual({ reads: ["src/math.ts#g"], writes: [{ key: "src/math.ts#f", kind: "new" }] });
+    });
+
+    it("changing one line of a declaration re-reads the whole declaration", () => {
+      const after = before.replace("export function long(ms: number): string {", "export function long(ms: number, unit = 'ms'): string {").replace("+ ' ms'", "+ ' ' + unit");
+      expect(analyze(before, after, path).reads).toEqual(["src/math.ts#format"]);
+      const bodyOnly = before.replace("export function long(ms: number): string {", "export function long(ms: number): string { // long form");
+      expect(analyze(before, bodyOnly, path).reads).toEqual(["src/math.ts#format"]);
+    });
+
+    it("a method edit reads the method's references, not its class's other methods'", () => {
+      const cls = [
+        "function a() { return 1; }",
+        "function b() { return 2; }",
+        "export class Box {",
+        "  one() { return a(); }",
+        "  two() { return b(); }",
+        "}",
+        "",
+      ].join("\n");
+      expect(analyze(cls, cls.replace("return b();", "return b() + 1;"), path).reads).toEqual(["src/math.ts#b"]);
+    });
+
+    it("removing lines from a declaration still reads what it calls", () => {
+      const withLog = before.replace("  return format(ms) + ' ms';", "  console.log(ms);\n  return format(ms) + ' ms';");
+      expect(analyze(withLog, before, path).reads).toEqual(["src/math.ts#format"]);
+    });
+
+    it("module-level statements are read only on the lines the edit adds", () => {
+      const main = `${before}g(1);\n`;
+      expect(analyze(main, `${main}format(2);\n`, path).reads).toEqual(["src/math.ts#format"]);
+    });
   });
 
   it("analyzes a modified file from a unified diff and current checkout contents", () => {

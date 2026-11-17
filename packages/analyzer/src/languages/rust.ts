@@ -198,6 +198,7 @@ function references(root: SyntaxNode): Reference[] {
   const add = (ref: Reference | undefined, at: SyntaxNode): void => {
     if (!ref || !ref.length) return;
     if (ref.length === 1 && typeParamsAt(at).has(ref[0])) return;
+    ref.pos = at.startIndex;
     out.push(ref);
   };
   const visit = (node: SyntaxNode): void => {
@@ -235,7 +236,10 @@ function references(root: SyntaxNode): Reference[] {
         break;
       }
       case "token_tree":
-        out.push(...macroPaths(node));
+        for (const ref of macroPaths(node)) {
+          ref.pos = node.startIndex;
+          out.push(ref);
+        }
         return;
     }
     for (const c of named(node)) visit(c);

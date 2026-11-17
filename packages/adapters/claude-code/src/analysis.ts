@@ -2,7 +2,7 @@
 // The analyzer sees one file at a time; cross-file reads (what an edit imports from other
 // modules in the checkout) are added here by resolving relative imports against the
 // checkout, so `import { calcTotal } from "./pricing"` reads `src/pricing.ts#calcTotal`.
-import { analyze, analyzeSource, contractReads, treeSitterLanguageFor, type Write } from "@weft/analyzer";
+import { analyze, analyzeSource, contractReads, scopedImports, treeSitterLanguageFor, type Write } from "@weft/analyzer";
 import ts from "typescript";
 import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { readInsideCheckout } from "./safe-read";
@@ -22,10 +22,13 @@ export function fileKey(rel: string): string {
 /**
  * Names imported from relative modules become reads of `<resolved path>#<name>`
  * (`default` for default imports, `ns.x` member accesses for namespace imports).
- * `rel` is checkout-relative; returned keys carry `prefix`.
+ * `rel` is checkout-relative; returned keys carry `prefix`. With `before` (the file's text
+ * before the edit), only imports the edit adds or that the declarations it touches use are
+ * read (docs/languages.md, "Reads are scoped to the edit").
  */
-export function importReads(text: string, rel: string, root?: string, prefix = ""): string[] {
+export function importReads(text: string, rel: string, root?: string, prefix = "", before?: string | null): string[] {
   const source = ts.createSourceFile("/entry.tsx", text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+  const scope = scopedImports(before, text);
   const found = new Set<string>();
   const dir = posix.dirname(rel);
   const resolveSpec = (spec: string): string | undefined => {
@@ -42,10 +45,14 @@ export function importReads(text: string, rel: string, root?: string, prefix = "
     const target = resolveSpec(statement.moduleSpecifier.text);
     const clause = statement.importClause;
     if (!target || !clause) continue;
-    if (clause.name) found.add(`${prefix}${target}#default`);
+    const spec = statement.moduleSpecifier.text;
+    if (clause.name && scope.keep(spec, "default", clause.name.text)) found.add(`${prefix}${target}#default`);
     const bindings = clause.namedBindings;
     if (bindings && ts.isNamedImports(bindings)) {
-      for (const el of bindings.elements) found.add(`${prefix}${target}#${(el.propertyName ?? el.name).text}`);
+      for (const el of bindings.elements) {
+        const imported = (el.propertyName ?? el.name).text;
+        if (scope.keep(spec, imported, el.name.text)) found.add(`${prefix}${target}#${imported}`);
+      }
     } else if (bindings && ts.isNamespaceImport(bindings)) {
       namespaces.set(bindings.name.text, target);
     }
@@ -54,10 +61,10 @@ export function importReads(text: string, rel: string, root?: string, prefix = "
     const visit = (node: ts.Node): void => {
       if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) {
         const target = namespaces.get(node.expression.text);
-        if (target) found.add(`${prefix}${target}#${node.name.text}`);
+        if (target && scope.inScope(node.getStart(source))) found.add(`${prefix}${target}#${node.name.text}`);
       } else if (ts.isQualifiedName(node) && ts.isIdentifier(node.left)) {
         const target = namespaces.get(node.left.text);
-        if (target) found.add(`${prefix}${target}#${node.right.text}`);
+        if (target && scope.inScope(node.getStart(source))) found.add(`${prefix}${target}#${node.right.text}`);
       }
       ts.forEachChild(node, visit);
     };
@@ -82,7 +89,7 @@ export function analyzeChanges(changes: FileChange[], root?: string, prefix = ""
         for (const k of result.reads) reads.add(k);
         for (const w of result.writes) writes.set(w.key, w);
         if (c.after) {
-          const imported = importReads(c.after, c.rel, root, prefix);
+          const imported = importReads(c.after, c.rel, root, prefix, c.before);
           for (const k of imported) reads.add(k);
           // The contract types of what this file uses (`PriceOptions` of `calcTotal(opts: PriceOptions)`).
           if (checkout) for (const k of contractReads(imported, checkout.read, prefix)) reads.add(k);

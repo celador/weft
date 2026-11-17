@@ -62,6 +62,30 @@ describe("analysis", () => {
     expect(analyzeChanges([{ rel: "README.md", before: null, after: "hi" }]).writes).toEqual([{ key: "README.md#*", kind: "new" }]);
   });
 
+  it("cross-file import reads are scoped to the edit like same-file reads (docs/languages.md)", () => {
+    const root = checkout("scoped");
+    const text = [
+      'import { calcTotal, type Item } from "./pricing";',
+      'import * as p from "./pricing";',
+      "export function total(items: Item[]): number {",
+      "  return calcTotal(items);",
+      "}",
+      "export function label(): string {",
+      "  return 'cart';",
+      "}",
+      "",
+    ].join("\n");
+    // An edit to label() uses no import: it reads none of them.
+    expect(importReads(text.replace("'cart'", "'basket'"), "src/x.ts", root, "", text)).toEqual([]);
+    // An edit to total() reads what total() uses.
+    expect(importReads(text.replace("calcTotal(items)", "calcTotal(items) + 0"), "src/x.ts", root, "", text).sort()).toEqual(["src/pricing.ts#Item", "src/pricing.ts#calcTotal"]);
+    // An added import is read; a namespace member is read where the edit uses it.
+    const added = text.replace("'cart'", "p.label()").replace('import * as p from "./pricing";', 'import * as p from "./pricing";\nimport { fmt } from "./pricing";');
+    expect(importReads(added, "src/x.ts", root, "", text).sort()).toEqual(["src/pricing.ts#fmt", "src/pricing.ts#label"]);
+    // Through analyzeChanges (what the hooks call).
+    expect(analyzeChanges([{ rel: "src/x.ts", before: text, after: text.replace("'cart'", "'basket'") }], root, "").reads).toEqual([]);
+  });
+
   it("unifiedDiff round-trips through the analyzer's diff reader", () => {
     const diff = unifiedDiff("src/pricing.ts", PRICING_V1, PRICING_V2);
     expect(diff).toContain("-export function calcTotal(items: Item[]): number {");

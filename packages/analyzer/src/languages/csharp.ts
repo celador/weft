@@ -29,6 +29,7 @@
 // no visible namespace falls back to any namespace in scope (`looseNamespaces`).
 import { posix } from "node:path";
 import type { CheckoutFs, Definition, ImportBinding, ModuleIndex, Reference, SyntaxNode, TreeSitterLanguage } from "../language.js";
+import { positioned } from "../treesitter.js";
 import { cut, isFieldOf, named, nodeId, same, scoped } from "./lexical.js";
 
 const TYPES = new Set([
@@ -47,17 +48,20 @@ function stripTail(text: string): string {
 
 function definitions(root: SyntaxNode): Definition[] {
   const out: Definition[] = [];
+  /** The declaration `add` records (set per child before any `add`; spans scope an edit's reads). */
+  let current: SyntaxNode = root;
   const add = (scope: string[], name: string, signature: string, body: string): void => {
-    out.push({ name: [...scope, name].join("."), signature, body });
+    out.push({ name: [...scope, name].join("."), signature, body, start: current.startIndex, end: current.endIndex });
   };
   const walk = (node: SyntaxNode, scope: string[]): void => {
     for (const child of named(node)) {
+      current = child;
       const nameNode = child.childForFieldName("name");
       const body = child.childForFieldName("body");
       if (TYPES.has(child.type)) {
         if (!nameNode) continue;
         const q = [...scope, nameNode.text];
-        out.push({ name: q.join("."), signature: body ? child.text.slice(0, body.startIndex - child.startIndex) : stripTail(child.text), body: body?.text ?? "" });
+        out.push({ name: q.join("."), signature: body ? child.text.slice(0, body.startIndex - child.startIndex) : stripTail(child.text), body: body?.text ?? "", start: child.startIndex, end: child.endIndex });
         if (body) walk(body, q);
         continue;
       }
@@ -272,7 +276,7 @@ function references(root: SyntaxNode): Reference[] {
   const isCtor = (node: SyntaxNode, parent: SyntaxNode | undefined): boolean =>
     !!parent && parent.type === "object_creation_expression" && same(parent.childForFieldName("type"), node);
 
-  const visit = (node: SyntaxNode, ctx: Ctx): void => {
+  const visit = positioned(out, (node: SyntaxNode, ctx: Ctx): void => {
     const parent = ctx.stack[ctx.stack.length - 1];
     switch (node.type) {
       case "using_directive":
@@ -319,7 +323,7 @@ function references(root: SyntaxNode): Reference[] {
     ctx.stack.push(node);
     for (const c of named(node)) visit(c, inner);
     ctx.stack.pop();
-  };
+  });
   visit(root, { stack: [], scope: [], locals: [] });
   return out;
 }

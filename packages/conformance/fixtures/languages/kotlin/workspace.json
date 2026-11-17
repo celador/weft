@@ -54,9 +54,7 @@
           "kind": "deleted"
         }
       ],
-      "reads": [
-        "src/main/java/com/shop/model/Item.java#Item"
-      ],
+      "reads": [],
       "after": {
         "src/main/kotlin/com/shop/pricing/Pricing.kt": "package com.shop.pricing\n\nimport com.shop.model.Item\n\nfun calcTotal(items: List<Item>): Double {\n    return items.sumOf { it.price() * it.qty() }\n}\n\nfun formatMoney(amount: Double): String {\n    return \"$\" + String.format(\"%.2f\", amount)\n}\n"
       }

@@ -47,9 +47,7 @@
           "kind": "deleted"
         }
       ],
-      "reads": [
-        "Sources/Shop/Pricing.swift#Item"
-      ],
+      "reads": [],
       "intent": "rename formatPrice to formatMoney",
       "after": {
         "Sources/Shop/Pricing.swift": "import Foundation\n\npublic struct Item {\n    public let price: Double\n    public let qty: Int\n}\n\npublic func calcTotal(items: [Item]) -> Double {\n    items.reduce(0) { $0 + $1.price * Double($1.qty) }\n}\n\npublic func formatMoney(_ amount: Double) -> String {\n    String(format: \"$%.2f\", amount)\n}\n"

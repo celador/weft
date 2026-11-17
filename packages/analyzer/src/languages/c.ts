@@ -130,9 +130,10 @@ type Scope = { path: string[]; access?: string };
 
 function definitions(root: SyntaxNode): Definition[] {
   const out: Definition[] = [];
-  const push = (scope: Scope, segments: string[], signature: string, body: string): void => {
+  /** `span`: the node the declaration occupies (its template, for a template). */
+  const push = (scope: Scope, segments: string[], signature: string, body: string, span: SyntaxNode): void => {
     const sig = scope.access ? `${scope.access}: ${signature}` : signature;
-    out.push({ name: [...scope.path, ...segments].join("."), signature: sig, body });
+    out.push({ name: [...scope.path, ...segments].join("."), signature: sig, body, start: span.startIndex, end: span.endIndex });
   };
 
   /** A struct/class/union/enum with a body: the type, then its members. */
@@ -140,7 +141,7 @@ function definitions(root: SyntaxNode): Definition[] {
     const body = spec.childForFieldName("body");
     const segments = asName ?? nameSegments(spec.childForFieldName("name"));
     if (!body || !segments) return undefined;
-    push(scope, segments, without(outer, [body]), body.text);
+    push(scope, segments, without(outer, [body]), body.text, outer);
     const inner = [...scope.path, ...segments];
     if (spec.type === "enum_specifier") {
       const scoped = spec.children.some((c) => c?.type === "class" || c?.type === "struct");
@@ -149,7 +150,7 @@ function definitions(root: SyntaxNode): Definition[] {
         const name = e.childForFieldName("name")?.text;
         if (!name) continue;
         const enumScope = scoped ? { path: inner } : { path: scope.path, access: scope.access };
-        push(enumScope, [name], "", e.childForFieldName("value")?.text ?? "");
+        push(enumScope, [name], "", e.childForFieldName("value")?.text ?? "", e);
       }
     } else {
       walk(body, { path: inner, access: spec.type === "class_specifier" ? "private" : "public" });
@@ -175,14 +176,14 @@ function definitions(root: SyntaxNode): Definition[] {
         if (first) specifier(spec, scope, outer, first);
         for (const d of declarators.slice(1)) {
           const n = declaratorName(d) ?? (nameSegments(d) ? { segments: nameSegments(d)!, fn: false } : undefined);
-          if (n) push(scope, n.segments, without(outer, [specBody]), "");
+          if (n) push(scope, n.segments, without(outer, [specBody]), "", outer);
         }
         return;
       }
       if (spec) specifier(spec, scope, spec);
       for (const d of declarators) {
         const segments = nameSegments(d) ?? declaratorName(d)?.segments;
-        if (segments) push(scope, segments, without(outer, [specBody]), "");
+        if (segments) push(scope, segments, without(outer, [specBody]), "", outer);
       }
       return;
     }
@@ -196,7 +197,7 @@ function definitions(root: SyntaxNode): Definition[] {
       const head = outer.text.slice(0, declarators[0].startIndex - outer.startIndex);
       const headSig = specBody ? head.replace(specBody.text, "") : head;
       const declSig = without(d, [init]);
-      push(scope, n.segments, `${headSig}${declSig}`, (init ?? (declarators.length === 1 ? value : null))?.text ?? "");
+      push(scope, n.segments, `${headSig}${declSig}`, (init ?? (declarators.length === 1 ? value : null))?.text ?? "", outer);
     }
   };
 
@@ -214,7 +215,7 @@ function definitions(root: SyntaxNode): Definition[] {
           const name = child.childForFieldName("name")?.text;
           if (!name) break;
           const params = child.childForFieldName("parameters")?.text ?? "";
-          push({ path: scope.path }, [name], `#define ${name}${params}`, child.childForFieldName("value")?.text.trim() ?? "");
+          push({ path: scope.path }, [name], `#define ${name}${params}`, child.childForFieldName("value")?.text.trim() ?? "", child);
           break;
         }
         case "function_definition": {
@@ -222,7 +223,7 @@ function definitions(root: SyntaxNode): Definition[] {
           const body = child.childForFieldName("body");
           if (!n) break;
           const init = named(child).find((c) => c.type === "field_initializer_list");
-          push(here, n.segments, without(outer, [body, init]), [init?.text, body?.text].filter(Boolean).join(" "));
+          push(here, n.segments, without(outer, [body, init]), [init?.text, body?.text].filter(Boolean).join(" "), outer);
           break;
         }
         case "declaration":
@@ -232,7 +233,7 @@ function definitions(root: SyntaxNode): Definition[] {
           break;
         case "alias_declaration": {
           const segments = nameSegments(child.childForFieldName("name"));
-          if (segments) push(here, segments, outer.text, "");
+          if (segments) push(here, segments, outer.text, "", outer);
           break;
         }
         case "struct_specifier":
@@ -284,11 +285,16 @@ type Context = { scope: string[]; types?: Map<string, string[]> };
 // ever walks back up the tree (each parent hop is a WASM call; this keeps 2,000 lines at a few ms).
 function references(root: SyntaxNode): Reference[] {
   const out: Reference[] = [];
+  // The same path used in two places is one reference per place: the engine reads only the
+  // places inside the declarations an edit touches.
   const seen = new Set<string>();
+  /** Start of the node being visited: where an emitted reference is. */
+  let cursor = 0;
   const emit = (ref: Reference): void => {
-    const id = `${ref.exact ? "=" : "~"}${ref.join(".")}`;
+    const id = `${ref.exact ? "=" : "~"}${ref.join(".")}@${cursor}`;
     if (seen.has(id)) return;
     seen.add(id);
+    ref.pos = cursor;
     out.push(ref);
   };
   /** `path` as written, plus the same path inside each enclosing scope (innermost first). */
@@ -348,6 +354,15 @@ function references(root: SyntaxNode): Reference[] {
     }
   };
   const visit = (node: SyntaxNode, ctx: Context): void => {
+    const outer = cursor;
+    cursor = node.startIndex;
+    try {
+      visitNode(node, ctx);
+    } finally {
+      cursor = outer;
+    }
+  };
+  const visitNode = (node: SyntaxNode, ctx: Context): void => {
     switch (node.type) {
       case "identifier":
       case "type_identifier":

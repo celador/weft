@@ -28,7 +28,8 @@
 // `PricingKt.calcTotal()` and `import static com.shop.pricing.PricingKt.calcTotal;` read
 // `Pricing.kt#calcTotal`, the key the Kotlin file writes (`ImportBinding.facade`).
 import type { Definition, ImportBinding, Reference, SyntaxNode, TreeSitterLanguage } from "../language.js";
-import { exact, header, implicitBindings, importBinding, named, perRoot, resolveJvmModule, sameNode, withFacade } from "./jvm.js";
+import { positioned } from "../treesitter.js";
+import { exact, header, implicitBindings, importBinding, named, perRoot, resolveJvmModule, sameNode, span, withFacade } from "./jvm.js";
 
 const TYPE_DECL = new Set(["class_declaration", "interface_declaration", "enum_declaration", "record_declaration", "annotation_type_declaration"]);
 const CONSTRUCTOR = new Set(["constructor_declaration", "compact_constructor_declaration"]);
@@ -46,18 +47,18 @@ const definitions = perRoot((root: SyntaxNode): Definition[] => {
         const q = [...scope, name];
         const body = child.childForFieldName("body");
         const ctors = body ? constructors(body).map((c) => header(c, c.childForFieldName("body")?.startIndex ?? c.endIndex)) : [];
-        out.push({ name: q.join("."), signature: [header(child, body?.startIndex ?? child.endIndex), ...ctors].join("\n"), body: body?.text ?? "" });
+        out.push({ name: q.join("."), signature: [header(child, body?.startIndex ?? child.endIndex), ...ctors].join("\n"), body: body?.text ?? "", ...span(child) });
         if (child.type === "record_declaration") {
           for (const p of named(child.childForFieldName("parameters") ?? child)) {
             const pn = p.childForFieldName("name")?.text;
-            if (p.type === "formal_parameter" && pn) out.push({ name: [...q, pn].join("."), signature: header(p), body: "" });
+            if (p.type === "formal_parameter" && pn) out.push({ name: [...q, pn].join("."), signature: header(p), body: "", ...span(p) });
           }
         }
         if (body) walk(body, q);
       } else if (METHOD.has(child.type)) {
         const name = child.childForFieldName("name")?.text;
         const body = child.childForFieldName("body");
-        if (name) out.push({ name: [...scope, name].join("."), signature: header(child, body?.startIndex ?? child.endIndex), body: body?.text ?? "" });
+        if (name) out.push({ name: [...scope, name].join("."), signature: header(child, body?.startIndex ?? child.endIndex), body: body?.text ?? "", ...span(child) });
       } else if (FIELD.has(child.type)) {
         const declarators = child.childrenForFieldName("declarator").filter((d): d is SyntaxNode => d !== null);
         const prefix = declarators[0] ? header(child, declarators[0].startIndex) : "";
@@ -65,11 +66,11 @@ const definitions = perRoot((root: SyntaxNode): Definition[] => {
           const name = d.childForFieldName("name")?.text;
           if (!name) continue;
           const dims = d.childForFieldName("dimensions")?.text ?? "";
-          out.push({ name: [...scope, name].join("."), signature: `${prefix} ${name}${dims}`, body: d.childForFieldName("value")?.text ?? "" });
+          out.push({ name: [...scope, name].join("."), signature: `${prefix} ${name}${dims}`, body: d.childForFieldName("value")?.text ?? "", ...span(child) });
         }
       } else if (child.type === "enum_constant") {
         const name = child.childForFieldName("name")?.text;
-        if (name) out.push({ name: [...scope, name].join("."), signature: name, body: child.text });
+        if (name) out.push({ name: [...scope, name].join("."), signature: name, body: child.text, ...span(child) });
       } else if (BODY.has(child.type)) {
         walk(child, scope);
       }
@@ -138,7 +139,7 @@ const references = perRoot((root: SyntaxNode): Reference[] => {
     for (const cls of enclosing(classes)) out.push(exact([...cls, name]));
     out.push(exact([name])); // static import
   };
-  const visit = (node: SyntaxNode, parent: SyntaxNode | null, classes: string[]): void => {
+  const visit = positioned(out, (node: SyntaxNode, parent: SyntaxNode | null, classes: string[]): void => {
     let inner = classes;
     switch (node.type) {
       case "method_invocation": {
@@ -196,7 +197,7 @@ const references = perRoot((root: SyntaxNode): Reference[] => {
         }
     }
     for (const c of named(node)) visit(c, node, inner);
-  };
+  });
   visit(root, null, []);
   return out;
 });
