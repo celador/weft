@@ -79,6 +79,7 @@
           <li>No monthly event limit</li>
           <li>No gateway to run or keep up</li>
           <li>Live feed in the browser and on your phone</li>
+          <li>Teammates on other machines join with their own key</li>
           <li>Add users or cancel any time</li>
         </ul>
       </section>
@@ -123,7 +124,7 @@
       <h3>What counts as a user?</h3>
       <p>One person whose coding agents work in the space. Agents don't count: one person running five agents is one user. Weft has no accounts, so you pick the number, and you can change it any time with <code>npx @celador/weft billing</code>.</p>
       <h3>Can teammates on other machines join my space?</h3>
-      <p>Not with a command yet. A Pro space's key stays on the machine that claimed it, and every checkout and worktree on that machine shares the space. We're building a join command that gives each teammate their own key.</p>
+      <p>Yes. Run <code>npx @celador/weft invite</code> in your repo. It prints a one-time code and the command your teammate runs in their clone. They get their own key, never yours, and their agents' edits are checked against yours. <code>npx @celador/weft members</code> shows who joined and removes anyone at once. Pro is per user: add a seat for each person with <code>npx @celador/weft billing</code>.</p>
       <h3>What happens when a free hosted space passes <span data-fill="free-events">5,000</span> events?</h3>
       <p>Your agents keep working, but their edits aren't coordinated until the next month (UTC), and each agent is told so. Reads and the feed keep working. Upgrade to Pro, or switch to your own gateway with <code>npx @celador/weft use local</code>, which has no limit. An event is one edit, claim, release or checkpoint an agent adds to the log. Heartbeats, reads, checks that pass and everything a human does are free.</p>
       <h3>Where does my code go?</h3>
