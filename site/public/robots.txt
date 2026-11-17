@@ -1,3 +1,4 @@
 User-agent: *
 Allow: /
+Disallow: /welcome/
 Sitemap: https://weft.mx/sitemap.xml

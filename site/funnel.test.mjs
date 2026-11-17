@@ -59,7 +59,8 @@ test("rumByDay prefers the weft.mx site and never adds both beacons", () => {
 
 test("formatReport shows '-' for days npm hasn't published", () => {
   const out = formatReport({ ...report([{ visits: 3, downloads: null }]), totals: { visits: 3, copies: 0, downloads: null, firstRuns: 0, hostedSpacesAllTime: 0 } });
-  assert.match(out, /2026-11-01 +3 +0 +- +0$/m);
+  // day, visits, copies, pricing, buys, paid, claimed (absent here: "-"), npm, first-runs
+  assert.match(out, /2026-11-01 +3 +0 +- +- +- +- +- +0$/m);
   assert.match(out, /3 visits -> 0 copies -> - npm downloads -> 0 first runs/);
 });
 

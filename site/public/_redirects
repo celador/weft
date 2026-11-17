@@ -1,5 +1,4 @@
-# Old shared links (signup / early-access era) land on the hero.
-/start /#start 301
-/start/ /#start 301
+# Old shared links (signup / early-access era) land on the hero. /start/ is now its own page
+# (the landing page for video traffic), so it no longer redirects.
 /early-access /#start 301
 /early-access/ /#start 301
