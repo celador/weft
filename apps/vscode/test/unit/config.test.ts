@@ -90,7 +90,13 @@ describe("tokenCandidates: WEFT_TOKEN, then .weft/, then ~/.config/weft, then Se
     secret(join(root, ".weft", "token"), "t-agent");
     const cfg = join(home, ".config", "weft");
     mkdirSync(cfg, { recursive: true });
-    writeFileSync(join(cfg, "cli.json"), JSON.stringify({ gateways: { "http://g": { kind: "local", viewer: "t-viewer", owner: "t-owner" } } }));
+    writeFileSync(
+      join(cfg, "cli.json"),
+      JSON.stringify({
+        gateways: { "http://g": { kind: "local", viewer: "t-viewer", owner: "t-owner" } },
+        spaces: { sp0000000009: { url: "http://g", key: "t-member", handle: "alice", viewer: "t-joined" }, sp0000000008: { url: "http://other", key: "t-m2", viewer: "t-elsewhere" } },
+      }),
+    );
     secret(join(cfg, "shop.token"), "t-repo");
     secret(join(cfg, "token"), "t-agent"); // same as the checkout's: listed once
     const checkout = { ...readCheckout(root), tokenFiles: [".weft/token"] };
@@ -100,11 +106,14 @@ describe("tokenCandidates: WEFT_TOKEN, then .weft/, then ~/.config/weft, then Se
       ["t-human", "repo", ".weft/human-token"],
       ["t-agent", "repo", ".weft/token"],
       ["t-viewer", "config", "~/.config/weft/cli.json (viewer key)"],
+      ["t-joined", "config", "~/.config/weft/cli.json (joined space)"],
       ["t-repo", "config", "~/.config/weft/shop.token"],
       ["t-secret", "secret", "Weft: Set token (SecretStorage)"],
     ]);
     // The owner token (space API only, no WCP scopes) is never used for the feed.
     expect(got.some((t) => t.token === "t-owner")).toBe(false);
+    // Nor a member key, nor a joined space's session on another gateway.
+    expect(got.some((t) => t.token === "t-member" || t.token === "t-elsewhere")).toBe(false);
   });
 
   it("WEFT_HOME and XDG_CONFIG_HOME move ~/.config/weft like npx weft does", () => {

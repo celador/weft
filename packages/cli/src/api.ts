@@ -7,7 +7,11 @@ export type SpaceRepo = { name: string; repo: string; created: boolean };
 export type SpaceErased = { type?: string; space: string; status: "erased"; already_erased: boolean; erased: { repos: string[]; events: number; tokens: number } };
 export type IssuedToken = { token: string; info: { id: string; principal: string } };
 export type Pairing = { code: string; url: string; expires_in: number; expires_at: string; space: string };
-export type Viewer = { id: string; label: string; created_at: string; last_seen_at: string; expires_at: string };
+export type Viewer = { id: string; label: string; created_at: string; last_seen_at: string; expires_at: string; by?: string };
+/** A teammate who joined the space with an invite code (`weft members`). */
+export type Member = { id: string; label: string; handle: string; created_at: string; last_seen_at: string };
+export type Invite = { code: string; expires_at: string; expires_in: number; space: string };
+export type Joined = { space: { id: string }; role: "member"; token: string; member: Member };
 export type FeedEvent = {
   seq: number;
   repo: string;
@@ -99,8 +103,34 @@ export class Api {
   createSpace(label?: string, admin?: string) {
     return this.call<SpaceCreated>("POST", "/v1/spaces", admin, label ? { label } : {});
   }
-  space(owner: string) {
-    return this.call<{ space: { id: string; repos: Array<{ name: string; repo: string }>; tokens: number }; usage?: SpaceUsage; billing?: { enabled: boolean } }>("GET", "/v1/space", owner);
+  /** The space, asked with its owner key or a member key (`role` says which; older gateways omit it: owner). */
+  space(key: string) {
+    return this.call<{ role?: "owner" | "member"; member?: Member; space: { id: string; repos: Array<{ name: string; repo: string }>; tokens: number; members?: number }; usage?: SpaceUsage; billing?: { enabled: boolean } }>("GET", "/v1/space", key);
+  }
+  // ----- team join: invite codes, members (owner key); join and leave (a teammate)
+  /** A one-time invite code (30 minutes, single use) a teammate trades for their own member key. */
+  invite(owner: string) {
+    return this.call<Invite>("POST", "/v1/space/invites", owner, {});
+  }
+  cancelInvites(owner: string) {
+    return this.call<{ cancelled: number }>("DELETE", "/v1/space/invites", owner);
+  }
+  members(owner: string) {
+    return this.call<{ members: Member[] }>("GET", "/v1/space/members", owner).then((r) => r.members);
+  }
+  removeMember(owner: string, id: string) {
+    return this.call<{ revoked: number }>("DELETE", `/v1/space/members/${encodeURIComponent(id)}`, owner);
+  }
+  removeAllMembers(owner: string) {
+    return this.call<{ revoked: number }>("DELETE", "/v1/space/members", owner);
+  }
+  /** Trade an invite code for a member key. Not retried: a lost answer after the code was used would only turn into a 401. */
+  join(space: string, code: string, label: string, handle: string) {
+    return this.once<Joined>("POST", "/v1/join", undefined, { space, code, label, handle });
+  }
+  /** A member leaves: its key and everything it minted are revoked. */
+  leave(member: string) {
+    return this.call<{ revoked: number }>("DELETE", "/v1/space/members/me", member);
   }
   // Billing calls are not retried: a 503 here means "billing is off" or "Stripe is down", and the person is waiting.
   checkout(owner: string, choice: { seats: number; interval: "month" | "year" }) {

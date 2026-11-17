@@ -18,13 +18,41 @@
 //   weft usage                  the hosted space's plan (Free or Weft Pro with its seats) and events this month
 //   weft upgrade [--seats N] [--year]   Weft Pro, per user (Stripe Checkout); `weft billing` manages it (Stripe portal)
 //   weft --hosted --claim CODE  a purchase made on weft.mx (the welcome page's code) makes this repo's space Pro
+//   weft invite                 (owner) a one-time code + the command a teammate on another machine runs to join
+//   weft --hosted --join SPACE:CODE [--repo NAME] [--as NAME]   join a teammate's space with your own member key
+//   weft members [revoke <id|handle>|--all]   (owner) who joined; remove one or all (their keys stop working)
 import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { Api, statusOf, type FeedEvent, type Viewer } from "./api";
+import { Api, statusOf, type FeedEvent, type Member, type Viewer } from "./api";
 import { MCP, WATCHER, adapterBin, detectHarnesses, ensureRuntime, harnessName, HARNESSES, installAdapter, installedIn, removeAdapters, startOrder, type HarnessId } from "./adapters";
-import { deploy, ensureSpace, feedUrl, hermesPointer, HOSTED_URL, HUMAN_TOKEN_FILE, kindOf, loadState, readPointer, saveState, sharedHumanToken, startLocal, stopLocal, withViewer, writePointer, LOCAL_PORT, type CliState, type HermesPointer, type RepoPointer } from "./gateways";
+import {
+  deploy,
+  ensureSpace,
+  feedUrl,
+  hermesPointer,
+  HOSTED_URL,
+  HUMAN_TOKEN_FILE,
+  joinSpace,
+  kindOf,
+  loadState,
+  memberAccess,
+  memberIdentity,
+  memberKey,
+  parseJoin,
+  readPointer,
+  saveState,
+  sharedHumanToken,
+  startLocal,
+  stopLocal,
+  withViewer,
+  writePointer,
+  LOCAL_PORT,
+  type CliState,
+  type HermesPointer,
+  type RepoPointer,
+} from "./gateways";
 import { billing as billingPage, claim as claimPurchase, looksLikeClaimCode, upgrade as upgradePage, usage as showUsage } from "./billing";
 import { ask, c, configDir, git, info, mainCheckout, ok, openUrl, readJson, readSecret, slug, tilde, tryGit, VERSION, warn, WeftError, worktrees, writeJson } from "./util";
 
@@ -47,13 +75,17 @@ type Opts = {
   year: boolean;
   /** A claim code from the weft.mx welcome page. */
   claim?: string;
+  /** `--join <space>:<code>`: join a teammate's space with an invite code. */
+  join?: { space: string; code: string };
+  /** `--as NAME`: how a joining teammate is shown to the owner (default: git's user.name). */
+  as?: string;
   positional: string[];
 };
 
 export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
   const o: Opts = { local: false, hosted: false, yes: false, open: true, space: false, all: false, year: false, positional: [] };
   let cmd = "init";
-  const known = new Set(["init", "demo", "add", "status", "pair", "viewers", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "usage", "upgrade", "billing", "help", "version"]);
+  const known = new Set(["init", "demo", "add", "status", "pair", "viewers", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "usage", "upgrade", "billing", "invite", "members", "help", "version"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     const val = () => {
@@ -78,6 +110,12 @@ export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
     else if (a === "--year" || a === "--yearly") o.year = true;
     else if (a === "--month" || a === "--monthly") o.year = false;
     else if (a === "--claim") o.claim = val();
+    else if (a === "--join") {
+      const v = val();
+      const j = parseJoin(v);
+      if (!j) throw new WeftError("--join takes <space>:<code>, e.g. sp0abc1def2g:K7M2P-9XQ4T", "Copy the whole command the space's owner sent you (they run: npx @celador/weft invite).");
+      o.join = j;
+    } else if (a === "--as") o.as = val();
     else if (a === "-h" || a === "--help") cmd = "help";
     else if (a === "-v" || a === "--version") cmd = "version";
     else if (a.startsWith("-")) throw new WeftError(`unknown option ${a}`, "Run `npx @celador/weft help`.");
@@ -90,6 +128,12 @@ export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
     if (o.local) throw new WeftError("a claim code is for a hosted space", "Run: npx @celador/weft --hosted --claim <code>");
     if (!looksLikeClaimCode(o.claim)) throw new WeftError("that does not look like a claim code (XXXX-XXXX-XXXX)", "Copy it from the welcome page you saw after paying.");
     // A purchase made on weft.mx is for the hosted gateway: --claim implies --hosted unless another gateway is named.
+    if (!o.url) o.hosted = true;
+  }
+  if (o.join) {
+    if (o.local) throw new WeftError("--join is for a shared gateway (hosted, or your team's own)", "Run: npx @celador/weft --hosted --join <space>:<code>");
+    if (o.claim) throw new WeftError("--join and --claim are separate steps", "Join first; the space's owner manages Weft Pro (npx @celador/weft billing).");
+    // An invite is for the hosted gateway unless the owner's command names another one with --url.
     if (!o.url) o.hosted = true;
   }
   if (o.agents !== undefined && (!Number.isInteger(o.agents) || o.agents < 1 || o.agents > 8)) throw new WeftError("--agents must be 1-8");
@@ -134,6 +178,14 @@ ${c.bold("npx @celador/weft")}            in a git repo: a gateway on this machi
   billing                     change seats, payment method, invoices or cancel (Stripe portal)
   --hosted --claim CODE       bought Weft Pro on weft.mx? this makes the repo's hosted space Pro (code from the welcome page)
 
+Teams (a hosted space, or your own gateway):
+  invite                      a one-time code (30 min, single use) and the command a teammate runs on their machine
+  --hosted --join SPACE:CODE  join a teammate's space with your own key, in your clone of the repo
+                              (--repo NAME picks the space's repo; --as NAME is how the owner sees you)
+  members                     who joined: name, handle, joined, last used
+  members revoke <id|handle>|--all
+                              remove a teammate: their key and every agent key and session it made stop working
+
 Docs: https://github.com/celador/weft/blob/main/docs/try-it.md`;
 
 // ------------------------------------------------------------------ setup
@@ -166,17 +218,28 @@ const changeId = () => `I${createHash("sha1").update(randomBytes(32)).digest("he
 
 type Checkout = { root: string; agent: string; branch?: string };
 
-function plan(roots: string[]): Checkout[] {
+/**
+ * One agent id per checkout: the directory name, made unique. A teammate's agents also carry their handle
+ * (`shop.alice`): two people's checkouts called `shop` must never share an agent id, because an agent is never
+ * checked against itself. The gateway refuses a member's agent id without it. Exported for tests.
+ */
+export function plan(roots: string[], handle?: string): Checkout[] {
   const used = new Set<string>();
   return roots.map((root) => {
     let agent = slug(basename(root), 48);
     for (let i = 2; used.has(agent); i++) agent = `${slug(basename(root), 44)}-${i}`;
     used.add(agent);
+    if (handle) agent = `${agent.slice(0, 63 - handle.length).replace(/[-._]+$/, "")}.${handle}`;
     return { root, agent, branch: tryGit(root, ["rev-parse", "--abbrev-ref", "HEAD"]) };
   });
 }
 
-async function setupCheckout(api: Api, url: string, owner: string, space: string, repo: string, name: string, co: Checkout, harnesses: HarnessId[], rt: string): Promise<void> {
+/** The key this run uses for the space API: the owner's, or a member's (a teammate who joined). */
+type Access = { space: string; key: string; role: "owner" | "member"; handle?: string };
+
+async function setupCheckout(api: Api, url: string, acc: Access, repo: string, name: string, co: Checkout, harnesses: HarnessId[], rt: string): Promise<void> {
+  const owner = acc.key;
+  const space = acc.space;
   const ptr = readPointer(co.root);
   const meta = readJson<{ tokenId?: string; agent?: string; change?: string; task?: string }>(join(co.root, ".weft", "space.json"), {});
   // Reuse a working agent token for the same gateway + repo; otherwise mint one.
@@ -199,8 +262,9 @@ async function setupCheckout(api: Api, url: string, owner: string, space: string
   const change = meta.change ?? changeId();
   const title = `${co.agent} (${co.branch ?? "detached"})`;
   for (const h of harnesses) installAdapter(rt, h, { root: co.root, url, repo, agent: co.agent, task, title, change, token });
-  writePointer(co.root, { url, space, repo, name }, owner);
-  writeJson(join(co.root, ".weft", "space.json"), { url, space, repo, name, agent: co.agent, tokenId, change, task, harnesses, weft: VERSION });
+  const role = acc.role === "member" ? { role: "member" as const, handle: acc.handle! } : {};
+  writePointer(co.root, { url, space, repo, name, ...role }, owner);
+  writeJson(join(co.root, ".weft", "space.json"), { url, space, repo, name, ...role, agent: co.agent, tokenId, change, task, harnesses, weft: VERSION });
 }
 
 /** Under "Next": the other harnesses that work here, first-run prompts, MCP, the squiggle. Exported for tests. */
@@ -277,16 +341,40 @@ async function init(o: Opts, addName?: string | true, fresh = false): Promise<st
   const api = new Api(url!);
   await api.health();
 
-  // 2. space + repo
-  const name = slug(o.repo ?? basename(main), 48);
-  const { gw, created } = await ensureSpace(api, url!, top, name);
-  const where = kindOf(url!) === "hosted" ? "hosted space on Cloudflare" : kindOf(url!) === "local" ? "local space" : "space";
-  ok(`${created ? "created your" : "using your"} ${where} ${c.bold(gw.space!)} ${c.dim(`(${new URL(url!).host}${kindOf(url!) === "local" ? "; your edits stay on this machine" : ""})`)}`);
+  // 2. space + repo: the repo's own space, or one this machine joins (--join) or joined as a teammate
+  const memberPtr = o.join ? undefined : [top, main].map(readPointer).find((p) => p?.role === "member" && p.url === url);
+  let acc: Access;
+  let name = slug(o.repo ?? memberPtr?.name ?? basename(main), 48);
+  const host = c.dim(`(${new URL(url!).host}${kindOf(url!) === "local" ? "; your edits stay on this machine" : ""})`);
+  if (o.join) {
+    refuseOverOwnSpace([top, main], url!, o.join.space);
+    const j = await joinSpace(api, url!, o.join, memberIdentity(o.as));
+    acc = { space: j.space, key: j.key, role: "member", handle: j.handle };
+    ok(`${j.reused ? "already a member of" : "joined"} space ${c.bold(j.space)} as ${c.bold(j.handle)} ${host}`);
+    if (j.reused) info("this machine already had a member key for that space, so the invite code was not used");
+    name = await memberRepo(api, j.key, name, o.repo !== undefined);
+  } else if (memberPtr) {
+    const m = await memberAccess(api, memberPtr, [top, main]);
+    acc = { space: m.space, key: m.key, role: "member", handle: m.handle };
+    ok(`using space ${c.bold(m.space)} as member ${c.bold(m.handle)} ${host}`);
+  } else {
+    const { gw, created } = await ensureSpace(api, url!, top, name);
+    acc = { space: gw.space!, key: gw.owner!, role: "owner" };
+    const where = kindOf(url!) === "hosted" ? "hosted space on Cloudflare" : kindOf(url!) === "local" ? "local space" : "space";
+    ok(`${created ? "created your" : "using your"} ${where} ${c.bold(gw.space!)} ${host}`);
+  }
   if (o.claim) {
-    const p = await claimPurchase(api, url!, gw.owner!, o.claim);
+    if (acc.role === "member") throw new WeftError("only the space's owner can attach a purchase to it", "Claim it in a repo with a space of your own, or send the code to the owner.");
+    const p = await claimPurchase(api, url!, acc.key, o.claim);
     ok(`Weft Pro: ${p.seats} ${p.seats === 1 ? "seat" : "seats"}, billed ${p.interval === "year" ? "yearly" : "monthly"} ${c.dim("(no event cut-off; manage it: npx @celador/weft billing)")}`);
   }
-  const r = await api.createRepo(gw.owner!, name);
+  let r;
+  try {
+    r = await api.createRepo(acc.key, name);
+  } catch (e) {
+    if (acc.role === "member" && statusOf(e) === 403) throw new WeftError((e as Error).message.replace(/ \(403.*$/, ""), "Pass --repo <name> with one of the space's repos, or ask the owner to run npx @celador/weft in this repo first.");
+    throw e;
+  }
   ok(`repo ${c.bold(name)} ${c.dim(r.created ? "(new)" : "(already there)")}`);
 
   // 3. checkouts: every worktree of the repo; offer a second one so two agents can work side by side
@@ -309,15 +397,16 @@ async function init(o: Opts, addName?: string | true, fresh = false): Promise<st
     harnesses = [WATCHER.id];
   }
   const rt = ensureRuntime();
-  const checkouts = plan(roots);
+  const checkouts = plan(roots, acc.handle);
   for (const co of checkouts) {
-    await setupCheckout(api, url!, gw.owner!, gw.space!, r.repo, name, co, harnesses, rt);
+    await setupCheckout(api, url!, acc, r.repo, name, co, harnesses, rt);
     ok(`${harnesses.map(harnessName).join(" + ")} ${c.dim("hooks in")} ${c.bold(tilde(co.root))} ${c.dim(`(agent ${co.agent})`)}`);
   }
   if (det.hermes && !o.harness) info(`Hermes Agent found: its Weft plugin installs per profile, see ${c.dim("https://github.com/celador/weft/tree/main/packages/adapters/hermes")}`);
 
   // 5. feed + next steps
-  const link = await showFeed(api, url!, gw.space!, gw.owner!);
+  const link = await showFeed(api, url!, acc.space, acc.key);
+  if (acc.role === "member") info(`your agents are ${checkouts.map((co) => c.bold(co.agent)).join(", ")}: the owner's and other teammates' agents are checked against them`);
   const order = startOrder(harnesses);
   const first = order[0]!;
   console.log(c.bold("Next:") + (checkouts.length > 1 ? " start one agent per checkout, each in its own terminal:" : " start your agent here:"));
@@ -404,8 +493,13 @@ async function hermesInit(hp: HermesPointer): Promise<void> {
   console.log(`\n${c.bold("Next")}  ${c.cyan("npx @celador/weft feed")} ${c.dim("(the same events Otto and the VS Code extension show)")}`);
 }
 
-/** The space's owner key on this machine (cli.json, else the repo's .weft/space-token), remembered in cli.json for the CLI's own read session. */
+/**
+ * The key this machine uses for the repo's space: for a space it joined, the member key (never written into
+ * `gateways`, which holds this machine's own space); else the owner key (cli.json, else the repo's
+ * .weft/space-token), remembered in cli.json for the CLI's own read session.
+ */
 function ownerFor(ptr: RepoPointer, main: string): string | undefined {
+  if (ptr.role === "member") return memberKey(ptr, [main, ...worktrees(main).map((w) => w.path)]);
   const state = loadState();
   const gw = state.gateways[ptr.url] ?? { kind: kindOf(ptr.url) };
   if (gw.owner) return gw.owner;
@@ -435,14 +529,56 @@ async function showFeed(api: Api, url: string, space: string, owner: string): Pr
   return address;
 }
 
-/** The repo's own hosted space (owner key and all), or an error that says what to do. Not for repos that report through the Hermes adapter. */
-function spaceHere(o: Opts): { api: Api; ptr: RepoPointer; owner: string } {
+/**
+ * The repo's space and the key this machine holds for it (`owner`: the owner key, or a member key when `member`), or an
+ * error that says what to do. Not for repos that report through the Hermes adapter.
+ */
+function spaceHere(o: Opts): { api: Api; ptr: RepoPointer; owner: string; member: boolean } {
   const { main, ptr, hp } = here(o);
   if (!ptr && hp) throw new WeftError(`this repo reports to ${hp.url} through the Hermes adapter and has no hosted space of its own`, "Otto and the VS Code panel read that feed with the shared human token; there is nothing to pair.");
   if (!ptr) throw new WeftError("Weft is not set up in this repo", "Run npx @celador/weft first.");
   const owner = ownerFor(ptr, main);
+  if (!owner && ptr.role === "member") throw new WeftError(`this machine has no member key for space ${ptr.space}`, "Run the join command the space's owner sent you again, or ask them for a new invite (npx @celador/weft invite).");
   if (!owner) throw new WeftError("this machine does not hold the space's owner key", "Run npx @celador/weft inside the repo that created the space (it keeps the key in .weft/space-token).");
-  return { api: new Api(ptr.url), ptr, owner };
+  return { api: new Api(ptr.url), ptr, owner: owner!, member: ptr.role === "member" };
+}
+
+/** The owner's commands: a teammate (member key) is told who can do it. */
+function ownerOnly(s: { member: boolean; ptr: RepoPointer }, what: string): void {
+  if (s.member) throw new WeftError(`only the owner of space ${s.ptr.space} can ${what}; you joined it as ${s.ptr.handle ?? "a member"}`, "Ask the person who sent you the invite.");
+}
+
+/**
+ * Before `--join` rewrites this repo's .weft/: never drop the only copy of an owner key. A repo that already uses a
+ * space of its own (on this gateway) whose key is not also kept in cli.json is left alone, with what to do.
+ */
+function refuseOverOwnSpace(roots: string[], url: string, joining: string): void {
+  const own = loadState().gateways[url]?.owner;
+  for (const r of roots) {
+    const p = readPointer(r);
+    const key = readSecret(join(r, ".weft", "space-token"));
+    if (!p || p.role === "member" || !key) continue;
+    if (p.space === joining && p.url === url) throw new WeftError(`this repo already uses space ${joining} with its owner key`, "There is nothing to join: run npx @celador/weft here.");
+    if (key !== own)
+      throw new WeftError(
+        `this repo uses your own space ${p.space}, and its owner key is kept only in ${tilde(join(r, ".weft", "space-token"))}`,
+        `Joining would replace it. Erase that space first (npx @celador/weft uninstall --space), or keep the key: copy it out of .weft/space-token, then run npx @celador/weft uninstall and the join command again.`,
+      );
+  }
+}
+
+/** The space repo a joining teammate uses: --repo, else this directory's name, else the space's only repo. */
+async function memberRepo(api: Api, key: string, name: string, explicit: boolean): Promise<string> {
+  const names = (await api.space(key)).space.repos.map((r) => r.name);
+  if (names.includes(name)) return name;
+  if (!explicit && names.length === 1) {
+    info(`this clone is called ${name}; the space's repo is ${c.bold(names[0]!)}, so it reports there`);
+    return names[0]!;
+  }
+  throw new WeftError(
+    names.length ? `space has no repo ${name}; it has ${names.join(", ")}` : "the space has no repo yet",
+    names.length ? `Run the command again with --repo <one of them>.` : "Ask the owner to run npx @celador/weft in the repo first, then invite you again.",
+  );
 }
 
 const until = (ts: string) => {
@@ -505,7 +641,7 @@ async function status(o: Opts): Promise<void> {
     up = false;
   }
   console.log(`${c.bold("gateway")}  ${ptr.url} ${up ? c.green("up") : c.red("unreachable")} ${c.dim(`(${kindOf(ptr.url)})`)}`);
-  console.log(`${c.bold("space")}    ${ptr.space}`);
+  console.log(`${c.bold("space")}    ${ptr.space}${ptr.role === "member" ? ` ${c.dim(`(joined as ${ptr.handle ?? "a member"}: your own key; the owner can remove it)`)}` : ""}`);
   console.log(`${c.bold("repo")}     ${ptr.name} ${c.dim(`(${ptr.repo})`)}`);
   console.log(c.bold("checkouts"));
   for (const w of worktrees(main)) {
@@ -526,11 +662,13 @@ async function status(o: Opts): Promise<void> {
   const owner = ownerFor(ptr, main);
   if (!up) return;
   if (!owner) {
-    console.log(c.dim("feed     (this machine does not hold the space's owner key; run npx @celador/weft in the repo that created it)"));
+    console.log(c.dim(ptr.role === "member" ? "feed     (this machine has no member key for the space; run the owner's join command again)" : "feed     (this machine does not hold the space's owner key; run npx @celador/weft in the repo that created it)"));
     return;
   }
+  const joined = ptr.role === "member" ? ptr.space : undefined;
+  if (joined) await memberAccess(api, ptr, [main, ...worktrees(main).map((w) => w.path)]); // a removed member is told so here
   try {
-    const ev = await withViewer(api, ptr.url, (v) => api.events(v, ptr.repo, "?tail=1&limit=5"));
+    const ev = await withViewer(api, ptr.url, (v) => api.events(v, ptr.repo, "?tail=1&limit=5"), joined);
     console.log(c.bold(`recent events`) + c.dim(` (head #${ev.head_seq})`));
     if (!ev.events.length) console.log(c.dim("  none yet: start an agent in one of the checkouts"));
     for (const e of ev.events) console.log(formatEvent(e, ptr.space));
@@ -549,7 +687,9 @@ async function pair(o: Opts): Promise<void> {
 
 /** `weft viewers` lists paired devices; `weft viewers revoke <id>|--all` unpairs them. */
 async function viewers(o: Opts): Promise<void> {
-  const { api, ptr, owner } = spaceHere(o);
+  const s = spaceHere(o);
+  ownerOnly(s, "list or unpair the space's devices");
+  const { api, ptr, owner } = s;
   const [sub, target] = o.positional;
   if (sub !== undefined && sub !== "revoke") throw new WeftError(`unknown viewers command ${sub}`, "Use: weft viewers · weft viewers revoke <id> · weft viewers revoke --all");
   if (sub === "revoke") {
@@ -569,7 +709,7 @@ async function viewers(o: Opts): Promise<void> {
   const list: Viewer[] = await api.viewers(owner);
   console.log(`${c.bold("paired devices")} ${c.dim(`for space ${ptr.space} on ${new URL(ptr.url).host}`)}`);
   if (!list.length) console.log(c.dim("  none: pair a browser with npx @celador/weft pair"));
-  for (const v of list) console.log(`  ${c.bold(v.id)}  ${(v.label || "device").padEnd(28)} ${c.dim(`paired ${when(v.created_at)} · last seen ${when(v.last_seen_at)} · unpairs itself in ${until(v.expires_at)} unless used`)}`);
+  for (const v of list) console.log(`  ${c.bold(v.id)}  ${(v.label || "device").padEnd(28)} ${c.dim(`${v.by ? `${v.by}'s · ` : ""}paired ${when(v.created_at)} · last seen ${when(v.last_seen_at)} · unpairs itself in ${until(v.expires_at)} unless used`)}`);
   if (list.length) console.log(c.dim("\nunpair one: npx @celador/weft viewers revoke <id> · all: npx @celador/weft viewers revoke --all"));
 }
 
@@ -577,12 +717,13 @@ async function feed(o: Opts): Promise<void> {
   const { ptr, hp } = here(o);
   if (!ptr && hp) return hermesFeed(hp);
   if (!ptr) throw new WeftError("Weft is not set up in this repo", "Run npx @celador/weft first.");
-  const { api } = spaceHere(o);
+  const { api, member } = spaceHere(o);
+  const joined = member ? ptr.space : undefined;
   console.log(c.dim(`live feed for space ${ptr.space} on ${ptr.url} (Ctrl-C to stop)\n`));
   let cursor: string | undefined;
   for (;;) {
     try {
-      const page = await withViewer(api, ptr.url, (v) => api.feed(v, cursor ? `?after=${encodeURIComponent(cursor)}&limit=200` : "?tail=1&limit=20"));
+      const page = await withViewer(api, ptr.url, (v) => api.feed(v, cursor ? `?after=${encodeURIComponent(cursor)}&limit=200` : "?tail=1&limit=20"), joined);
       for (const e of page.events) console.log(formatEvent(e, ptr.space));
       if (page.cursor) cursor = page.cursor;
       if (page.has_more) continue;
@@ -618,13 +759,18 @@ async function hermesFeed(hp: HermesPointer): Promise<void> {
 
 async function uninstall(o: Opts): Promise<void> {
   const { main, ptr } = here(o);
-  const owner = ptr ? (loadState().gateways[ptr.url]?.owner ?? readSecret(join(main, ".weft", "space-token"))) : undefined;
+  const member = ptr?.role === "member";
+  const owner = ptr ? (member ? ownerFor(ptr, main) : (loadState().gateways[ptr.url]?.owner ?? readSecret(join(main, ".weft", "space-token")))) : undefined;
   const api = ptr ? new Api(ptr.url) : undefined;
 
   // --space: erase on the gateway FIRST. If that fails (network, gateway error) nothing local has been
   // removed yet, so the owner key is still here and the command can simply be run again.
+  // A teammate's --space leaves the space instead (their key and what it minted are revoked); only the owner erases.
   let erased = false;
-  if (o.space) {
+  if (o.space && member && ptr && api) {
+    if (!owner) info("this machine has no member key for the space any more, so there is nothing to leave");
+    else erased = await leaveSpace(api, ptr, owner, o.yes);
+  } else if (o.space) {
     if (!ptr || !api) info("no Weft space is set up in this repo, so there is nothing to erase");
     else if (!owner) throw new WeftError(`this machine does not hold the owner key for space ${ptr.space}`, `It is kept in ${tilde(join(configDir(), "cli.json"))} and ${tilde(join(main, ".weft", "space-token"))}. Without it only the gateway's operator can erase the space.`);
     else erased = await eraseSpace(api, ptr, owner, o.yes);
@@ -641,7 +787,15 @@ async function uninstall(o: Opts): Promise<void> {
     }
   }
   if (!n) info("Weft was not installed in this repo's checkouts");
-  if (erased && ptr) {
+  if (erased && ptr && member) {
+    rmSync(join(main, ".weft", "space-token"), { force: true });
+    const s = loadState();
+    if (s.spaces?.[ptr.space]) {
+      delete s.spaces[ptr.space];
+      saveState(s);
+    }
+    ok(`removed your member key from ${tilde(join(configDir(), "cli.json"))} and ${tilde(join(main, ".weft", "space-token"))}`);
+  } else if (erased && ptr) {
     // The owner key is useless now, and a leftover copy only invites confusion: drop every local trace of the space.
     rmSync(join(main, ".weft", "space-token"), { force: true });
     const s = loadState();
@@ -701,6 +855,104 @@ async function eraseSpace(api: Api, ptr: NonNullable<ReturnType<typeof readPoint
   );
   console.log(c.dim("  Irreversible. The gateway keeps only a tombstone: the space id, when it was erased, and the day it was created."));
   return true;
+}
+
+/** A teammate's `uninstall --space`: leave the space (the gateway revokes this member key and everything it minted). */
+async function leaveSpace(api: Api, ptr: RepoPointer, key: string, yes: boolean): Promise<boolean> {
+  if (!yes) {
+    const go = await ask(`Leave space ${ptr.space} on ${ptr.url}? Your member key and your agents' keys stop working; the space and its history stay with its owner.`, false);
+    if (!go) {
+      info("still a member (run `npx @celador/weft uninstall --space` again to leave)");
+      return false;
+    }
+  }
+  try {
+    await api.leave(key);
+  } catch (e) {
+    if (statusOf(e) !== 401 && statusOf(e) !== 403) throw new WeftError(`could not leave space ${ptr.space}: ${(e as Error).message}`, "Nothing was removed on this machine. Run the command again.");
+    info("the gateway no longer accepts this member key: you were already removed");
+    return true;
+  }
+  ok(`left space ${ptr.space} ${c.dim("(its owner keeps the space and its history)")}`);
+  return true;
+}
+
+/**
+ * `weft invite` (owner): a one-time invite code and the one command a teammate runs in their clone. The code goes on the
+ * command line, never into a URL; it works once, for 30 minutes, and gives that teammate their own member key.
+ */
+async function invite(o: Opts): Promise<void> {
+  const s = spaceHere(o);
+  ownerOnly(s, "invite teammates");
+  const { api, ptr, owner } = s;
+  if (o.positional[0] === "cancel") {
+    const r = await api.cancelInvites(owner);
+    ok(`cancelled ${r.cancelled} open invite code${r.cancelled === 1 ? "" : "s"}`);
+    return;
+  }
+  if (o.positional[0] !== undefined) throw new WeftError(`unknown invite command ${o.positional[0]}`, "Use: weft invite · weft invite cancel");
+  if (kindOf(ptr.url) === "local") warn(`this space is on the gateway on this machine (${new URL(ptr.url).host}): a teammate on another machine cannot reach it. For a team, use a hosted space (npx @celador/weft --hosted) or your own gateway (npx @celador/weft deploy).`);
+  let p;
+  try {
+    p = await api.invite(owner);
+  } catch (e) {
+    if (statusOf(e) === 404) throw new WeftError(`${ptr.url} has no team join (an older gateway)`, "Update it: npx @celador/weft deploy");
+    throw e;
+  }
+  const where = kindOf(ptr.url) === "hosted" ? "--hosted" : `--url ${ptr.url}`;
+  const cmd = `npx @celador/weft ${where} --join ${ptr.space}:${p.code} --repo ${ptr.name}`;
+  console.log(`\n${c.bold("Invite a teammate")} ${c.dim(`to space ${ptr.space}`)}`);
+  console.log(`  ${c.bold("code")}  ${c.bold(c.cyan(p.code))}  ${c.dim(`one use, expires in ${Math.round(p.expires_in / 60)} minutes`)}`);
+  console.log(`\nSend them this command, to run in their clone of ${c.bold(ptr.name)}:`);
+  console.log(`  ${c.cyan(cmd)}`);
+  console.log(c.dim(`\nThey get their own key (not yours) and their agents are named <checkout>.<their name>, so your agents and theirs are checked against each other.`));
+  console.log(c.dim(`See who joined: npx @celador/weft members · remove someone: npx @celador/weft members revoke <id> · drop open codes: npx @celador/weft invite cancel`));
+  // Weft Pro is per user: an honor system, but say so when this invite would pass the seats paid for.
+  try {
+    const sp = await api.space(owner);
+    const u = sp.usage;
+    const people = 1 + (sp.space.members ?? 0) + 1;
+    if (u?.plan === "paid" && u.seats && people > u.seats)
+      warn(`Weft Pro is per user: this space pays for ${u.seats} ${u.seats === 1 ? "seat" : "seats"}, and will have ${people} people with this teammate. Add a seat: npx @celador/weft billing`);
+  } catch {
+    /* the invite is what matters */
+  }
+  console.log("");
+}
+
+/** `weft members` (owner): who joined; `weft members revoke <id|handle>|--all` removes them. */
+async function members(o: Opts): Promise<void> {
+  const s = spaceHere(o);
+  ownerOnly(s, "list or remove members");
+  const { api, ptr, owner } = s;
+  const [sub, target] = o.positional;
+  if (sub !== undefined && sub !== "revoke") throw new WeftError(`unknown members command ${sub}`, "Use: weft members · weft members revoke <id|handle> · weft members revoke --all");
+  if (sub === "revoke") {
+    if (o.all) {
+      const r = await api.removeAllMembers(owner);
+      ok(`removed every member ${c.dim(`(${r.revoked} key${r.revoked === 1 ? "" : "s"} revoked)`)}`);
+      return;
+    }
+    if (!target) throw new WeftError("revoke needs a member id, a handle or --all", "List them with: npx @celador/weft members");
+    const all = await api.members(owner);
+    const exact = all.filter((m) => m.id === target || m.handle === target);
+    const hits = exact.length ? exact : all.filter((m) => m.id.startsWith(target));
+    if (hits.length !== 1) throw new WeftError(hits.length ? `${target} matches ${hits.length} members; use the full id` : `no member ${target}`, "List them with: npx @celador/weft members");
+    const r = await api.removeMember(owner, hits[0]!.id);
+    ok(`removed ${c.bold(hits[0]!.handle)} ${c.dim(`(${hits[0]!.label}; ${r.revoked} key${r.revoked === 1 ? "" : "s"} revoked: their member key, agent keys and read sessions)`)}`);
+    return;
+  }
+  const list: Member[] = await api.members(owner);
+  console.log(`${c.bold("members")} ${c.dim(`of space ${ptr.space} on ${new URL(ptr.url).host} (you are the owner)`)}`);
+  if (!list.length) console.log(c.dim("  none yet: invite a teammate with npx @celador/weft invite"));
+  for (const m of list) console.log(`  ${c.bold(m.id)}  ${m.handle.padEnd(14)} ${m.label.padEnd(28)} ${c.dim(`joined ${when(m.created_at)} · last used ${when(m.last_seen_at)}`)}`);
+  try {
+    const u = (await api.space(owner)).usage;
+    if (u?.plan === "paid" && u.seats) console.log(c.dim(`\n${1 + list.length} ${list.length ? "people" : "person"} (you and ${list.length} member${list.length === 1 ? "" : "s"}) · Weft Pro seats: ${u.seats}${1 + list.length > u.seats ? " · add a seat: npx @celador/weft billing" : ""}`));
+  } catch {
+    /* listing is what matters */
+  }
+  if (list.length) console.log(c.dim("\nremove one: npx @celador/weft members revoke <id|handle> · all: npx @celador/weft members revoke --all"));
 }
 
 function watch(o: Opts): void {
@@ -818,13 +1070,21 @@ export async function main(argv: string[]): Promise<number> {
       await showUsage(s.ptr.url, s.owner, s.ptr.space);
       return 0;
     }
+    case "invite":
+      await invite(o);
+      return 0;
+    case "members":
+      await members(o);
+      return 0;
     case "upgrade": {
       const s = spaceHere(o);
+      ownerOnly(s, "change its plan");
       await upgradePage(s.ptr.url, s.owner, o.open, { seats: o.seats ?? 1, interval: o.year ? "year" : "month" });
       return 0;
     }
     case "billing": {
       const s = spaceHere(o);
+      ownerOnly(s, "manage its billing");
       await billingPage(s.ptr.url, s.owner, o.open);
       return 0;
     }

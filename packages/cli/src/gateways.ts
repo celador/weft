@@ -9,7 +9,7 @@
 // token in .weft/space-token (0600, git-ignored) so the repo can find its space again.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { homedir, hostname } from "node:os";
+import { homedir, hostname, userInfo } from "node:os";
 import { createServer as createNetServer } from "node:net";
 import { delimiter, dirname, join, resolve, sep } from "node:path";
 import { Api, statusOf } from "./api";
@@ -21,7 +21,12 @@ export const LOCAL_PORT = 7878;
 const WRANGLER = "wrangler@4";
 
 export type GatewayState = { kind: "hosted" | "local" | "own"; space?: string; owner?: string; viewer?: string; viewerId?: string; admin?: string; name?: string; created_at?: string };
-export type CliState = { default?: string; gateways: Record<string, GatewayState> };
+/**
+ * A space this machine joined as a teammate (`--join <space>:<code>`), by space id. Kept apart from `gateways` (one own
+ * space per gateway): joining a teammate's space never replaces this machine's own space on the same gateway.
+ */
+export type JoinedSpace = { url: string; key: string; handle: string; member: string; joined_at: string; viewer?: string; viewerId?: string };
+export type CliState = { default?: string; gateways: Record<string, GatewayState>; spaces?: Record<string, JoinedSpace> };
 
 const statePath = (env = process.env) => join(configDir(env), "cli.json");
 
@@ -41,7 +46,8 @@ export function kindOf(url: string): GatewayState["kind"] {
   return "own";
 }
 
-export type RepoPointer = { url: string; space: string; repo: string; name: string };
+/** `.weft/space.json`. `role: "member"` = this repo uses a space it joined; `.weft/space-token` then holds the member key. */
+export type RepoPointer = { url: string; space: string; repo: string; name: string; role?: "member"; handle?: string };
 
 export function readPointer(root: string): RepoPointer | undefined {
   const p = readJson<RepoPointer | null>(join(root, ".weft", "space.json"), null);
@@ -99,9 +105,103 @@ export function sharedHumanToken(url: string, env = process.env): string | undef
   return j.url.replace(/\/+$/, "") === url.replace(/\/+$/, "") ? j.token.trim() || undefined : undefined;
 }
 
-export function writePointer(root: string, p: RepoPointer, owner: string): void {
+export function writePointer(root: string, p: RepoPointer, key: string): void {
   writeJson(join(root, ".weft", "space.json"), p);
-  writeSecret(join(root, ".weft", "space-token"), owner);
+  writeSecret(join(root, ".weft", "space-token"), key);
+}
+
+// ------------------------------------------------------------------ team join (a teammate's member key)
+
+/** `<space>:<code>`, as `weft invite` prints it. */
+export function parseJoin(s: string): { space: string; code: string } | undefined {
+  const m = /^(sp[a-z0-9]{10}):([A-Za-z0-9]{5}-?[A-Za-z0-9]{5})$/.exec(s.trim());
+  return m ? { space: m[1]!, code: m[2]!.toUpperCase() } : undefined;
+}
+
+/** Who this machine says it is to the space's owner: git's user.name (else the login name) and the short host name. */
+export function memberIdentity(as?: string): { label: string; handle: string } {
+  let name = as?.trim() ?? "";
+  if (!name) {
+    const r = spawnSync("git", ["config", "user.name"], { encoding: "utf8" });
+    name = (r.status === 0 ? r.stdout.trim() : "") || safeUser();
+  }
+  const handle = name.split(/\s+/)[0]!.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 20) || "member";
+  return { label: `${name} on ${hostname().split(".")[0]}`, handle };
+}
+
+function safeUser(): string {
+  try {
+    return userInfo().username;
+  } catch {
+    return "teammate";
+  }
+}
+
+/** The member key a member repo uses: its .weft/space-token, else the one kept in cli.json for that space. */
+export function memberKey(ptr: RepoPointer, roots: string[], env = process.env): string | undefined {
+  for (const r of roots) {
+    const p = readPointer(r);
+    const k = p?.space === ptr.space && p.role === "member" ? readSecret(join(r, ".weft", "space-token")) : undefined;
+    if (k) return k;
+  }
+  const j = loadState(env).spaces?.[ptr.space];
+  return j && j.url === ptr.url ? j.key : undefined;
+}
+
+export type MemberAccess = { space: string; key: string; handle: string; member: string };
+
+/** A live member key for `space` on `url`, or undefined when the gateway refuses it (removed, or the space is gone). */
+async function checkMember(api: Api, key: string): Promise<{ handle: string; member: string } | undefined> {
+  try {
+    const s = await api.space(key);
+    return s.role === "member" && s.member ? { handle: s.member.handle, member: s.member.id } : undefined;
+  } catch (e) {
+    if (statusOf(e) === 401 || statusOf(e) === 403) return undefined;
+    throw e;
+  }
+}
+
+/**
+ * Join `space` with an invite code: trade it for a member key, kept in cli.json under `spaces` (and, by the caller, in
+ * the repo's .weft/space-token). A machine that already holds a working member key for that space reuses it and leaves
+ * the code unused.
+ */
+export async function joinSpace(api: Api, url: string, spec: { space: string; code: string }, who: { label: string; handle: string }): Promise<MemberAccess & { reused: boolean }> {
+  const state = loadState();
+  const had = state.spaces?.[spec.space];
+  if (had && had.url === url) {
+    const live = await checkMember(api, had.key);
+    if (live) return { space: spec.space, key: had.key, ...live, reused: true };
+  }
+  let j;
+  try {
+    j = await api.join(spec.space, spec.code, who.label, who.handle);
+  } catch (e) {
+    if (statusOf(e) === 401) throw new WeftError("that invite code is not valid or has expired (codes work once, for 30 minutes)", "Ask the space's owner for a new one: they run npx @celador/weft invite");
+    if (statusOf(e) === 404) throw new WeftError(`${url} has no team join (an older gateway)`, "Its operator can update it: npx @celador/weft deploy");
+    throw e;
+  }
+  const s = loadState();
+  s.spaces = { ...(s.spaces ?? {}), [spec.space]: { url, key: j.token, handle: j.member.handle, member: j.member.id, joined_at: j.member.created_at } };
+  saveState(s);
+  return { space: spec.space, key: j.token, handle: j.member.handle, member: j.member.id, reused: false };
+}
+
+/** The member key of a repo that joined a space, checked with the gateway. A removed member is told so; nothing new is created. */
+export async function memberAccess(api: Api, ptr: RepoPointer, roots: string[]): Promise<MemberAccess> {
+  const key = memberKey(ptr, roots);
+  const live = key ? await checkMember(api, key) : undefined;
+  if (!key || !live)
+    throw new WeftError(
+      `this repo joined space ${ptr.space} as a teammate, and ${new URL(ptr.url).host} no longer accepts this machine's member key (the owner removed it, or the space was erased)`,
+      "Ask the space's owner for a new invite (npx @celador/weft invite) and run the command it prints. To use a space of your own here instead: npx @celador/weft uninstall, then npx @celador/weft.",
+    );
+  const s = loadState();
+  if (s.spaces?.[ptr.space]?.key !== key) {
+    s.spaces = { ...(s.spaces ?? {}), [ptr.space]: { ...(s.spaces?.[ptr.space] ?? { joined_at: new Date().toISOString() }), url: ptr.url, key, ...live } };
+    saveState(s);
+  }
+  return { space: ptr.space, key, ...live };
 }
 
 /** The space for `url`: from cli.json, else from this repo's .weft/space-token, else a new one. */
@@ -111,7 +211,8 @@ export async function ensureSpace(api: Api, url: string, root: string, label: st
   const tryOwner = async (owner: string | undefined) => {
     if (!owner) return undefined;
     try {
-      return (await api.space(owner)).space.id;
+      const s = await api.space(owner);
+      return s.role === "member" ? undefined : s.space.id; // a member key is never taken for an owner key
     } catch (e) {
       if (statusOf(e) === 401 || statusOf(e) === 403) return undefined;
       throw e;
@@ -166,8 +267,18 @@ export function feedUrl(url: string, space: string): string {
  * a device session, paired by the owner key. It expires after 7 days without use (30 in all), shows up
  * in `weft viewers`, and is replaced by the next command that finds it gone. Kept in cli.json as `viewer`.
  */
-export async function mintViewer(api: Api, url: string): Promise<string> {
+export async function mintViewer(api: Api, url: string, joined?: string): Promise<string> {
   const state = loadState();
+  if (joined) {
+    // A space this machine joined: the member key pairs the CLI's own read session, kept with that space.
+    const j = state.spaces?.[joined];
+    if (!j || j.url !== url) throw new WeftError(`this machine has no member key for space ${joined}`, "Run the join command the space's owner sent you (npx @celador/weft invite prints it).");
+    const d = await api.mintViewer(j.key, `weft CLI on ${hostname().split(".")[0]} (${j.handle})`);
+    j.viewer = d.token;
+    j.viewerId = d.device.id;
+    saveState(state);
+    return d.token;
+  }
   const gw = state.gateways[url];
   if (!gw?.owner) throw new WeftError("this machine does not hold the space's owner key", "Run npx @celador/weft inside the repo that created the space.");
   const label = `weft CLI on ${hostname().split(".")[0]}`;
@@ -192,13 +303,14 @@ export async function mintViewer(api: Api, url: string): Promise<string> {
 }
 
 /** Run `fn` with this machine's read session; if the gateway no longer accepts it (expired, revoked), mint a new one and retry once. */
-export async function withViewer<T>(api: Api, url: string, fn: (viewer: string) => Promise<T>): Promise<T> {
-  let viewer = loadState().gateways[url]?.viewer ?? (await mintViewer(api, url));
+export async function withViewer<T>(api: Api, url: string, fn: (viewer: string) => Promise<T>, joined?: string): Promise<T> {
+  const s = loadState();
+  let viewer = (joined ? s.spaces?.[joined]?.viewer : s.gateways[url]?.viewer) ?? (await mintViewer(api, url, joined));
   try {
     return await fn(viewer);
   } catch (e) {
     if (statusOf(e) !== 401) throw e;
-    viewer = await mintViewer(api, url);
+    viewer = await mintViewer(api, url, joined);
     return fn(viewer);
   }
 }
