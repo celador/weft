@@ -284,12 +284,15 @@ export class Registry extends DurableObject<RegistryEnv> {
     if (!billingCols.includes("interval")) this.sql.exec(`ALTER TABLE space_billing ADD COLUMN interval TEXT`);
     if (!this.sql.exec<{ name: string }>(`PRAGMA table_info(usage)`).toArray().some((c) => c.name === "fair_use_at")) this.sql.exec(`ALTER TABLE usage ADD COLUMN fair_use_at TEXT`);
     // Web-first purchases (GET /buy): a paid Pro subscription not yet bound to a space. Keyed by the Checkout Session id
-    // (the welcome page has it); holds Stripe ids, seats, interval and plan, nothing about the person. Bound to a space
+    // (the welcome page has it); holds Stripe ids, seats, interval, plan and the link's utm_source / utm_campaign (which
+    // marketing link sold it, for the site's funnel), nothing about the person. Bound to a space
     // with a one-time claim code (claim_codes: salted hashes only, one hour, single use), then kept as `claimed` so the
     // same purchase can never be claimed twice. Deleted with the space it was claimed for.
     this.sql.exec(
-      `CREATE TABLE IF NOT EXISTS entitlements (session TEXT PRIMARY KEY, customer TEXT, subscription TEXT, seats INTEGER NOT NULL, interval TEXT NOT NULL, plan TEXT NOT NULL, billing_event_at INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, claimed_space TEXT, claimed_at TEXT)`,
+      `CREATE TABLE IF NOT EXISTS entitlements (session TEXT PRIMARY KEY, customer TEXT, subscription TEXT, seats INTEGER NOT NULL, interval TEXT NOT NULL, plan TEXT NOT NULL, billing_event_at INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, claimed_space TEXT, claimed_at TEXT, utm_source TEXT, utm_campaign TEXT)`,
     );
+    const entCols = this.sql.exec<{ name: string }>(`PRAGMA table_info(entitlements)`).toArray().map((c) => c.name);
+    for (const col of ["utm_source", "utm_campaign"]) if (!entCols.includes(col)) this.sql.exec(`ALTER TABLE entitlements ADD COLUMN ${col} TEXT`);
     this.sql.exec(`CREATE INDEX IF NOT EXISTS entitlements_customer ON entitlements(customer)`);
     this.sql.exec(`CREATE INDEX IF NOT EXISTS entitlements_space ON entitlements(claimed_space)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS claim_codes (id TEXT PRIMARY KEY, session TEXT NOT NULL, code_hash TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)`);
@@ -941,11 +944,11 @@ export class Registry extends DurableObject<RegistryEnv> {
    * report of the same purchase updates plan and seats while it is unclaimed; a claimed one is not touched here
    * (later changes reach it through its customer, applyBillingEvent).
    */
-  recordPurchase(p: { session: string; customer: string; subscription: string; seats: number; interval: Interval; plan: Plan; created: number; eventId?: string }): { result: "applied" | "duplicate" | "stale" } {
+  recordPurchase(p: { session: string; customer: string; subscription: string; seats: number; interval: Interval; plan: Plan; created: number; eventId?: string; utm?: Utm }): { result: "applied" | "duplicate" | "stale" } {
     this.ensureSpaces();
     if (p.eventId && this.sql.exec(`INSERT OR IGNORE INTO stripe_events (id, at) VALUES (?, ?)`, p.eventId, Math.floor(Date.now() / 1000)).rowsWritten === 0) return { result: "duplicate" };
     const n = this.sql.exec(
-      `INSERT INTO entitlements (session, customer, subscription, seats, interval, plan, billing_event_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO entitlements (session, customer, subscription, seats, interval, plan, billing_event_at, created_at, utm_source, utm_campaign) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(session) DO UPDATE SET plan = excluded.plan, seats = excluded.seats, interval = excluded.interval, billing_event_at = excluded.billing_event_at
        WHERE entitlements.claimed_space IS NULL AND entitlements.billing_event_at <= excluded.billing_event_at`,
       p.session,
@@ -956,16 +959,24 @@ export class Registry extends DurableObject<RegistryEnv> {
       p.plan,
       p.created,
       new Date().toISOString(),
+      p.utm?.source ?? null,
+      p.utm?.campaign ?? null,
     ).rowsWritten;
     return { result: n > 0 ? "applied" : "stale" };
   }
 
   /** Where a web purchase stands, by its Checkout Session id. Never returns Stripe ids or the space. */
-  purchase(session: string): { status: "unknown" | "claimed" | "inactive" | "claimable"; seats?: number; interval?: Interval } {
+  purchase(session: string): { status: "unknown" | "claimed" | "inactive" | "claimable"; seats?: number; interval?: Interval; utm?: Utm } {
     this.ensureSpaces();
-    const r = this.sql.exec<{ seats: number; interval: string; plan: string; claimed_space: string | null }>(`SELECT seats, interval, plan, claimed_space FROM entitlements WHERE session = ?`, session).toArray()[0];
+    const r = this.sql
+      .exec<{ seats: number; interval: string; plan: string; claimed_space: string | null; utm_source: string | null; utm_campaign: string | null }>(
+        `SELECT seats, interval, plan, claimed_space, utm_source, utm_campaign FROM entitlements WHERE session = ?`,
+        session,
+      )
+      .toArray()[0];
     if (!r) return { status: "unknown" };
-    const facts = { seats: r.seats, interval: (r.interval === "year" ? "year" : "month") as Interval };
+    const utm: Utm = { ...(r.utm_source ? { source: r.utm_source } : {}), ...(r.utm_campaign ? { campaign: r.utm_campaign } : {}) };
+    const facts = { seats: r.seats, interval: (r.interval === "year" ? "year" : "month") as Interval, utm };
     if (r.claimed_space) return { status: "claimed", ...facts };
     return { status: r.plan === "paid" ? "claimable" : "inactive", ...facts };
   }
@@ -980,7 +991,7 @@ export class Registry extends DurableObject<RegistryEnv> {
   }
 
   /** A fresh one-time claim code for an unclaimed, paid purchase (one hour, one use; at most 3 open per purchase). */
-  async claimCodeCreate(session: string): Promise<{ code: string; expires_at: string; seats: number; interval: Interval } | { error: string; code: "unknown" | "claimed" | "inactive" }> {
+  async claimCodeCreate(session: string): Promise<{ code: string; expires_at: string; seats: number; interval: Interval; utm: Utm } | { error: string; code: "unknown" | "claimed" | "inactive" }> {
     const st = this.purchase(session);
     if (st.status === "unknown") return { error: "no paid Weft Pro checkout with that id (yet): if you just paid, try again in a few seconds", code: "unknown" };
     if (st.status === "claimed") return { error: "this purchase is already claimed by a space; manage it with `npx @celador/weft billing` in that repo", code: "claimed" };
@@ -993,7 +1004,7 @@ export class Registry extends DurableObject<RegistryEnv> {
     for (const old of open.slice(MAX_OPEN_CLAIMS - 1)) this.sql.exec(`DELETE FROM claim_codes WHERE id = ?`, old.id);
     const expires_at = new Date(now + CLAIM_TTL_MS).toISOString();
     this.sql.exec(`INSERT INTO claim_codes (id, session, code_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`, `cc_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`, session, hash, new Date(now).toISOString(), expires_at);
-    return { code, expires_at, seats: st.seats!, interval: st.interval! };
+    return { code, expires_at, seats: st.seats!, interval: st.interval!, utm: st.utm ?? {} };
   }
 
   /**
@@ -1406,6 +1417,8 @@ export class Registry extends DurableObject<RegistryEnv> {
 export const REPORT_EVERY_MS = 3_600_000;
 
 export type HostedMode = "open" | "no-signups" | "off";
+/** Which marketing link sold a web purchase (from the /buy link's utm_source / utm_campaign). */
+export type Utm = { source?: string; campaign?: string };
 export type SignupLimits = { perIpDay: number; perDay: number; maxSpaces: number };
 export type SpaceInfo = { id: string; status: "active" | "deleted" | "suspended" | "erasing" | "erased"; label?: string; created_at: string };
 /** What an erasure removed. After it, the Registry keeps only the tombstone: space id, status 'erased', deleted_at, created_at (date only). */

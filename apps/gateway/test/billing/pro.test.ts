@@ -84,7 +84,7 @@ const uid = () => crypto.randomUUID().replace(/-/g, "").slice(0, 12);
 const spaceCheckout = (space: string, customer: string, subscription: string) =>
   evt("checkout.session.completed", { id: `cs_test_${uid()}`, mode: "subscription", client_reference_id: space, metadata: { weft_space: space, weft_plan: "pro" }, customer, subscription, payment_status: "paid", amount_total: 2400 });
 const webCheckout = (session: string, customer: string, subscription: string) =>
-  evt("checkout.session.completed", { id: session, object: "checkout.session", mode: "subscription", status: "complete", client_reference_id: null, metadata: { weft_purchase: "web", weft_plan: "pro" }, customer, subscription, payment_status: "paid", amount_total: 2400 });
+  evt("checkout.session.completed", { id: session, object: "checkout.session", mode: "subscription", status: "complete", client_reference_id: null, metadata: { weft_purchase: "web", weft_plan: "pro", utm_source: "youtube", utm_campaign: "launch-1" }, customer, subscription, payment_status: "paid", amount_total: 2400 });
 
 /** A web purchase Stripe has told us about (webhook), ready to claim. */
 async function webPurchase(seats = 2, interval: "month" | "year" = "month") {
@@ -222,7 +222,7 @@ describe("GET /buy", () => {
       .reply(200, (o) => ((body = String(o.body)), { id: "cs_test_buy2", url: "https://checkout.stripe.com/c/pay/cs_test_buy2" }));
     expect((await SELF.fetch(`${BASE}/buy`, { redirect: "manual", headers: { "cf-connecting-ip": ip() } })).status).toBe(303);
     expect(form(body)).toMatchObject({ "line_items[0][price]": "price_pro_month", "line_items[0][quantity]": "1" });
-    for (const q of ["interval=week", "seats=0", "seats=501", "seats=1.5", "seats=abc"]) {
+    for (const q of ["interval=week", "seats=0", "seats=1000", "seats=1.5", "seats=abc"]) {
       const r = await SELF.fetch(`${BASE}/buy?${q}`, { redirect: "manual", headers: { "cf-connecting-ip": ip() } });
       expect(r.status, q).toBe(400);
       expect(r.headers.get("content-type")).toContain("text/html");
@@ -250,7 +250,7 @@ describe("web purchase -> claim code -> space becomes Pro", () => {
     expect(r.headers.get("access-control-allow-origin")).toBe("https://site.test");
     const c = (await r.json()) as { code: string; expires_at: string; seats: number; interval: string; command: string };
     expect(c.code).toMatch(/^[2-9A-HJKMNP-Z]{4}-[2-9A-HJKMNP-Z]{4}-[2-9A-HJKMNP-Z]{4}$/);
-    expect(c).toMatchObject({ seats: 2, interval: "year", command: `npx @celador/weft --hosted --claim ${c.code}` });
+    expect(c).toMatchObject({ seats: 2, interval: "year", command: `npx @celador/weft --hosted --claim ${c.code}`, utm_source: "youtube", utm_campaign: "launch-1" });
     expect(Date.parse(c.expires_at) - Date.now()).toBeGreaterThan(55 * 60_000);
     // the code is stored only as a salted hash: no row holds it in clear
     const stored = await runInDurableObject(registry(), (i: Registry) => [...(i as any).sql.exec("SELECT code_hash FROM claim_codes")].map((x: { code_hash: string }) => x.code_hash));
@@ -269,8 +269,8 @@ describe("web purchase -> claim code -> space becomes Pro", () => {
     const other = await signup();
     expect((await redeem(other.owner, c.code)).status).toBe(401);
     const again = await claimStart(p.session);
-    expect(again.status).toBe(400);
-    expect(((await again.json()) as { error: { details: { status: string } } }).error.details.status).toBe("claimed");
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as { error: { code: string; details: { status: string } } }).error).toMatchObject({ code: "already_claimed", details: { status: "claimed" } });
     expect((await usage(other.owner)).plan).toBe("free");
 
     // later Portal changes reach the claimed space through its customer

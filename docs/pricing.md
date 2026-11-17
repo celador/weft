@@ -70,7 +70,7 @@ made. Usage is still counted so `GET /v1/space` and `weft usage` have real numbe
   `seats`, `interval`, `allowance` (nullable override), `stripe_customer_id`, and a per-month usage row (`events`,
   `fair_use_at`, and the legacy report window). Stripe Checkout collects the email and card and keeps them.
 - **Registry, per web purchase** (`entitlements`): the Checkout Session id, the Stripe customer and subscription ids,
-  seats, interval, plan, and when and to which space it was claimed. Claim codes (`claim_codes`) are stored only as
+  seats, interval, plan, the buy link's `utm_source` / `utm_campaign`, and when and to which space it was claimed. Claim codes (`claim_codes`) are stored only as
   SHA-256 of a per-Registry random salt plus the code, expire after an hour, and are deleted on use. A claimed purchase
   is deleted with its space; an unclaimed purchase whose subscription ended is deleted after 30 days.
 - **Metering**: after a submit that entered the log the gateway adds one unit through a coalescing background write
@@ -101,7 +101,7 @@ checks them. `legacy_usage` describes the superseded usage price, kept so existi
     "usd_per_user_month": 12,
     "usd_per_user_year": 98,
     "fair_use_events_per_seat_month": 50000,
-    "max_seats": 500
+    "max_seats": 999
   },
   "legacy_usage": {
     "product_name": "Weft hosted",

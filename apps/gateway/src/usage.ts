@@ -16,8 +16,8 @@ export const DEFAULT_FREE_EVENTS = 5000;
  * (`GET /v1/admin/spaces`). Must equal `pro.fair_use_events_per_seat_month` in docs/pricing.md (a test checks).
  */
 export const DEFAULT_FAIR_USE_PER_SEAT = 50_000;
-/** Most seats one Pro subscription can have. Must equal `pro.max_seats` in docs/pricing.md (a test checks). */
-export const MAX_SEATS = 500;
+/** Most seats one Pro subscription can have (Stripe's ceiling for an adjustable quantity; the site's seat picker). Must equal `pro.max_seats` in docs/pricing.md (a test checks). */
+export const MAX_SEATS = 999;
 
 export function freeEvents(env: { WEFT_FREE_EVENTS?: string }): number {
   const n = Number(env.WEFT_FREE_EVENTS);

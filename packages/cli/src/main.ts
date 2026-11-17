@@ -85,7 +85,7 @@ export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
     else o.positional.push(a);
   }
   if (o.local && o.hosted) throw new WeftError("--local and --hosted contradict each other", "Local is the default; add --hosted only to use a hosted space.");
-  if (o.seats !== undefined && (!Number.isInteger(o.seats) || o.seats < 1 || o.seats > 500)) throw new WeftError("--seats must be a whole number from 1 to 500");
+  if (o.seats !== undefined && (!Number.isInteger(o.seats) || o.seats < 1 || o.seats > 999)) throw new WeftError("--seats must be a whole number from 1 to 999");
   if (o.claim !== undefined) {
     if (o.local) throw new WeftError("a claim code is for a hosted space", "Run: npx @celador/weft --hosted --claim <code>");
     if (!looksLikeClaimCode(o.claim)) throw new WeftError("that does not look like a claim code (XXXX-XXXX-XXXX)", "Copy it from the welcome page you saw after paying.");

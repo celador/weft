@@ -182,7 +182,7 @@ without them (local, your own) never limits or charges, its billing routes answe
 |---|---|
 | `GET /v1/space` | adds `usage` (this month's events, the allowance, `plan` = `free` or `paid`, and for Pro `seats`, `interval`, `fair_use_events`, `over_fair_use`) and `billing.enabled`; `npx @celador/weft usage` prints it |
 | over the allowance (free plan, billing enabled) | submits answer `429 over_allowance` with a one-line upgrade message; the adapters fail open and tell the agent its edit was not coordinated. Hello, heartbeat, inbox, gate and every read keep working. Pro is never cut off |
-| `POST /v1/space/billing/checkout {"interval": "month"\|"year", "seats": N}` | owner key: a Stripe Checkout Session for Weft Pro, `seats` (1-500, default 1) of the monthly or yearly per-seat price, adjustable on the page, `client_reference_id` = the space id; `npx @celador/weft upgrade [--seats N] [--year]` prints the URL |
+| `POST /v1/space/billing/checkout {"interval": "month"\|"year", "seats": N}` | owner key: a Stripe Checkout Session for Weft Pro, `seats` (1-999, default 1) of the monthly or yearly per-seat price, adjustable on the page, `client_reference_id` = the space id; `npx @celador/weft upgrade [--seats N] [--year]` prints the URL |
 | `POST /v1/space/billing/portal` | owner key: a Stripe Customer Portal session (seats, monthly/yearly, card, invoices, cancel); `npx @celador/weft billing` |
 | `POST /v1/space/billing/claim {"code"}` | owner key: bind a web purchase to this space (below); `npx @celador/weft --hosted --claim <code>` |
 | `GET /buy`, `POST /v1/billing/claim` | the web-first purchase (below) |
@@ -210,11 +210,12 @@ $GW/buy?interval=year&seats=2&utm_source=youtube&utm_campaign=launch
 | parameter | values | default |
 |---|---|---|
 | `interval` | `month` or `year` | `month` |
-| `seats` | 1 to 500 | `1` (the buyer can change it on the Checkout page) |
+| `seats` | 1 to 999 | `1` (the buyer can change it on the Checkout page) |
 | `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `ref` | optional; letters, digits, `. _ ~ -` and spaces, up to 100 characters (anything else is dropped) | none |
 
 The gateway answers `303` to a Stripe Checkout page for Weft Pro (promotion codes allowed). The `utm_*` / `ref`
-values go into the Checkout Session's metadata in Stripe; the gateway does not keep them. A bad `interval` or `seats`
+values go into the Checkout Session's metadata in Stripe; the gateway keeps only `utm_source` and `utm_campaign` with
+the purchase, to hand them back to the welcome page (the site's funnel counts claims per campaign). A bad `interval` or `seats`
 gets a `400` HTML page, more than 10 checkouts a minute from one network a `429` page, and a gateway without billing a
 `503` page. Back-out goes to `https://weft.mx/pricing/` (`WEFT_PRICING_URL`).
 
@@ -237,9 +238,9 @@ CORS allows the origins in `WEFT_SITE_ORIGINS` (`https://weft.mx`, `https://www.
 
 | status | body | what the page shows |
 |---|---|---|
-| `201` | `{"type": "billing.claim", "code": "K7M2-9XQ4-TPRA", "expires_at": "...", "seats": 2, "interval": "year", "command": "npx @celador/weft --hosted --claim K7M2-9XQ4-TPRA"}` | the command, with a copy button; "run it in your repo; the code works once, for an hour" |
+| `201` | `{"type": "billing.claim", "code": "K7M2-9XQ4-TPRA", "expires_at": "...", "seats": 2, "interval": "year", "command": "npx @celador/weft --hosted --claim K7M2-9XQ4-TPRA", "utm_source": "youtube", "utm_campaign": "launch"}` (the two `utm_*` only when the buy link had them) | the command, with a copy button; "run it in your repo; the code works once, for an hour" |
 | `404`, `error.details.status = "unknown"` | Stripe has not confirmed the payment yet | "Finishing your payment..." and retry every 2-3 seconds for about a minute |
-| `400`, `error.details.status = "claimed"` | the purchase is already bound to a space | "Already set up. Manage it with `npx @celador/weft billing` in that repo" |
+| `409`, `error.code = "already_claimed"` | the purchase is already bound to a space | "Already set up. Manage it with `npx @celador/weft billing` in that repo" |
 | `400`, `error.details.status = "inactive"` | the subscription was cancelled or is unpaid | "This subscription is not active" |
 | `429` | more than 10 requests a minute from this network | retry after a minute |
 

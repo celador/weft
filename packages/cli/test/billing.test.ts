@@ -98,7 +98,7 @@ describe("weft usage / upgrade / billing", () => {
     expect(parseArgs(["upgrade", "--seats", "3", "--year"]).o).toMatchObject({ seats: 3, year: true });
     expect(parseArgs(["upgrade"]).o).toMatchObject({ year: false });
     expect(parseArgs(["upgrade"]).o.seats).toBeUndefined();
-    for (const bad of ["0", "501", "2.5", "x"]) expect(() => parseArgs(["upgrade", "--seats", bad])).toThrow(/--seats/);
+    for (const bad of ["0", "1000", "2.5", "x"]) expect(() => parseArgs(["upgrade", "--seats", bad])).toThrow(/--seats/);
     // --claim implies --hosted (a weft.mx purchase is for the hosted gateway) unless another gateway is named
     expect(parseArgs(["--claim", "abcd-efgh-jkmn"]).o).toMatchObject({ claim: "abcd-efgh-jkmn", hosted: true });
     expect(parseArgs(["--claim", "ABCDEFGHJKMN", "--url", "http://127.0.0.1:1"]).o).toMatchObject({ hosted: false, url: "http://127.0.0.1:1" });
