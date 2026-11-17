@@ -47,9 +47,7 @@
           "kind": "deleted"
         }
       ],
-      "reads": [
-        "pricing/pricing.go#Item"
-      ],
+      "reads": [],
       "intent": "rename FormatPrice to FormatMoney",
       "after": {
         "pricing/pricing.go": "package pricing\n\nimport \"fmt\"\n\ntype Item struct {\n\tPrice float64\n\tQty   int\n}\n\nfunc CalcTotal(items []Item) float64 {\n\ttotal := 0.0\n\tfor _, i := range items {\n\t\ttotal += i.Price * float64(i.Qty)\n\t}\n\treturn total\n}\n\nfunc FormatMoney(amount float64) string {\n\treturn fmt.Sprintf(\"$%.2f\", amount)\n}\n"

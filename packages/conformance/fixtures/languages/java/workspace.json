@@ -56,9 +56,7 @@
           "kind": "deleted"
         }
       ],
-      "reads": [
-        "src/main/java/com/shop/model/Item.java#Item"
-      ],
+      "reads": [],
       "after": {
         "src/main/java/com/shop/pricing/Pricing.java": "package com.shop.pricing;\n\nimport java.util.List;\nimport com.shop.model.Item;\n\npublic final class Pricing {\n    private Pricing() {}\n\n    public static double calcTotal(List<Item> items) {\n        double sum = 0;\n        for (Item i : items) sum += i.price() * i.qty();\n        return sum;\n    }\n\n    public static String formatMoney(double amount) {\n        return String.format(\"$%.2f\", amount);\n    }\n}\n"
       }

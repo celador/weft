@@ -131,9 +131,10 @@ describe("go (tree-sitter backend)", () => {
     ]);
     const other = await run(CART_TAX, CART_TAX.replace("return 0\n", "return CalcTotal(nil) * TaxRate\n"), "pricing/cart.go");
     expect(other.writes).toEqual([{ key: "pricing/cart.go#Cart.Tax", kind: "body" }]);
-    // Cart, Item and CalcTotal live in pricing.go; the external test package's CalcTotal
-    // (pricing_test.go, `package pricing_test`) is not this package's.
-    expect(other.reads).toEqual(["pricing/pricing.go#CalcTotal", "pricing/pricing.go#Cart", "pricing/pricing.go#Item"]);
+    // Cart and CalcTotal live in pricing.go; the external test package's CalcTotal
+    // (pricing_test.go, `package pricing_test`) is not this package's. Item is used only by
+    // newCart, which the edit does not touch (reads are scoped to the edit).
+    expect(other.reads).toEqual(["pricing/pricing.go#CalcTotal", "pricing/pricing.go#Cart"]);
   });
 
   it("reads imported package members through go.mod, keyed by the declaring file", async () => {

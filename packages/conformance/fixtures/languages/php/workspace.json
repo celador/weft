@@ -55,9 +55,7 @@
           "kind": "deleted"
         }
       ],
-      "reads": [
-        "src/Pricing/Item.php#Item"
-      ],
+      "reads": [],
       "intent": "rename formatPrice to formatMoney",
       "after": {
         "src/Pricing/Pricing.php": "<?php\n\nnamespace App\\Pricing;\n\nfinal class Pricing\n{\n    public static function calcTotal(array $items): float\n    {\n        return array_sum(array_map(fn (Item $i) => $i->price * $i->qty, $items));\n    }\n\n    public static function formatMoney(float $amount): string\n    {\n        return sprintf('$%.2f', $amount);\n    }\n}\n"

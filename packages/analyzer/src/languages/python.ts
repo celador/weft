@@ -102,7 +102,9 @@ function references(root: SyntaxNode): Reference[] {
   const out: Reference[] = [];
   const add = (node: SyntaxNode | null | undefined): void => {
     const ref = node ? dotted(node) : undefined;
-    if (ref) out.push(ref);
+    if (!ref || !node) return;
+    ref.pos = node.startIndex;
+    out.push(ref);
   };
   const visit = (node: SyntaxNode): void => {
     switch (node.type) {

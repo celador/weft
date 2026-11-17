@@ -162,6 +162,23 @@ describe.each([
     expect(closed(c.gate(b, "stop"))).toEqual({ allow: true, open: [] });
   });
 
+  it("an accepted edit of the same file that does not read the key does not clear it", () => {
+    // python-slugify cold run (2026-11): after the denied call site, B edited `__all__` in the
+    // same file. Edit reads are scoped to the declarations an edit touches (docs/languages.md),
+    // so that edit does not read X, and only an edit that reads X again clears the error.
+    for (const mode of ["check", "commit"] as const) {
+      const c = make();
+      const { b } = setup(c, mode);
+      const sameFile = "src/api/client.ts#__all__";
+      expect(c.submit(b, edit(5, [[sameFile, "body"]]))).toMatchObject({ verdict: "accept", diagnostics: [] });
+      expect(c.submit(b, edit(6, [[Y, "body"]]))).toMatchObject({ verdict: "accept", diagnostics: [] });
+      expect(closed(c.gate(b, "stop"))).toEqual(STILL_OPEN);
+      expect(closed(c.gate(b, "commit"))).toEqual(STILL_OPEN);
+      expect(c.submit(b, edit(7, [[Y, "body"]], [X]))).toMatchObject({ verdict: "accept", diagnostics: [] });
+      expect(closed(c.gate(b, "stop"))).toEqual({ allow: true, open: [] });
+    }
+  });
+
   it("a check-mode error (edit denied, never applied) is cleared by releasing the key: a retreat", () => {
     const c = make();
     const { b } = setup(c, "check");

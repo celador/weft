@@ -60,12 +60,7 @@
           "kind": "deleted"
         }
       ],
-      "reads": [
-        "include/shop/cart.hpp#shop.Cart.items_",
-        "include/shop/cart.hpp#shop.Item",
-        "include/shop/cart.hpp#shop.Item.price",
-        "include/shop/cart.hpp#shop.Item.qty"
-      ],
+      "reads": [],
       "intent": "rename format_price to format_money",
       "after": {
         "include/shop/cart.hpp": "#pragma once\n#include <vector>\n\nnamespace shop {\n\nstruct Item {\n  long price;\n  int qty;\n};\n\nclass Cart {\n public:\n  explicit Cart(std::vector<Item> items);\n  long total() const;\n  int count() const;\n\n private:\n  std::vector<Item> items_;\n};\n\nstd::string format_money(long cents);\n\n}  // namespace shop\n",

@@ -22,7 +22,7 @@
 // `src/`). Same-namespace classes are also tried next to the file.
 import { posix } from "node:path";
 import type { Checkout, Definition, Exists, ImportBinding, Reference, SyntaxNode, TreeSitterLanguage } from "../language.js";
-import { firstExisting } from "../treesitter.js";
+import { firstExisting, positioned } from "../treesitter.js";
 
 function named(node: SyntaxNode): SyntaxNode[] {
   return node.namedChildren.filter((c): c is SyntaxNode => c !== null);
@@ -42,8 +42,9 @@ function definitions(root: SyntaxNode): Definition[] {
   const cached = definitionsCache.get(root);
   if (cached) return cached;
   const out: Definition[] = [];
-  const push = (scope: string[], name: string, signature: string, body: string): void => {
-    out.push({ name: [...scope, name].join("."), signature, body });
+  /** `span`: the node the declaration occupies (scopes an edit's reads). */
+  const push = (scope: string[], name: string, signature: string, body: string, span: SyntaxNode): void => {
+    out.push({ name: [...scope, name].join("."), signature, body, start: span.startIndex, end: span.endIndex });
   };
   const walk = (node: SyntaxNode, scope: string[]): void => {
     for (const child of named(node)) {
@@ -53,13 +54,13 @@ function definitions(root: SyntaxNode): Definition[] {
           const name = child.childForFieldName("name")?.text;
           if (!name) break;
           const body = child.childForFieldName("body");
-          push(scope, name, body ? slice(child, child.startIndex, body.startIndex) : child.text, body?.text ?? "");
+          push(scope, name, body ? slice(child, child.startIndex, body.startIndex) : child.text, body?.text ?? "", child);
           if (name === "__construct") {
             for (const p of named(child.childForFieldName("parameters") ?? child)) {
               if (p.type !== "property_promotion_parameter") continue;
               const prop = varName(p.childForFieldName("name"));
               const value = p.childForFieldName("default_value");
-              if (prop) push(scope, prop, value ? slice(p, p.startIndex, value.startIndex) : p.text, value?.text ?? "");
+              if (prop) push(scope, prop, value ? slice(p, p.startIndex, value.startIndex) : p.text, value?.text ?? "", p);
             }
           }
           break; // nothing inside a function body is a declaration others depend on
@@ -71,7 +72,7 @@ function definitions(root: SyntaxNode): Definition[] {
           const name = child.childForFieldName("name")?.text;
           const body = child.childForFieldName("body");
           if (!name) break;
-          push(scope, name, body ? slice(child, child.startIndex, body.startIndex) : child.text, body?.text ?? "");
+          push(scope, name, body ? slice(child, child.startIndex, body.startIndex) : child.text, body?.text ?? "", child);
           if (body) walk(body, [...scope, name]);
           break;
         }
@@ -80,7 +81,7 @@ function definitions(root: SyntaxNode): Definition[] {
           const signature = elements.length ? slice(child, child.startIndex, elements[0].startIndex) : child.text;
           for (const e of elements) {
             const prop = varName(e.childForFieldName("name"));
-            if (prop) push(scope, prop, signature, e.childForFieldName("default_value")?.text ?? "");
+            if (prop) push(scope, prop, signature, e.childForFieldName("default_value")?.text ?? "", child);
           }
           break;
         }
@@ -89,13 +90,13 @@ function definitions(root: SyntaxNode): Definition[] {
           const signature = elements.length ? slice(child, child.startIndex, elements[0].startIndex) : "";
           for (const e of elements) {
             const [nameNode, ...value] = named(e);
-            if (nameNode?.type === "name") push(scope, nameNode.text, signature, value.map((v) => v.text).join(" "));
+            if (nameNode?.type === "name") push(scope, nameNode.text, signature, value.map((v) => v.text).join(" "), child);
           }
           break;
         }
         case "enum_case": {
           const name = child.childForFieldName("name")?.text;
-          if (name) push(scope, name, "", child.childForFieldName("value")?.text ?? "");
+          if (name) push(scope, name, "", child.childForFieldName("value")?.text ?? "", child);
           break;
         }
         default:
@@ -195,7 +196,7 @@ function scan(root: SyntaxNode): Scan {
     classUse(scope, ns);
   };
   /** Visits `node` (whose parent has type `parent`); returns the namespace in effect after it. */
-  const visit = (node: SyntaxNode, parent: string, ns: string, cls: string | undefined): string => {
+  const visit = positioned(refs, (node: SyntaxNode, parent: string, ns: string, cls: string | undefined): string => {
     switch (node.type) {
       case "namespace_definition": {
         const name = node.childForFieldName("name");
@@ -256,7 +257,7 @@ function scan(root: SyntaxNode): Scan {
     let current = ns;
     for (const c of named(node)) current = visit(c, node.type, current, cls);
     return ns;
-  };
+  });
   let ns = "";
   for (const c of named(root)) ns = visit(c, root.type, ns, undefined);
   const result = { refs, classUses, uses: useList };

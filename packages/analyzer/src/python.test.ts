@@ -121,6 +121,60 @@ def summary(items: List[Item]) -> str:
     ]);
   });
 
+  describe("reads are scoped to the declarations the edit adds or changes (docs/languages.md)", () => {
+    // python-slugify (cold run 2026-11): B's edit to `__all__` read `_decode_entities`, which
+    // only `slugify` calls, and so cleared B's open stale_assumption on it.
+    const SLUGIFY = `import re
+from .cart import Cart
+
+__all__ = ["slugify"]
+
+
+def _decode_entities(text, hexadecimal=True):
+    return text
+
+
+def _modern_slugify(text):
+    return re.sub("x", "", text)
+
+
+def slugify(text):
+    text = _decode_entities(text)
+    return Cart(_modern_slugify(text))
+`;
+    const slug = (after: string) => run(SLUGIFY, after, "app/slugify.py");
+
+    it("an edit to __all__ does not read _decode_entities (or anything the file's functions use)", async () => {
+      expect(await slug(SLUGIFY.replace('__all__ = ["slugify"]', '__all__ = ["slugify", "Cart"]'))).toEqual({
+        reads: [],
+        writes: [{ key: "app/slugify.py#__all__", kind: "body" }],
+      });
+    });
+
+    it("an edit to one function reads only what that function references", async () => {
+      const r = await slug(SLUGIFY.replace("text = _decode_entities(text)", "text = _decode_entities(text, hexadecimal=False)"));
+      expect(r.reads).toEqual(["app/cart.py#Cart", "app/slugify.py#_decode_entities", "app/slugify.py#_modern_slugify"]);
+      expect((await slug(SLUGIFY.replace('re.sub("x", "", text)', 're.sub("y", "", text)'))).reads).toEqual([]);
+    });
+
+    it("an edit adding f() that calls g reads g", async () => {
+      const r = await slug(`${SLUGIFY}\n\ndef f(text):\n    return _decode_entities(text)\n`);
+      expect(r).toEqual({ reads: ["app/slugify.py#_decode_entities"], writes: [{ key: "app/slugify.py#f", kind: "new" }] });
+    });
+
+    it("an import the edit adds is read; an existing one only when touched code uses it", async () => {
+      const imported = await slug(SLUGIFY.replace("from .cart import Cart\n", "from .cart import Cart\nfrom .pricing import calc_total\n"));
+      expect(imported.reads).toEqual(["app/pricing.py#calc_total"]);
+    });
+
+    it("a method edit reads that method's self-calls, not its siblings'", async () => {
+      const after = PRICING_V1.replace("return 0.0", "return TAX_RATE");
+      expect((await run(PRICING_V1, after)).reads).toEqual([]);
+      const total = PRICING_V1.replace("return calc_total(self.items) + self.tax()", "return calc_total(self.items) * 2 + self.tax()");
+      expect((await run(PRICING_V1, total)).reads).toEqual(["app/pricing.py#Cart.tax", "app/pricing.py#calc_total"]);
+    });
+  });
+
   it("prefixes keys with the checkout's path in the repository", async () => {
     const r = await analyzeSource({ path: "app/pricing.py", before: "", after: "def f():\n    return 1\n" }, { prefix: "svc/" });
     expect(r.writes).toEqual([{ key: "svc/app/pricing.py#f", kind: "new" }]);

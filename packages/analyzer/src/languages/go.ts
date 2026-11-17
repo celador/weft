@@ -172,6 +172,7 @@ function references(root: SyntaxNode): Reference[] {
     const ref = node ? dotted(node) : undefined;
     if (!ref) return;
     if (ref.length === 1 && node && typeParamsAt(node).has(ref[0])) return;
+    if (node) ref.pos = node.startIndex;
     out.push(ref);
   };
   const visit = (node: SyntaxNode): void => {

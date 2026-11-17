@@ -40,7 +40,8 @@
 // top-level declarations are skipped. Same package in another directory (a test source set) is
 // not indexed.
 import type { Definition, ImportBinding, Reference, SyntaxNode, TreeSitterLanguage } from "../language.js";
-import { children, exact, header, implicitBindings, importBinding, named, perRoot, resolveJvmModule, tail } from "./jvm.js";
+import { positioned } from "../treesitter.js";
+import { children, exact, header, implicitBindings, importBinding, named, perRoot, resolveJvmModule, span, tail } from "./jvm.js";
 
 const CLASS = new Set(["class_declaration", "object_declaration"]);
 const CLASS_BODY = new Set(["class_body", "enum_class_body"]);
@@ -87,13 +88,13 @@ const definitions = perRoot((root: SyntaxNode): Definition[] => {
         const body = named(child).find((c) => CLASS_BODY.has(c.type));
         const secondary = body ? named(body).filter((c) => c.type === "secondary_constructor") : [];
         const ctors = secondary.map((c) => header(c, children(c).find((k) => k.type === ":" || k.type === "block")?.startIndex ?? c.endIndex));
-        out.push({ name: q.join("."), signature: [header(child, body?.startIndex ?? child.endIndex), ...ctors].join("\n"), body: body?.text ?? "" });
+        out.push({ name: q.join("."), signature: [header(child, body?.startIndex ?? child.endIndex), ...ctors].join("\n"), body: body?.text ?? "", ...span(child) });
         const params = named(child).find((c) => c.type === "primary_constructor");
         for (const p of params ? named(named(params).find((c) => c.type === "class_parameters") ?? params) : []) {
           if (p.type !== "class_parameter" || !children(p).some((c) => c.type === "val" || c.type === "var")) continue;
           const pn = named(p).find((c) => c.type === "identifier")?.text;
           const eq = children(p).find((c) => c.type === "=");
-          if (pn) out.push({ name: [...q, pn].join("."), signature: header(p, eq?.startIndex ?? p.endIndex), body: eq ? tail(p, eq.startIndex) : "" });
+          if (pn) out.push({ name: [...q, pn].join("."), signature: header(p, eq?.startIndex ?? p.endIndex), body: eq ? tail(p, eq.startIndex) : "", ...span(p) });
         }
         if (body) walk(body, q);
       } else if (child.type === "companion_object") {
@@ -103,19 +104,19 @@ const definitions = perRoot((root: SyntaxNode): Definition[] => {
         const name = nameOf(child);
         const body = named(child).find((c) => c.type === "function_body");
         const q = receiver(child) && scope.length === 0 ? [name] : [...scope, name];
-        if (name) out.push({ name: q.join("."), signature: header(child, body?.startIndex ?? child.endIndex), body: body?.text ?? "" });
+        if (name) out.push({ name: q.join("."), signature: header(child, body?.startIndex ?? child.endIndex), body: body?.text ?? "", ...span(child) });
       } else if (child.type === "property_declaration") {
         const name = propertyName(child);
         if (!name) continue;
         const start = propertyBodyStart(child);
         const q = receiver(child) && scope.length === 0 ? [name] : [...scope, name];
-        out.push({ name: q.join("."), signature: header(child, start), body: tail(child, start) });
+        out.push({ name: q.join("."), signature: header(child, start), body: tail(child, start), ...span(child) });
       } else if (child.type === "type_alias") {
         const name = child.childForFieldName("type")?.text;
-        if (name) out.push({ name: [...scope, name].join("."), signature: header(child), body: "" });
+        if (name) out.push({ name: [...scope, name].join("."), signature: header(child), body: "", ...span(child) });
       } else if (child.type === "enum_entry") {
         const name = named(child).find((c) => c.type === "identifier")?.text;
-        if (name) out.push({ name: [...scope, name].join("."), signature: name, body: child.text });
+        if (name) out.push({ name: [...scope, name].join("."), signature: name, body: child.text, ...span(child) });
       }
     }
   };
@@ -168,7 +169,7 @@ const references = perRoot((root: SyntaxNode): Reference[] => {
     for (const cls of enclosing(scope)) out.push(exact([...cls, name]));
     out.push(exact([name])); // a top-level declaration of this file, or an imported name
   };
-  const visit = (node: SyntaxNode, parent: SyntaxNode | null, scope: Scope): void => {
+  const visit = positioned(out, (node: SyntaxNode, parent: SyntaxNode | null, scope: Scope): void => {
     let inner = scope;
     switch (node.type) {
       case "class_declaration":
@@ -223,7 +224,7 @@ const references = perRoot((root: SyntaxNode): Reference[] => {
       }
     }
     for (const c of named(node)) visit(c, node, inner);
-  };
+  });
   visit(root, null, { classes: [] });
   return out;
 });

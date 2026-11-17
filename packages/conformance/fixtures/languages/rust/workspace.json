@@ -48,9 +48,7 @@
           "kind": "deleted"
         }
       ],
-      "reads": [
-        "src/pricing.rs#Item"
-      ],
+      "reads": [],
       "intent": "rename format_price to format_money",
       "after": {
         "src/pricing.rs": "#[derive(Debug, Clone)]\npub struct Item {\n    pub price: f64,\n    pub qty: u32,\n}\n\npub fn calc_total(items: &[Item]) -> f64 {\n    items.iter().map(|i| i.price * i.qty as f64).sum()\n}\n\npub fn format_money(amount: f64) -> String {\n    format!(\"${:.2}\", amount)\n}\n"

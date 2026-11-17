@@ -10,7 +10,7 @@ per language family.
 | Language | Extensions | Backend | Declarations (writes) | Uses (reads) | Signature vs body | Renames | LSP enrichment (async) | Tested |
 |---|---|---|---|---|---|---|---|---|
 | TypeScript / JavaScript | `.ts .tsx .mts .cts .js .jsx .mjs .cjs` | `typescript` (TS compiler API) | functions, classes, methods, properties, interfaces, type aliases, enums, variables | calls, `new`, type references, named/namespace/default imports of relative modules | yes | deleted + new | not needed (the compiler API already resolves types) | unit tests, core conformance fixtures (L0–L3), real agent runs |
-| Python | `.py .pyi` | `tree-sitter` (tree-sitter-python 0.25.0) | functions, classes, methods (`Cart.total`), module- and class-level assignments | calls, decorators, base classes, type annotations, attribute chains (`pricing.calc_total`, `self.tax`), every imported member that resolves into the checkout | yes (decorators count as signature; whitespace and trailing commas do not; an assignment's annotation is its signature and its value its body) | deleted + new | **yes**: `pyright-langserver` or `basedpyright-langserver` on PATH — precise reads (re-exports, instance attributes), callers of a signature change, type breakage | 13 analyzer tests, 5 conformance fixtures (`fixtures/languages/python`), real two-agent Claude Code run ([record](research/python-real-run-2026-10-22.md)); LSP: analyzer `src/lsp/lsp.test.ts` (fake server + real pyright), adapter `test/lsp.test.ts`, end to end `scripts/lsp-e2e.mjs` ([record](research/lsp-enrichment-2026-10-22.md)) |
+| Python | `.py .pyi` | `tree-sitter` (tree-sitter-python 0.25.0) | functions, classes, methods (`Cart.total`), module- and class-level assignments | calls, decorators, base classes, type annotations, attribute chains (`pricing.calc_total`, `self.tax`), imported members that resolve into the checkout (those the edit adds or its touched declarations use) | yes (decorators count as signature; whitespace and trailing commas do not; an assignment's annotation is its signature and its value its body) | deleted + new | **yes**: `pyright-langserver` or `basedpyright-langserver` on PATH — precise reads (re-exports, instance attributes), callers of a signature change, type breakage | 13 analyzer tests, 5 conformance fixtures (`fixtures/languages/python`), real two-agent Claude Code run ([record](research/python-real-run-2026-10-22.md)); LSP: analyzer `src/lsp/lsp.test.ts` (fake server + real pyright), adapter `test/lsp.test.ts`, end to end `scripts/lsp-e2e.mjs` ([record](research/lsp-enrichment-2026-10-22.md)) |
 | Go | `.go` | `tree-sitter` (tree-sitter-go 0.25.0) | functions, methods keyed by receiver type (`Cart.Total`), types and interfaces, package-level consts/vars | calls, selector chains (`pricing.CalcTotal`, receiver calls `c.Tax()` → `Cart.Tax`), type uses (`Item`, `pricing.Item`, composite literals); imports resolve through `go.mod` to a package directory, and names used but not declared in the file resolve through its own package (see [Go packages](#go-packages)) | yes (the receiver is part of a method's signature; a struct's fields and an interface's methods are the type's signature; a const/var's type is its signature, its value the body; gofmt alignment and trailing commas are not changes) | deleted + new | registered (`gopls`), used when installed; not tested against a real server | 12 analyzer tests, 5 conformance fixtures (`fixtures/languages/go`, incl. a same-package cross-file deny) |
 | Rust | `.rs` | `tree-sitter` (tree-sitter-rust 0.24.0) | functions, impl/trait methods keyed by type (`Cart.total`, `impl Display for Cart` → `Cart.fmt`, `Shape.area`), structs, enums, unions, traits, type aliases, consts, statics, items of inline modules (`tests.t`) | calls, paths (`pricing::calc_total`, `Self::new`, `Kind::A`), `self.tax()` → `Cart.tax`, type uses, calls and paths inside macro arguments (`format!(.., calc_total(x))`); `use` trees (`{self, x, y as z}`), `mod x;`, and `crate::`/`self::`/`super::` paths resolve to `src/a/b.rs` or `src/a/b/mod.rs` under the nearest `Cargo.toml` | yes (outer attributes such as `#[derive]` are signature; a struct's fields and an enum's variants are its signature; a const/static's type is its signature, its value the body) | deleted + new | registered (`rust-analyzer`), used when installed; not tested against a real server | 11 analyzer tests, 5 conformance fixtures (`fixtures/languages/rust`) |
 | Java | `.java` | `tree-sitter` (tree-sitter-java 0.23.5) | classes, interfaces, enums, records, annotation types (nested: `Pricing.Kind`), methods (overloads share a key), fields, enum constants, record components | calls (`calcTotal()`, `this.tax()`, `Fmt.round()`), `new`, every type use, annotations, field accesses, method references, unqualified members of enclosing classes; single-type, static, wildcard and same-package imports, as `.java` or `.kt`; Kotlin top-level declarations through their facade class (`PricingKt.calcTotal()`, `@file:JvmName`) | yes (constructors count as the class's signature; comments and `@Override`/`@Deprecated`/`@SuppressWarnings` do not; other annotations do) | deleted + new | registered (`jdtls`), used when installed; not tested against a real server | 16 analyzer tests, 5 conformance fixtures (`fixtures/languages/java`) |
@@ -133,6 +133,44 @@ For each changed file the engine parses before and after, diffs the declarations
 declarations first, then its imports. Imported members that resolve to a file in the checkout
 are reads, the same rule the TypeScript adapter applies to named imports. Modules outside the
 checkout (stdlib, packages) are ignored.
+
+### Reads are scoped to the edit
+
+An edit's `reads` are what the code it adds or changes references, not what the whole file
+references. Every backend (TypeScript, every tree-sitter language, and the adapters'
+cross-file `importReads` for TS/JS) applies one rule, implemented once in
+`packages/analyzer/src/scope.ts`:
+
+1. A line diff of the file (before vs after) gives the lines the edit adds and removes.
+2. A declaration is **touched** when an added line (new text) or a removed line (old text, mapped
+   by name) has non-blank text in the declaration's *own region*: its span minus the spans of the
+   declarations nested in it. Changing one method touches that method, not its class; changing
+   the class header (bases, decorators) or a field touches the class or the field. Declarations
+   inside a function body (TypeScript locals) belong to the function.
+3. A reference is read when the innermost declaration containing it is touched. The whole
+   declaration counts, not just the changed line: an edit to a function re-asserts every call in
+   it. A reference outside every declaration (module-level statements) is read only when it is on
+   a line the edit adds.
+4. An import binding is read when the edit adds it (a new import, or a new name in an existing
+   one) or an in-scope reference uses it; a namespace member (`ns.x`) where the edit uses it.
+5. A new file is in scope as a whole; a deleted file reads nothing.
+
+Why: an edit's reads feed R2 (stale assumption/read, WCP §6.2), the change's accumulated reads
+(§6.3 step 1, so later contract changes are pushed to it) and the open-error rule (§6.5 rule 1:
+an accepted edit that reads the key clears it). With whole-file reads, an unrelated edit in the
+same file cleared an open `stale_assumption` the agent had not fixed (python-slugify: an edit to
+`__all__` read `_decode_entities`, which only `slugify` calls), drew `stale_read` warnings about
+functions the agent never touched, and reported "your change started using" symbols an untouched
+function used ([cold run](research/onboarding-cold-run-2026-11.md), friction #4). The coordinator
+is unchanged: it never parses code and treats keys as opaque (§4.1); only what adapters put in
+`reads` narrows. Language-server reads amendments (§8.3 step 3a) already look only at changed
+ranges.
+
+What a spec provides for this: `start`/`end` on every `Definition` (the declaration's extent,
+decorators/attributes included) and `pos` on every `Reference` (the offset of the node it was read
+from; `positioned()` in `treesitter.ts` wraps a reference walker to stamp it). A spec that leaves a
+declaration without a span gets whole-file reads; a reference without `pos` is always read. Every
+bundled language provides both (`src/scope.test.ts` checks each one).
 
 Runtime: `web-tree-sitter` 0.25.10 (WASM, no native build, no toolchain). Adapters bundle the
 analyzer and copy the WASM files to `dist/grammars/` at build time
@@ -373,10 +411,12 @@ Neither language imports names the way Python does, so the specs synthesize the 
    the pinned `web-tree-sitter` (ABI 13–15).
 2. Spec: `packages/analyzer/src/languages/<lang>.ts` implementing `TreeSitterLanguage`; register
    it in `src/languages/index.ts`. Decide and document: what a declaration is, what is signature
-   vs body, how members are qualified, and how module paths resolve.
+   vs body, how members are qualified, and how module paths resolve. Give every `Definition`
+   `start`/`end` and every `Reference` a `pos` (wrap the reference walker in `positioned()`), or
+   the language gets whole-file reads ([Reads are scoped to the edit](#reads-are-scoped-to-the-edit)).
 3. Tests: `packages/analyzer/src/<lang>.test.ts`, covering new, signature vs body, reformatting
    is not a signature change, rename = deleted + new, local and imported reads, and the 300 ms
-   budget.
+   budget. Add a sample to `src/scope.test.ts` (an edit to `g` reads `k`, not `h`).
 4. Conformance: `packages/conformance/fixtures/languages/<lang>/` with a `workspace.json` and at
    least `<L>.deny-stale-signature`, `<L>.allow-after-adapting` and `<L>.allow-unrelated`
    fixtures (copy the Python set). `test/languages.test.ts` picks the set up automatically,

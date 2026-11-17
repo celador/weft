@@ -55,9 +55,7 @@
           "kind": "deleted"
         }
       ],
-      "reads": [
-        "src/Shop/Pricing/PriceCalculator.cs#Item"
-      ],
+      "reads": [],
       "intent": "rename FormatPrice to FormatMoney",
       "after": {
         "src/Shop/Pricing/PriceCalculator.cs": "namespace Shop.Pricing;\n\npublic record Item(decimal Price, int Qty);\n\npublic static class PriceCalculator\n{\n    public static decimal CalcTotal(IEnumerable<Item> items)\n    {\n        return items.Sum(i => i.Price * i.Qty);\n    }\n\n    public static string FormatMoney(decimal amount) => amount.ToString(\"C\");\n}\n"
