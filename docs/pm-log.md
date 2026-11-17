@@ -308,3 +308,11 @@ Append-only. One dated entry per heartbeat that changed something.
 - Spot-check: weft-site-preview.elier.ai `/`, `/pricing/`, `/welcome/`, `/start/` all 200 with the $12/$98 prices and noindex on /welcome (local resolver had a negative DNS cache for the new host; checked via `--resolve` to Cloudflare's IP). weft.mx not redeployed: the new pricing ships with go-live t_52c6e0ad.
 - Decision: land now (not at go-live) so the Clerk, license-purchase and team-join cards build on main. Risk noted: any `wrangler deploy` of site/ from main before go-live would publish the new pricing page; only t_52c6e0ad deploys weft.mx.
 - Security impact: none server-side (static site + preview Worker env; no secrets, nothing published).
+
+## 2026-11-17 13:50 — Landed five done branches (cold run, Codex shell writes, hunk reads, Pro plan, team join)
+- Merged `--no-ff` into main, all clean merges, worktrees clean beforehand: wt/cold-run-2 (t_673b52cf, 7617cc4), wt/t_81723188 (Codex shell writes, 4edf3e5), wt/t_0c4537af (edit reads scoped to changed declarations, 9464bf4), wt/pro-plan (t_6ee961cf, 6b5f590), wt/t_4b2a2d87 (team join, cd30762). Pushed. Weft lands already recorded by auto-land (#2935-#2939); `weft_land.py --recent 20` exit 0. Worktrees removed.
+- Gate on main: `pnpm -r --no-bail typecheck && test` GATE_EXIT=0 (analyzer 240, gateway 168+58, cli 97, claude-code 129, codex 21, no failures). site `node --test` 31/31.
+- Decision: HOLD wt/license-change (t_fcc5b412, done). main is public, and the go-live card t_52c6e0ad makes the license public in its step 1 together with the GOVERNANCE Discussion post; landing it now would switch the public repo to AGPL ahead of that. Go-live lands it.
+- Nothing deployed or published: Pro/team-join gateway code and CLI 0.4.0 are on main only. Same risk as the site-signup land: only t_52c6e0ad deploys hosted/site or publishes.
+- Security impact: none live. On main: Stripe test-mode Pro billing routes (inert without secrets), member invite/join keys (own key per teammate, revocable), Codex adapter reports shell-written files.
+- Remaining: t_4fe570cd Clerk running (~55 min); t_ae271f1e todo (waits on Clerk + license); go-live todo.
