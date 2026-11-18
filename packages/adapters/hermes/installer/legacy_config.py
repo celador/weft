@@ -16,12 +16,12 @@ def read_raw(path):
 
 def load(path=None, profile=None):
     try:
-        from .adapter import Config, Root, current_profile, default_config_path, _real, _find_node, DEFAULT_ROOTS, DEFAULT_PROJECT_DIRS, DEFAULT_EXCLUDES
+        from .adapter import Config, Root, current_profile, default_config_path, _real, DEFAULT_ROOTS, DEFAULT_PROJECT_DIRS, DEFAULT_EXCLUDES
     except ImportError:
         try:
-            from weft.adapter import Config, Root, current_profile, default_config_path, _real, _find_node, DEFAULT_ROOTS, DEFAULT_PROJECT_DIRS, DEFAULT_EXCLUDES
+            from weft.adapter import Config, Root, current_profile, default_config_path, _real, DEFAULT_ROOTS, DEFAULT_PROJECT_DIRS, DEFAULT_EXCLUDES
         except ImportError:
-            from adapter import Config, Root, current_profile, default_config_path, _real, _find_node, DEFAULT_ROOTS, DEFAULT_PROJECT_DIRS, DEFAULT_EXCLUDES
+            from adapter import Config, Root, current_profile, default_config_path, _real, DEFAULT_ROOTS, DEFAULT_PROJECT_DIRS, DEFAULT_EXCLUDES
     path = path or default_config_path()
     profile = profile or current_profile()
     try:
@@ -74,7 +74,7 @@ def load(path=None, profile=None):
         modes[repo] = str(raw["mode"])
     cfg = Config(
         url=url, repo=repo, token=str(tokens.get(repo, "")), agent=str(agent), profile=profile,
-        roots=roots, node=str(raw.get("node") or _find_node()), analyzer=analyzer,
+        roots=roots, node=str(raw.get("node") or ""), analyzer=analyzer,
         timeout=float(raw.get("timeout", 4.0)), log_path=cache / f"{profile}.log",
         tokens=tokens, modes=modes, default_mode=str(raw.get("default_mode") or "advise"),
         project_dirs=project_dirs, projects=projects, excludes=excludes,

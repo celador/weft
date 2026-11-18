@@ -45,6 +45,7 @@ import os
 import queue
 import re
 import select
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -213,7 +214,7 @@ class Config:
     profile: str
     roots: List[Root]
     mode: str = "enforce"  # enforce (L2/L3 blocking) | advise (L1 only: never blocks)
-    node: str = "node"
+    node: str = ""  # "" = the first working candidate (resolve_node); a configured node is probed too
     analyzer: Optional[str] = None
     timeout: float = 4.0
     log_path: Optional[Path] = None
@@ -296,7 +297,7 @@ class Config:
                 analyzer = None
         return Config(
             url="", repo="", token="", agent=f"hermes-{profile}", profile=profile, roots=[], mode=st.mode,
-            node=_find_node(), analyzer=analyzer, log_path=log_path, default_mode=st.mode,
+            node="", analyzer=analyzer, log_path=log_path, default_mode=st.mode,
             excludes=[_real(x) for x in DEFAULT_EXCLUDES], auto_land=False, links=links, settings=st,
             async_advise=True)
 
@@ -313,11 +314,99 @@ class Config:
         return load(path, profile)
 
 
-def _find_node() -> str:
-    for candidate in ("/opt/homebrew/opt/node@24/bin/node", "/opt/homebrew/bin/node", "/usr/local/bin/node"):
-        if os.path.exists(candidate):
-            return candidate
-    return "node"
+# ------------------------------------------------------------------------------------------
+# node selection
+# ------------------------------------------------------------------------------------------
+# A node binary can exist and still be dead: a `brew upgrade` of one of its dylibs (simdjson
+# 4 -> 5 on 2026-11-17) leaves /opt/homebrew/opt/node@24/bin/node aborting in dyld before it
+# runs a line. So a candidate counts only when it actually runs (and is new enough for the
+# analyzer bundle), probed once per process.
+
+NODE_CANDIDATES = ("/opt/homebrew/opt/node@24/bin/node", "/opt/homebrew/bin/node", "/usr/local/bin/node")
+NODE_MIN_MAJOR = 22
+NODE_PROBE_TIMEOUT = 5.0
+_node_probes: Dict[str, Optional[str]] = {}
+_node_probe_lock = threading.Lock()
+
+
+def _first_line(text: Optional[str]) -> str:
+    for line in (text or "").splitlines():
+        if line.strip():
+            return line.strip()[:300]
+    return ""
+
+
+def _probe_node(node: str, timeout: float) -> Optional[str]:
+    try:
+        out = subprocess.run([node, "-p", "process.versions.node"], stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, timeout=timeout)
+    except FileNotFoundError:
+        return "not found"
+    except subprocess.TimeoutExpired:
+        return f"no answer in {timeout:g}s"
+    except OSError as err:
+        return str(err)
+    if out.returncode != 0:
+        status = f"exit status {out.returncode}" if out.returncode > 0 else f"signal {-out.returncode}"
+        return _first_line(out.stderr) or status
+    version = out.stdout.strip()
+    try:
+        major = int(version.split(".")[0])
+    except ValueError:
+        return f"unexpected version output {version[:60]!r}"
+    if major < NODE_MIN_MAJOR:
+        return f"version {version} is older than {NODE_MIN_MAJOR}"
+    return None
+
+
+def probe_node(node: str, refresh: bool = False, timeout: float = NODE_PROBE_TIMEOUT) -> Optional[str]:
+    """Why ``node`` cannot run the analyzer (its first stderr line, or a short reason); None when
+    it runs. Cached per process; ``refresh`` re-probes."""
+    with _node_probe_lock:
+        if not refresh and node in _node_probes:
+            return _node_probes[node]
+    reason = _probe_node(node, timeout)
+    with _node_probe_lock:
+        _node_probes[node] = reason
+    return reason
+
+
+def node_candidates(preferred: Optional[str] = None) -> List[str]:
+    """``preferred`` (the configured node), then the usual install locations, then ``node`` on PATH."""
+    out: List[str] = []
+    for c in ([preferred] if preferred else []) + list(NODE_CANDIDATES) + [shutil.which("node") or ""]:
+        if c and c not in out:
+            out.append(c)
+    return out
+
+
+def resolve_node(preferred: Optional[str] = None, log: Optional[Callable[[str], None]] = None,
+                 refresh: bool = False) -> str:
+    """The first candidate that runs. When the node that would have been used (``preferred``, or
+    the first installed candidate) is broken, logs ONE line naming it, why, and the fallback.
+    No working node at all: ``preferred`` (or ``node``) unchanged, so callers fail as before."""
+    broken: Optional[Tuple[str, str]] = None
+    for c in node_candidates(preferred):
+        if os.sep in c and not os.path.exists(c):
+            if c == preferred:
+                broken = (c, "not found")
+            continue
+        reason = probe_node(c, refresh=refresh)
+        if reason is None:
+            if broken and log:
+                log(f"node {broken[0]} is broken: {broken[1]}; using {c}")
+            return c
+        broken = broken or (c, reason)
+    fallback = preferred or "node"
+    if broken and log:
+        log(f"node {broken[0]} is broken: {broken[1]}; no working node >= {NODE_MIN_MAJOR} found, "
+            f"keeping {fallback}")
+    return fallback
+
+
+def _find_node(log: Optional[Callable[[str], None]] = None) -> str:
+    """The node to run the analyzer with when none is configured (probed, see ``resolve_node``)."""
+    return resolve_node(None, log)
 
 
 # ------------------------------------------------------------------------------------------
@@ -532,7 +621,17 @@ class StandaloneScope(Scope):
 
 class Analyzer:
     """Persistent ``node analyze.mjs --serve`` child. Without a bundle: ``pyanalyze`` for Python
-    files, whole-file keys for everything else."""
+    files, whole-file keys for everything else.
+
+    The node binary is probed before first use (``resolve_node``): a configured node that no
+    longer runs is replaced by the next working candidate, with one log line. When the child
+    still dies before answering anything ``EARLY_EXITS`` times in a row, the node is re-probed
+    and switched; if no other node works (or the node is fine and the bundle itself dies), the
+    analyzer pauses for ``DEAD_COOLDOWN`` seconds instead of respawning a dead binary on every
+    call. The child's stderr is kept (first line) and logged when it dies."""
+
+    EARLY_EXITS = 2
+    DEAD_COOLDOWN = 300.0
 
     def __init__(self, node: str, script: Optional[str], timeout: float = 6.0,
                  log: Callable[[str], None] = lambda _m: None):
@@ -542,20 +641,44 @@ class Analyzer:
         self.broken = False
         self.seq = 0
         self._extensions: Optional[Tuple[str, ...]] = None
+        self._extensions_node: Optional[str] = None  # the node --languages was last asked with
+        self._node_lock = threading.Lock()
+        self._node_resolved = False
+        self._node_refresh = False  # re-probe (ignore the per-process cache) on the next resolve
+        self._early_exits = 0
+        self._paused_until = 0.0
+
+    def resolved_node(self) -> str:
+        """The configured node if it runs, else the first working candidate (probed once)."""
+        with self._node_lock:
+            if not self._node_resolved:
+                self.node = resolve_node(self.node or None, self.log, refresh=self._node_refresh)
+                self._node_resolved, self._node_refresh = True, False
+            return self.node
+
+    def _paused(self) -> bool:
+        return time.monotonic() < self._paused_until
 
     def extensions(self) -> Optional[Tuple[str, ...]]:
         """File extensions the bundle analyzes at declaration level (``analyze.mjs --languages``),
-        asked once. None when the bundle cannot say (older bundle): every file is then sent and
-        the bundle's ``analyzed`` list decides."""
-        if self._extensions is None and self.script and not self.broken:
+        asked once per node. None when the bundle cannot say (older bundle): every file is then
+        sent and the bundle's ``analyzed`` list decides."""
+        if self._extensions is None and self.script and not self.broken and not self._paused():
+            node = self.resolved_node()
+            if node == self._extensions_node:
+                return None
+            self._extensions_node = node
             try:
-                out = subprocess.run([self.node, self.script, "--languages"], capture_output=True, text=True,
+                out = subprocess.run([node, self.script, "--languages"], capture_output=True, text=True,
                                      timeout=max(self.timeout, 10.0))
                 info = json.loads(out.stdout.strip().splitlines()[-1]) if out.stdout.strip() else {}
                 exts = info.get("extensions") if info.get("ok") else None
                 if isinstance(exts, list):
                     self._extensions = tuple(str(e).lower() for e in exts)
                     self.log(f"analyzer languages: {', '.join(l.get('id', '?') for l in info.get('languages', []))}")
+                elif out.returncode != 0:
+                    self.log(f"analyzer --languages failed: exit {out.returncode}: "
+                             f"{_first_line(out.stderr) or 'no stderr'}")
             except Exception as err:
                 self.log(f"analyzer --languages failed: {err}")
         return self._extensions
@@ -564,20 +687,90 @@ class Analyzer:
         exts = self.extensions()
         return True if exts is None else path.lower().endswith(exts)
 
+    @staticmethod
+    def _drain_stderr(proc: subprocess.Popen) -> None:
+        """Keep the child's first stderr line (dyld errors land there); never let the pipe fill."""
+        try:
+            for line in proc.stderr:  # type: ignore[union-attr]
+                if not getattr(proc, "weft_stderr", "") and line.strip():
+                    proc.weft_stderr = line.strip()[:300]  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    @staticmethod
+    def _release(proc: subprocess.Popen) -> None:
+        """Close a finished child's pipes (after its stderr drain thread had its chance)."""
+        drain = getattr(proc, "weft_drain", None)
+        if drain is not None:
+            drain.join(timeout=1.0)
+        for f in (proc.stdin, proc.stdout, proc.stderr):
+            try:
+                if f:
+                    f.close()
+            except Exception:
+                pass
+
     def _start(self) -> Optional[subprocess.Popen]:
         if self.broken or not self.script:
             return None
         if self.proc and self.proc.poll() is None:
             return self.proc
-        try:
-            self.proc = subprocess.Popen(
-                [self.node, self.script, "--serve"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, text=True, bufsize=1)
-            return self.proc
-        except Exception as err:
-            self.log(f"analyzer start failed: {err}")
-            self.broken = True
+        if self.proc is not None:  # died between requests
+            dead, self.proc = self.proc, None
+            self._died(dead, "analyzer exited")
+        if self._paused():
             return None
+        node = self.resolved_node()
+        try:
+            proc = subprocess.Popen(
+                [node, self.script, "--serve"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True, bufsize=1)
+        except Exception as err:
+            self.log(f"analyzer start failed with node {node}: {err}")
+            self._early_exit(node, str(err))
+            return None
+        proc.weft_answered = False  # type: ignore[attr-defined]
+        proc.weft_stderr = ""  # type: ignore[attr-defined]
+        drain = threading.Thread(target=self._drain_stderr, args=(proc,), daemon=True)
+        drain.start()
+        proc.weft_drain = drain  # type: ignore[attr-defined]
+        self.proc = proc
+        return proc
+
+    def _died(self, proc: subprocess.Popen, what: str) -> None:
+        """Log a child that ended on its own (exit status + first stderr line); count it when it
+        never answered (it died at start, e.g. dyld could not load the node binary)."""
+        self._release(proc)
+        err = getattr(proc, "weft_stderr", "")
+        code = proc.poll()
+        status = "" if code is None else (f" (exit {code})" if code >= 0 else f" (signal {-code})")
+        self.log(f"analyzer failed: {what}{status}" + (f": {err}" if err else ""))
+        if getattr(proc, "weft_answered", True):
+            self._early_exits = 0
+        else:
+            self._early_exit(str(proc.args[0]) if isinstance(proc.args, (list, tuple)) else self.node, err)
+
+    def _early_exit(self, node: str, err: str) -> None:
+        self._early_exits += 1
+        if self._early_exits < self.EARLY_EXITS:
+            return
+        self._early_exits = 0
+        with self._node_lock:
+            fresh = resolve_node(node, self.log, refresh=True)  # logs "node X is broken: ...; using Y"
+            if fresh != node:
+                self.node, self._node_resolved = fresh, True
+                self._extensions, self._extensions_node = None, None
+                return
+        reason = probe_node(node) if os.sep not in node or os.path.exists(node) else "not found"
+        if reason:
+            why = f"node {node} is broken and no other node >= {NODE_MIN_MAJOR} runs"
+        else:
+            why = f"node {node} runs, but the bundle exits at start" + (f" ({err})" if err else "")
+        self._paused_until = time.monotonic() + self.DEAD_COOLDOWN
+        with self._node_lock:
+            # re-probe after the pause, so fixing node (brew upgrade) needs no gateway restart
+            self._node_resolved, self._node_refresh = False, True
+        self.log(f"analyzer paused for {self.DEAD_COOLDOWN:g}s: {why}; whole-file keys meanwhile")
 
     def _ask(self, files: List[dict], root: Optional[str] = None, prefix: str = "") -> Optional[dict]:
         with self.lock:
@@ -604,14 +797,26 @@ class Analyzer:
                         raise EOFError("analyzer exited")
                     msg = json.loads(line)
                     if msg.get("id") == self.seq:
+                        proc.weft_answered = True  # type: ignore[attr-defined]
+                        self._early_exits = 0
                         return msg if msg.get("ok") else None
             except Exception as err:
+                self.proc = None
+                if isinstance(err, (EOFError, BrokenPipeError)):
+                    try:
+                        proc.wait(timeout=1.0)
+                    except Exception:
+                        pass
+                if proc.poll() is not None:  # it died on its own
+                    self._died(proc, str(err) or type(err).__name__)
+                    return None
                 self.log(f"analyzer failed: {err}")
                 try:
                     proc.kill()
+                    proc.wait(timeout=1.0)
                 except Exception:
                     pass
-                self.proc = None
+                self._release(proc)
                 return None
 
     def analyze(self, changes: List[Tuple[str, Optional[str], Optional[str]]], root: Optional[str] = None,
@@ -649,12 +854,15 @@ class Analyzer:
         return sorted(set(reads) - set(writes)), list(writes.values())
 
     def close(self) -> None:
-        if self.proc and self.proc.poll() is None:
+        proc, self.proc = self.proc, None
+        if proc and proc.poll() is None:
             try:
-                self.proc.stdin.close()  # type: ignore[union-attr]
-                self.proc.wait(timeout=1)
+                proc.stdin.close()  # type: ignore[union-attr]
+                proc.wait(timeout=1)
             except Exception:
-                self.proc.kill()
+                proc.kill()
+        if proc:
+            self._release(proc)
 
 
 def file_key(rel: str) -> str:

@@ -64,7 +64,7 @@ CONFIG = Path(os.environ.get("WEFT_HERMES_CONFIG", "~/.config/weft/hermes-adapte
 
 sys.path.insert(0, str(PLUGIN_SRC.parent))
 sys.path.insert(0, str(PKG / "installer"))
-from weft.adapter import discover_projects  # noqa: E402
+from weft.adapter import NODE_MIN_MAJOR, discover_projects, probe_node, resolve_node  # noqa: E402
 
 
 def hermes_root() -> Path:
@@ -84,11 +84,20 @@ def all_profiles() -> list:
     return out
 
 
+_NODE: list = []
+
+
 def node_bin() -> str:
-    for c in ("/opt/homebrew/opt/node@24/bin/node", shutil.which("node") or ""):
-        if c and os.path.exists(c):
-            return c
-    sys.exit("node >= 22 not found")
+    """A node >= 22 that actually runs. Probed, not just found: a `brew upgrade` of one of its
+    dylibs can leave an existing binary aborting in dyld. Only such a node is built with and
+    written into the adapter config (``node``)."""
+    if not _NODE:
+        node = resolve_node(None, log=lambda m: print(f"note: {m}"))
+        reason = probe_node(node)
+        if reason:
+            sys.exit(f"no working node >= {NODE_MIN_MAJOR} found ({node}: {reason})")
+        _NODE.append(node)
+    return _NODE[0]
 
 
 def admin_call(url: str, admin: str, method: str, path: str, body=None):
