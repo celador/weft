@@ -210,8 +210,8 @@ describe("--demo end to end (no LLM)", () => {
 describe("installed hooks survive a Homebrew node upgrade", () => {
   it("maps a versioned Cellar node to the stable opt/<formula> link when it exists", () => {
     const cellar = "/opt/homebrew/Cellar/node@24/24.21.0/bin/node";
-    expect(stableNodePath(cellar, (p) => p === "/opt/homebrew/opt/node@24/bin/node")).toBe("/opt/homebrew/opt/node@24/bin/node");
-    expect(stableNodePath("/usr/local/Cellar/node/25.1.0/bin/node", (p) => p === "/usr/local/opt/node/bin/node")).toBe("/usr/local/opt/node/bin/node");
+    expect(stableNodePath(cellar, (p) => p === "/opt/homebrew/opt/node@24/bin/node", () => true)).toBe("/opt/homebrew/opt/node@24/bin/node");
+    expect(stableNodePath("/usr/local/Cellar/node/25.1.0/bin/node", (p) => p === "/usr/local/opt/node/bin/node", () => true)).toBe("/usr/local/opt/node/bin/node");
   });
   it("keeps the real path otherwise", () => {
     expect(stableNodePath("/opt/homebrew/Cellar/node@24/24.21.0/bin/node", () => false)).toBe("/opt/homebrew/Cellar/node@24/24.21.0/bin/node");
