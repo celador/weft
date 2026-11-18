@@ -343,3 +343,8 @@ Append-only. One dated entry per heartbeat that changed something.
 - Its "2 Hermes analyzer unittests fail, node@24 broken" note was real and wider: a brew simdjson upgrade (18:07) broke /opt/homebrew/opt/node@24/bin/node (dyld libsimdjson.33), which the Hermes adapter config uses, so 113 analyzer calls failed 18:26-21:03 (whole-file fallback). Fixed: `brew upgrade node@24` -> 24.22.3_1; analyze.mjs runs; hermes unittest 125/125 OK on main.
 - Created + dispatched t_b89331cc (wt/node-probe): adapters probe the node binary and fall back, log stderr, instead of trusting file existence. Decision: card it so the next brew upgrade can't silently degrade analysis.
 - Security impact: none (local runtime repair + board ops).
+
+## 2026-11-17 22:20 — Landed node-probe (t_b89331cc), rolled it out to the dogfood adapter
+- Merged wt/node-probe as e5c83ea (adapters probe node before use, fall back, re-probe after two early analyzer exits). Gate on main green (GATE_EXIT=0, all suites pass); spot-check: hermes unittest 136/136 OK. Pushed; Weft land already auto-recorded (#3003). Worktree removed.
+- Ran install.py with the existing enforce list (weft, hermes-ios, weft-demo-site, lawnstarter-take-home): default/reader/webmaster plugin copies now match main, gateway reloaded. Decision: install now so the next brew break degrades loudly with fallback instead of silently.
+- t_4fe570cd still parked on John's `clerk auth login` (reported 18:05); go-live t_52c6e0ad gated on it. Security impact: none (local node selection only).
