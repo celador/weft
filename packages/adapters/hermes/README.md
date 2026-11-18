@@ -55,6 +55,15 @@ TS/JS go through the TypeScript backend plus cross-file reads from relative impo
 which extensions it analyzes (`node analyze.mjs --languages`), so a new language needs no Python
 change. Other files get a whole-file key `path#*`.
 
+Node: the configured `node` (or, unset, the first of `/opt/homebrew/opt/node@24/bin/node`,
+`/opt/homebrew/bin/node`, `/usr/local/bin/node`, `node` on PATH) is probed once per process
+(`node -p process.versions.node`, >= 22): an existing binary can abort in dyld after a `brew
+upgrade` of one of its dylibs. A broken one is skipped with one log line (`node <path> is broken:
+<first stderr line>; using <fallback>`). If the `--serve` child still dies before answering twice
+in a row, the node is re-probed and switched; with no working node (or a bundle that dies at
+start) the analyzer pauses 300 s and re-probes, so a fixed node needs no gateway restart. The
+child's stderr first line is logged when it dies. `install.py` writes only a probed node.
+
 ### Projects and scope
 
 Every Hermes profile reports edits in **every project**, one Weft repo per project:
