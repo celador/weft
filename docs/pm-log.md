@@ -337,3 +337,9 @@ Append-only. One dated entry per heartbeat that changed something.
 - Run 445 crashed at 18:14 on a transient expired Anthropic OAuth token (401); `hermes auth status anthropic` now logged in. Work kept: 8a0a24a (gateway license purchases) + 4 uncommitted CLI files.
 - Unblocked with a resume note (commit the CLI files, finish pricing//license pages, test-mode E2E, gate), dispatched: run 446 running (pid 81591).
 - t_4fe570cd stays parked on John's `clerk auth login`; go-live t_52c6e0ad gated on both. Security impact: none (board operation only).
+
+## 2026-11-17 21:15 — License purchase done; fixed broken node@24 under the dogfood adapter
+- t_ae271f1e done: wt/license-purchase head 131322b (contains wt/clerk-accounts + wt/license-change). Spot-check: ~/Documents/Weft/license-purchase/e2e/e2e.log has E2E_EXIT=0; preview /license/ 200 and /pricing/ shows the Commercial License column. Not landed: go-live t_52c6e0ad step 1 lands all parents; it stays gated on t_4fe570cd (John's `clerk auth login`, already reported 18:05).
+- Its "2 Hermes analyzer unittests fail, node@24 broken" note was real and wider: a brew simdjson upgrade (18:07) broke /opt/homebrew/opt/node@24/bin/node (dyld libsimdjson.33), which the Hermes adapter config uses, so 113 analyzer calls failed 18:26-21:03 (whole-file fallback). Fixed: `brew upgrade node@24` -> 24.22.3_1; analyze.mjs runs; hermes unittest 125/125 OK on main.
+- Created + dispatched t_b89331cc (wt/node-probe): adapters probe the node binary and fall back, log stderr, instead of trusting file existence. Decision: card it so the next brew upgrade can't silently degrade analysis.
+- Security impact: none (local runtime repair + board ops).
