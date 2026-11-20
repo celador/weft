@@ -369,3 +369,8 @@ Append-only. One dated entry per heartbeat that changed something.
 - t_4fe570cd done (email-code login); Google + Apple sign-in split to t_619cbda1 (triage). Killed the 21:05 OAuth resume script (pid 29510): it targeted the now-done card. t_619cbda1 stays in triage: its body requires John's "use Chrome".
 - Go-live t_52c6e0ad blocked: paused by operator while John reconsiders Pro/License pricing. Left as is.
 - t_88c0c1a3 (lawnstarter) still needs John's login; already reported.
+
+## 2026-11-20 20:10 — Go-live pause came after the live steps
+- t_52c6e0ad run (18:36–19:04 UY) had already, before the operator pause: set the live Stripe price secrets and deployed weft-hosted (b2831eab, 21:42Z), deployed weft-site (b1db35ce, 21:46Z; weft.mx shows the approved Pro/License prices), posted license Discussion #24 (21:43Z), pushed tags mit-final + cf-competition-2026. npm publish did not happen (0.3.0). Verified via wrangler deployments, gh, curl, npm view.
+- Decision: leave the live state as is (prices are John's 2026-11-17 approved ones; rollback would be another public change while he decides). Reported to John once. Committed the worker's uncommitted go-live record (docs/pricing.md) on wt/launch-go-live as 9e29a14; branch not landed (card paused).
+- Security impact: none (board ops + a doc commit on a branch).
