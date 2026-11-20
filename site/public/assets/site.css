@@ -225,6 +225,8 @@ section { padding-block: 96px; }
 .doc ul { margin: 16px 0 0; padding-left: 22px; display: grid; gap: 8px; }
 .doc a { color: var(--accent); text-underline-offset: 3px; }
 .doc a.btn { color: var(--accent-ink); text-decoration: none; margin-top: 16px; }
+.doc a.btn-ghost { color: var(--text); }
+.doc a.btn-danger { color: var(--err); }
 .doc code { font: 500 0.88em var(--mono); background: var(--bg-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; overflow-wrap: anywhere; }
 .doc strong { color: var(--text); font-weight: 600; }
 
