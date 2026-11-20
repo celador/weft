@@ -27,7 +27,7 @@ through Stripe (see [pricing.md](pricing.md)). Nothing is charged unless you sub
 or on weft.mx.
 
 **Accounts.** A hosted space belongs to a **Weft account**: a user of the Weft Clerk application, signed up free on
-weft.mx (email with a code, or email and password). `npx @celador/weft login` connects a machine (see "Accounts" below).
+weft.mx with an emailed code (no passwords). `npx @celador/weft login` connects a machine (see "Accounts" below).
 The machine's credential is still the space's *owner key*, and it is still the only thing the CLI keeps: in
 `~/.config/weft/cli.json` (mode 600) and in each checkout's `.weft/space-token` (git-ignored), so running the CLI
 again in the same repo, even on a machine that lost `~/.config/weft`, finds the same space. On the hosted gateway
@@ -258,7 +258,7 @@ which load Clerk's browser SDK from the application's Frontend API (`clerk.weft.
 
 | | holds |
 |---|---|
-| Clerk (the Weft application) | email, password hash or sign-in codes, sign-in times, sessions |
+| Clerk (the Weft application) | email, sign-in codes, sign-in times, sessions |
 | Stripe | billing email, card, invoices; the subscription's metadata carries the account id |
 | Weft's gateway (`accounts` table) | the Clerk user id, plan, product, seats, interval, renewal time, Stripe customer id, created and paid times, and `utm_source`/`utm_campaign` of the first visit that sent the person; spaces carry a nullable `account_id`. No email, no name |
 | the site Worker (`weft-site`) | nothing about users; it holds the Clerk **secret** key only to delete the caller's own Clerk user |
