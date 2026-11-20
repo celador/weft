@@ -152,17 +152,37 @@ checks them. `legacy_usage` describes the superseded usage price, kept so existi
 }
 ```
 
-### Go-live checklist (the go-live card)
+### Go-live record (2026-11-20, card t_52c6e0ad)
 
-1. The numbers above are the approved ones (2026-11-17); edit them only if John changes them.
-2. `node scripts/stripe-setup.mjs --live` (restricted key from keychain `weft-stripe-live-key`; the key also needs
-   write access to Prices and Customer Portal, which it has): product `weft_pro`, prices `weft_pro_user_month` and
-   `weft_pro_user_year`, Pro portal configuration (metadata `weft=pro`).
-3. `wrangler secret put --env hosted` for `STRIPE_PRICE_PRO_MONTH`, `STRIPE_PRICE_PRO_YEAR` and
-   `STRIPE_PORTAL_CONFIG_ID` (the existing key and webhook secret stay; the webhook endpoint already sends the four
-   events). Until these are set, a deploy of this code turns hosted billing OFF (no allowance enforced).
-4. Deploy `weft-hosted`, publish the CLI (0.4.0), ship the site's pricing and welcome pages.
-5. Verify: `/buy` answers 303 to a live Checkout page; `GET /v1/admin/billing` shows `enabled: true`.
+Weft Pro, the Commercial License and Weft accounts are live on weft.mx and the production hosted gateway
+(`weft-hosted.elier.ai`), in Stripe account elier.ai (customers see "Atelier" on Checkout and statements).
+
+1. Prices approved by John on 2026-11-17 (the `pricing-config` block above).
+2. Live objects, created with the restricted key `weft-stripe-live-key` (`node scripts/stripe-setup.mjs --live
+   --wrangler-args "--env hosted"`, idempotent; the account's full secret key was not used):
+   - product `weft_pro`: `price_1UdzWFIphXjNhKDjwa3yoZhJ` ($12 per user per month, `weft_pro_user_month`),
+     `price_1UdzWGIphXjNhKDjhTjuxu56` ($98 per user per year, `weft_pro_user_year`); Customer Portal configuration
+     `bpc_1UdzWGIphXjNhKDjY3oKQZMq` (seat changes prorated, cancel at period end).
+   - product `weft_license`: `price_1UdzWIIphXjNhKDjBpBxeZ3c` ($29 per user per year, `weft_license_user_year`),
+     `price_1UdzWIIphXjNhKDjh8Fh2LSm` ($58 per user once, `weft_license_user_lifetime`).
+   - The Worker secrets `STRIPE_PRICE_PRO_MONTH`, `STRIPE_PRICE_PRO_YEAR`, `STRIPE_PORTAL_CONFIG_ID`,
+     `STRIPE_PRICE_LICENSE_YEAR` and `STRIPE_PRICE_LICENSE_LIFETIME` hold these ids; the webhook endpoint
+     `we_1UXsRgIphXjNhKDjIQ1qiY4G` and its signing secret are unchanged (same four events).
+   - The usage price `price_1UXsR9IphXjNhKDj6VSpNKYd` was archived after checking it had 0 live subscriptions.
+3. Accounts: the Clerk application "Weft" (production instance on weft.mx: `clerk.weft.mx`, `accounts.weft.mx`, mail
+   from `notifications@weft.mx`), sign-in with an emailed code (no passwords). The gateway reads `CLERK_ISSUER` from
+   wrangler.toml and holds no Clerk secret; the site Worker `weft-site` holds `CLERK_SECRET_KEY` only to delete the
+   caller's own Clerk user.
+4. Deployed: `weft-hosted` version `b2831eab-6ca8-48c7-a507-2d02437f364c` (main `a3c7357`); `weft-site` (weft.mx).
+   CLI: {NPM_LINE}
+5. Checked live: `GET /v1/admin/billing` = `enabled: true`; a new account signed up on weft.mx/sign-up/ reached
+   /account/; Checkout for 2 Pro users showed "Subscribe to Weft Pro, $24.00 per month, Qty 2 (adjustable), $12.00
+   each" and for 3 lifetime licenses "Weft Commercial License, Qty 3, $58.00 each, $174.00" (neither paid; both
+   sessions expired); `weft login` from a clean HOME created a space on the account; an unsigned webhook POST is
+   rejected (400); an anonymous `POST /v1/spaces` answers 403 `login_required`. The test account was deleted.
+6. License: the product is AGPL-3.0-only from November 20, 2026; the last MIT commit is `b825786` (tag `mit-final`);
+   the judged competition code is tagged `cf-competition-2026`. Announcement:
+   https://github.com/celador/weft/discussions/24.
 
 ## History: the usage-based model (2026-11-01)
 
