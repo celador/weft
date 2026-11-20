@@ -185,6 +185,17 @@ class SessionAttributionTests(Workspace):
             while ("bye", old.session) not in old.client.calls and time.monotonic() < deadline:
                 time.sleep(0.02)
             self.assertIn(("bye", old.session), old.client.calls)
+            # the heartbeat loop of an idle conversation hands it back to the router
+            quiet = r.adapter_for("alpha", "quiet-chat")
+            self.assertIsNotNone(quiet.on_idle)
+            self.assertIsNone(r.adapter_for("alpha", "").on_idle, "the process-wide adapter never idles out")
+            quiet.ensure_session()
+            quiet.on_idle(quiet)
+            self.assertNotIn(("alpha", "quiet-chat"), r.adapters)
+            deadline = time.monotonic() + 5
+            while ("bye", quiet.session) not in quiet.client.calls and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertIn(("bye", quiet.session), quiet.client.calls)
             r.close()
 
 
@@ -426,6 +437,26 @@ class InstallUrlTests(InstallerCase):
         self.run_main("--sync", "--public-url", "")
         self.assertNotIn("public_url", self.cfg())
 
+    def test_the_weft_hermes_url_workaround_migrates_to_url_and_public_url(self):
+        # before: url = the tailnet address, ~/.hermes/.env WEFT_HERMES_URL = loopback
+        self.run_main("--sync", "--url", self.TAILNET, "--project-dirs", str(self.projects))
+        before = self.cfg()["agents"]["default"]["tokens"]
+        envfile = self.tmp / "home" / ".hermes" / ".env"
+        envfile.parent.mkdir(parents=True, exist_ok=True)
+        envfile.write_text("OTHER_SECRET=s3cret\nexport WEFT_HERMES_URL='http://127.0.0.1:7878/'\n")
+        with env(WEFT_HERMES_URL=None), mock.patch.object(self.install, "healthy", return_value=True):
+            out = self.run_main("--sync")
+        cfg = self.cfg()
+        self.assertEqual((cfg["url"], cfg["public_url"]), (self.LOOP, self.TAILNET))
+        self.assertEqual(cfg["agents"]["default"]["tokens"], before)
+        self.assertIn("the WEFT_HERMES_URL line can go", out)
+        self.assertNotIn("s3cret", out)
+        # an unreachable override is not adopted
+        self.run_main("--sync", "--url", self.TAILNET, "--public-url", "")
+        with env(WEFT_HERMES_URL=None):
+            self.run_main("--sync")
+        self.assertEqual(self.cfg()["url"], self.TAILNET)
+
     def test_another_gateway_drops_tokens_and_leaves_the_human_token(self):
         self.run_main("--sync", "--url", self.LOOP, "--project-dirs", str(self.projects))
         (self.weft_dir / "otto-human-token.json").write_text(json.dumps({"url": self.LOOP, "token": "h"}))
@@ -609,6 +640,15 @@ class WorktreeJoinTests(unittest.TestCase):
         self.assertIn("no Claude Code adapter", worktrees.plan_join(str(self.wt), "t_1")["skip"])
         self.assertIsNone(worktrees.join_worktree(str(self.wt), "t_1", self.lines.append))
         self.assertEqual(self.lines, [])
+
+    def test_a_launcher_that_came_with_the_repo_is_never_run(self):
+        git(self.main, "add", "-f", ".weft/bin/weft")
+        self.assertIn(".weft/ in git", worktrees.plan_join(str(self.wt), "t_abc123")["skip"])
+        git(self.main, "rm", "-q", "--cached", ".weft/bin/weft")
+        self.assertNotIn("skip", worktrees.plan_join(str(self.wt), "t_abc123"))
+        # the launcher must exec node on an .mjs file
+        (self.main / ".weft" / "bin" / "weft").write_text(f"#!/bin/sh\nexec /bin/sh '{self.adapter}' \"$@\"\n")
+        self.assertIn("no .weft/bin/weft launcher", worktrees.plan_join(str(self.wt), "t_abc123")["skip"])
 
     def test_plugin_registers_the_spawn_hook(self):
         import weft

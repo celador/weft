@@ -99,7 +99,7 @@ MAX_FILE_BYTES = 512 * 1024
 MAX_SNAPSHOT_FILES = 300
 DRAIN_EVERY_S = 20.0
 RELOAD_EVERY_S = 60.0  # long-lived processes re-read the config for unknown projects at most this often
-SESSION_IDLE_S = 6 * 3600.0  # a chat's adapters (one WCP session per repo) close after this long idle
+SESSION_IDLE_S = 2 * 3600.0  # a chat's adapters (one WCP session per repo) close after this long idle
 MAX_SESSION_KEYS = 4096      # remembered session id -> conversation id pairs
 RELEASE_AFTER_REFUSALS = 2
 SYMBOL_KEY = re.compile(r"^[^#\s]+#[^#\s]+$")  # WCP SymbolKey (schema $defs.SymbolKey)
@@ -1149,6 +1149,10 @@ class WeftAdapter:
         # serves many chats, so the change must come from the hook call, never process state.
         self.session_key = session_key
         self.last_used = time.monotonic()
+        # Set by the router for conversation adapters: the heartbeat loop hands an idle one back
+        # (``on_idle(self)``) instead of heartbeating it until the gateway process exits.
+        self.on_idle: Optional[Callable[["WeftAdapter"], None]] = None
+        self.idle_clock: Callable[[], float] = time.monotonic
         self.scope = scope or config.scope()
         self.client = client or WcpClient(config.url, config.token, config.repo, config.timeout,
                                           breaker_cooldown=config.breaker_cooldown)
@@ -1340,6 +1344,9 @@ class WeftAdapter:
                 time.sleep(interval)
                 if self._closed or not self.session:
                     continue
+                if self.session_key and self.on_idle and self.idle_clock() - self.last_used > SESSION_IDLE_S:
+                    self.on_idle(self)  # the chat went quiet: no heartbeats for it until it is back
+                    return
                 self.rec.touch()
                 if time.monotonic() - self.last_contact < interval * 0.8:
                     continue
@@ -2177,6 +2184,8 @@ class WeftRouter:
             adapter = WeftAdapter(cfg, client=client, analyzer=self.analyzer, heartbeat=self.heartbeat,
                                   scope=self.scope, session_key=session)
             adapter.last_used = self._clock()
+            if session:
+                adapter.on_idle, adapter.idle_clock = self._idle_retire, self._clock
             self.adapters[(repo, session)] = adapter
             if adapter._pending_exists():  # a land a previous process could not post
                 adapter.request_land("retrying a pending land")
@@ -2189,6 +2198,14 @@ class WeftRouter:
         idle = [k for k, a in self.adapters.items() if k[1] and now - a.last_used > SESSION_IDLE_S]
         for k in idle:
             self._retire(self.adapters.pop(k), "idle")
+
+    def _idle_retire(self, adapter: WeftAdapter) -> None:
+        """An idle conversation adapter's heartbeat loop gave it back: drop it and say bye."""
+        with self.lock:
+            for k, a in list(self.adapters.items()):
+                if a is adapter:
+                    self.adapters.pop(k)
+        self._retire(adapter, "idle")
 
     def _retire(self, adapter: WeftAdapter, why: str) -> None:
         adapter.log(f"[{adapter.cfg.repo}] closing session {adapter.change} ({why})")

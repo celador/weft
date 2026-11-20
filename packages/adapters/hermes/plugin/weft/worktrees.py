@@ -16,7 +16,9 @@ makes the adapter copy its own token file (runtimes that predate that flag get `
 pointing at the main checkout's token instead).
 
 Nothing here is a credential reader: it reads ``.weft/claude.json`` (no secrets) and the
-``.weft/bin/weft`` launcher (to find the adapter the user installed), and runs that adapter.
+``.weft/bin/weft`` launcher (to find the adapter the user installed), and runs that adapter, only
+when the launcher execs a ``node*`` binary on an ``.mjs`` file and git tracks nothing under
+``.weft/`` (a launcher committed to the repo is the repo's content, not the user's install).
 """
 
 from __future__ import annotations
@@ -84,9 +86,22 @@ def adapter_command(main: str) -> Optional[List[str]]:
             words = shlex.split(line)
         except ValueError:
             return None
-        if len(words) >= 3 and words[1] and words[2].endswith(".mjs") and os.path.isfile(words[2]):
+        if (len(words) >= 3 and os.path.basename(words[1]).startswith("node") and words[2].endswith(".mjs")
+                and os.path.isfile(words[2])):
             return [words[1], words[2]]
     return None
+
+
+def tracks_weft_dir(main: str) -> bool:
+    """True when git tracks anything under ``main/.weft`` (or cannot tell). The adapter install
+    writes ``.weft/`` locally and keeps it out of git; a ``.weft/bin/weft`` that came with the
+    repo's own content (a clone) is not the user's choice and is never run."""
+    try:
+        out = subprocess.run(["git", "-C", main, "ls-files", "--", ".weft"], capture_output=True, text=True,
+                             timeout=10, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return out.returncode != 0 or bool(out.stdout.strip())
 
 
 def plan_join(worktree: str, task_id: str) -> Optional[Dict[str, Any]]:
@@ -109,6 +124,8 @@ def plan_join(worktree: str, task_id: str) -> Optional[Dict[str, Any]]:
     cmd = adapter_command(main)
     if not cmd:
         return {"skip": f"main checkout {main} has no .weft/bin/weft launcher naming the adapter"}
+    if tracks_weft_dir(main):
+        return {"skip": f"main checkout {main} has .weft/ in git (not a local adapter install); not run"}
     token_rel = cfg.get("tokenFile")
     if not isinstance(token_rel, str) or not token_rel:
         token_rel = ".weft/token"

@@ -128,10 +128,35 @@ def local_gateway():
     return (url, admin) if healthy(url) else None
 
 
+def env_url_override() -> str:
+    """``WEFT_HERMES_URL`` from this environment or ~/.hermes/.env (only that one line is read;
+    the file's other values are never kept or printed)."""
+    if os.environ.get("WEFT_HERMES_URL", "").strip():
+        return norm_url(os.environ["WEFT_HERMES_URL"])
+    try:
+        text = (hermes_root() / ".env").read_text()
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        key, sep, value = line.strip().removeprefix("export ").partition("=")
+        if sep and key.strip() == "WEFT_HERMES_URL":
+            return norm_url(value.strip().strip("'\""))
+    return ""
+
+
 def resolve_gateway(args, cfg: dict) -> None:
     """Fill args.url / args.public_url / args.admin_token_file from the flags, the config, a
     running local gateway, then the defaults (see the module docstring)."""
     url = norm_url(args.url) or norm_url(cfg.get("url"))
+    if (not args.url and args.public_url is None and url and not is_loopback(url)
+            and not norm_url(cfg.get("public_url"))):
+        # The old workaround: `url` = the address phones use, WEFT_HERMES_URL = loopback for the
+        # plugin. Same gateway under two addresses: keep both, in the fields made for them.
+        override = env_url_override()
+        if override and is_loopback(override) and healthy(override):
+            print(f"note: WEFT_HERMES_URL {override} is this Mac's address of gateway {url}: saving it as "
+                  f"url and {url} as public_url (the WEFT_HERMES_URL line can go)")
+            args.public_url, url = url, override
     local = None
     if not url:
         local = local_gateway()
