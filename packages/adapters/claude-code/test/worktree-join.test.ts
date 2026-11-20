@@ -113,6 +113,8 @@ describe("linked worktrees and the commit-msg hook", () => {
       `${joinCmd} --shared`,
       joinCmd.replace(`--dir ${wt}`, `--dir ${main}`),
       joinCmd.replace("--task t_1", "--task 'bad id'"),
+      joinCmd.replace(` --dir ${wt}`, ""),
+      `${joinCmd.replace(` --dir ${wt}`, "")} --shared x`,
     ]) expect(denied(hookIn(wt, { tool_name: "Bash", tool_input: { command: bad } }, noToken)), bad).toContain("has not joined Weft");
     expect(why).toContain("--mode enforce");
     expect(denied(hookIn(wt, { tool_name: "Bash", tool_input: { command: `cd ${main} && git status` } }, noToken))).toBeUndefined();

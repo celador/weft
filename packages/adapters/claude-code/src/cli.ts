@@ -154,7 +154,8 @@ export function unjoinedAllows(command: string, cwd: string, worktree: string, o
     };
     const got = flags(words);
     const exp = flags(want)!;
-    const same = !!got && got.size === exp.size && [...exp].every(([k, v]) => (k === "--dir" ? resolve(cwd, got.get(k) ?? "") === v : got.get(k) === v));
+    // every planned flag present (so no other flag fits in the same count) with its planned value
+    const same = !!got && got.size === exp.size && [...exp].every(([k, v]) => got.has(k) && (k === "--dir" ? resolve(cwd, got.get(k)!) === v : got.get(k) === v));
     return words[0] === want[0] && JOIN_TASK.test(task) && same && !!cfg.url && !!cfg.repo && !!cfg.agent;
   }
   const target = bashTargetDir(command, cwd);

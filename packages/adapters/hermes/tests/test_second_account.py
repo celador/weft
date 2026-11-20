@@ -393,6 +393,29 @@ class TerminalTargetTests(Workspace):
                                      tool_call_id="q-commit")
         self.assertEqual((block or {}).get("action"), "block")
 
+    def test_fail_closed_scan_survives_unbalanced_quotes_home_vars_and_many_paths(self):
+        odd = self.alpha / ".worktrees" / "O'Brien wt"
+        git(self.alpha, "worktree", "add", "-q", "-b", "wt/odd2", str(odd))
+        scratch = self.tmp / "scratch"
+        scratch.mkdir()
+        os.environ["HERMES_KANBAN_WORKSPACE"] = str(scratch)
+        for i in range(60):  # more distinct existing directories than the old bound of 32
+            (scratch / f"n{i}").mkdir()
+        noise = " ".join(str(scratch / f"n{i}") for i in range(60))
+        cases = (
+            (odd, f'pushd "{odd}"; rm src/a.md; echo "'),               # unbalanced trailing quote
+            (self.wt, f"cd /tmp; rm $HOME/github/alpha/.worktrees/t_2/src/a.md"),
+            (self.wt, "cd /tmp; rm ${HOME}/github/alpha/.worktrees/t_2/src/a.md"),
+            (self.wt, f"cd /tmp; ls {noise} /etc /var /private /bin /sbin; pushd {self.wt} && rm src/a.md"),
+        )
+        with env(HOME=str(self.tmp)):
+            for n, (wt, cmd) in enumerate(cases):
+                target = wt / "src" / "a.md"
+                before = len(self.run_terminal("true", f"h-noop{n}", lambda: None))
+                edits = self.run_terminal(cmd, f"h{n}", target.unlink)
+                self.assertEqual([e["files"] for e in edits[before:]], [["src/a.md"]], cmd)
+                git(wt, "checkout", "-q", "--", "src/a.md")
+
     def test_one_call_in_two_worktrees_reports_both(self):
         def apply():
             (self.alpha / "src" / "a.md").write_text("main\n")

@@ -248,7 +248,8 @@ _DIR_CHANGE = re.compile(
     r"""|(?:^|[\s;&|(])(?:ba|z|da|k)?sh[ \t]+-\w*c""", re.M)
 # Absolute or ~ paths anywhere in a command (quoted or not): the fail-closed candidates.
 _ABS_PATH = re.compile(r"""(?:(?<=^)|(?<=[\s=:'"(<>|;&]))(~?/[^\s'";&|<>()`$*?\[\]{}]*)""", re.M)
-MAX_COMMAND_PATHS = 32
+MAX_COMMAND_PATHS = 256  # distinct existing directories (each costs a realpath + scope lookup)
+MAX_COMMAND_WORDS = 4096
 
 
 def _target_of(m: "re.Match[str]") -> Optional[str]:
@@ -281,17 +282,29 @@ def bash_target_dir(command: Any) -> Optional[str]:
     return _target_of(m) if m else None
 
 
+_HOME_VAR = re.compile(r"\A(?:\$HOME|\$\{HOME\})(?=/|\Z)")
+
+
+def _shell_words(command: str) -> Optional[List[str]]:
+    for text in (command, command + '"', command + "'"):  # an unbalanced quote: close it at the end
+        try:
+            lex = shlex.shlex(text, posix=True, punctuation_chars=True)
+            lex.whitespace_split = True
+            lex.commenters = ""
+            return list(lex)[:MAX_COMMAND_WORDS]
+        except ValueError:
+            continue
+    return None
+
+
 def _path_words(command: str, depth: int = 0) -> List[str]:
-    """Words of ``command`` that are absolute / ``~`` paths, split the way a shell would: quotes
-    and ``'\\''`` escapes keep a path with spaces or apostrophes whole, ``;&|()<>`` separate
-    words, ``--opt=/path`` yields ``/path``. A quoted word that is itself a command (``sh -c
-    '...'``) is scanned again. Unbalanced quotes fall back to a plain pattern scan."""
-    try:
-        lex = shlex.shlex(command, posix=True, punctuation_chars=True)
-        lex.whitespace_split = True
-        lex.commenters = ""
-        words = list(lex)
-    except ValueError:
+    """Words of ``command`` that are absolute / ``~`` / ``$HOME`` paths, split the way a shell
+    would: quotes and ``'\\''`` escapes keep a path with spaces or apostrophes whole, ``;&|()<>``
+    separate words, ``--opt=/path`` yields ``/path``. A quoted word that is itself a command
+    (``sh -c '...'``) is scanned again. An unbalanced quote is closed at the end of the command;
+    only when even that does not parse, a plain pattern scan is used."""
+    words = _shell_words(command)
+    if words is None:
         return [m.group(1) for m in _ABS_PATH.finditer(command)]
     out: List[str] = []
     for w in words:
@@ -299,6 +312,7 @@ def _path_words(command: str, depth: int = 0) -> List[str]:
         if "=" in w and not w.startswith(("/", "~")):
             cands.append(w.split("=", 1)[1])
         for c in cands:
+            c = _HOME_VAR.sub(lambda _: os.path.expanduser("~"), c)
             if c.startswith("/") or c == "~" or c.startswith("~/"):
                 out.append(c)
         if depth < 2 and not w.startswith(("/", "~")) and any(ch in w for ch in " \t\n;&|"):
