@@ -1,8 +1,8 @@
 // Adapter configuration and per-Codex-session state, both under `<checkout>/.weft/`
 // (excluded from git by the installer). Hook processes are short-lived and may run
 // concurrently (parallel tool calls), so state is a JSON file guarded by a lock dir.
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, readdirSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, readdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 export type Mode = "enforce" | "advise";
 
@@ -27,28 +27,11 @@ export type Loaded = { root: string; config: AdapterConfig; token: string };
 
 export const CONFIG_REL = ".weft/codex.json";
 
-/** True when `dir` is a linked git worktree (`.git` is a file whose gitdir is in `<common>/worktrees/`). */
-export function isLinkedWorktree(dir: string): boolean {
-  try {
-    const dotgit = join(dir, ".git");
-    if (!lstatSync(dotgit).isFile()) return false;
-    const m = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(readFileSync(dotgit, "utf8").slice(0, 4096));
-    return !!m && basename(dirname(resolve(dir, m[1]!))) === "worktrees";
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Walk up from `start` to the first directory holding `.weft/codex.json`, stopping at a linked
- * git worktree without its own config (a `<main>/.worktrees/<task>` worktree must not borrow the
- * main checkout's identity; see the Claude Code adapter's findRoot).
- */
+/** Walk up from `start` to the first directory holding `.weft/codex.json`. */
 export function findRoot(start: string): string | undefined {
   let dir = resolve(start);
   for (;;) {
     if (existsSync(join(dir, CONFIG_REL))) return dir;
-    if (isLinkedWorktree(dir)) return undefined;
     const parent = dirname(dir);
     if (parent === dir) return undefined;
     dir = parent;
