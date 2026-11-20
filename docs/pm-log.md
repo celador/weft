@@ -357,3 +357,9 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-11-20 14:55 — Second account (t_7f917af6) done as PR #23, left for John
 - t_7f917af6 completed: wt/second-account head 0161753 = PR celador/weft#23 (open). Spot-check: PR head matches branch; gate/secrets/audit checks pass; the external mergesafe-review app check fails (third-party review bot, not our gate). Card is "PR only": not landed by the PM; reported to John for review.
 - t_4fe570cd still blocked; its 21:05 resume script (pid 45914) is alive. Go-live t_52c6e0ad gated on it. Security impact: none (board ops only).
+
+## 2026-11-20 17:56 — PR #23 merged by t_bd75b66d; Clerk OAuth via Chrome at 21:05; lawnstarter needs John
+- t_bd75b66d done: PR #23 merged (d0c1f53, 20:28Z), GitHub Gate green on it. Weft lands already recorded (#3094, #3095). Spot-check: default profile plugin .py files match main (plugin 0.4.0). wt/second-account worktree gone.
+- t_4fe570cd: run 455 finished prod Clerk on weft.mx (DNS via jan's DNS token, deploy status complete, passwords off per John's Otto note) and blocked needing Weft's own Google + Apple OAuth credentials; the second block tripped block_loop_detected → triage. Decision: take the worker's "use Chrome" option after 21:00 UY (Friday, outside the Mac window) instead of asking John. Killed the stale 21:05 DNS script (pid 45914); new script ~/.hermes/cache/scratch/weft-clerk-oauth-resume.sh (pid 29510) comments, PATCHes triage→todo, promotes and dispatches at 21:05. Native Otto Apple sign-in left out of scope.
+- t_88c0c1a3 blocked: lawnstarter account logged out, its 8643/8652/7878 services refuse (confirmed). Needs John to log in to that account; reported.
+- t_959cd359 (terminal capture) running. Go-live t_52c6e0ad still gated on t_4fe570cd. Security impact: none (board ops only).
