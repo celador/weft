@@ -12,7 +12,7 @@ just before the license change merge) and `{discussion link}` in the release not
 
 **Body:**
 
-Starting {effective date}, Weft is no longer MIT-licensed as a whole. Here is what changes, what
+Starting November 20, 2026, Weft is no longer MIT-licensed as a whole. Here is what changes, what
 doesn't, and why.
 
 ### What changes
@@ -45,7 +45,7 @@ doesn't, and why.
   (`plugins/weft/`, `.claude-plugin/`) and the Hermes plugin
   (`packages/adapters/hermes/plugin/`).
 - **Everything released before this change.** Every version up to and including
-  `@celador/weft` 0.3.0, every commit up to `{last MIT commit}`, and every contribution made so far
+  `@celador/weft` 0.3.0, every commit up to `b825786` (tag `mit-final`), and every contribution made so far
   stays available under the MIT License, permanently. If you use 0.3.0 at work, you don't need a
   license for it. The MIT text and its notice are kept in
   [licenses/LICENSE-MIT](../../licenses/LICENSE-MIT).
@@ -66,7 +66,7 @@ the hook code that runs in their agent.
 
 ### When
 
-- The license change takes effect on {effective date}, the day it lands on `main`.
+- The license change takes effect on November 20, 2026, the day it lands on `main`.
 - The first release under the new terms is the next `@celador/weft` release after 0.3.0, and the
   next VS Code extension release after 0.1.2.
 - Open pull requests: before merging, we will ask authors to add the CLA sentence.

@@ -1,8 +1,8 @@
 # Weft commercial license
 
-<!-- Published at https://weft.mx/license/. The go-live card replaces {effective date}. -->
+<!-- Published at https://weft.mx/license/. Effective date filled in at go-live (t_52c6e0ad). -->
 
-Effective {effective date}. Operator: Weft (celador), John Nelson. Contact:
+Effective November 20, 2026. Operator: Weft (celador), John Nelson. Contact:
 [john@elier.ai](mailto:john@elier.ai).
 
 Weft is free for personal use. Using it for work needs a Weft commercial license, or Weft Pro,
