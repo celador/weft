@@ -367,6 +367,32 @@ class TerminalTargetTests(Workspace):
             self.assertEqual([e["files"] for e in edits[before:]], [["src/a.md"]], cmd)
             git(self.wt, "checkout", "-q", "--", "src/a.md")
 
+    def test_fail_closed_scan_keeps_quoted_paths_with_spaces_and_apostrophes_whole(self):
+        odd = self.alpha / ".worktrees" / "O'Brien wt"
+        git(self.alpha, "worktree", "add", "-q", "-b", "wt/odd", str(odd))
+        scratch = self.tmp / "scratch"
+        scratch.mkdir()
+        os.environ["HERMES_KANBAN_WORKSPACE"] = str(scratch)
+        sq = "'" + str(odd).replace("'", "'\\''") + "'"
+        n = 0
+        for cmd in (f'pushd "{odd}"; rm src/a.md', f"cd x; cd {sq} && rm src/a.md",
+                    "sh -c '" + f'cd "{odd}" && rm src/a.md'.replace("'", "'\\''") + "'", f"cd /tmp; rm {sq}/src/a.md",
+                    f'git --work-tree="{odd}" status; rm "{odd}/src/a.md"'):
+            target = odd / "src" / "a.md"
+            n += 1
+            before = len(self.run_terminal("true", f"q-noop{n}", lambda: None))
+            edits = self.run_terminal(cmd, f"q{n}", target.unlink)
+            self.assertEqual([e["files"] for e in edits[before:]], [["src/a.md"]], cmd)
+            git(odd, "checkout", "-q", "--", "src/a.md")
+        # and the commit gate runs for that worktree
+        a = self.r.adapter_for("alpha", "")
+        a.cfg.mode = "enforce"
+        a.ensure_session()
+        a.client.gate_results = [{"allow": False, "reason": "1 open", "open_errors": [{"key": "src/a.md#x"}]}] * 3
+        block = self.r.pre_tool_call(tool_name="terminal", args={"command": f'cd "{odd}"; git commit -am x'},
+                                     tool_call_id="q-commit")
+        self.assertEqual((block or {}).get("action"), "block")
+
     def test_one_call_in_two_worktrees_reports_both(self):
         def apply():
             (self.alpha / "src" / "a.md").write_text("main\n")

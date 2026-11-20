@@ -99,9 +99,22 @@ describe("linked worktrees and the commit-msg hook", () => {
     expect(denied(hookIn(wt, { tool_name: "Bash", tool_input: { command: "rm -f a.txt" } }, noToken))).toContain("has not joined Weft");
     // the join itself, and commands that work elsewhere, still run
     const mainCfg = JSON.parse(readFileSync(join(main, ".weft/claude.json"), "utf8"));
-    const joinCmd = `${main}/.weft/bin/weft install --dir ${wt} --url ${mainCfg.url} --repo ${mainCfg.repo} --agent ${mainCfg.agent} --task t_1 --token-from ${main}/.weft/token`;
+    const joinCmd = `${main}/.weft/bin/weft install --dir ${wt} --url ${mainCfg.url} --repo ${mainCfg.repo} --agent ${mainCfg.agent} --task t_1 --mode enforce --token-from ${main}/.weft/token`;
     expect(denied(hookIn(wt, { tool_name: "Bash", tool_input: { command: joinCmd } }, noToken))).toBeUndefined();
-    expect(denied(hookIn(wt, { tool_name: "Bash", tool_input: { command: `${joinCmd}; rm -rf src` } }, noToken))).toContain("has not joined Weft");
+    expect(denied(hookIn(wt, { tool_name: "Bash", tool_input: { command: `'${main}/.weft/bin/weft' install --task t_1 --dir '${wt}' --url ${mainCfg.url} --repo ${mainCfg.repo} --agent ${mainCfg.agent} --mode enforce --token-from ${main}/.weft/token` } }, noToken))).toBeUndefined();
+    // any other install would let the agent switch enforcement off (or join as someone else): refused
+    for (const bad of [
+      `${joinCmd}; rm -rf src`,
+      joinCmd.replace("--mode enforce", "--mode advise"),
+      joinCmd.replace(" --mode enforce", ""),
+      joinCmd.replace(`--repo ${mainCfg.repo}`, "--repo other"),
+      joinCmd.replace(`--agent ${mainCfg.agent}`, "--agent someone-else"),
+      `${joinCmd} --mode advise`,
+      `${joinCmd} --shared`,
+      joinCmd.replace(`--dir ${wt}`, `--dir ${main}`),
+      joinCmd.replace("--task t_1", "--task 'bad id'"),
+    ]) expect(denied(hookIn(wt, { tool_name: "Bash", tool_input: { command: bad } }, noToken)), bad).toContain("has not joined Weft");
+    expect(why).toContain("--mode enforce");
     expect(denied(hookIn(wt, { tool_name: "Bash", tool_input: { command: `cd ${main} && git status` } }, noToken))).toBeUndefined();
     expect(denied(hookIn(wt, { tool_name: "Read", tool_input: { file_path: join(wt, "a.txt") } }, noToken))).toBeUndefined();
     // once joined, the worktree is its own agent and the refusal is gone

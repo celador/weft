@@ -97,23 +97,66 @@ export const BY_PATH_SYMLINK =
 /** `--by-path` denial for an edit inside a joined checkout's own `.weft/` (its config and token). */
 export const BY_PATH_WEFT_DIR =
   "[weft] Files under the worktree's .weft/ are Weft's own (its config and token); a subagent does not edit them.";
+/** The one command that joins `worktree` to the enforcing checkout `owner` (its config `cfg`). `task` = the WCP task. */
+function joinWords(worktree: string, owner: string, cfg: Partial<AdapterConfig>, task: string): string[] {
+  const words = [`${owner}/.weft/bin/weft`, "install", "--dir", worktree, "--url", cfg.url ?? "", "--repo", cfg.repo ?? "",
+    "--agent", cfg.agent ?? "", "--task", task, "--mode", "enforce", "--token-from", resolve(owner, cfg.tokenFile ?? ".weft/token")];
+  return cfg.prefix ? [...words, "--prefix", cfg.prefix] : words;
+}
+
+const JOIN_TASK = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
 /**
  * Denial for an edit or command in a linked worktree that has not joined Weft while the checkout it
  * belongs to enforces. Names the one command that joins it (no secret in it: the token is copied
  * from the owner's token file by the adapter itself).
  */
 export function unjoinedDenial(worktree: string, owner: string, cfg: Partial<AdapterConfig>): string {
-  const join_ = [`${owner}/.weft/bin/weft`, "install", "--dir", worktree, "--url", cfg.url ?? "<url>", "--repo", cfg.repo ?? "<repo>",
-    "--agent", cfg.agent ?? "<agent>", "--task", "<task id>", "--mode", "enforce", "--token-from", `${owner}/${cfg.tokenFile ?? ".weft/token"}`]
-    .map((w) => (w.startsWith("<") ? w : shellQuote(w))).join(" ");
-  return `[weft] ${worktree} is a git worktree of ${owner}, which enforces Weft, but it has not joined Weft yet (no .weft/claude.json of its own), so edits and commands here are refused. Join it first: ${join_}`;
+  const cmd = joinWords(worktree, owner, cfg, "TASK").map((w) => (w === "TASK" ? "<task id>" : shellQuote(w))).join(" ");
+  return `[weft] ${worktree} is a git worktree of ${owner}, which enforces Weft, but it has not joined Weft yet (no .weft/claude.json of its own), so edits and commands here are refused. Join it first (exactly this command, with your task id): ${cmd}`;
 }
 
-/** True when a Bash command in an unjoined worktree is the join itself, or works outside that worktree. */
-export function unjoinedAllows(command: string, cwd: string, worktree: string, owner: string): boolean {
-  const c = command.replace(/^\s+/, "");
-  const launcher = `${owner}/.weft/bin/weft`;
-  if ((c.startsWith(`${launcher} install `) || c.startsWith(`${shellQuote(launcher)} install `)) && !/[;&|`$<>()\n]/.test(c)) return true;
+/** Shell words of a command made only of bare, '...' and "..." words (no expansion, no operators); undefined otherwise. */
+export function plainWords(command: string): string[] | undefined {
+  if (/[;&|`$<>()\n\r\\]/.test(command)) return undefined;
+  const words: string[] = [];
+  const re = /\s*(?:'([^']*)'|"([^"]*)"|([^\s'"]+))(?=\s|$)/y;
+  let i = 0;
+  const rest = command.trimEnd();
+  while (i < rest.length) {
+    re.lastIndex = i;
+    const m = re.exec(rest);
+    if (!m) return undefined;
+    words.push(m[1] ?? m[2] ?? m[3]!);
+    i = re.lastIndex;
+  }
+  return words;
+}
+
+/**
+ * True when a Bash command in an unjoined worktree is THE join (the owner's launcher, `install`,
+ * this worktree, the owner's url/repo/agent/prefix/token file, `--mode enforce`, any task id: no
+ * other flag, nothing else on the line), or works outside that worktree. Any other install (say
+ * `--mode advise`) would let the agent switch enforcement off, so it is refused like the rest.
+ */
+export function unjoinedAllows(command: string, cwd: string, worktree: string, owner: string, cfg: Partial<AdapterConfig> = readConfigFile(owner) ?? {}): boolean {
+  const words = plainWords(command.trim());
+  if (words && words.length >= 2 && words[1] === "install") {
+    const task = words[words.indexOf("--task") + 1] ?? "";
+    const want = joinWords(worktree, owner, cfg, task);
+    const flags = (ws: string[]) => {
+      const m = new Map<string, string>();
+      for (let i = 2; i < ws.length; i += 2) {
+        if (!ws[i]!.startsWith("--") || m.has(ws[i]!) || i + 1 >= ws.length) return undefined;
+        m.set(ws[i]!, ws[i + 1]!);
+      }
+      return m;
+    };
+    const got = flags(words);
+    const exp = flags(want)!;
+    const same = !!got && got.size === exp.size && [...exp].every(([k, v]) => (k === "--dir" ? resolve(cwd, got.get(k) ?? "") === v : got.get(k) === v));
+    return words[0] === want[0] && JOIN_TASK.test(task) && same && !!cfg.url && !!cfg.repo && !!cfg.agent;
+  }
   const target = bashTargetDir(command, cwd);
   return !!target && target !== worktree && !target.startsWith(worktree + sep);
 }
@@ -179,7 +222,7 @@ async function hook(byPath: boolean, args: string[] = []): Promise<void> {
         const owner = u ? readConfigFile(u.owner) : undefined;
         if (!u || !owner || owner.mode === "advise") continue;
         if ((byPath || pinned) && !pinMatches(u.owner, pin)) continue;
-        if (input.tool_name === "Bash" && unjoinedAllows(command, cwd, u.worktree, u.owner)) continue;
+        if (input.tool_name === "Bash" && unjoinedAllows(command, cwd, u.worktree, u.owner, owner)) continue;
         appendAdapterLog(u.owner, `hook refused ${input.tool_name} in unjoined worktree ${u.worktree}`);
         out = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: unjoinedDenial(u.worktree, u.owner, owner) } };
         break;

@@ -44,6 +44,7 @@ import json
 import os
 import queue
 import re
+import shlex
 import select
 import shutil
 import sqlite3
@@ -280,17 +281,40 @@ def bash_target_dir(command: Any) -> Optional[str]:
     return _target_of(m) if m else None
 
 
+def _path_words(command: str, depth: int = 0) -> List[str]:
+    """Words of ``command`` that are absolute / ``~`` paths, split the way a shell would: quotes
+    and ``'\\''`` escapes keep a path with spaces or apostrophes whole, ``;&|()<>`` separate
+    words, ``--opt=/path`` yields ``/path``. A quoted word that is itself a command (``sh -c
+    '...'``) is scanned again. Unbalanced quotes fall back to a plain pattern scan."""
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        lex.commenters = ""
+        words = list(lex)
+    except ValueError:
+        return [m.group(1) for m in _ABS_PATH.finditer(command)]
+    out: List[str] = []
+    for w in words:
+        cands = [w]
+        if "=" in w and not w.startswith(("/", "~")):
+            cands.append(w.split("=", 1)[1])
+        for c in cands:
+            if c.startswith("/") or c == "~" or c.startswith("~/"):
+                out.append(c)
+        if depth < 2 and not w.startswith(("/", "~")) and any(ch in w for ch in " \t\n;&|"):
+            out.extend(_path_words(w, depth + 1))
+    return out
+
+
 def command_paths(command: Any) -> List[str]:
     """Existing directories named by absolute / ``~`` paths in ``command`` (a file names its
     directory; a path that does not exist yet names its deepest existing ancestor). Bounded."""
     if not isinstance(command, str):
         return []
     out: List[str] = []
-    for m in _ABS_PATH.finditer(command):
-        raw = m.group(1).rstrip(".,")
+    for raw in _path_words(command):
+        raw = raw.rstrip(",")
         if raw.startswith("~"):
-            if not (raw == "~" or raw.startswith("~/")):
-                continue
             raw = os.path.expanduser(raw)
         d = os.path.normpath(raw)
         while d and d != os.path.dirname(d) and not os.path.isdir(d):
