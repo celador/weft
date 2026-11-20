@@ -190,12 +190,74 @@ class SessionAttributionTests(Workspace):
             self.assertIsNotNone(quiet.on_idle)
             self.assertIsNone(r.adapter_for("alpha", "").on_idle, "the process-wide adapter never idles out")
             quiet.ensure_session()
-            quiet.on_idle(quiet)
+            self.assertFalse(quiet.on_idle(quiet), "just used: the router keeps it (rechecked under its lock)")
+            self.assertIn(("alpha", "quiet-chat"), r.adapters)
+            now[0] += 3 * 3600
+            self.assertTrue(quiet.on_idle(quiet))
             self.assertNotIn(("alpha", "quiet-chat"), r.adapters)
             deadline = time.monotonic() + 5
             while ("bye", quiet.session) not in quiet.client.calls and time.monotonic() < deadline:
                 time.sleep(0.02)
             self.assertIn(("bye", quiet.session), quiet.client.calls)
+            r.close()
+
+
+    def test_a_tool_call_in_flight_keeps_its_adapter_past_the_idle_time(self):
+        with env(HERMES_KANBAN_TASK=None):
+            now = [1000.0]
+            r = self.router()
+            r._clock = lambda: now[0]
+            a_md = self.gh / "alpha" / "src" / "a.md"
+            kw = self.ids("long-chat", call="build")
+            r.pre_tool_call(tool_name="terminal", args={"command": "make", "workdir": str(self.gh / "alpha")}, **kw)
+            a = r.adapter_for("alpha", "long-chat")
+            a.ensure_session()
+            now[0] += 3 * 3600  # a three-hour build
+            self.assertFalse(a.on_idle(a), "a call in flight is not idle")
+            r.adapter_for("alpha", "other-chat")  # eviction runs here too
+            self.assertIn(("alpha", "long-chat"), r.adapters)
+            a_md.write_text("built\n")
+            r.post_tool_call(tool_name="terminal", args={}, **kw)
+            self.assertTrue(r.flush(5))
+            self.assertEqual([s[3]["files"] for s in a.client.submits("commit")], [["src/a.md"]])
+            self.assertEqual(a.last_used, now[0], "the end of the call counts as use")
+            r.close()
+
+    def test_session_start_of_a_resumed_conversation_hands_its_base_to_the_conversation(self):
+        # on_session_start carries only the physical session id. For a resumed (compressed)
+        # conversation that id is not the conversation id the tool calls carry.
+        with env(HERMES_KANBAN_TASK=None, HERMES_KANBAN_WORKSPACE=str(self.gh / "alpha")):
+            r = self.router()
+            r.session_started(session_id="phys-2", platform="cli")
+            deadline = time.monotonic() + 5
+            while not (r.adapters.get(("alpha", "phys-2")) and r.adapters[("alpha", "phys-2")].session) \
+                    and time.monotonic() < deadline:
+                time.sleep(0.02)
+            early = r.adapters[("alpha", "phys-2")]
+            early.base_seq = 7  # the log head when this session started
+            a_md = self.gh / "alpha" / "src" / "a.md"
+            kw = self.ids("phys-2", conversation="conv-1", call="c1")
+            r.pre_tool_call(tool_name="write_file", args={"path": str(a_md), "content": "x\n"}, **kw)
+            self.assertNotIn(("alpha", "phys-2"), r.adapters, "the start-time adapter does not linger")
+            live = r.adapters[("alpha", "conv-1")]
+            self.assertEqual(live.task["id"], "adhoc-conv-1")
+            live.client.head = 12  # another agent's edit landed in between
+            live.ensure_session()
+            self.assertEqual(live.base_seq, 7, "the conversation keeps the base from session start")
+            deadline = time.monotonic() + 5
+            while ("bye", early.session) not in early.client.calls and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertIn(("bye", early.session), early.client.calls)
+            # a brand-new conversation (session id == conversation id) keeps its start adapter
+            r.session_started(session_id="fresh-1")
+            fresh = r.adapters[("alpha", "fresh-1")]
+            r.pre_tool_call(tool_name="write_file", args={"path": str(a_md), "content": "y\n"},
+                            **self.ids("fresh-1", call="c2"))
+            self.assertIs(r.adapters[("alpha", "fresh-1")], fresh)
+            # finalize by physical id closes both keys
+            r.session_started(session_id="phys-3")
+            r.session_finalized(session_id="phys-3")
+            self.assertNotIn(("alpha", "phys-3"), r.adapters)
             r.close()
 
 
@@ -213,13 +275,19 @@ class TerminalTargetTests(Workspace):
             "cd ~/p && ls": os.path.join(home, "p"),
             "cd ~ && ls": home,
             "git -C /a/b status": "/a/b",
+            "git -C /a --no-pager commit -m x": "/a",
+            "git -C /a -c x=y commit": "/a",
+            "git -c core.x=1 -C /a commit": "/a",
+            "git -C /a/repo,backup commit": "/a/repo,backup",
+            "cd '/x/O'\\''Brien/t' && rm f": "/x/O'Brien/t",
+            "\n\ncd /x/t && rm f": "/x/t",
             "cd /a/b; rm x": None,          # not `&&`
             "cd rel && ls": None,           # relative
             "cd /a/../b && ls": None,       # `..`
             "cd $HOME/x && ls": None,       # variable
             "cd '~/x' && ls": None,         # quoted ~ is literal
             "ls && cd /a && rm x": None,    # not leading
-            "git -C /a -c x=y commit": None,
+            "git -C /a -C /b commit": None,   # a second -C is relative to the first
             None: None,
         }
         for cmd, want in cases.items():
@@ -264,6 +332,50 @@ class TerminalTargetTests(Workspace):
         edits = self.run_terminal(f"git -C {self.wt} status && echo changed > {self.wt}/src/a.md", "t2", apply)
         self.assertEqual([e["files"] for e in edits], [["src/a.md"]])
 
+    def test_git_dash_c_with_global_options_still_runs_the_commit_gate(self):
+        # the session's cwd is out of scope; `git -C <in-scope worktree> --no-pager commit` must
+        # still reach that worktree's adapter (gate + capture), not be skipped as out of scope
+        scratch = self.tmp / "scratch"
+        scratch.mkdir()
+        os.environ["HERMES_KANBAN_WORKSPACE"] = str(scratch)
+        self.r.cfg.modes["alpha"] = "enforce"
+        a = self.r.adapter_for("alpha", "")
+        a.ensure_session()
+        a.client.gate_results = [{"allow": False, "reason": "1 open", "open_errors": [{"key": "src/a.md#x"}]}] * 3
+        for cmd in (f"git -C {self.wt} --no-pager commit -am x", f"git -C {self.wt} -c user.name=x commit -am x",
+                    f"git -c user.name=x -C {self.wt} commit -am x"):
+            block = self.r.pre_tool_call(tool_name="terminal", args={"command": cmd}, tool_call_id=f"g{cmd[-12:]}")
+            self.assertIsNotNone(block, cmd)
+            self.assertEqual(block["action"], "block", cmd)
+
+    def test_unparsed_directory_changes_snapshot_every_named_path(self):
+        # fail closed: spellings the parser does not accept still capture the in-scope worktree
+        # the command names, besides the session's own directory
+        scratch = self.tmp / "scratch"
+        scratch.mkdir()
+        os.environ["HERMES_KANBAN_WORKSPACE"] = str(scratch)
+        n = [0]
+        for cmd in (f"cd {self.wt}; rm src/a.md", f"cd /tmp && cd {self.wt} && rm src/a.md",
+                    f"pushd {self.wt} && rm src/a.md", f"git -C /tmp -C {self.wt} rm -q src/a.md",
+                    f"(cd {self.wt} && rm src/a.md)", f"sh -c 'cd {self.wt} && rm src/a.md'"):
+            target = self.wt / "src" / "a.md"
+            target.write_text("one\n")
+            git(self.wt, "checkout", "-q", "--", "src/a.md")
+            before = len(self.run_terminal("true", f"noop{n[0]}", lambda: None))
+            n[0] += 1
+            edits = self.run_terminal(cmd, f"u{n[0]}", target.unlink)
+            self.assertEqual([e["files"] for e in edits[before:]], [["src/a.md"]], cmd)
+            git(self.wt, "checkout", "-q", "--", "src/a.md")
+
+    def test_one_call_in_two_worktrees_reports_both(self):
+        def apply():
+            (self.alpha / "src" / "a.md").write_text("main\n")
+            (self.wt / "src" / "a.md").write_text("wt\n")
+        edits = self.run_terminal(f"cd {self.wt}; echo wt > src/a.md; echo main > {self.alpha}/src/a.md", "both",
+                                  apply, workdir=str(self.alpha))
+        self.assertEqual(sorted(json.dumps(e["files"]) for e in edits), [json.dumps(["src/a.md"])] * 2)
+        self.assertEqual(len(self.clients), 1, "one repo, one adapter")
+
     def test_relative_cd_keeps_the_workdir(self):
         def apply():
             (self.wt / "src" / "a.md").write_text("rel\n")
@@ -303,10 +415,38 @@ class SpaceRepoTests(unittest.TestCase):
         self.assertEqual({os.path.basename(p): r for p, r in got.items()},
                          {"app": "sp1234-app", "brain": "brain", "bad": "bad"})
         self.assertIsNone(space_repo(str(self.projects / "bad")), "an invalid repo name is ignored")
-        # an unsynced project resolves the same way (no bare `app` repo even before --sync)
-        scope = Scope([], projects={}, project_dirs=[str(self.projects)])
+        # an unsynced project resolves the same way when the config already knows that repo
+        scope = Scope([], projects={}, project_dirs=[str(self.projects)], known_repos=["sp1234-app"])
         t = scope.resolve(str(self.projects / "app" / "src" / "a.md"))
         self.assertEqual((t.repo, t.rel), ("sp1234-app", "src/a.md"))
+
+    def test_a_trailing_newline_is_not_a_repo_name(self):
+        (self.projects / "app" / ".weft" / "space.json").write_text(json.dumps({"repo": "sp1234-app\n"}))
+        self.assertIsNone(space_repo(str(self.projects / "app")))
+        self.assertEqual(discover_projects([str(self.projects)])[str(self.projects / "app")], "app")
+
+    def test_the_checkout_cannot_pick_its_own_repo_or_mode(self):
+        # `enforced` is an enforce repo the config knows; `docs` an advise one. An unsynced checkout
+        # whose folder is a known enforce repo cannot switch itself to `docs` (advise) via its own
+        # .weft/space.json, and a name the config does not know is never adopted.
+        make_checkout(self.projects / "enforced", "docs")
+        make_checkout(self.projects / "fresh", "sp9999-unknown")
+        cfg = Config(url="http://fake", repo="", token="", agent="hermes-test", profile="test", roots=[],
+                     tokens={"enforced": "te", "docs": "td"}, modes={"enforced": "enforce"},
+                     default_mode="advise", project_dirs=[str(self.projects)], projects={})
+        scope = cfg.scope()
+        t = scope.resolve(str(self.projects / "enforced" / "src" / "a.md"))
+        self.assertEqual(t.repo, "enforced")
+        self.assertEqual(cfg.for_repo(t.repo).mode, "enforce")
+        self.assertEqual(scope.resolve(str(self.projects / "fresh" / "src" / "a.md")).repo, "fresh")
+        # a space.json that came with the repository's content (tracked) names nothing at install time
+        git(self.projects / "brain", "add", "-f", ".")
+        (self.projects / "brain" / ".weft").mkdir()
+        (self.projects / "brain" / ".weft" / "space.json").write_text(json.dumps({"repo": "weft"}))
+        git(self.projects / "brain", "add", "-f", ".weft/space.json")
+        self.assertEqual(discover_projects([str(self.projects)])[str(self.projects / "brain")], "brain")
+        # and the file never names a gateway: the plugin config's url is the only one used
+        self.assertEqual(cfg.for_repo("docs").url, "http://fake")
 
 
 # ------------------------------------------------------------------------------------------
@@ -476,10 +616,47 @@ class InstallUrlTests(InstallerCase):
         (self.weft_dir / "local" / "admin-token").write_text("local-admin\n")
         (self.weft_dir / "local" / "port").write_text("7999\n")
         self.gw.admin = "local-admin"
-        with mock.patch.object(self.install, "healthy", return_value=True):
+        with mock.patch.object(self.install, "healthy", return_value=True), \
+                mock.patch.object(self.install, "listener_uids", return_value={os.getuid()}):
             out = self.run_main("--sync", "--project-dirs", str(self.projects))
         self.assertEqual(self.cfg()["url"], "http://127.0.0.1:7999")
         self.assertIn("local Weft gateway", out)
+
+    def test_a_loopback_listener_of_another_user_is_not_the_local_gateway(self):
+        # the real gateway is down and another account bound its port, answering /v1/health
+        (self.weft_dir / "local").mkdir()
+        (self.weft_dir / "local" / "admin-token").write_text("local-admin\n")
+        (self.weft_dir / "local" / "port").write_text("7999\n")
+        self.install._ADMIN_TARGETS.clear()
+        with mock.patch.object(self.install, "healthy", return_value=True), \
+                mock.patch.object(self.install, "listener_uids", return_value={os.getuid() + 1}):
+            self.assertIsNone(self.install.local_gateway())
+            self.assertIn("another user", self.install.admin_target_refusal("http://127.0.0.1:7999"))
+        self.install._ADMIN_TARGETS.clear()
+        with mock.patch.object(self.install, "listener_uids", return_value=set()):
+            self.assertIn("no process of yours", self.install.admin_target_refusal("http://localhost:7999"))
+        self.install._ADMIN_TARGETS.clear()
+        with mock.patch.object(self.install, "listener_uids", return_value=None):
+            self.assertIn("cannot tell", self.install.admin_target_refusal("http://[::1]:7999"))
+        self.install._ADMIN_TARGETS.clear()
+        self.assertIsNone(self.install.admin_target_refusal("https://gateway.example"), "not loopback: not checked")
+
+    def test_local_admin_token_only_for_the_local_gateway_port(self):
+        (self.weft_dir / "local").mkdir()
+        (self.weft_dir / "local" / "admin-token").write_text("local-admin\n")
+        for url, want in (("http://127.0.0.1:7878", "local"), ("http://127.0.0.1:9999", "preview")):
+            args = SimpleNamespace(url=url, public_url=None, admin_token_file=None)
+            self.install.resolve_gateway(args, {})
+            self.assertIn("local" if want == "local" else "preview-admin-token", args.admin_token_file, url)
+
+    def test_host_case_is_the_same_gateway(self):
+        self.run_main("--sync", "--url", "https://Box.Tailnet.Example:8710", "--project-dirs", str(self.projects))
+        before = self.cfg()["agents"]["default"]["tokens"]
+        self.assertEqual(self.cfg()["url"], self.TAILNET, "saved normalized")
+        out = self.run_main("--sync", "--url", "HTTPS://box.tailnet.example:8710/")
+        self.assertNotIn("existing tokens are dropped", out)
+        self.assertEqual(self.cfg()["agents"]["default"]["tokens"], before)
+        self.assertTrue(self.install.has_land_token(self.cfg(), "https://BOX.tailnet.example:8710", "brain"))
 
     def test_plugin_presence_is_recorded_without_secrets(self):
         self.run_main("--sync", "--url", self.LOOP, "--project-dirs", str(self.projects))
@@ -506,6 +683,49 @@ mkdirSync(dirname(out) + "/grammars", { recursive: true });
 writeFileSync(out, %s);
 writeFileSync(dirname(out) + "/grammars/x.wasm", "");
 """ % json.dumps(FAKE_BUNDLE)
+
+
+class AdminCallGuardTests(unittest.TestCase):
+    """The real admin_call (InstallerCase patches it out)."""
+
+    def setUp(self):
+        sys.path.insert(0, str(PKG / "scripts"))
+        self.addCleanup(sys.path.remove, str(PKG / "scripts"))
+        import install  # noqa: WPS433
+        self.install = install
+        install._ADMIN_TARGETS.clear()
+        self.addCleanup(install._ADMIN_TARGETS.clear)
+
+    def test_admin_token_is_never_sent_to_a_loopback_port_another_user_holds(self):
+        sent = []
+        with mock.patch.object(self.install.urllib.request, "urlopen", lambda *a, **k: sent.append(a)), \
+                mock.patch.object(self.install, "listener_uids", return_value={0, os.getuid()}), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            status, body = self.install.admin_call("http://127.0.0.1:7878", "ADMIN-SECRET", "GET", "/v1/admin/repos")
+        self.assertEqual((status, sent), (0, []))
+        self.assertIn("admin token not sent", body["error"])
+        self.assertIn("another user", err.getvalue())
+        self.assertNotIn("ADMIN-SECRET", err.getvalue() + json.dumps(body))
+
+    def test_a_listener_of_this_user_passes(self):
+        import socket
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen()
+        self.addCleanup(srv.close)
+        url = f"http://127.0.0.1:{srv.getsockname()[1]}"
+        self.assertEqual(self.install.listener_uids(srv.getsockname()[1]), {os.getuid()})
+        self.assertIsNone(self.install.admin_target_refusal(url))
+
+    def test_url_normalization_and_loopback_spellings(self):
+        n, lo = self.install.norm_url, self.install.is_loopback
+        self.assertEqual(n(" HTTPS://Box.Example:8710/Path/ "), "https://box.example:8710/Path")
+        self.assertEqual(n("http://User@HOST"), "http://User@host")
+        self.assertEqual(n(None), "")
+        for u in ("http://127.0.0.2:7878", "http://[0:0:0:0:0:0:0:1]:7878", "http://[::1]:1", "http://LOCALHOST"):
+            self.assertTrue(lo(u), u)
+        for u in ("http://localhost.example", "http://10.0.0.1", "https://box.example", "not a url"):
+            self.assertFalse(lo(u), u)
 
 
 class InstallBuildTests(InstallerCase):
@@ -629,6 +849,33 @@ class WorktreeJoinTests(unittest.TestCase):
         self.assertIn("--token-from", first["args"])
         self.assertEqual(second["args"][second["args"].index("--token-file") + 1], str(self.main / ".weft" / "token"))
         self.assertFalse((self.wt / ".weft" / "token").exists())
+
+    def test_a_runtime_that_rejects_token_from_gets_the_token_file_retry(self):
+        calls = []
+
+        def fake_run(args, **kw):
+            calls.append(args)
+            if "--token-from" in args:
+                return SimpleNamespace(returncode=2, stdout="", stderr="unknown option --token-from")
+            cfg = {"url": "u", "repo": "sp1234-app", "agent": "app", "task": {"id": "t_abc123"}}
+            (self.wt / ".weft").mkdir(exist_ok=True)
+            (self.wt / ".weft" / "claude.json").write_text(json.dumps(cfg))
+            return SimpleNamespace(returncode=0, stdout="installed", stderr="")
+        msg = worktrees.join_worktree(str(self.wt), "t_abc123", self.lines.append, run=fake_run)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1][calls[1].index("--token-file") + 1], str(self.main / ".weft" / "token"))
+        self.assertIn("joined", msg)
+        # both attempts failing reports both reasons
+        calls.clear()
+        msg = worktrees.join_worktree(str(self.wt), "t_other1", self.lines.append,
+                                      run=lambda a, **k: SimpleNamespace(returncode=1, stdout="", stderr="nope"))
+        self.assertIn("--token-from: nope; --token-file: nope", msg)
+
+    def test_task_ids_and_configs_are_validated_strictly(self):
+        self.assertEqual(worktrees.plan_join(str(self.wt), "t_abc123\n")["skip"], "no usable task id")
+        (self.wt / ".weft").mkdir()
+        (self.wt / ".weft" / "claude.json").write_text(json.dumps({"task": "t_abc123"}))  # not a dict
+        self.assertNotIn("skip", worktrees.plan_join(str(self.wt), "t_abc123"))
 
     def test_nothing_to_join(self):
         self.assertEqual(worktrees.plan_join(str(self.main), "t_1")["skip"], "not a linked git worktree")

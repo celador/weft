@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { findRoot, isLinkedWorktree, loadConfig } from "../src/config";
+import { findRoot, isLinkedWorktree, loadConfig, unjoinedWorktree } from "../src/config";
 import { checkout } from "./helpers";
 
 const BUNDLE = join(dirname(dirname(fileURLToPath(import.meta.url))), "dist", "weft-claude.mjs");
@@ -40,7 +40,7 @@ describe("linked worktrees and the commit-msg hook", () => {
     expect(findRoot(join(wt, "src", "deep"))).toBeUndefined();
     expect(loadConfig(wt)).toBeUndefined();
     expect(findRoot(join(main, "src"))).toBe(main);
-  });
+  }, 30_000);
 
   it("commit-msg skips an unjoined worktree, and stamps the worktree's own task once it joined", () => {
     const { noToken, main, wt, commit } = setup();
@@ -77,5 +77,53 @@ describe("linked worktrees and the commit-msg hook", () => {
     expect(() =>
       execFileSync(process.execPath, [BUNDLE, "install", "--dir", wt, "--url", "http://127.0.0.1:9", "--repo", "r", "--agent", "a", "--task", "t", "--token-from", empty], { env: noToken, stdio: "pipe" }),
     ).toThrow(/is empty/);
-  });
+  }, 30_000);
+
+  // `git worktree add` inside an enforced checkout must not be a way around enforcement.
+  const hookIn = (cwd: string, input: Record<string, unknown>, env: NodeJS.ProcessEnv) => {
+    const out = execFileSync(process.execPath, [BUNDLE, "hook"], { cwd, env, encoding: "utf8", input: JSON.stringify({ cwd, session_id: "s1", hook_event_name: "PreToolUse", ...input }) });
+    return out.trim() ? JSON.parse(out) : undefined;
+  };
+  const denied = (o: any) => o?.hookSpecificOutput?.permissionDecision === "deny" ? String(o.hookSpecificOutput.permissionDecisionReason) : undefined;
+
+  it("an unjoined worktree of an enforcing checkout refuses edits and commands until it joins", () => {
+    const { noToken, main, wt } = setup();
+    expect(unjoinedWorktree(join(wt, "src"))).toEqual({ worktree: wt, owner: main });
+    expect(unjoinedWorktree(main)).toBeUndefined();
+    const edit = hookIn(wt, { tool_name: "Write", tool_input: { file_path: join(wt, "a.txt"), content: "x" } }, noToken);
+    const why = denied(edit);
+    expect(why).toContain("has not joined Weft");
+    expect(why).toContain(`${main}/.weft/bin/weft`);
+    expect(why).toContain(`--dir ${wt}`);
+    expect(why).not.toContain("main-token");
+    expect(denied(hookIn(wt, { tool_name: "Bash", tool_input: { command: "rm -f a.txt" } }, noToken))).toContain("has not joined Weft");
+    // the join itself, and commands that work elsewhere, still run
+    const mainCfg = JSON.parse(readFileSync(join(main, ".weft/claude.json"), "utf8"));
+    const joinCmd = `${main}/.weft/bin/weft install --dir ${wt} --url ${mainCfg.url} --repo ${mainCfg.repo} --agent ${mainCfg.agent} --task t_1 --token-from ${main}/.weft/token`;
+    expect(denied(hookIn(wt, { tool_name: "Bash", tool_input: { command: joinCmd } }, noToken))).toBeUndefined();
+    expect(denied(hookIn(wt, { tool_name: "Bash", tool_input: { command: `${joinCmd}; rm -rf src` } }, noToken))).toContain("has not joined Weft");
+    expect(denied(hookIn(wt, { tool_name: "Bash", tool_input: { command: `cd ${main} && git status` } }, noToken))).toBeUndefined();
+    expect(denied(hookIn(wt, { tool_name: "Read", tool_input: { file_path: join(wt, "a.txt") } }, noToken))).toBeUndefined();
+    // once joined, the worktree is its own agent and the refusal is gone
+    execFileSync(process.execPath, [BUNDLE, "install", "--dir", wt, "--url", mainCfg.url, "--repo", mainCfg.repo, "--agent", mainCfg.agent,
+      "--task", "t_1", "--mode", "enforce", "--token-from", join(main, ".weft/token")], { cwd: wt, env: noToken, encoding: "utf8" });
+    expect(unjoinedWorktree(wt)).toBeUndefined();
+    expect(String(denied(hookIn(wt, { tool_name: "Bash", tool_input: { command: "rm -f a.txt" } }, noToken)) ?? "")).not.toContain("has not joined Weft");
+  }, 30_000);
+
+  it("an advise-mode checkout's unjoined worktree is not refused", () => {
+    const { noToken, main, wt } = setup();
+    const cfgPath = join(main, ".weft/claude.json");
+    writeFileSync(cfgPath, JSON.stringify({ ...JSON.parse(readFileSync(cfgPath, "utf8")), mode: "advise" }));
+    expect(hookIn(wt, { tool_name: "Write", tool_input: { file_path: join(wt, "a.txt"), content: "x" } }, noToken)).toBeUndefined();
+  }, 30_000);
+
+  it("a worktree outside the main checkout is refused too when the main checkout enforces", () => {
+    const { noToken, main } = setup();
+    const outside = join(mkdtempSync(join(tmpdir(), "weft-outside-")), "wt2");
+    execFileSync("git", ["-C", main, "-c", "core.hooksPath=/dev/null", "worktree", "add", "-q", "-b", "wt/t_2", outside], { stdio: "pipe" });
+    const real = execFileSync("git", ["-C", outside, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+    expect(unjoinedWorktree(real)?.owner).toBe(execFileSync("git", ["-C", main, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim());
+    expect(denied(hookIn(real, { tool_name: "Edit", tool_input: { file_path: join(real, "a.txt"), old_string: "a", new_string: "b" } }, noToken))).toContain("has not joined Weft");
+  }, 30_000);
 });

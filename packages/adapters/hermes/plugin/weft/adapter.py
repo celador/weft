@@ -140,7 +140,12 @@ def capabilities_for(mode: str, async_advise: bool) -> dict:
 DEFAULT_ROOTS: List[dict] = []          # explicit {path, prefix, repo} overrides (legacy: weft only)
 DEFAULT_PROJECT_DIRS = ["~/github", "~/code"]
 DEFAULT_EXCLUDES = ["~/.hermes"]
-REPO_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# fullmatch only: with ``match``, ``$`` also matches before a trailing newline ("app\n").
+REPO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+def valid_repo(name: Any) -> bool:
+    return isinstance(name, str) and REPO_NAME.fullmatch(name) is not None
 
 
 def sanitize_repo(name: str) -> str:
@@ -156,22 +161,46 @@ def _real(p: str) -> str:
 def space_repo(checkout: str) -> Optional[str]:
     """The Weft repo ``npx @celador/weft`` registered this checkout as (``.weft/space.json``
     ``repo``, e.g. ``<space>-<folder>``), when it names a valid one. Such a checkout already has a
-    feed: reporting it under a bare ``<folder>`` repo would split one project's events in two."""
+    feed: reporting it under a bare ``<folder>`` repo would split one project's events in two.
+
+    The file sits in the checkout the agent edits, so it is a HINT only: it can name a repo, never
+    a gateway URL, a token or a mode (a repo's mode comes from the adapter config's ``modes``).
+    Callers accept the name only where they trust it: ``discover_projects`` (install time) when git
+    does not track the file, ``Scope`` (run time) only among repos the config already has."""
     try:
         with open(os.path.join(checkout, ".weft", "space.json")) as f:
             repo = json.loads(f.read(65536)).get("repo")
     except (OSError, ValueError, AttributeError):
         return None
-    return repo if isinstance(repo, str) and REPO_NAME.match(repo) else None
+    return repo if valid_repo(repo) else None
+
+
+def _git_tracks(checkout: str, rel: str) -> bool:
+    """True when git tracks ``rel`` in ``checkout`` (or cannot tell: fail closed)."""
+    try:
+        out = subprocess.run(["git", "-C", checkout, "ls-files", "--", rel], capture_output=True, text=True,
+                             timeout=10, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return out.returncode != 0 or bool(out.stdout.strip())
+
+
+def local_space_repo(checkout: str) -> Optional[str]:
+    """``space_repo`` for a ``.weft/space.json`` the user's own ``npx @celador/weft`` wrote: git
+    does not track it. One that came with the repository's content (a clone) names nothing."""
+    repo = space_repo(checkout)
+    if repo is None or _git_tracks(checkout, ".weft/space.json"):
+        return None
+    return repo
 
 
 def discover_projects(dirs: List[str], explicit: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """{project dir (realpath): weft repo} for every top-level git repo in ``dirs``.
 
     A project is a direct child of a projects dir that is a git checkout (``.git`` dir or file).
-    A checkout with ``.weft/space.json`` keeps the repo named there (``space_repo``); other names
-    come from the basename, and a later dir's duplicate gets ``<dirbasename>-<name>``.
-    ``explicit`` (path -> repo) wins over discovery.
+    A checkout with an untracked ``.weft/space.json`` keeps the repo named there
+    (``local_space_repo``); other names come from the basename, and a later dir's duplicate gets ``<dirbasename>-<name>``. ``explicit``
+    (path -> repo) wins over discovery.
     """
     out: Dict[str, str] = {}
     taken: Dict[str, str] = {}
@@ -185,7 +214,7 @@ def discover_projects(dirs: List[str], explicit: Optional[Dict[str, str]] = None
             full = os.path.join(base, name)
             if name.startswith(".") or not os.path.isdir(full) or not os.path.exists(os.path.join(full, ".git")):
                 continue
-            repo = space_repo(full)
+            repo = local_space_repo(full)
             if repo is None:
                 repo = sanitize_repo(name)
                 if repo in taken and taken[repo] != full:
@@ -202,22 +231,29 @@ def discover_projects(dirs: List[str], explicit: Optional[Dict[str, str]] = None
 # ------------------------------------------------------------------------------------------
 # Bare paths exclude glob/brace/expansion characters (the shell would rewrite them before cd
 # runs); double-quoted paths exclude `$`, backquote and `\`; single quotes keep everything
-# literal. Only a LEADING `cd <dir> &&` or `git -C <dir> <subcommand>` counts.
-_BASH_DIR = r"""(?:"([^"$`\\\n\r]+)"|'([^'\n\r]+)'|([^\s"'$`;&|<>()*?\[\]{},\\]+))"""
-_CD_TARGET = re.compile(r"^[ \t]*cd[ \t]+" + _BASH_DIR + r"[ \t]*&&")
-_GIT_C_TARGET = re.compile(r"^[ \t]*git[ \t]+-C[ \t]+" + _BASH_DIR + r"[ \t]+[a-z]")
+# literal, and `'\''` (close, escaped quote, reopen) is how a shell spells an apostrophe in one.
+# Only a LEADING `cd <dir> &&` or `git [global options] -C <dir> [global options] <subcommand>`
+# names THE directory; leading blank lines are skipped.
+_BASH_DIR = r"""(?:"([^"$`\\\n\r]+)"|'((?:[^'\n\r]|'\\'')+)'|([^\s"'$`;&|<>()*?\[\]{}\\]+))"""
+# git global options that may stand before or after `-C <dir>` (`-c k=v` takes a value).
+_GIT_OPT = r"""(?:[ \t]+(?:-c[ \t]+[^\s;&|<>()`$]+|--[a-z][a-z-]*(?:=[^\s;&|<>()`$]+)?|-[pP]))"""
+_CD_TARGET = re.compile(r"\A\s*cd[ \t]+" + _BASH_DIR + r"[ \t]*&&")
+_GIT_C_TARGET = re.compile(r"\A\s*git" + _GIT_OPT + r"*[ \t]+-C[ \t]+" + _BASH_DIR + _GIT_OPT + r"*[ \t]+[a-z]")
+# Anything else that moves where a command works: another cd/pushd, a second -C, --git-dir /
+# --work-tree, `sh -c` (the leading form is counted once; see terminal_dirs).
+_DIR_CHANGE = re.compile(
+    r"""(?:^|[\s;&|()`'"{])(?:cd|pushd|popd|chdir|env[ \t]+-C)(?=$|[\s;&|()`'"}])"""
+    r"""|(?:^|\s)(?:-C|--git-dir|--work-tree|--chdir|--directory)(?=[=\s]|$)"""
+    r"""|(?:^|[\s;&|(])(?:ba|z|da|k)?sh[ \t]+-\w*c""", re.M)
+# Absolute or ~ paths anywhere in a command (quoted or not): the fail-closed candidates.
+_ABS_PATH = re.compile(r"""(?:(?<=^)|(?<=[\s=:'"(<>|;&]))(~?/[^\s'";&|<>()`$*?\[\]{}]*)""", re.M)
+MAX_COMMAND_PATHS = 32
 
 
-def bash_target_dir(command: Any) -> Optional[str]:
-    """The directory a shell command works in when it names one with a leading ``cd <dir> &&``
-    or ``git -C <dir> <subcommand>`` (absolute or ``~`` path; no ``..``, no variables). None
-    otherwise. Mirrors ``bashTargetDir`` in packages/adapters/claude-code/src/config.ts."""
-    if not isinstance(command, str):
-        return None
-    m = _CD_TARGET.match(command) or _GIT_C_TARGET.match(command)
-    if not m:
-        return None
+def _target_of(m: "re.Match[str]") -> Optional[str]:
     raw = m.group(1) or m.group(2) or m.group(3)
+    if m.group(2) is not None:
+        raw = m.group(2).replace("'\\''", "'")
     if not raw or ".." in re.split(r"[\\/]", raw):
         return None
     quoted = m.group(1) is not None or m.group(2) is not None
@@ -232,13 +268,59 @@ def bash_target_dir(command: Any) -> Optional[str]:
     return os.path.normpath(raw) if raw.startswith("/") else None
 
 
-def terminal_dirs(args: dict, base: str) -> List[str]:
-    """Candidate directories of a terminal call, best first: the command's own leading
-    ``cd``/``git -C`` target, then its ``workdir``, then the session's directory."""
+def bash_target_dir(command: Any) -> Optional[str]:
+    """The directory a shell command works in when it names one with a leading ``cd <dir> &&``
+    or ``git [opts] -C <dir> [opts] <subcommand>`` (absolute or ``~`` path; no ``..``, no
+    variables). None otherwise. Accepts the forms of ``bashTargetDir`` in
+    packages/adapters/claude-code/src/config.ts and a few more spellings (``'\\''``, git global
+    options, leading blank lines); anything else is handled fail-closed by ``terminal_dirs``."""
+    if not isinstance(command, str):
+        return None
+    m = _CD_TARGET.match(command) or _GIT_C_TARGET.match(command)
+    return _target_of(m) if m else None
+
+
+def command_paths(command: Any) -> List[str]:
+    """Existing directories named by absolute / ``~`` paths in ``command`` (a file names its
+    directory; a path that does not exist yet names its deepest existing ancestor). Bounded."""
+    if not isinstance(command, str):
+        return []
     out: List[str] = []
-    for d in (bash_target_dir(args.get("command")), args.get("workdir") or base):
+    for m in _ABS_PATH.finditer(command):
+        raw = m.group(1).rstrip(".,")
+        if raw.startswith("~"):
+            if not (raw == "~" or raw.startswith("~/")):
+                continue
+            raw = os.path.expanduser(raw)
+        d = os.path.normpath(raw)
+        while d and d != os.path.dirname(d) and not os.path.isdir(d):
+            d = os.path.dirname(d)
+        if d and d != os.path.dirname(d) and d not in out:
+            out.append(d)
+        if len(out) >= MAX_COMMAND_PATHS:
+            break
+    return out
+
+
+def terminal_dirs(args: dict, base: str) -> List[str]:
+    """Candidate directories of a terminal call: the command's own leading ``cd``/``git -C``
+    target, its ``workdir`` (else the session's directory) and, FAIL CLOSED, when the command
+    changes directory in any other spelling (or the leading one did not parse), every absolute
+    / ``~`` path it names. Every in-scope candidate is snapshotted around the call
+    (``WeftAdapter._pre_terminal``), so a spelling the parser misses still cannot edit an
+    in-scope worktree unseen or skip its commit gate."""
+    command = args.get("command")
+    target = bash_target_dir(command)
+    out: List[str] = []
+    for d in (target, args.get("workdir") or base):
         if isinstance(d, str) and d and d not in out:
             out.append(d)
+    if isinstance(command, str):
+        changes = len(_DIR_CHANGE.findall(command))
+        if changes > (1 if target else 0):
+            for d in command_paths(command):
+                if d not in out:
+                    out.append(d)
     return out
 
 
@@ -328,7 +410,15 @@ class Config:
         if self.links is not None:
             return StandaloneScope(self.links, self.excludes)
         return Scope(self.roots, projects=self.projects, project_dirs=self.project_dirs,
-                     excludes=self.excludes, default_repo=self.repo)
+                     excludes=self.excludes, default_repo=self.repo, known_repos=self.known_repos())
+
+    def known_repos(self) -> List[str]:
+        """Every Weft repo this config already names (project map, tokens, the legacy repo): the
+        only names a checkout's own ``.weft/space.json`` may pick (``Scope._project_root``)."""
+        out = set(self.projects.values()) | set(self.tokens)
+        if self.repo:
+            out.add(self.repo)
+        return sorted(r for r in out if r)
 
     @staticmethod
     def standalone(get_config: Callable[[str, Any], Any], get_secret: Callable[[str], Optional[str]],
@@ -494,9 +584,11 @@ class Scope:
 
     def __init__(self, roots: List[Root], projects: Optional[Dict[str, str]] = None,
                  project_dirs: Optional[List[str]] = None, excludes: Optional[List[str]] = None,
-                 default_repo: str = ""):
+                 default_repo: str = "", known_repos: Optional[List[str]] = None):
         self.roots = sorted(roots, key=lambda r: len(r.path), reverse=True)
         self.projects = dict(projects or {})
+        # repos the adapter config names: the only ones a checkout's space.json may pick
+        self.known_repos = set(known_repos or ()) | set(self.projects.values())
         self.project_dirs = list(project_dirs or [])
         self.excludes = list(excludes or [])
         self.default_repo = default_repo
@@ -513,10 +605,20 @@ class Scope:
                 if proj in self.projects:
                     return Root(proj, "", self.projects[proj])
                 if os.path.exists(os.path.join(proj, ".git")):
-                    # unknown until `install.py --sync`; named as discover_projects would name it
-                    return Root(proj, "", space_repo(proj) or sanitize_repo(name))
+                    return Root(proj, "", self._unsynced_repo(proj, name))
                 return None
         return None
+
+    def _unsynced_repo(self, proj: str, name: str) -> str:
+        """The repo of a checkout ``install.py --sync`` has not mapped yet: its folder name, or
+        the repo its ``.weft/space.json`` names when that is a repo the config already knows and
+        the folder name is not. The agent can write that file, so it never picks a repo (and with
+        it a mode or token) outside the config, and never displaces a configured folder repo."""
+        repo = sanitize_repo(name)
+        if repo in self.known_repos:
+            return repo
+        hint = space_repo(proj)
+        return hint if hint is not None and hint in self.known_repos else repo
 
     def _external_root(self, path: str) -> Optional[Root]:
         """A linked git worktree outside the project dirs (``git worktree add /tmp/x``)."""
@@ -627,11 +729,17 @@ class Scope:
         """(worktree root, repo) a terminal call works in: its leading ``cd <abs> &&`` /
         ``git -C <abs>`` target when that is in scope (``cd ~/github/x/.worktrees/t && rm f`` run
         from another worktree's session edits ``t``), else its workdir / the session's cwd."""
+        hits = self.locate_terminal_all(args, base)
+        return hits[0] if hits else None
+
+    def locate_terminal_all(self, args: dict, base: str) -> List[Tuple[str, str]]:
+        """Every in-scope (worktree root, repo) of ``terminal_dirs``, best first, deduplicated."""
+        out: List[Tuple[str, str]] = []
         for d in terminal_dirs(args, base):
             hit = self.locate_dir(d)
-            if hit:
-                return hit
-        return None
+            if hit and hit not in out:
+                out.append(hit)
+        return out
 
     def resolve_dir(self, directory: Any) -> Optional[str]:
         """Worktree root for an in-scope directory (terminal workdir), else None."""
@@ -1137,6 +1245,7 @@ class Pending:
     head: Optional[str] = None
     snapshot: Dict[str, Optional[str]] = field(default_factory=dict)  # rel(no prefix) -> text
     integration: bool = False  # git merge/rebase/...: record HEAD moves only, not file changes
+    more: List["Pending"] = field(default_factory=list)  # terminal: the call's other worktrees
 
 
 class WeftAdapter:
@@ -1151,7 +1260,7 @@ class WeftAdapter:
         self.last_used = time.monotonic()
         # Set by the router for conversation adapters: the heartbeat loop hands an idle one back
         # (``on_idle(self)``) instead of heartbeating it until the gateway process exits.
-        self.on_idle: Optional[Callable[["WeftAdapter"], None]] = None
+        self.on_idle: Optional[Callable[["WeftAdapter"], bool]] = None  # True: retired
         self.idle_clock: Callable[[], float] = time.monotonic
         self.scope = scope or config.scope()
         self.client = client or WcpClient(config.url, config.token, config.repo, config.timeout,
@@ -1345,8 +1454,8 @@ class WeftAdapter:
                 if self._closed or not self.session:
                     continue
                 if self.session_key and self.on_idle and self.idle_clock() - self.last_used > SESSION_IDLE_S:
-                    self.on_idle(self)  # the chat went quiet: no heartbeats for it until it is back
-                    return
+                    if self.on_idle(self):  # the chat went quiet: no heartbeats for it until it is back
+                        return
                 self.rec.touch()
                 if time.monotonic() - self.last_contact < interval * 0.8:
                     continue
@@ -1662,21 +1771,30 @@ class WeftAdapter:
             "new state.")}
 
     def _pre_terminal(self, name: str, args: dict, call_id: str, task_id: Any = "") -> Optional[dict]:
-        hit = self.scope.locate_terminal(args, self._base_dir(task_id))
-        if not hit or hit[1] != self.cfg.route_key:
+        # Every in-scope worktree the call may touch (terminal_dirs: the parsed leading target,
+        # the workdir, and fail-closed every absolute path of a command that changes directory in
+        # a spelling the parser does not accept), this repo's only.
+        worktrees = [wt for wt, repo in self.scope.locate_terminal_all(args, self._base_dir(task_id))
+                     if repo == self.cfg.route_key]
+        if not worktrees:
             return None  # SCOPE GUARD
-        worktree = hit[0]
         command = str(args.get("command") or "")
         if self.session and re.search(r"\bgit\b[^|;&]*\bcommit\b", command):
             block = self._gate("commit", "git commit")
             if block:
                 return block
-        pend = Pending("terminal", name, call_id or f"anon-{time.monotonic_ns()}", worktree=worktree)
-        self.worktrees.setdefault(worktree, None)
-        pend.head = (git(worktree, "rev-parse", "HEAD") or "").strip() or None
-        pend.integration = bool(GIT_INTEGRATION.search(command))
-        if not pend.integration:
-            pend.snapshot = self._dirty_snapshot(worktree)
+        call_id = call_id or f"anon-{time.monotonic_ns()}"
+        integration = bool(GIT_INTEGRATION.search(command))
+        parts = []
+        for worktree in worktrees:
+            part = Pending("terminal", name, call_id, worktree=worktree, integration=integration)
+            self.worktrees.setdefault(worktree, None)
+            part.head = (git(worktree, "rev-parse", "HEAD") or "").strip() or None
+            if not integration:
+                part.snapshot = self._dirty_snapshot(worktree)
+            parts.append(part)
+        pend = parts[0]
+        pend.more = parts[1:]
         with self.lock:
             self.pending[pend.call_id] = pend
         return None
@@ -1808,7 +1926,8 @@ class WeftAdapter:
                 changes = [(t, pend.before.get(t.abs), self._current(t.abs)) for t in pend.targets]
                 self._defer(lambda: self._commit_changes(changes, name, pend.call_id))
             elif pend and pend.kind == "terminal":
-                self._post_terminal(pend)
+                for part in [pend, *pend.more]:
+                    self._post_terminal(part)
             elif self.session and time.monotonic() - self.last_drain > DRAIN_EVERY_S:
                 self.last_drain = time.monotonic()
                 self._defer(self._drain)
@@ -2081,6 +2200,9 @@ class WeftRouter:
         # the conversation id stays); filled from tool calls, read by hooks that carry only
         # ``session_id`` (pre_verify, session start/end).
         self._conversations: "collections.OrderedDict[str, str]" = collections.OrderedDict()
+        # (repo, conversation) -> base_seq of a session-start adapter opened under the physical
+        # session id before a tool call showed the conversation (see ``_adopt``).
+        self._start_bases: Dict[Tuple[str, str], int] = {}
         self.client_factory = client_factory
         self.heartbeat = heartbeat
         self.lock = threading.RLock()
@@ -2114,6 +2236,7 @@ class WeftRouter:
             return True
         # Shared with live adapters: update in place (single attribute stores, GIL-atomic).
         self.scope.projects = dict(fresh.projects)
+        self.scope.known_repos = set(fresh.known_repos())
         self.scope.project_dirs = list(fresh.project_dirs)
         self.scope.excludes = list(fresh.excludes)
         self.scope._ext = {}
@@ -2143,15 +2266,39 @@ class WeftRouter:
         with self.lock:
             if conv:
                 if sid and sid != conv:
+                    known = self._conversations.get(sid)
                     self._conversations[sid] = conv
                     self._conversations.move_to_end(sid)
                     while len(self._conversations) > MAX_SESSION_KEYS:
                         self._conversations.popitem(last=False)
+                    if known != conv:
+                        self._adopt(sid, conv)
                 return conv
             if sid:
                 return self._conversations.get(sid, sid)
         tid = kw.get("task_id")
         return tid.strip()[:200] if isinstance(tid, str) else ""
+
+    def _adopt(self, sid: str, conv: str) -> None:
+        """A tool call just showed that physical session ``sid`` belongs to conversation ``conv``.
+        ``on_session_start`` carries only ``sid``, so a resumed (compressed) conversation's
+        start-time adapter was keyed by it, with a task named after it. Hand its base (the log
+        head when the session started) to the conversation's adapter, which every later edit
+        uses, and close it: the late-base problem session start prevents stays prevented, and no
+        second WCP session lingers until finalize. Caller holds ``self.lock``."""
+        for key in [k for k in self.adapters if k[1] == sid]:
+            early = self.adapters.pop(key)
+            target = (key[0], conv)
+            if early.session and early.base_seq:
+                live = self.adapters.get(target)
+                if live is None:
+                    prev = self._start_bases.get(target)
+                    self._start_bases[target] = min(prev, early.base_seq) if prev else early.base_seq
+                elif not live.session:
+                    live.base_seq = min(live.base_seq, early.base_seq) if live.base_seq else early.base_seq
+            self._retire(early, f"session start adopted by conversation {conv}")
+        while len(self._start_bases) > MAX_SESSION_KEYS:
+            self._start_bases.pop(next(iter(self._start_bases)))
 
     def adapter_for(self, repo: str, session: str = "") -> Optional[WeftAdapter]:
         if not repo:
@@ -2184,6 +2331,9 @@ class WeftRouter:
             adapter = WeftAdapter(cfg, client=client, analyzer=self.analyzer, heartbeat=self.heartbeat,
                                   scope=self.scope, session_key=session)
             adapter.last_used = self._clock()
+            start_base = self._start_bases.pop((repo, session), 0)
+            if start_base:
+                adapter.base_seq = start_base  # its hello keeps min(base, delivered_through)
             if session:
                 adapter.on_idle, adapter.idle_clock = self._idle_retire, self._clock
             self.adapters[(repo, session)] = adapter
@@ -2195,17 +2345,23 @@ class WeftRouter:
         """Close conversation adapters idle for ``SESSION_IDLE_S`` (the gateway lives for days and
         serves many chats). A chat that comes back gets a fresh WCP session on the same change."""
         now = self._clock()
-        idle = [k for k, a in self.adapters.items() if k[1] and now - a.last_used > SESSION_IDLE_S]
+        idle = [k for k, a in self.adapters.items()
+                if k[1] and now - a.last_used > SESSION_IDLE_S and not a.pending]
         for k in idle:
             self._retire(self.adapters.pop(k), "idle")
 
-    def _idle_retire(self, adapter: WeftAdapter) -> None:
-        """An idle conversation adapter's heartbeat loop gave it back: drop it and say bye."""
+    def _idle_retire(self, adapter: WeftAdapter) -> bool:
+        """An idle conversation adapter's heartbeat loop gave it back: drop it and say bye.
+        Rechecked under the lock: a call that reused it since the heartbeat looked, or a tool
+        call still in flight (a build running for hours), keeps it."""
         with self.lock:
+            if self._clock() - adapter.last_used <= SESSION_IDLE_S or adapter.pending:
+                return False
             for k, a in list(self.adapters.items()):
                 if a is adapter:
                     self.adapters.pop(k)
         self._retire(adapter, "idle")
+        return True
 
     def _retire(self, adapter: WeftAdapter, why: str) -> None:
         adapter.log(f"[{adapter.cfg.repo}] closing session {adapter.change} ({why})")
@@ -2223,9 +2379,9 @@ class WeftRouter:
                 if t and t.repo not in repos:
                     repos.append(t.repo)
         elif name in TERMINAL_TOOLS:
-            hit = self.scope.locate_terminal(args, base)
-            if hit:
-                repos.append(hit[1])
+            for _, repo in self.scope.locate_terminal_all(args, base):
+                if repo not in repos:
+                    repos.append(repo)
         return repos
 
     def _live(self, session: Optional[str] = None) -> List[WeftAdapter]:
@@ -2275,7 +2431,9 @@ class WeftRouter:
         return None
 
     def post_tool_call(self, **kw: Any) -> None:
+        now = self._clock()
         for adapter in self._live(self.session_key(kw)):
+            adapter.last_used = now  # a long tool call counts as use: idle starts when it ends
             adapter.post_tool_call(**kw)
 
     def session_started(self, session_id: Any = "", **kw: Any) -> None:
@@ -2306,9 +2464,11 @@ class WeftRouter:
         if not session:
             return
         with self.lock:
-            done = [k for k in self.adapters if k[1] == session]
+            sid = str(kw.get("session_id") or "").strip()[:200]
+            done = [k for k in self.adapters if k[1] in (session, sid)]
             adapters = [self.adapters.pop(k) for k in done]
-            sid = str(kw.get("session_id") or "")
+            for k in [k for k in self._start_bases if k[1] == session]:
+                self._start_bases.pop(k)
             if sid:
                 self._conversations.pop(sid, None)
         for adapter in adapters:

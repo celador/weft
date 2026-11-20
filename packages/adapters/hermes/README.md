@@ -71,7 +71,11 @@ Every Hermes profile reports edits in **every project**, one Weft repo per proje
 - a project is a git repo directly under one of the project dirs (`projects.dirs` in the config,
   set with `install.py --project-dirs`; default `~/github,~/code`);
 - a checkout that `npx @celador/weft` already registered keeps the repo named in its
-  `.weft/space.json` (`<space>-<folder>`), so its Hermes and Claude Code edits share one feed;
+  `.weft/space.json` (`<space>-<folder>`), so its Hermes and Claude Code edits share one feed.
+  That file sits in the checkout the agent edits, so it only ever names a repo (never a gateway,
+  token or mode): `install.py --sync` ignores one git tracks (it came with a clone), and before a
+  sync the plugin accepts the name only when it is a repo the config already has and the folder
+  name is not;
   any other project's Weft repo is the directory name (sanitized to `[A-Za-z0-9._-]`, e.g.
   `~/github/cto` → `cto`);
 - its `.worktrees/*` (kanban worktrees) and any linked `git worktree` elsewhere whose common git
@@ -91,9 +95,13 @@ pinned candidate run) is one task for the whole process. A conversation's sessio
 A project that has no token for the profile (no Weft repo yet) is a no-op with one log line per
 process; `install.py --sync` adds it.
 
-Terminal calls are located by their leading `cd <abs path> &&` or `git -C <abs path>` target
-when it is in scope (the Claude Code adapter's Bash rule), else `workdir`, else the session's
-cwd: `cd ~/github/x/.worktrees/t && rm f` run from another worktree's session edits `t`.
+Terminal calls are located by their leading `cd <abs path> &&` or `git [opts] -C <abs path>
+[opts] <subcommand>` target (the Claude Code adapter's Bash forms, plus `'\''` quoting, git
+global options and leading blank lines) and by `workdir` (else the session's cwd): `cd
+~/github/x/.worktrees/t && rm f` run from another worktree's session edits `t`. Fail closed: a
+command that changes directory in any other spelling (`cd x;`, a second `cd` or `-C`, `pushd`,
+`--git-dir`, `sh -c`, ...) also has every in-scope worktree named by an absolute or `~` path in it
+snapshotted around the call, and each of those runs the commit gate for `git commit`.
 
 Kanban worktrees join the Claude Code adapter: on `on_kanban_worker_spawned` the plugin checks
 whether the worker's workspace is a linked git worktree of a checkout with `.weft/claude.json`
@@ -102,7 +110,9 @@ and, if so, runs that checkout's adapter (`.weft/bin/weft install --dir <worktre
 worktree then report as the kanban task. (The dispatcher's `git worktree add` runs with git
 hooks off, so a `post-checkout` hook could not do this.) The Claude Code adapter itself stops its
 config search at a linked worktree without its own `.weft/claude.json`, so an unjoined worktree's
-commits are never stamped with the main checkout's Task-Id / Change-Id. Setting:
+commits are never stamped with the main checkout's Task-Id / Change-Id; while the main checkout
+enforces, its hook refuses edits and commands in such a worktree (except the join command) until
+it joins, so `git worktree add` is no way around enforcement. Setting:
 `join_worktrees` (default on).
 
 ### Modes
@@ -145,8 +155,11 @@ Flags: `--project-dirs DIR,DIR` (saved absolute in `projects.dirs`; later runs r
 `http://127.0.0.1:7878`), `--public-url` = the same gateway's address for other devices (e.g. a
 tailnet URL the Otto relay hands to phones; `''` removes it). Both are saved (`url`,
 `public_url`) and kept by later runs. With no `--url` and none configured, a running local
-gateway (`npx @celador/weft`) is preferred over the hosted preview, and a loopback `--url` uses
-that gateway's admin token. Moving between the two addresses of one gateway keeps every token
+gateway (`npx @celador/weft`) is preferred over the hosted preview, and a loopback `--url` on its
+port uses that gateway's admin token. An admin token is sent to a loopback URL only when every
+process listening on that port runs as you (`/proc/net/tcp` or `lsof`): a `/v1/health` answer
+alone proves nothing, since any local user can bind the port while the gateway is down. URLs
+compare with scheme and host case ignored. Moving between the two addresses of one gateway keeps every token
 and re-keys the shared human token (`otto-human-token.json`) to `public_url or url`, the key
 clients look it up under. A config whose `url` is the public address while `WEFT_HERMES_URL`
 (env or `~/.hermes/.env`) points at a healthy loopback gateway is migrated to `url` = loopback,

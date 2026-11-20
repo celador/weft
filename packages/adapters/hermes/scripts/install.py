@@ -21,7 +21,9 @@ here: http://127.0.0.1:7878); ``--public-url`` is the address other devices use 
 gateway (e.g. a tailnet URL the Otto relay hands to phones). Both are kept in the config (``url``,
 ``public_url``); a later run without the flags keeps them. With neither flag nor a configured
 ``url``, a running local gateway (``npx @celador/weft``, ~/.config/weft/local) is preferred over the
-hosted preview. The admin token defaults to that local gateway's for a loopback ``--url``.
+hosted preview. The admin token defaults to that local gateway's for a loopback ``--url`` on its
+port (~/.config/weft/local/port). An admin token is only ever sent to a loopback URL whose
+listening process runs as you (``admin_target_refusal``): a health answer alone proves nothing.
 Changing between ``url`` and ``public_url`` of one gateway keeps every token, and the shared
 human token (otto-human-token.json) is re-keyed to ``public_url`` (else ``url``), the key clients
 look it up under.
@@ -59,6 +61,7 @@ weft_land.py's system token). Repos are kept. Secrets are never printed.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import shutil
@@ -96,12 +99,96 @@ def weft_dir() -> Path:
 
 
 def norm_url(url) -> str:
-    return str(url or "").strip().rstrip("/")
+    """Trimmed, no trailing slash, scheme and host lowercased (they are case-insensitive, so
+    ``https://Box.example`` and ``https://box.example`` are one gateway). Path case is kept."""
+    s = str(url or "").strip().rstrip("/")
+    try:
+        parts = urllib.parse.urlsplit(s)
+    except ValueError:
+        return s
+    if not parts.scheme or not parts.netloc:
+        return s
+    user, at, host = parts.netloc.rpartition("@")
+    return urllib.parse.urlunsplit((parts.scheme.lower(), f"{user}{at}{host.lower()}", parts.path,
+                                    parts.query, parts.fragment))
 
 
 def is_loopback(url: str) -> bool:
-    host = urllib.parse.urlsplit(url).hostname or ""
-    return host in ("127.0.0.1", "localhost", "::1")
+    """Any loopback spelling: localhost, 127.0.0.0/8, ::1 in any form (``[0:0:0:0:0:0:0:1]``)."""
+    try:
+        host = urllib.parse.urlsplit(str(url or "")).hostname or ""
+    except ValueError:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def url_port(url: str):
+    try:
+        parts = urllib.parse.urlsplit(str(url or ""))
+        return parts.port or {"http": 80, "https": 443}.get(parts.scheme.lower())
+    except ValueError:
+        return None
+
+
+def listener_uids(port: int):
+    """UIDs of the processes listening on TCP ``port`` on this machine, or None when that cannot
+    be told. Linux: /proc/net/tcp{,6} (every user's sockets). macOS: lsof, which shows a normal
+    user only their own processes, so another user's listener shows up as no listener at all."""
+    found, readable = set(), False
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            lines = Path(table).read_text().splitlines()[1:]
+        except OSError:
+            continue
+        readable = True
+        for line in lines:
+            f = line.split()
+            # sl local_address rem_address st ... uid: st 0A = LISTEN
+            if len(f) > 7 and f[3] == "0A" and int(f[1].rsplit(":", 1)[1], 16) == port:
+                found.add(int(f[7]))
+    if readable:
+        return found
+    lsof = shutil.which("lsof") or ("/usr/sbin/lsof" if os.path.exists("/usr/sbin/lsof") else None)
+    if not lsof:
+        return None
+    try:
+        out = subprocess.run([lsof, "-nP", "-w", "-a", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fu"],
+                             capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return {int(x[1:]) for x in out.stdout.split() if x.startswith("u") and x[1:].isdigit()}
+
+
+_ADMIN_TARGETS: dict = {}
+
+
+def admin_target_refusal(url: str):
+    """Why the admin token must not go to ``url``, or None. A loopback port is whatever process
+    bound it first: when the real gateway is down another local user can listen there (and answer
+    /v1/health like a gateway). So an admin token goes to a loopback URL only when every process
+    listening on that port runs as this user (who can read the token file anyway)."""
+    if not is_loopback(url):
+        return None
+    if url in _ADMIN_TARGETS:
+        return _ADMIN_TARGETS[url]
+    port = url_port(url)
+    uids = listener_uids(port) if port else None
+    me = os.getuid()
+    if uids is None:
+        why = f"cannot tell who listens on port {port} (no /proc/net/tcp, no lsof)"
+    elif not uids:
+        why = f"no process of yours is listening on port {port}"
+    elif uids != {me}:
+        why = f"port {port} is held by another user (uid {', '.join(str(u) for u in sorted(uids - {me}))})"
+    else:
+        why = None
+    _ADMIN_TARGETS[url] = why
+    return why
 
 
 def healthy(url: str, timeout: float = 3.0) -> bool:
@@ -116,16 +203,21 @@ def healthy(url: str, timeout: float = 3.0) -> bool:
 def local_gateway():
     """(loopback url, admin token path) of the gateway ``npx @celador/weft`` runs on this Mac
     when it is up, else None."""
-    local = weft_dir() / "local"
-    admin = local / "admin-token"
-    try:
-        port = int((local / "port").read_text().strip())
-    except (OSError, ValueError):
-        port = LOCAL_PORT
+    admin = weft_dir() / "local" / "admin-token"
+    port = local_port()
     if not admin.exists():
         return None
     url = f"http://127.0.0.1:{port}"
-    return (url, admin) if healthy(url) else None
+    # Its /v1/health answer proves nothing (any listener can say "weft-gateway"); the admin token
+    # is offered only when the listener is this user's own process.
+    return (url, admin) if healthy(url) and admin_target_refusal(url) is None else None
+
+
+def local_port() -> int:
+    try:
+        return int((weft_dir() / "local" / "port").read_text().strip())
+    except (OSError, ValueError):
+        return LOCAL_PORT
 
 
 def env_url_override() -> str:
@@ -167,8 +259,11 @@ def resolve_gateway(args, cfg: dict) -> None:
     public = args.public_url if args.public_url is not None else cfg.get("public_url")
     args.public_url = norm_url(public) if norm_url(public) != url else ""
     if not args.admin_token_file:
+        # The local admin token belongs to the gateway npx @celador/weft runs (its port file), not
+        # to every loopback URL.
         local_admin = weft_dir() / "local" / "admin-token"
-        args.admin_token_file = str(local_admin) if is_loopback(url) and local_admin.exists() else DEFAULT_ADMIN
+        mine = is_loopback(url) and url_port(url) == local_port() and local_admin.exists()
+        args.admin_token_file = str(local_admin) if mine else DEFAULT_ADMIN
 
 
 def resolve_dirs(args, cfg: dict) -> list:
@@ -225,6 +320,10 @@ def node_bin() -> str:
 
 
 def admin_call(url: str, admin: str, method: str, path: str, body=None):
+    refusal = admin_target_refusal(url)
+    if refusal:
+        print(f"refusing to send the admin token to {norm_url(url)}: {refusal}", file=sys.stderr)
+        return 0, {"error": f"admin token not sent: {refusal}"}
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(url.rstrip("/") + path, data=data, method=method)
     req.add_header("Authorization", f"Bearer {admin}")
@@ -295,8 +394,9 @@ def issue_land_token(url: str, admin: str, repo: str):
 def has_land_token(cfg: dict, url: str, repo: str) -> bool:
     entry = (cfg.get("land_tokens") or {}).get(repo) or {}
     legacy = cfg.get("land") or {}
-    return bool((entry.get("token") and entry.get("url") == url)
-                or (legacy.get("token") and legacy.get("url") == url and legacy.get("repo") == repo))
+    url = norm_url(url)
+    return bool((entry.get("token") and norm_url(entry.get("url")) == url)
+                or (legacy.get("token") and norm_url(legacy.get("url")) == url and legacy.get("repo") == repo))
 
 
 def hermes(profile: str, *args: str) -> subprocess.CompletedProcess:

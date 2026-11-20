@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { gatewayAliases, sharedHumanToken } from "../src/gateways";
+import { gatewayAliases, normGatewayUrl, sharedHumanToken } from "../src/gateways";
 
 const LOOP = "http://127.0.0.1:7878";
 const PUBLIC = "https://box.tailnet.example:8710";
@@ -44,5 +44,19 @@ describe("gateway aliases", () => {
     const env = home({ url: LOOP }, { url: LOOP, token: "h2" });
     expect(gatewayAliases(LOOP, env)).toEqual([LOOP]);
     expect(sharedHumanToken(LOOP, env)).toBe("h2");
+  });
+
+  it("an empty url matches nothing, even a token file without a url", () => {
+    const env = home({ public_url: PUBLIC }, { url: "", token: "blank" });
+    expect(gatewayAliases("", env)).toEqual([]);
+    expect(sharedHumanToken("", env)).toBeUndefined();
+    expect(sharedHumanToken("  ", home(null, { token: "no-url" }))).toBeUndefined();
+  });
+
+  it("scheme/host case and whitespace around a saved url name the same gateway", () => {
+    const env = home({ url: LOOP, public_url: "HTTPS://Box.Tailnet.Example:8710" }, { url: ` ${PUBLIC}/ `, token: "h3" });
+    expect(gatewayAliases("HTTP://127.0.0.1:7878", env)).toEqual([LOOP, PUBLIC]);
+    expect(sharedHumanToken(LOOP, env)).toBe("h3");
+    expect(normGatewayUrl("https://Box.Example/A/B/")).toBe("https://box.example/A/B");
   });
 });

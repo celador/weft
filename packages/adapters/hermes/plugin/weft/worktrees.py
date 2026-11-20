@@ -33,7 +33,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 CONFIG_REL = os.path.join(".weft", "claude.json")
 LAUNCHER_REL = os.path.join(".weft", "bin", "weft")
-TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+TASK_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")  # fullmatch: no trailing newline
 INSTALL_TIMEOUT_S = 30.0
 
 
@@ -110,7 +110,7 @@ def plan_join(worktree: str, task_id: str) -> Optional[Dict[str, Any]]:
     if not isinstance(worktree, str) or not os.path.isabs(worktree) or not os.path.isdir(worktree):
         return {"skip": "workspace is not a directory"}
     worktree = os.path.realpath(worktree)
-    if not isinstance(task_id, str) or not TASK_ID.match(task_id):
+    if not isinstance(task_id, str) or not TASK_ID.fullmatch(task_id):
         return {"skip": "no usable task id"}
     main = linked_main(worktree)
     if not main:
@@ -119,7 +119,8 @@ def plan_join(worktree: str, task_id: str) -> Optional[Dict[str, Any]]:
     if not cfg or not all(isinstance(cfg.get(k), str) and cfg.get(k) for k in ("url", "repo", "agent")):
         return {"skip": f"main checkout {main} has no Claude Code adapter (.weft/claude.json)"}
     own = read_json(os.path.join(worktree, CONFIG_REL))
-    if own and (own.get("task") or {}).get("id") == task_id:
+    own_task = own.get("task") if own else None
+    if isinstance(own_task, dict) and own_task.get("id") == task_id:
         return {"skip": "already joined"}
     cmd = adapter_command(main)
     if not cmd:
@@ -137,23 +138,31 @@ def plan_join(worktree: str, task_id: str) -> Optional[Dict[str, Any]]:
     return {"main": main, "worktree": worktree, "args": args, "token_src": token_src}
 
 
+def _tail(out: Any) -> str:
+    return (getattr(out, "stderr", "") or getattr(out, "stdout", "") or "").strip()[-300:]
+
+
 def run_join(plan: Dict[str, Any], run: Callable[..., Any] = subprocess.run) -> str:
-    """Run a ``plan_join`` plan. Returns a one-line outcome for the log."""
+    """Run a ``plan_join`` plan. Returns a one-line outcome for the log.
+
+    ``install --token-from`` first. A runtime that predates the flag either rejects it (non-zero
+    exit: unknown option) or ignores it (exit 0, no ``.weft/token``); both get one retry with
+    ``--token-file`` pointing at the main checkout's token file."""
     env = {k: v for k, v in os.environ.items() if k != "WEFT_TOKEN"}  # never pass a token through env
     wt = plan["worktree"]
-    out = run(plan["args"] + ["--token-from", plan["token_src"]], env=env, capture_output=True, text=True,
-              timeout=INSTALL_TIMEOUT_S, stdin=subprocess.DEVNULL)
-    if getattr(out, "returncode", 1) != 0:
-        return f"join {wt}: adapter install failed: {(out.stderr or out.stdout or '').strip()[-300:]}"
-    if not os.path.exists(os.path.join(wt, ".weft", "token")):
-        # A runtime without --token-from: point the worktree at the main checkout's token file.
-        out = run(plan["args"] + ["--token-file", plan["token_src"]], env=env, capture_output=True, text=True,
-                  timeout=INSTALL_TIMEOUT_S, stdin=subprocess.DEVNULL)
+    kw = dict(env=env, capture_output=True, text=True, timeout=INSTALL_TIMEOUT_S, stdin=subprocess.DEVNULL)
+    first = run(plan["args"] + ["--token-from", plan["token_src"]], **kw)
+    if getattr(first, "returncode", 1) != 0 or not os.path.exists(os.path.join(wt, ".weft", "token")):
+        out = run(plan["args"] + ["--token-file", plan["token_src"]], **kw)
         if getattr(out, "returncode", 1) != 0:
-            return f"join {wt}: adapter install failed: {(out.stderr or out.stdout or '').strip()[-300:]}"
+            why = _tail(out)
+            if getattr(first, "returncode", 1) != 0:
+                why = f"--token-from: {_tail(first)}; --token-file: {why}"
+            return f"join {wt}: adapter install failed: {why}"
     cfg = read_json(os.path.join(wt, CONFIG_REL)) or {}
+    task = cfg.get("task") if isinstance(cfg.get("task"), dict) else {}
     return (f"joined {wt} to the Claude Code adapter of {plan['main']} "
-            f"(repo {cfg.get('repo')}, agent {cfg.get('agent')}, task {(cfg.get('task') or {}).get('id')})")
+            f"(repo {cfg.get('repo')}, agent {cfg.get('agent')}, task {task.get('id')})")
 
 
 def join_worktree(workspace_path: Any, task_id: Any, log: Callable[[str], None],

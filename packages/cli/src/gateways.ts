@@ -103,18 +103,33 @@ export function hermesPointer(dirs: string[], env = process.env): HermesPointer 
  * `url` is that config's `url` (the Mac reaches its own gateway on loopback, phones on the tailnet).
  */
 export function gatewayAliases(url: string, env = process.env): string[] {
-  const norm = (u: unknown) => (typeof u === "string" ? u.trim().replace(/\/+$/, "") : "");
-  const out = [norm(url)];
+  const norm = normGatewayUrl;
+  const out = [norm(url)].filter(Boolean);
+  if (!out.length) return out;
   const cfg = readJson<{ url?: unknown; public_url?: unknown } | null>(hermesConfigPath(env), null);
   if (cfg && norm(cfg.url) === out[0] && norm(cfg.public_url)) out.push(norm(cfg.public_url));
   return out;
+}
+
+/**
+ * A gateway URL for comparison: trimmed, no trailing slash, scheme and host lowercased (both are
+ * case-insensitive). "" for anything that is not a non-empty string. Same rule as VS Code's
+ * `normGatewayUrl` (apps/vscode/src/config.ts) and the Hermes installer's `norm_url`.
+ */
+export function normGatewayUrl(u: unknown): string {
+  const s = typeof u === "string" ? u.trim().replace(/\/+$/, "") : "";
+  const m = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^/?#]*)(.*)$/.exec(s);
+  if (!m) return s;
+  const at = m[2]!.lastIndexOf("@");
+  return m[1]!.toLowerCase() + m[2]!.slice(0, at + 1) + m[2]!.slice(at + 1).toLowerCase() + m[3]!;
 }
 
 /** The shared human token, when it was minted for `url` (or for the same gateway's `public_url`, the key it is saved under). */
 export function sharedHumanToken(url: string, env = process.env): string | undefined {
   const j = readJson<{ url?: unknown; token?: unknown } | null>(join(configDir(env), HUMAN_TOKEN_FILE), null);
   if (!j || typeof j.url !== "string" || typeof j.token !== "string") return undefined;
-  return gatewayAliases(url, env).includes(j.url.replace(/\/+$/, "")) ? j.token.trim() || undefined : undefined;
+  const saved = normGatewayUrl(j.url);
+  return saved && gatewayAliases(url, env).includes(saved) ? j.token.trim() || undefined : undefined;
 }
 
 export function writePointer(root: string, p: RepoPointer, key: string): void {

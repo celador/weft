@@ -45,18 +45,54 @@ export function isLinkedWorktree(dir: string): boolean {
   }
 }
 
+/** The main checkout of a linked git worktree (its gitdir's `commondir`), else undefined. */
+export function mainOfLinkedWorktree(dir: string): string | undefined {
+  try {
+    const m = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(readFileSync(join(dir, ".git"), "utf8").slice(0, 4096));
+    if (!m) return undefined;
+    const gitdir = resolve(dir, m[1]!);
+    if (basename(dirname(gitdir)) !== "worktrees") return undefined;
+    const common = existsSync(join(gitdir, "commondir")) ? resolve(gitdir, readFileSync(join(gitdir, "commondir"), "utf8").trim()) : dirname(dirname(gitdir));
+    return basename(common) === ".git" ? dirname(common) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `start` lies in a linked git worktree that has no config of its own, while the checkout it would
+ * have borrowed one from does (the checkout above it, e.g. `<main>/.worktrees/<task>` inside
+ * `<main>`, else the worktree's main checkout). `findRoot` gives such a worktree no config (it must
+ * not report or stamp as the main checkout's task), so the hook uses this to refuse edits there when
+ * that checkout enforces: creating a worktree must not be a way around enforcement.
+ */
+export function unjoinedWorktree(start: string, configRel: string = CONFIG_REL): { worktree: string; owner: string } | undefined {
+  let worktree: string | undefined;
+  for (let dir = resolve(start); ; dir = dirname(dir)) {
+    if (existsSync(join(dir, configRel))) return worktree ? { worktree, owner: dir } : undefined;
+    if (!worktree && isLinkedWorktree(dir)) worktree = dir;
+    if (dirname(dir) === dir) break;
+  }
+  const main = worktree ? mainOfLinkedWorktree(worktree) : undefined;
+  return worktree && main && existsSync(join(main, configRel)) ? { worktree, owner: main } : undefined;
+}
+
 /**
  * Walk up from `start` to the first directory holding `.weft/claude.json`. The walk stops at a
- * linked git worktree without its own config: kanban worktrees live inside the main checkout
+ * linked git worktree without its own config (Claude Code's config only): kanban worktrees live inside the main checkout
  * (`<main>/.worktrees/<task>`), and borrowing the main checkout's config there would report the
  * worktree's edits, and stamp its commits (the shared commit-msg hook), as the main checkout's
- * task and change. Such a worktree is not coordinated until it joins (`install --dir <worktree>`).
+ * task and change. Such a worktree is not coordinated until it joins (`install --dir <worktree>`);
+ * until then the hook refuses edits there when the main checkout enforces (`unjoinedWorktree`).
  */
 export function findRoot(start: string, configRel: string = CONFIG_REL): string | undefined {
   let dir = resolve(start);
   for (;;) {
     if (existsSync(join(dir, configRel))) return dir;
-    if (isLinkedWorktree(dir)) return undefined;
+    // Claude Code's own config only: its hook refuses edits in such a worktree (unjoinedWorktree).
+    // Hosts on other configs (host.ts) have no such refusal yet and keep inheriting, so a worktree
+    // never switches their enforcement off.
+    if (configRel === CONFIG_REL && isLinkedWorktree(dir)) return undefined;
     const parent = dirname(dir);
     if (parent === dir) return undefined;
     dir = parent;

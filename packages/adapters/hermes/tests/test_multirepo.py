@@ -266,7 +266,7 @@ class GatewayProcessTests(Workspace):
 
         def factory(cfg):
             c = self.clients[cfg.repo] = FakeClient()
-            self.all_clients.append(c)
+            self.all_clients.append((cfg.repo, c))
             return c
 
         def loader():
@@ -329,9 +329,13 @@ class GatewayProcessTests(Workspace):
             os.chdir(cwd)
             sys.modules.pop("tools.file_tools_paths", None)
         self.assertTrue(r.flush(5))
-        # task_id is the call's only id here: each one is its own conversation (own WCP session)
-        commits = [c[3]["files"] for client in self.all_clients for c in client.submits("commit")]
-        self.assertEqual(commits, [["src/a.md"]] * 2)
+        # task_id is the call's only id here: each one is its own conversation (own WCP session),
+        # and both are routed to alpha's repo: no other repo's client receives anything
+        by_repo = {}
+        for repo, client in self.all_clients:
+            by_repo.setdefault(repo, []).extend(c[3]["files"] for c in client.submits("commit"))
+        self.assertEqual(by_repo.get("alpha"), [["src/a.md"]] * 2)
+        self.assertEqual({r: v for r, v in by_repo.items() if r != "alpha" and v}, {})
 
     def test_get_adapter_retries_a_missing_config(self):
         import weft.adapter as mod

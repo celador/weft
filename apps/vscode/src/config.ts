@@ -124,14 +124,29 @@ export function hermesTarget(root: string, env: NodeJS.ProcessEnv = process.env,
  */
 export const HUMAN_TOKEN_FILE = "otto-human-token.json";
 export function sharedHumanToken(url: string, env: NodeJS.ProcessEnv = process.env, home = homedir()): string | undefined {
+  // Only a real gateway address can match: an empty `url` must not match a token file without one.
+  const want = normGatewayUrl(url);
+  if (!want) return undefined;
   const j = readJson(join(configDir(env, home), HUMAN_TOKEN_FILE));
-  const norm = (u: unknown) => str(u)?.replace(/\/+$/, "") ?? "";
   // The token is saved under the gateway's `public_url` when the Hermes adapter config has one
   // (phones use that address); this Mac reaches the same gateway at the config's `url`.
   const cfg = readJson(hermesConfigPath(env, home));
-  const aliases = [norm(url), ...(cfg && norm(cfg.url) === norm(url) && norm(cfg.public_url) ? [norm(cfg.public_url)] : [])];
-  if (!j || !aliases.includes(norm(j.url))) return undefined;
+  const aliases = [want, ...(cfg && normGatewayUrl(cfg.url) === want && normGatewayUrl(cfg.public_url) ? [normGatewayUrl(cfg.public_url)] : [])];
+  if (!j || !aliases.includes(normGatewayUrl(j.url))) return undefined;
   return str(j.token);
+}
+
+/**
+ * A gateway URL for comparison: trimmed, no trailing slash, scheme and host lowercased (both are
+ * case-insensitive). "" for anything that is not a non-empty string. Same rule as the CLI's
+ * `normGatewayUrl` (packages/cli/src/gateways.ts) and the Hermes installer's `norm_url`.
+ */
+export function normGatewayUrl(u: unknown): string {
+  const s = typeof u === "string" ? u.trim().replace(/\/+$/, "") : "";
+  const m = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^/?#]*)(.*)$/.exec(s);
+  if (!m) return s;
+  const at = m[2]!.lastIndexOf("@");
+  return m[1]!.toLowerCase() + m[2]!.slice(0, at + 1) + m[2]!.slice(at + 1).toLowerCase() + m[3]!;
 }
 
 /**

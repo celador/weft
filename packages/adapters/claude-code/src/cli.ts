@@ -25,7 +25,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CLAIM_USAGE, NEGOTIATE_USAGE, parseClaim, parseNegotiate } from "@weft/protocol";
 import { HttpTransport, type Transport } from "./client";
-import { BASH_TARGET_FORMS, CONFIG_REL, appendAdapterLog, bashTargetDir, configStarts, pinFromArgs, withoutPinnedOverrides, currentSession, findRoot, loadConfig, hasDotDot, pinMatches, throughSymlink, readConfigFile, readState, stateDir, type AdapterConfig, type Loaded, type Pin } from "./config";
+import { BASH_TARGET_FORMS, CONFIG_REL, appendAdapterLog, bashTargetDir, configStarts, pinFromArgs, withoutPinnedOverrides, currentSession, findRoot, loadConfig, hasDotDot, pinMatches, throughSymlink, readConfigFile, readState, stateDir, unjoinedWorktree, type AdapterConfig, type Loaded, type Pin } from "./config";
 import { EDIT_TOOLS, editPath } from "./edits";
 import { ClaudeAdapter, type HookInput } from "./hooks";
 import { flushJobs, type LspJob } from "./lsp-queue";
@@ -97,6 +97,27 @@ export const BY_PATH_SYMLINK =
 /** `--by-path` denial for an edit inside a joined checkout's own `.weft/` (its config and token). */
 export const BY_PATH_WEFT_DIR =
   "[weft] Files under the worktree's .weft/ are Weft's own (its config and token); a subagent does not edit them.";
+/**
+ * Denial for an edit or command in a linked worktree that has not joined Weft while the checkout it
+ * belongs to enforces. Names the one command that joins it (no secret in it: the token is copied
+ * from the owner's token file by the adapter itself).
+ */
+export function unjoinedDenial(worktree: string, owner: string, cfg: Partial<AdapterConfig>): string {
+  const join_ = [`${owner}/.weft/bin/weft`, "install", "--dir", worktree, "--url", cfg.url ?? "<url>", "--repo", cfg.repo ?? "<repo>",
+    "--agent", cfg.agent ?? "<agent>", "--task", "<task id>", "--mode", "enforce", "--token-from", `${owner}/${cfg.tokenFile ?? ".weft/token"}`]
+    .map((w) => (w.startsWith("<") ? w : shellQuote(w))).join(" ");
+  return `[weft] ${worktree} is a git worktree of ${owner}, which enforces Weft, but it has not joined Weft yet (no .weft/claude.json of its own), so edits and commands here are refused. Join it first: ${join_}`;
+}
+
+/** True when a Bash command in an unjoined worktree is the join itself, or works outside that worktree. */
+export function unjoinedAllows(command: string, cwd: string, worktree: string, owner: string): boolean {
+  const c = command.replace(/^\s+/, "");
+  const launcher = `${owner}/.weft/bin/weft`;
+  if ((c.startsWith(`${launcher} install `) || c.startsWith(`${shellQuote(launcher)} install `)) && !/[;&|`$<>()\n]/.test(c)) return true;
+  const target = bashTargetDir(command, cwd);
+  return !!target && target !== worktree && !target.startsWith(worktree + sep);
+}
+
 /** `--by-path` note when the checkout's config does not match the pinned coordinator. */
 export const BY_PATH_REFUSED =
   "[weft] This checkout is not coordinated: its .weft/claude.json does not match the coordinator this subagent is pinned to (see .weft/log/adapter.log). Work only in the worktree you were given.";
@@ -146,6 +167,21 @@ async function hook(byPath: boolean, args: string[] = []): Promise<void> {
           break;
         }
         loaded = found;
+        break;
+      }
+    }
+    if (!loaded && !out && input.hook_event_name === "PreToolUse" && (EDIT_TOOLS.has(input.tool_name ?? "") || input.tool_name === "Bash")) {
+      // A linked worktree without its own config borrows nothing (findRoot), but if the checkout it
+      // belongs to enforces, `git worktree add` must not switch enforcement off: refuse until it joins.
+      const starts = byPath && target ? [file ? dirname(target) : target] : configStarts(input, byPath);
+      for (const start of starts.length ? starts : [cwd]) {
+        const u = unjoinedWorktree(start);
+        const owner = u ? readConfigFile(u.owner) : undefined;
+        if (!u || !owner || owner.mode === "advise") continue;
+        if ((byPath || pinned) && !pinMatches(u.owner, pin)) continue;
+        if (input.tool_name === "Bash" && unjoinedAllows(command, cwd, u.worktree, u.owner)) continue;
+        appendAdapterLog(u.owner, `hook refused ${input.tool_name} in unjoined worktree ${u.worktree}`);
+        out = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: unjoinedDenial(u.worktree, u.owner, owner) } };
         break;
       }
     }
