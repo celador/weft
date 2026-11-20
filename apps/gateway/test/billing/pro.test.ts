@@ -1,6 +1,6 @@
-// Weft Pro (per user) inside the Workers runtime: CLI-first checkout with seats, the web-first purchase
-// (GET /buy -> Stripe -> welcome page -> claim code -> `--claim`), seat changes from the Customer Portal, fair
-// use (flagged, never cut off), no meter events for Pro, and erasing a Pro space. Stripe is mocked with
+// Weft Pro (per user) inside the Workers runtime: CLI-first checkout with seats on a gateway without accounts, seat
+// changes from the Customer Portal, fair use (flagged, never cut off), no meter events for Pro, erasing a Pro space,
+// and the anonymous web purchase being gone (test/accounts covers Pro bought by an account). Stripe is mocked with
 // fetchMock (vitest.billing.config.ts: Pro prices price_pro_month / price_pro_year, fair use 5 events per seat).
 
 import { SELF, env, fetchMock, runInDurableObject } from "cloudflare:test";
@@ -68,7 +68,6 @@ async function webhook(event: unknown, secret = SECRET) {
 const hookResult = async (r: Response) => ((await r.json()) as { result: string }).result;
 
 const stripe = () => fetchMock.get("https://api.stripe.com");
-const form = (b: string) => Object.fromEntries(new URLSearchParams(b));
 
 /** A Stripe subscription object for a Pro price. */
 const proSub = (id: string, customer: string, seats: number, interval: "month" | "year" = "month", status = "active") => ({
@@ -83,30 +82,6 @@ const mockSub = (sub: ReturnType<typeof proSub>) => stripe().intercept({ path: `
 const uid = () => crypto.randomUUID().replace(/-/g, "").slice(0, 12);
 const spaceCheckout = (space: string, customer: string, subscription: string) =>
   evt("checkout.session.completed", { id: `cs_test_${uid()}`, mode: "subscription", client_reference_id: space, metadata: { weft_space: space, weft_plan: "pro" }, customer, subscription, payment_status: "paid", amount_total: 2400 });
-const webCheckout = (session: string, customer: string, subscription: string) =>
-  evt("checkout.session.completed", { id: session, object: "checkout.session", mode: "subscription", status: "complete", client_reference_id: null, metadata: { weft_purchase: "web", weft_plan: "pro", utm_source: "youtube", utm_campaign: "launch-1" }, customer, subscription, payment_status: "paid", amount_total: 2400 });
-
-/** A web purchase Stripe has told us about (webhook), ready to claim. */
-async function webPurchase(seats = 2, interval: "month" | "year" = "month") {
-  const session = `cs_test_${uid()}${uid()}`;
-  const customer = `cus_${uid()}`;
-  const sub = proSub(`sub_${uid()}`, customer, seats, interval);
-  mockSub(sub);
-  const r = await webhook(webCheckout(session, customer, sub.id));
-  expect(r.status).toBe(200);
-  expect(await hookResult(r)).toBe("applied");
-  return { session, customer, subscription: sub.id };
-}
-
-const claimStart = (session: unknown, headers: Record<string, string> = {}) => call("POST", "/v1/billing/claim", undefined, { session_id: session }, { "cf-connecting-ip": ip(), ...headers });
-async function claimCode(session: string): Promise<string> {
-  const r = await claimStart(session);
-  expect(r.status).toBe(201);
-  return ((await r.json()) as { code: string }).code;
-}
-const redeem = (owner: string, code: string) => call("POST", "/v1/space/billing/claim", owner, { code }, { "cf-connecting-ip": ip() });
-const labelSub = (sub: string) => stripe().intercept({ path: `/v1/subscriptions/${sub}`, method: "POST" }).reply(200, { id: sub });
-
 const registry = () => env.WEFT_REGISTRY.get(env.WEFT_REGISTRY.idFromName("registry"));
 
 // ------------------------------------------------------------------ CLI-first
@@ -183,221 +158,34 @@ describe("Pro usage: no cut-off, no meter events, fair use flagged for the opera
   });
 });
 
-// ------------------------------------------------------------------ web-first: /buy
+// ------------------------------------------------------------------ the anonymous web purchase is gone
 
-describe("GET /buy", () => {
-  it("answers 303 to a Pro Checkout Session with no space, seats adjustable, utm passed into metadata, welcome URL with the session id", async () => {
-    let body = "";
-    stripe()
-      .intercept({ path: "/v1/checkout/sessions", method: "POST" })
-      .reply(200, (o) => ((body = String(o.body)), { id: "cs_test_buy1", url: "https://checkout.stripe.com/c/pay/cs_test_buy1" }));
-    const r = await SELF.fetch(`${BASE}/buy?interval=year&seats=2&utm_source=x.com&utm_campaign=launch%20video<script>&foo=bar`, { redirect: "manual", headers: { "cf-connecting-ip": ip() } });
-    expect(r.status).toBe(303);
-    expect(r.headers.get("location")).toBe("https://checkout.stripe.com/c/pay/cs_test_buy1");
-    expect(r.headers.get("cache-control")).toBe("no-store");
-    const f = form(body);
-    expect(f).toMatchObject({
-      mode: "subscription",
-      "line_items[0][price]": "price_pro_year",
-      "line_items[0][quantity]": "2",
-      "line_items[0][adjustable_quantity][enabled]": "true",
-      "metadata[weft_purchase]": "web",
-      "metadata[weft_plan]": "pro",
-      "metadata[utm_source]": "x.com",
-      "metadata[utm_campaign]": "launch videoscript",
-      "subscription_data[metadata][weft_purchase]": "web",
-      success_url: "https://site.test/welcome/?session_id={CHECKOUT_SESSION_ID}",
-      cancel_url: "https://site.test/pricing/",
-      allow_promotion_codes: "true",
-    });
-    expect(f.client_reference_id).toBeUndefined();
-    expect(f["metadata[foo]"]).toBeUndefined();
-    fetchMock.assertNoPendingInterceptors();
-  });
-
-  it("defaults to monthly, one seat; refuses a bad interval or seat count with a page and no Stripe call", async () => {
-    let body = "";
-    stripe()
-      .intercept({ path: "/v1/checkout/sessions", method: "POST" })
-      .reply(200, (o) => ((body = String(o.body)), { id: "cs_test_buy2", url: "https://checkout.stripe.com/c/pay/cs_test_buy2" }));
-    expect((await SELF.fetch(`${BASE}/buy`, { redirect: "manual", headers: { "cf-connecting-ip": ip() } })).status).toBe(303);
-    expect(form(body)).toMatchObject({ "line_items[0][price]": "price_pro_month", "line_items[0][quantity]": "1" });
-    for (const q of ["interval=week", "seats=0", "seats=1000", "seats=1.5", "seats=abc"]) {
-      const r = await SELF.fetch(`${BASE}/buy?${q}`, { redirect: "manual", headers: { "cf-connecting-ip": ip() } });
-      expect(r.status, q).toBe(400);
-      expect(r.headers.get("content-type")).toContain("text/html");
-    }
-    fetchMock.assertNoPendingInterceptors();
-  });
-
-  it("is rate limited per network", async () => {
-    const net = ip();
-    stripe().intercept({ path: "/v1/checkout/sessions", method: "POST" }).reply(200, { id: "cs_test_rl", url: "https://checkout.stripe.com/c/pay/cs_test_rl" }).times(10);
-    const codes: number[] = [];
-    for (let i = 0; i < 11; i++) codes.push((await SELF.fetch(`${BASE}/buy`, { redirect: "manual", headers: { "cf-connecting-ip": net } })).status);
-    expect(codes.slice(0, 10).every((c) => c === 303)).toBe(true);
-    expect(codes[10]).toBe(429);
-  });
-});
-
-// ------------------------------------------------------------------ web-first: webhook, claim code, redeem
-
-describe("web purchase -> claim code -> space becomes Pro", () => {
-  it("the whole path: webhook records the purchase, the welcome page gets a one-time code, --claim makes the space Pro with the purchase's seats", async () => {
-    const p = await webPurchase(2, "year");
-    const r = await claimStart(p.session, { origin: "https://site.test" });
-    expect(r.status).toBe(201);
-    expect(r.headers.get("access-control-allow-origin")).toBe("https://site.test");
-    const c = (await r.json()) as { code: string; expires_at: string; seats: number; interval: string; command: string };
-    expect(c.code).toMatch(/^[2-9A-HJKMNP-Z]{4}-[2-9A-HJKMNP-Z]{4}-[2-9A-HJKMNP-Z]{4}$/);
-    expect(c).toMatchObject({ seats: 2, interval: "year", command: `npx @celador/weft --hosted --claim ${c.code}`, utm_source: "youtube", utm_campaign: "launch-1" });
-    expect(Date.parse(c.expires_at) - Date.now()).toBeGreaterThan(55 * 60_000);
-    // the code is stored only as a salted hash: no row holds it in clear
-    const stored = await runInDurableObject(registry(), (i: Registry) => [...(i as any).sql.exec("SELECT code_hash FROM claim_codes")].map((x: { code_hash: string }) => x.code_hash));
-    expect(stored.length).toBeGreaterThan(0);
-    expect(stored.join(",")).not.toContain(c.code.replace(/-/g, ""));
-
+describe("no anonymous web purchase (accounts: paying on the web needs a signed-in account)", () => {
+  it("GET /buy and POST /v1/billing/claim no longer exist, and no Stripe call is made", async () => {
+    expect((await SELF.fetch(`${BASE}/buy?interval=month&seats=2`, { redirect: "manual", headers: { "cf-connecting-ip": ip() } })).status).toBe(404);
+    expect((await call("POST", "/v1/billing/claim", undefined, { session_id: "cs_test_abcdefgh12345" }, { "cf-connecting-ip": ip() })).status).toBe(404);
     const s = await signup();
-    labelSub(p.subscription);
-    const red = await redeem(s.owner, c.code.toLowerCase().replace(/-/g, " ")); // case and separators do not matter
-    expect(red.status).toBe(200);
-    expect(await red.json()).toEqual({ type: "billing.claimed", plan: "paid", product: "pro", seats: 2, interval: "year" });
-    expect(await usage(s.owner)).toMatchObject({ plan: "paid", seats: 2, interval: "year", has_billing_account: true });
-    fetchMock.assertNoPendingInterceptors(); // the subscription was labelled with the space
-
-    // single use, and the purchase cannot be claimed again
-    const other = await signup();
-    expect((await redeem(other.owner, c.code)).status).toBe(401);
-    const again = await claimStart(p.session);
-    expect(again.status).toBe(409);
-    expect(((await again.json()) as { error: { code: string; details: { status: string } } }).error).toMatchObject({ code: "already_claimed", details: { status: "claimed" } });
-    expect((await usage(other.owner)).plan).toBe("free");
-
-    // later Portal changes reach the claimed space through its customer
-    expect(await hookResult(await webhook(evt("customer.subscription.updated", proSub(p.subscription, p.customer, 7, "year"), Math.floor(Date.now() / 1000) + 30)))).toBe("applied");
-    expect((await usage(s.owner)).seats).toBe(7);
-  });
-
-  it("the same webhook event twice records the purchase once", async () => {
-    const session = `cs_test_${uid()}${uid()}`;
-    const customer = `cus_${uid()}`;
-    const sub = proSub(`sub_${uid()}`, customer, 1);
-    mockSub(sub);
-    const e = webCheckout(session, customer, sub.id);
-    expect(await hookResult(await webhook(e))).toBe("applied");
-    expect(await hookResult(await webhook(e))).toBe("duplicate");
-  });
-
-  it("a forged webhook cannot create a purchase", async () => {
-    const session = `cs_test_${uid()}${uid()}`;
-    const r = await webhook(webCheckout(session, "cus_forged", "sub_forged"), "whsec_attacker");
-    expect(r.status).toBe(400);
-    stripe().intercept({ path: `/v1/checkout/sessions/${session}`, method: "GET" }).reply(404, { error: { message: "No such checkout.session" } });
-    expect((await claimStart(session)).status).toBe(404);
-  });
-
-  it("if the welcome page gets there before the webhook, the purchase is read from Stripe", async () => {
-    const session = `cs_test_${uid()}${uid()}`;
-    const customer = `cus_${uid()}`;
-    const sub = proSub(`sub_${uid()}`, customer, 3);
-    stripe()
-      .intercept({ path: `/v1/checkout/sessions/${session}`, method: "GET" })
-      .reply(200, { id: session, object: "checkout.session", mode: "subscription", status: "complete", payment_status: "paid", amount_total: 3600, client_reference_id: null, metadata: { weft_purchase: "web" }, customer, subscription: sub.id });
-    mockSub(sub);
-    const r = await claimStart(session);
-    expect(r.status).toBe(201);
-    expect(await r.json()).toMatchObject({ seats: 3, interval: "month" });
-    // the webhook arriving afterwards does not duplicate anything
-    mockSub(sub);
-    expect(["applied", "stale"]).toContain(await hookResult(await webhook(webCheckout(session, customer, sub.id))));
+    expect((await call("POST", "/v1/space/billing/claim", s.owner, { code: "AAAA-BBBB-CCCC" })).status).toBe(404);
     fetchMock.assertNoPendingInterceptors();
-  });
-
-  it("a session that is not a paid web purchase gets no code", async () => {
-    const unpaid = `cs_test_${uid()}${uid()}`;
-    stripe().intercept({ path: `/v1/checkout/sessions/${unpaid}`, method: "GET" }).reply(200, { id: unpaid, mode: "subscription", status: "open", metadata: { weft_purchase: "web" }, customer: null, subscription: null });
-    const r1 = await claimStart(unpaid);
-    expect(r1.status).toBe(404);
-    expect(((await r1.json()) as { error: { details: { status: string } } }).error.details.status).toBe("unknown");
-    const theirs = `cs_test_${uid()}${uid()}`;
-    stripe().intercept({ path: `/v1/checkout/sessions/${theirs}`, method: "GET" }).reply(200, { id: theirs, mode: "subscription", status: "complete", metadata: {}, customer: "cus_x", subscription: "sub_x" });
-    expect((await claimStart(theirs)).status).toBe(404);
-    for (const bad of ["", "cs_x", "pi_test_123456789", "cs_test_../../v1/x", 42]) expect((await claimStart(bad)).status, String(bad)).toBe(400);
-    fetchMock.assertNoPendingInterceptors();
-  });
-
-  it("a purchase cancelled before it is claimed cannot be claimed", async () => {
-    const p = await webPurchase(1);
-    expect(await hookResult(await webhook(evt("customer.subscription.deleted", proSub(p.subscription, p.customer, 1, "month", "canceled"), Math.floor(Date.now() / 1000) + 30)))).toBe("applied");
-    const r = await claimStart(p.session);
-    expect(r.status).toBe(400);
-    expect(((await r.json()) as { error: { details: { status: string } } }).error.details.status).toBe("inactive");
-  });
-
-  it("a space that already pays cannot claim; the code stays good for another space", async () => {
-    const p = await webPurchase(2);
-    const code = await claimCode(p.session);
-    const paid = await signup();
-    const sub = proSub(`sub_${uid()}`, `cus_${uid()}`, 1);
-    mockSub(sub);
-    await webhook(spaceCheckout(paid.id, sub.customer, sub.id));
-    const r = await redeem(paid.owner, code);
-    expect(r.status).toBe(400);
-    expect(((await r.json()) as { error: { details: { status: string } } }).error.details.status).toBe("already_paid");
-    const fresh = await signup();
-    labelSub(p.subscription);
-    expect((await redeem(fresh.owner, code)).status).toBe(200);
-    expect((await usage(fresh.owner)).seats).toBe(2);
-  });
-
-  it("wrong codes all get the same 401; only the owner key may redeem; redeeming is rate limited", async () => {
-    const a = await agentSpace();
-    expect((await redeem(a.agent, "AAAA-BBBB-CCCC")).status).toBe(403);
-    const s = await signup();
-    const r = await redeem(s.owner, "AAAA-BBBB-CCCC");
-    expect(r.status).toBe(401);
-    const msg = ((await r.json()) as { error: { message: string } }).error.message;
-    expect(msg).toContain("not valid or has expired");
-    // per space: the 11th attempt in a minute is refused even from fresh networks
-    const codes: number[] = [];
-    for (let i = 0; i < 11; i++) codes.push((await redeem(s.owner, "ZZZZ-ZZZZ-ZZZZ")).status);
-    expect(codes).toContain(429);
-  });
-
-  it("asking for codes is rate limited per network, and only the site's origins get CORS", async () => {
-    const p = await webPurchase(1);
-    const pre = await SELF.fetch(`${BASE}/v1/billing/claim`, { method: "OPTIONS", headers: { origin: "https://site.test", "access-control-request-method": "POST" } });
-    expect(pre.status).toBe(204);
-    expect(pre.headers.get("access-control-allow-origin")).toBe("https://site.test");
-    const evil = await claimStart(p.session, { origin: "https://evil.test" });
-    expect(evil.headers.get("access-control-allow-origin")).toBeNull();
-    const net = ip();
-    const codes: number[] = [];
-    for (let i = 0; i < 11; i++) codes.push((await call("POST", "/v1/billing/claim", undefined, { session_id: p.session }, { "cf-connecting-ip": net, origin: "https://site.test" })).status);
-    expect(codes[10]).toBe(429);
-    // at most 3 codes are open per purchase at a time
-    const open = await runInDurableObject(registry(), (i: Registry) => [...(i as any).sql.exec("SELECT COUNT(*) AS n FROM claim_codes WHERE session = ?", p.session)][0].n);
-    expect(open).toBe(3);
   });
 });
 
 // ------------------------------------------------------------------ erase
 
 describe("erasing a Pro space", () => {
-  it("cancels the subscription first (no meter event), then removes the claimed purchase", async () => {
-    const p = await webPurchase(2);
-    const code = await claimCode(p.session);
+  it("cancels the space's own subscription first (no meter event), then erases", async () => {
     const s = await signup();
-    labelSub(p.subscription);
-    expect((await redeem(s.owner, code)).status).toBe(200);
+    const sub = proSub(`sub_${uid()}`, `cus_${uid()}`, 2);
+    mockSub(sub);
+    await webhook(spaceCheckout(s.id, sub.customer, sub.id));
     const calls: string[] = [];
-    stripe().intercept({ path: "/v1/subscriptions", method: "GET", query: { customer: p.customer, status: "all", limit: "100" } }).reply(200, { data: [{ id: p.subscription, status: "active" }] });
-    stripe().intercept({ path: `/v1/subscriptions/${p.subscription}`, method: "DELETE", query: { invoice_now: "true", prorate: "false" } }).reply(200, () => (calls.push("cancel"), { id: p.subscription, status: "canceled" }));
+    stripe().intercept({ path: "/v1/subscriptions", method: "GET", query: { customer: sub.customer, status: "all", limit: "100" } }).reply(200, { data: [{ id: sub.id, status: "active" }] });
+    stripe().intercept({ path: `/v1/subscriptions/${sub.id}`, method: "DELETE", query: { invoice_now: "true", prorate: "false" } }).reply(200, () => (calls.push("cancel"), { id: sub.id, status: "canceled" }));
     const r = await call("DELETE", "/v1/space", s.owner);
     expect(r.status).toBe(200);
     expect(calls).toEqual(["cancel"]);
     fetchMock.assertNoPendingInterceptors();
-    const left = await runInDurableObject(registry(), (i: Registry) => [...(i as any).sql.exec("SELECT session FROM entitlements WHERE session = ?", p.session)].length);
+    const left = await runInDurableObject(registry(), (i: Registry) => [...(i as any).sql.exec("SELECT space FROM space_billing WHERE space = ?", s.id)].length);
     expect(left).toBe(0);
   });
 });

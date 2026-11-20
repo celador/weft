@@ -31,7 +31,7 @@ npx @celador/weft --harness copilot      # in your repo
 
 ## What it runs, sends and fetches
 
-- `/weft:setup` runs `npx -y @celador/weft@0.4.0` (the Weft CLI from npm, pinned) in your repo.
+- `/weft:setup` runs `npx -y @celador/weft@0.5.0` (the Weft CLI from npm, pinned) in your repo.
   The CLI starts a gateway on this machine (`127.0.0.1`; it installs Cloudflare's `wrangler` into
   `~/.config/weft/tools` once). A hosted space on `weft-hosted.elier.ai` is opt-in (`--hosted`, or
   `npx @celador/weft use hosted`); if you already had one, the CLI keeps using it. `--url` picks
@@ -60,4 +60,7 @@ Uninstall: `npx @celador/weft uninstall` in the repo removes `.weft/` and the ho
 Privacy: <https://weft.mx/privacy> (what a hosted space stores and for how long; local mode stores nothing off your machine) · Terms:
 <https://weft.mx/terms> · Support: <https://weft.mx/support>
 
-Source, protocol and docs: <https://github.com/celador/weft> · <https://weft.mx>. License: MIT.
+Source, protocol and docs: <https://github.com/celador/weft> · <https://weft.mx>.
+
+License: this plugin is MIT. The `@celador/weft` package it runs is free for personal use; using it
+at work needs a Weft commercial license or Weft Pro (<https://weft.mx/license/>).

@@ -1,6 +1,7 @@
 {
   "name": "@weft/adapter-cursor",
   "version": "0.0.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "WCP v0.1 adapter for Cursor CLI (cursor-agent) hooks: preToolUse deny (L2), postToolUse additional_context (L1), stop followup_message (L3).",

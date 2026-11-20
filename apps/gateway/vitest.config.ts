@@ -7,8 +7,9 @@ export default defineWorkersConfig(async () => {
   return {
     test: {
       include: ["test/**/*.test.ts"],
-      // test/billing runs with Stripe configured (vitest.billing.config.ts); everything else runs with billing off.
-      exclude: [...configDefaults.exclude, "test/billing/**"],
+      // test/billing runs with Stripe configured (vitest.billing.config.ts), test/accounts with Clerk accounts on
+      // (vitest.accounts.config.ts); everything else runs with billing and accounts off.
+      exclude: [...configDefaults.exclude, "test/billing/**", "test/accounts/**"],
       // Six files share one workerd; conformance/WS tests exceed 5 s under full-gate load.
       testTimeout: 20_000,
       setupFiles: ["./test/apply-migrations.ts"],

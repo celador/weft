@@ -263,6 +263,15 @@ export async function ensureSpace(api: Api, url: string, root: string, label: st
       r = await api.createSpace(label, gw.admin);
     } catch (e) {
       const code = (e as { code?: string }).code;
+      // The hosted gateway makes new spaces for signed-in accounts only: sign in (free) and use the space that gives.
+      if ((e as { details?: { reason?: string } }).details?.reason === "login_required") {
+        info("A hosted space needs a Weft account (free). Sign in once; local Weft never needs one.");
+        const { login } = await import("./login");
+        const l = await login(url, { open: true, root, quiet: true });
+        const st = loadState().gateways[url]!;
+        ok(`signed in ${c.dim(`(space ${l.space} on your account)`)}`);
+        return { gw: st, created: l.created };
+      }
       if (code === "rate_limited" || code === "unavailable")
         throw new WeftError(`the hosted gateway could not create a space: ${(e as Error).message}`, "Run it on this machine instead: `npx @celador/weft use local` (the default for new projects), or `npx @celador/weft deploy` (your Cloudflare account).");
       throw e;

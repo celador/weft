@@ -78,6 +78,12 @@ styles only from the extension's files, no inline style). The extension host tal
 gateway with the token in the `Authorization` header or the first WebSocket frame, never in a
 URL. Tokens are never written to the log.
 
+## License
+
+Free for personal use; using the extension at work needs a Weft commercial license or Weft Pro
+(<https://weft.mx/license/>). The `LICENSE` file in the extension has the terms. The source is
+AGPL-3.0-only at <https://github.com/celador/weft>; a build you make from it is under the AGPL only.
+
 ## Build
 
 ```sh

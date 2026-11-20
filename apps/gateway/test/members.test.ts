@@ -173,7 +173,6 @@ describe("team join: what a member key can and cannot do", () => {
       ["DELETE", "/v1/space"],
       ["POST", "/v1/space/billing/checkout", { seats: 1, interval: "month" }],
       ["POST", "/v1/space/billing/portal", {}],
-      ["POST", "/v1/space/billing/claim", { code: "AAAA-BBBB-CCCC" }],
       ["POST", "/v1/space/invites"],
       ["DELETE", "/v1/space/invites"],
       ["GET", "/v1/space/members"],

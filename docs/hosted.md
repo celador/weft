@@ -7,7 +7,7 @@ month, and Weft Pro (per user, monthly or yearly; prices in [pricing.md](pricing
 | | Where it runs | Who can create a space | Command |
 |---|---|---|---|
 | **Local** (default) | this machine (`wrangler dev`, port 7878) | you | `npx @celador/weft` |
-| **Hosted** (opt-in) | Weft's Cloudflare account, `https://weft-hosted.elier.ai` | anyone, no login | `npx @celador/weft --hosted` or `npx @celador/weft use hosted` |
+| **Hosted** (opt-in) | Weft's Cloudflare account, `https://weft-hosted.elier.ai` | anyone with a free Weft account (weft.mx); older spaces made without one keep working | `npx @celador/weft login`, then `npx @celador/weft --hosted` |
 | **Your own** | your Cloudflare account | you (the admin key the CLI keeps) | `npx @celador/weft deploy` |
 
 All three run the same gateway code (`apps/gateway`): a Worker, one `RepoCoordinator` Durable
@@ -26,12 +26,16 @@ gateway. Each space gets 5,000 agent events a month free (UTC); a Weft Pro space
 through Stripe (see [pricing.md](pricing.md)). Nothing is charged unless you subscribe, with `npx @celador/weft upgrade`
 or on weft.mx.
 
-**No account.** `POST /v1/spaces` (no auth) creates a space and returns its *owner key*. That key
-is the only credential: there is no login and no third-party identity. The CLI keeps it in
-`~/.config/weft/cli.json` (mode 600) and in each checkout's `.weft/space-token` (git-ignored), so
-running the CLI again in the same repo, even on a machine that lost `~/.config/weft`, finds the
-same space. A teammate on another machine never gets the owner key: they join with an invite code and get their own
-*member key* (see "Teammates on other machines" below).
+**Accounts.** A hosted space belongs to a **Weft account**: a user of the Weft Clerk application, signed up free on
+weft.mx (email with a code, or email and password). `npx @celador/weft login` connects a machine (see "Accounts" below).
+The machine's credential is still the space's *owner key*, and it is still the only thing the CLI keeps: in
+`~/.config/weft/cli.json` (mode 600) and in each checkout's `.weft/space-token` (git-ignored), so running the CLI
+again in the same repo, even on a machine that lost `~/.config/weft`, finds the same space. On the hosted gateway
+`POST /v1/spaces` without the admin key answers `403 login_required`: new hosted spaces come from `weft login`.
+Spaces created before accounts keep working unchanged with their owner key; `weft login` on that machine attaches
+them to the account. Local and self-hosted gateways have no accounts (no Clerk issuer set): there `POST /v1/spaces`
+works as before, with no login. A teammate on another machine never gets the owner key: they join with an invite
+code and get their own *member key* (see "Teammates on other machines" below).
 
 **The space API** (owner key as `Authorization: Bearer`):
 
@@ -233,10 +237,9 @@ without them (local, your own) never limits or charges, its billing routes answe
 |---|---|
 | `GET /v1/space` | adds `usage` (this month's events, the allowance, `plan` = `free` or `paid`, and for Pro `seats`, `interval`, `fair_use_events`, `over_fair_use`) and `billing.enabled`; `npx @celador/weft usage` prints it |
 | over the allowance (free plan, billing enabled) | submits answer `429 over_allowance` with a one-line upgrade message; the adapters fail open and tell the agent its edit was not coordinated. Hello, heartbeat, inbox, gate and every read keep working. Pro is never cut off |
-| `POST /v1/space/billing/checkout {"interval": "month"\|"year", "seats": N}` | owner key: a Stripe Checkout Session for Weft Pro, `seats` (1-999, default 1) of the monthly or yearly per-seat price, adjustable on the page, `client_reference_id` = the space id; `npx @celador/weft upgrade [--seats N] [--year]` prints the URL |
+| `POST /v1/space/billing/checkout {"interval": "month"\|"year", "seats": N}` | owner key: Stripe Checkout for Weft Pro for the space's **account**, `seats` (1-999, default 1), `client_reference_id` = the account id; `npx @celador/weft upgrade [--seats N] [--year]` prints the URL. A space with no account gets `403 login_required` on a gateway with accounts, and the CLI runs `weft login` first (keeping the space). A gateway without accounts sells per space, as before |
 | `POST /v1/space/billing/portal` | owner key: a Stripe Customer Portal session (seats, monthly/yearly, card, invoices, cancel); `npx @celador/weft billing` |
-| `POST /v1/space/billing/claim {"code"}` | owner key: bind a web purchase to this space (below); `npx @celador/weft --hosted --claim <code>` |
-| `GET /buy`, `POST /v1/billing/claim` | the web-first purchase (below) |
+| `POST /v1/account/billing/checkout`, `POST /v1/account/billing/portal` | the same, from weft.mx/account/ with the Clerk session (below) |
 | `POST /v1/billing/stripe/webhook` | Stripe only: signature verified (constant-time, 5-minute tolerance), idempotent on event id, ignores events about other products |
 
 The Registry stores per space the plan, Pro's seats and interval, an optional allowance override, the Stripe customer id
@@ -245,73 +248,57 @@ subscription first. While billing is enabled, agents on a hosted space submit ov
 WebSocket is not offered, because its submits would not be counted. An allowance is enforced from a cache that lasts up
 to 10 seconds per Worker isolate, so a free space can overshoot it by the few events sent in that window.
 
-### Weft Pro on the web: the contract the site uses
+### Accounts (weft.mx, Clerk)
 
-A stranger who has never run Weft can buy Pro on weft.mx and attach it to a space later. There is no account: the
-purchase is bound to a space by a one-time claim code. All URLs below are on the hosted gateway,
-`https://weft-hosted.elier.ai` (call it `$GW`).
+A Weft account is a user of the **Weft** Clerk application (its own application, users and keys; nothing else trusts
+its users). Sign-up, sign-in and the account page are on weft.mx (`/sign-up/`, `/sign-in/`, `/account/`, `/cli/`),
+which load Clerk's browser SDK from the application's Frontend API (`clerk.weft.mx`).
 
-**1. Buy button** (pricing page): a plain link, no JavaScript needed.
+**What is stored where.**
 
-```
-$GW/buy?interval=month&seats=1
-$GW/buy?interval=year&seats=2&utm_source=youtube&utm_campaign=launch
-```
+| | holds |
+|---|---|
+| Clerk (the Weft application) | email, password hash or sign-in codes, sign-in times, sessions |
+| Stripe | billing email, card, invoices; the subscription's metadata carries the account id |
+| Weft's gateway (`accounts` table) | the Clerk user id, plan, product, seats, interval, renewal time, Stripe customer id, created and paid times, and `utm_source`/`utm_campaign` of the first visit that sent the person; spaces carry a nullable `account_id`. No email, no name |
+| the site Worker (`weft-site`) | nothing about users; it holds the Clerk **secret** key only to delete the caller's own Clerk user |
 
-| parameter | values | default |
+**Session tokens.** The page sends Clerk's short-lived session token as `Authorization: Bearer` (never a cookie, so a
+form on another site cannot use it). The gateway has **no Clerk secret**: it verifies the token with the application's
+public keys (`CLERK_ISSUER/.well-known/jwks.json`, cached), RS256 only, and checks `exp`, `nbf`, `iss` (exactly
+`CLERK_ISSUER`: a token from any other Clerk application, e.g. elier.ai's, is refused) and `azp` against
+`CLERK_AUTHORIZED_PARTIES` (`https://weft.mx` in production). Tests: `apps/gateway/test/accounts/`. CORS allows the
+origins in `WEFT_SITE_ORIGINS`, no credentials.
+
+| Route | Auth | |
 |---|---|---|
-| `interval` | `month` or `year` | `month` |
-| `seats` | 1 to 999 | `1` (the buyer can change it on the Checkout page) |
-| `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `ref` | optional; letters, digits, `. _ ~ -` and spaces, up to 100 characters (anything else is dropped) | none |
+| `GET /v1/account` | Clerk session | plan, seats, interval, renewal, `has_billing_account`, `license`, and the account's spaces (repos, events this month, last activity). The account row is created on first call |
+| `POST /v1/account/billing/checkout {"interval", "seats", "utm_source"?, "utm_campaign"?}` | Clerk session | Stripe Checkout for Pro, `client_reference_id` = the account id; returns to `WEFT_ACCOUNT_URL?checkout=done`. The webhook makes the **account** Pro, and every space of the account is Pro |
+| `POST /v1/account/billing/portal` | Clerk session | Stripe Customer Portal |
+| `POST /v1/account/billing/checkout {"product": "license", "term": "year"\|"lifetime", "seats"}` | Clerk session | Stripe Checkout for the Commercial License ([pricing.md](pricing.md#commercial-license-per-user-yearly-or-once-approved-2026-11-17)); refused for a Pro account (Pro includes it). `GET /v1/account` then carries `license` (seats, term, `valid_until`, `renews`, purchases, key hint) |
+| `POST /v1/account/license/key` | Clerk session | a new license key, returned once (only a salted SHA-256 and the last 4 characters are kept; the old key stops working). Only for an account with a license or Pro |
+| `POST /v1/license/verify {"key"}` | none (rate-limited) | what a license key covers now (`weft license <key>`); never the account id. Unknown or replaced key: 404 |
+| `DELETE /v1/account` | Clerk session | cancels the subscription at once, erases every space of the account (the erase path below), deletes the account row; answers what was erased |
+| `POST /v1/login` | none | `weft login` starts: a polling secret (`device_code`) and an 8-symbol code to confirm (`ABCD-EFGH`, ~2^39.6, 10 minutes, single use) and `https://weft.mx/cli/?code=...` |
+| `POST /v1/login/approve {"code"}` | Clerk session | the signed-in person confirms the code on `/cli/` |
+| `POST /v1/login/poll {"device_code", "label"}` | none, or the machine's current owner key | pending until approved; then a new owner key for the account's space (created on first login), or, with an owner key of a space that has no account, that space is attached to the account and keeps its key |
+| `POST /v1/space/logout` | owner key | revokes this machine's owner key (spaces on an account only; logging in again gets a new one) |
+| `GET /v1/admin/accounts` | admin key | accounts with plan, seats, spaces and events in 7 days (`node site/hosted-admin.mjs users` joins them with Clerk's emails locally) |
 
-The gateway answers `303` to a Stripe Checkout page for Weft Pro (promotion codes allowed). The `utm_*` / `ref`
-values go into the Checkout Session's metadata in Stripe; the gateway keeps only `utm_source` and `utm_campaign` with
-the purchase, to hand them back to the welcome page (the site's funnel counts claims per campaign). A bad `interval` or `seats`
-gets a `400` HTML page, more than 10 checkouts a minute from one network a `429` page, and a gateway without billing a
-`503` page. Back-out goes to `https://weft.mx/pricing/` (`WEFT_PRICING_URL`).
+Login codes and polling secrets are stored only as salted SHA-256 (`settings.login_salt`), compared in constant time,
+deleted when used or expired, and `/v1/login` and `/v1/login/approve` are rate limited like `POST /v1/pair` (10 a
+minute per network; approve also per account). Every bad code answers the same `401`. The `/cli/` page is sent with
+`no-store`, `Referrer-Policy: no-referrer` and `noindex`, and carries no analytics beacon.
 
-**2. Welcome page**: after paying, Stripe sends the buyer to
+**Deleting an account** (weft.mx/account/ -> Delete account): the page calls the site Worker's
+`POST /api/account/delete` with the session token. The Worker verifies the token the same way, has the gateway delete
+the account's data first (`DELETE /v1/account`: subscription cancelled, every space erased, account row deleted), and
+only then deletes **that same** Clerk user with the secret key. If the gateway step fails nothing is deleted at Clerk.
+Stripe keeps invoices, as the law requires.
 
-```
-https://weft.mx/welcome/?session_id=cs_live_...        (WEFT_WELCOME_URL)
-```
-
-The page reads `session_id` from its own address and calls, from the browser:
-
-```
-POST $GW/v1/billing/claim
-content-type: application/json
-
-{"session_id": "cs_live_..."}
-```
-
-CORS allows the origins in `WEFT_SITE_ORIGINS` (`https://weft.mx`, `https://www.weft.mx`, and the site preview
-`https://weft-site-preview.elier.ai`), no credentials. Answers:
-
-| status | body | what the page shows |
-|---|---|---|
-| `201` | `{"type": "billing.claim", "code": "K7M2-9XQ4-TPRA", "expires_at": "...", "seats": 2, "interval": "year", "command": "npx @celador/weft --hosted --claim K7M2-9XQ4-TPRA", "utm_source": "youtube", "utm_campaign": "launch"}` (the two `utm_*` only when the buy link had them) | the command, with a copy button; "run it in your repo; the code works once, for an hour" |
-| `404`, `error.details.status = "unknown"` | Stripe has not confirmed the payment yet | "Finishing your payment..." and retry every 2-3 seconds for about a minute |
-| `409`, `error.code = "already_claimed"` | the purchase is already bound to a space | "Already set up. Manage it with `npx @celador/weft billing` in that repo" |
-| `400`, `error.details.status = "inactive"` | the subscription was cancelled or is unpaid | "This subscription is not active" |
-| `429` | more than 10 requests a minute from this network | retry after a minute |
-
-Every reload of the welcome page gives a fresh code (at most 3 are open at a time; older ones stop working) until
-the purchase is claimed. The page must send `Referrer-Policy: no-referrer` (the `session_id` is in its address)
-and must not put the code in any URL, analytics event or log.
-
-**3. Claim**: in a git repo, `npx @celador/weft --hosted --claim K7M2-9XQ4-TPRA` creates the hosted space (or reuses
-the one this repo or machine already has), then calls `POST /v1/space/billing/claim {"code"}` with the space's owner
-key. The space becomes Pro with the purchase's seats and interval; Stripe's subscription is labelled with the space id.
-A space that already pays refuses a claim (the code stays good for another space). Codes are case-insensitive and
-ignore separators.
-
-**Security of the flow.** The Checkout Session id in the welcome address is the only thing that turns into a code,
-and only while the purchase is unclaimed; it is a long random id chosen by Stripe. A claim code is 12 symbols from
-a 31-symbol alphabet (~2^59), single use, valid for an hour, stored only as SHA-256 of a per-Registry random salt plus
-the code, and compared in constant time against every open code. Both `POST /v1/billing/claim` and
-`POST /v1/space/billing/claim` are rate limited (10 a minute per network, and per space for redeeming), and every bad
-code gets the same `401`. Neither the owner key nor a claim code is ever put in a URL.
+**The anonymous web purchase is gone.** Earlier builds (never deployed) sold Pro on the web without an account
+(`GET /buy` and a claim code on `/welcome/`). Paying on the web now always happens signed in, and `/welcome/` redirects
+to `/account/`.
 
 ### Operator controls (kill switch)
 

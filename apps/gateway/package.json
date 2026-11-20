@@ -1,16 +1,18 @@
 {
   "name": "@weft/gateway",
   "version": "0.0.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run && vitest run --config vitest.billing.config.ts",
+    "test": "vitest run && vitest run --config vitest.billing.config.ts && vitest run --config vitest.accounts.config.ts",
     "dev": "wrangler dev",
     "dev:local": "wrangler dev --env test",
     "deploy:preview": "wrangler deploy --env preview",
     "deploy:hosted": "wrangler deploy --env hosted",
-    "test:billing": "vitest run --config vitest.billing.config.ts"
+    "test:billing": "vitest run --config vitest.billing.config.ts",
+    "test:accounts": "vitest run --config vitest.accounts.config.ts"
   },
   "dependencies": {
     "@weft/artifacts": "workspace:*",

@@ -44,4 +44,22 @@ included.
 ## Development
 
 See [docs/try-it.md](docs/try-it.md) for setup, and [AGENTS.md](AGENTS.md) for repository rules.
-By contributing you agree your work is licensed under the [MIT License](LICENSE).
+
+## Licensing and the contributor license agreement
+
+Weft's source is under the GNU AGPL-3.0-only, except the protocol specifications and schema, the
+conformance suite and the agent plugins, which are MIT; [LICENSE](LICENSE) lists which directory
+is which. The builds the maintainer distributes are also offered under
+[commercial terms](docs/commercial-license.md).
+
+Every pull request needs the [Weft Contributor License Agreement](CLA.md) (based on the Apache
+Individual CLA). You keep the copyright in your work; the CLA lets the project distribute it
+under the AGPL, the MIT License and the commercial terms, and promises that your merged work is
+always published as open source under the license of the directory you contributed to. To sign,
+keep this sentence, with your GitHub username, in the pull request description (the template has
+it):
+
+> I have read the Weft CLA (CLA.md, version 1.0) and agree to it for this contribution. — @username
+
+Contributions made before this section existed were made under the MIT License and stay available
+under it ([licenses/LICENSE-MIT](licenses/LICENSE-MIT)).

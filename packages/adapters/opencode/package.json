@@ -1,6 +1,7 @@
 {
   "name": "@weft/adapter-opencode",
   "version": "0.0.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "WCP v0.1 adapter for OpenCode: a generated plugin (tool.execute.before/after, session.idle) bridged to the shared WCP core (L3).",

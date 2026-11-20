@@ -7,8 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { main, parseArgs } from "../src/main";
-import { claim, usageLines } from "../src/billing";
-import { Api } from "../src/api";
+import { usageLines } from "../src/billing";
+import { login } from "../src/login";
+import { readFileSync } from "node:fs";
 
 type Reply = { status: number; body?: unknown };
 const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -99,11 +100,9 @@ describe("weft usage / upgrade / billing", () => {
     expect(parseArgs(["upgrade"]).o).toMatchObject({ year: false });
     expect(parseArgs(["upgrade"]).o.seats).toBeUndefined();
     for (const bad of ["0", "1000", "2.5", "x"]) expect(() => parseArgs(["upgrade", "--seats", bad])).toThrow(/--seats/);
-    // --claim implies --hosted (a weft.mx purchase is for the hosted gateway) unless another gateway is named
-    expect(parseArgs(["--claim", "abcd-efgh-jkmn"]).o).toMatchObject({ claim: "abcd-efgh-jkmn", hosted: true });
-    expect(parseArgs(["--claim", "ABCDEFGHJKMN", "--url", "http://127.0.0.1:1"]).o).toMatchObject({ hosted: false, url: "http://127.0.0.1:1" });
-    expect(() => parseArgs(["--claim", "ABCD-EFGH-JKMN", "--local"])).toThrow(/hosted space/);
-    expect(() => parseArgs(["--claim", "nope"])).toThrow(/claim code/);
+    for (const c of ["login", "logout", "whoami"]) expect(parseArgs([c]).cmd).toBe(c);
+    // the anonymous web purchase is gone: no claim codes
+    expect(() => parseArgs(["--claim", "ABCD-EFGH-JKMN"])).toThrow(/unknown option --claim/);
   });
 
   it("usage prints events against the allowance, sends the owner key, and prints no key", async () => {
@@ -131,15 +130,75 @@ describe("weft usage / upgrade / billing", () => {
     expect(bodies.at(-1)).toEqual({ seats: 1, interval: "month" });
   });
 
-  it("--claim binds a web purchase to the space with the owner key; a bad code says how to get a new one", async () => {
+  it("login: prints the confirm URL and code, polls with this repo's owner key (the space joins the account), prints no key", async () => {
     const bodies: unknown[] = [];
     bodyLog = bodies;
-    reply = { "POST /v1/space/billing/claim": { status: 200, body: { type: "billing.claimed", plan: "paid", product: "pro", seats: 2, interval: "year" } } };
-    expect(await claim(new Api(url), url, "weft_owner_secret", "ABCD-EFGH-JKMN")).toEqual({ seats: 2, interval: "year" });
-    expect(bodies.at(-1)).toEqual({ code: "ABCD-EFGH-JKMN" });
-    expect(seen.at(-1)).toMatchObject({ method: "POST", path: "/v1/space/billing/claim", auth: "Bearer weft_owner_secret" });
-    reply = { "POST /v1/space/billing/claim": { status: 401, body: { type: "error", error: { code: "unauthorized", message: "that claim code is not valid or has expired" } } } };
-    await expect(claim(new Api(url), url, "weft_owner_secret", "ABCD-EFGH-JKMN")).rejects.toThrow(/not valid or has expired/);
+    let polls = 0;
+    reply = {
+      "POST /v1/login": { status: 201, body: { type: "login", device_code: "weft_login_devicesecret0123456789abcdef", user_code: "ABCD-EFGH", verification_url: "https://weft.mx/cli/?code=ABCD-EFGH", expires_in: 600, interval: 3 } },
+    };
+    Object.defineProperty(reply, "POST /v1/login/poll", { enumerable: true, get: () => (++polls < 2 ? { status: 202, body: { type: "login.pending" } } : { status: 200, body: { type: "login.approved", space: "sp0000000001", attached: true, created: false } }) });
+    reply["POST /v1/space/viewers"] = { status: 201, body: { token: "weft_dev_x", device: { id: "dev_1", label: "l", created_at: "", last_seen_at: "", expires_at: "" } } };
+    logs.length = 0;
+    const r = await login(url, { open: false, root: repo, pollMs: 5 });
+    expect(r).toEqual({ space: "sp0000000001", attached: true, created: false });
+    const out = strip(logs.join("\n"));
+    expect(out).toContain("ABCD-EFGH");
+    expect(out).toContain("https://weft.mx/cli/?code=ABCD-EFGH");
+    expect(out).not.toContain("weft_login_devicesecret");
+    expect(out).not.toContain("weft_owner_secret");
+    const pollsSeen = seen.filter((x) => x.path === "/v1/login/poll");
+    expect(pollsSeen.length).toBe(2);
+    expect(pollsSeen.at(-1)!.auth).toBe("Bearer weft_owner_secret");
+    expect(bodies.at(-2)).toMatchObject({ device_code: "weft_login_devicesecret0123456789abcdef" });
+    // attached: the owner key stays the same
+    expect(JSON.parse(readFileSync(join(base, "config", "cli.json"), "utf8")).gateways[url].owner).toBe("weft_owner_secret");
+  });
+
+  it("upgrade on a space with no account signs in first (keeping the space), then opens Checkout for the account", async () => {
+    let checkouts = 0;
+    reply = {
+      "POST /v1/login": { status: 201, body: { type: "login", device_code: "weft_login_devicesecret0123456789abcdef", user_code: "WXYZ-2345", verification_url: "https://weft.mx/cli/?code=WXYZ-2345", expires_in: 600, interval: 3 } },
+      "POST /v1/login/poll": { status: 200, body: { type: "login.approved", space: "sp0000000001", attached: true, created: false } },
+    };
+    Object.defineProperty(reply, "POST /v1/space/billing/checkout", {
+      enumerable: true,
+      get: () =>
+        ++checkouts < 2
+          ? { status: 403, body: { type: "error", error: { code: "forbidden", message: "Weft Pro is bought by an account: run `npx @celador/weft login`", details: { reason: "login_required" } } } }
+          : { status: 201, body: { type: "billing.checkout", url: "https://checkout.stripe.com/c/pay/cs_test_acc" } },
+    });
+    logs.length = 0;
+    // the poll interval comes from the gateway (3 s): this test waits for one poll
+    expect(await main(["upgrade", "--dir", repo, "--no-open", "--seats", "2"])).toBe(0);
+    const out = strip(logs.join("\n"));
+    expect(out).toContain("WXYZ-2345");
+    expect(out).toContain("https://checkout.stripe.com/c/pay/cs_test_acc");
+    expect(checkouts).toBe(2);
+  }, 15_000);
+
+  it("whoami shows the space and its account; logout revokes this machine's key and forgets it", async () => {
+    reply = { "GET /v1/space": { status: 200, body: { space: { id: "sp0000000001", repos: [], tokens: 1 }, usage: { month: "2026-11", events: 1, allowance: 5000, plan: "paid", seats: 2, has_billing_account: true }, account: "user_2abcdEFGH", accounts: true } } };
+    logs.length = 0;
+    expect(await main(["whoami", "--url", url, "--dir", repo])).toBe(0);
+    let out = strip(logs.join("\n"));
+    expect(out).toContain("sp0000000001");
+    expect(out).toContain("user_2abcdEFGH");
+    expect(out).toContain("Weft Pro, 2 seats");
+    // a key that no longer works (logged out elsewhere, space or account deleted) says what to run
+    reply = { "GET /v1/space": { status: 401, body: { type: "error", error: { code: "unauthorized", message: "invalid token" } } } };
+    await expect(main(["whoami", "--url", url, "--dir", repo])).rejects.toThrow(/no longer works/);
+    reply = { "POST /v1/space/logout": { status: 204 } };
+    logs.length = 0;
+    const tmp = mkdtempSync(join(tmpdir(), "weft-cli-nogit-"));
+    expect(await main(["logout", "--url", url, "--dir", tmp])).toBe(0);
+    expect(seen.at(-1)).toMatchObject({ method: "POST", path: "/v1/space/logout", auth: "Bearer weft_owner_secret" });
+    const st = JSON.parse(readFileSync(join(base, "config", "cli.json"), "utf8")).gateways[url];
+    expect(st.owner).toBeUndefined();
+    out = strip(logs.join("\n"));
+    expect(out).toContain("logged out");
+    // restore for the tests below
+    writeFileSync(join(base, "config", "cli.json"), JSON.stringify({ default: url, gateways: { [url]: { owner: "weft_owner_secret", space: "sp0000000001" } } }));
   });
 
   it("billing prints the portal URL", async () => {

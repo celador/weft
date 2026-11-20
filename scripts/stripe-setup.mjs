@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Create (or find) the Stripe objects hosted billing needs, idempotently, from the values in docs/pricing.md
 // ("pricing-config" block): the "Weft Pro" product, its two licensed per-seat prices (monthly and yearly, found by
-// lookup key), a Customer Portal configuration that lets a customer change seats and cancel, and (with --webhook)
-// the webhook endpoint. Safe to run again: everything is looked up by a stable key first.
+// lookup key), a Customer Portal configuration that lets a customer change seats and cancel, the "Weft Commercial
+// License" product with a yearly and a one-time per-seat price, and (with --webhook) the webhook endpoint. Safe to run again: everything is looked up by a stable key first.
 //
 //   node scripts/stripe-setup.mjs                     # test mode: key from $STRIPE_KEY or keychain `weft-stripe-test-key`
 //   node scripts/stripe-setup.mjs --live              # live mode: key from $STRIPE_KEY or keychain `weft-stripe-live-key`
@@ -27,6 +27,7 @@ export const STRIPE_VERSION = "2025-09-30.clover"; // keep equal to apps/gateway
 export const PRODUCT_ID = "weft_hosted"; // legacy usage product; a custom product id makes "find or create" exact, with no search lag
 export const PRICE_LOOKUP_KEY = "weft_hosted_agent_events";
 export const PRO_LOOKUP_KEYS = { month: "weft_pro_user_month", year: "weft_pro_user_year" };
+export const LICENSE_LOOKUP_KEYS = { year: "weft_license_user_year", lifetime: "weft_license_user_lifetime" };
 export const WEBHOOK_EVENTS = ["checkout.session.completed", "customer.subscription.updated", "customer.subscription.deleted", "invoice.payment_failed"];
 
 /** The machine-readable block in docs/pricing.md. */
@@ -37,6 +38,9 @@ export function parsePricingConfig(markdown) {
   for (const k of ["currency", "free_events_per_month", "pro"]) if (cfg[k] === undefined) throw new Error(`pricing-config lacks ${k}`);
   for (const k of ["product_id", "product_name", "usd_per_user_month", "usd_per_user_year", "fair_use_events_per_seat_month", "max_seats"]) if (cfg.pro[k] === undefined) throw new Error(`pricing-config lacks pro.${k}`);
   if (!(cfg.pro.usd_per_user_month > 0) || !(cfg.pro.usd_per_user_year > 0)) throw new Error("Pro prices must be positive");
+  if (!cfg.commercial_license) throw new Error("pricing-config lacks commercial_license");
+  for (const k of ["product_id", "product_name", "usd_per_user_year", "usd_per_user_once", "max_seats"]) if (cfg.commercial_license[k] === undefined) throw new Error(`pricing-config lacks commercial_license.${k}`);
+  if (!(cfg.commercial_license.usd_per_user_year > 0) || !(cfg.commercial_license.usd_per_user_once > 0)) throw new Error("Commercial License prices must be positive");
   if (cfg.legacy_usage && !(cfg.legacy_usage.usd_per_1000_events > 0)) throw new Error("legacy_usage.usd_per_1000_events must be positive");
   return cfg;
 }
@@ -150,6 +154,48 @@ export async function setup(request, cfg, log = () => {}) {
     log(`portal   created  ${portal.id}`);
   }
   return { product: product.id, prices, portal: portal.id };
+}
+
+/**
+ * The Weft Commercial License: find or create its product, the yearly per-seat price (a licensed subscription) and
+ * the one-time per-seat price, by lookup key. The seats are the quantity the buyer sets in Checkout. Like `setup`:
+ * a rerun only reports, a changed amount makes a new price that takes over the lookup key.
+ */
+export async function setupLicense(request, cfg, log = () => {}) {
+  const lic = cfg.commercial_license;
+  let product = await request("GET", `/v1/products/${lic.product_id}`);
+  if (product && product.active) log(`product  found    ${product.id}`);
+  else {
+    product = product
+      ? await request("POST", `/v1/products/${lic.product_id}`, { active: true })
+      : await request("POST", "/v1/products", { id: lic.product_id, name: lic.product_name, description: "Use Weft at work: the commercial license for the builds we distribute, per user. weft.mx/license", metadata: { weft: "license" } });
+    log(`product  created  ${product.id}`);
+  }
+  const prices = {};
+  for (const term of ["year", "lifetime"]) {
+    const amount = cents(term === "year" ? lic.usd_per_user_year : lic.usd_per_user_once);
+    const key = LICENSE_LOOKUP_KEYS[term];
+    const found = await request("GET", "/v1/prices", { "lookup_keys[0]": key, active: true, limit: 10 });
+    let price = found.data.find((p) => p.product === lic.product_id && p.currency === cfg.currency && p.unit_amount === amount && (term === "year" ? p.recurring?.interval === "year" && p.recurring?.usage_type === "licensed" : !p.recurring));
+    const label = `$${(amount / 100).toFixed(2)} per user ${term === "year" ? "per year" : "once"}`;
+    if (price) log(`price    found    ${price.id} (${label})`);
+    else {
+      price = await request("POST", "/v1/prices", {
+        product: lic.product_id,
+        currency: cfg.currency,
+        unit_amount: amount,
+        billing_scheme: "per_unit",
+        ...(term === "year" ? { recurring: { interval: "year", usage_type: "licensed" } } : {}),
+        lookup_key: key,
+        transfer_lookup_key: true,
+        nickname: `Weft Commercial License, per user, ${term === "year" ? "yearly" : "one-time (never renews)"}`,
+        metadata: { weft: "license", term },
+      });
+      log(`price    created  ${price.id} (${label})${found.data.length ? "; the previous price keeps its buyers but is no longer the lookup key" : ""}`);
+    }
+    prices[term] = price.id;
+  }
+  return { product: product.id, prices };
 }
 
 /**
@@ -286,6 +332,7 @@ async function main(argv) {
   }
   const cfg = parsePricingConfig(readFileSync(join(HERE, "..", "docs", "pricing.md"), "utf8"));
   const ids = await setup(request, cfg, log);
+  const lic = await setupLicense(request, cfg, log);
   if (flag("--legacy-usage")) await setupLegacyUsage(request, cfg, log);
   const wrangler = val("--wrangler-args");
   const hook = val("--webhook");
@@ -296,10 +343,12 @@ async function main(argv) {
     putSecret("STRIPE_PRICE_PRO_MONTH", ids.prices.month, wrangler);
     putSecret("STRIPE_PRICE_PRO_YEAR", ids.prices.year, wrangler);
     putSecret("STRIPE_PORTAL_CONFIG_ID", ids.portal, wrangler);
+    putSecret("STRIPE_PRICE_LICENSE_YEAR", lic.prices.year, wrangler);
+    putSecret("STRIPE_PRICE_LICENSE_LIFETIME", lic.prices.lifetime, wrangler);
     if (secret) putSecret("STRIPE_WEBHOOK_SECRET", secret, wrangler);
     else if (hook) console.log("secret   skipped  STRIPE_WEBHOOK_SECRET (the endpoint already existed; see above)");
   } else {
-    console.log(`\nSTRIPE_PRICE_PRO_MONTH=${ids.prices.month}\nSTRIPE_PRICE_PRO_YEAR=${ids.prices.year}\nSTRIPE_PORTAL_CONFIG_ID=${ids.portal}\n(set them and STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET with wrangler secret put, or rerun with --wrangler-args "--env hosted")`);
+    console.log(`\nSTRIPE_PRICE_PRO_MONTH=${ids.prices.month}\nSTRIPE_PRICE_PRO_YEAR=${ids.prices.year}\nSTRIPE_PORTAL_CONFIG_ID=${ids.portal}\nSTRIPE_PRICE_LICENSE_YEAR=${lic.prices.year}\nSTRIPE_PRICE_LICENSE_LIFETIME=${lic.prices.lifetime}\n(set them and STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET with wrangler secret put, or rerun with --wrangler-args "--env hosted")`);
   }
 }
 

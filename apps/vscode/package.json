@@ -3,7 +3,7 @@
   "version": "0.1.2",
   "private": true,
   "description": "Weft for VS Code and every VS Code fork (Cursor, Windsurf, Kiro, Antigravity, VSCodium, Trae): the live Changes feed, Editing now, per-event diffs, squiggles linked to their cause, and Approve/Undo/Pause/Resume/Message.",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json",
@@ -33,7 +33,7 @@
     "homepage": "https://weft.mx",
     "repository": { "type": "git", "url": "https://github.com/celador/weft" },
     "bugs": { "url": "https://github.com/celador/weft/issues" },
-    "license": "MIT",
+    "license": "SEE LICENSE IN LICENSE",
     "categories": ["AI", "Linters", "SCM Providers", "Other"],
     "keywords": ["agents", "coding agents", "ai agents", "claude code", "copilot", "codex", "cursor", "merge conflicts", "multi-agent", "weft"],
     "engines": { "vscode": "^1.88.0" },

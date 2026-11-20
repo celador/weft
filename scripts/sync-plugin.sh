@@ -2,7 +2,7 @@
 # Mirror plugins/weft into the small standalone repo celador/weft-plugin
 # (the Claude plugin directory can't download the full monorepo archive).
 #
-# The plugin folder lands at the repo root, plus LICENSE. README.md is the
+# The plugin folder lands at the repo root, with its own MIT LICENSE. README.md is the
 # plugin's own README. Nothing else goes in.
 #
 # Usage: scripts/sync-plugin.sh [remote-url]
@@ -26,7 +26,7 @@ fi
 # Replace everything except .git with the plugin folder verbatim.
 find "$work" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
 cp -R "$src"/. "$work"/
-cp "$here/LICENSE" "$work/LICENSE"
+# plugins/weft/LICENSE (MIT) comes with the folder copy above.
 
 cd "$work"
 git add -A

@@ -226,10 +226,15 @@ WEFT_SPACE_MAX_TOKENS = "200"
 WEFT_FREE_EVENTS = "5000"
 # Weft Pro fair use (docs/pricing.md): events per seat per month. Passing it is flagged for the operator, never cut off.
 WEFT_PRO_FAIR_USE_EVENTS = "50000"
-# Web-first purchase (GET /buy): where Stripe sends the buyer, and which site origins may ask for a claim code.
-WEFT_WELCOME_URL = "https://weft.mx/welcome/"
-WEFT_PRICING_URL = "https://weft.mx/pricing/"
-WEFT_SITE_ORIGINS = "https://weft.mx,https://www.weft.mx,https://weft-site-preview.elier.ai"
+# Accounts (docs/hosted.md "Accounts"): the Weft Clerk application's production Frontend API. The gateway verifies
+# session tokens with its public keys (no Clerk secret here) and only for pages on these origins (azp). With an issuer
+# set, new hosted spaces come from `weft login`. The site's account page and `weft login` confirmations live at
+# WEFT_SITE_URL; Checkout started there returns to WEFT_ACCOUNT_URL. CORS for browser calls: WEFT_SITE_ORIGINS.
+CLERK_ISSUER = "https://clerk.weft.mx"
+CLERK_AUTHORIZED_PARTIES = "https://weft.mx"
+WEFT_SITE_URL = "https://weft.mx"
+WEFT_ACCOUNT_URL = "https://weft.mx/account/"
+WEFT_SITE_ORIGINS = "https://weft.mx,https://www.weft.mx"
 
 [env.hosted.observability]
 enabled = true

@@ -3,30 +3,32 @@
 // STRIPE_PRICE_PRO_MONTH and STRIPE_PRICE_PRO_YEAR are all set (stripeConfig): without them the billing routes
 // answer 503 and no allowance is enforced. Usage is counted either way.
 //
-//   POST /v1/space/billing/checkout {interval, seats}  owner key -> Stripe Checkout URL (Pro, per seat)
+//   POST /v1/account/billing/checkout {interval, seats}   Clerk session (weft.mx/account/): Checkout for the account (accounts.ts)
+//   POST /v1/account/billing/checkout {product: "license", term: year|lifetime, seats}   the Commercial License (accounts.ts)
+//   POST /v1/account/billing/portal                       Clerk session: the account's Customer Portal
+//   POST /v1/space/billing/checkout {interval, seats}  owner key -> Checkout for the space's ACCOUNT (a space with no
+//                                     account gets 403 login_required on a gateway with accounts: `weft login` first)
 //   POST /v1/space/billing/portal     owner key -> Stripe Customer Portal URL (seats, card, invoices, cancel)
-//   POST /v1/space/billing/claim {code}   owner key: bind a web purchase (claim code) to this space
-//   GET  /buy?interval=month|year&seats=N[&utm_*]   no auth: 303 to Stripe Checkout for Pro, before any space exists
-//   POST /v1/billing/claim {session_id}   no auth (the welcome page): a one-time claim code for that purchase
 //   POST /v1/billing/stripe/webhook   Stripe -> plan changes (signature verified, idempotent on event id)
 //   GET  /billing/done | /billing/cancelled   where Checkout and the Portal send the browser back (CLI-first)
 //   POST /v1/admin/billing/report     send unreported legacy-plan overage to Stripe now (also runs hourly)
 //   POST /v1/admin/billing/reset-usage {month}        zero a month's counters (go-live)
 //   POST /v1/admin/spaces/{id}/allowance {events|null}   override one space's free allowance
-//   GET  /v1/admin/billing            plan counts, Pro seats, fair use, unclaimed purchases
+//   GET  /v1/admin/billing            plan counts, Pro seats, fair use, accounts
+//
+// Paying on the web always happens signed in (an account); the anonymous `/buy` + claim code path is gone.
 
 import type { Registry, SpaceGrant, Utm } from "./registry";
+import { clerkConfig, type ClerkEnv } from "./clerk";
 import { StripeError, cancelCustomerSubscriptions, fetchSubscription, stripeConfig, stripeRequest, subscriptionFacts, verifyStripeSignature, type StripeConfig, type StripeEnv, type SubscriptionFacts } from "./stripe";
 import { freeEvents, isInterval, MAX_SEATS, monthKey, parseSeats, type Interval, type Plan } from "./usage";
 
-export interface BillingEnv extends StripeEnv {
+export interface BillingEnv extends StripeEnv, ClerkEnv {
   WEFT_REGISTRY: DurableObjectNamespace<Registry>;
   WEFT_FREE_EVENTS?: string;
-  /** Where Stripe sends a web buyer after paying; `?session_id={CHECKOUT_SESSION_ID}` is appended (default https://weft.mx/welcome/). */
-  WEFT_WELCOME_URL?: string;
-  /** Where Stripe sends a web buyer who backs out (default https://weft.mx/pricing/). */
-  WEFT_PRICING_URL?: string;
-  /** Comma-separated origins whose pages may call POST /v1/billing/claim from a browser (default weft.mx, www.weft.mx and the site preview). */
+  /** The signed-in account page: Checkout started there returns to `?checkout=done|cancelled` (default https://weft.mx/account/). */
+  WEFT_ACCOUNT_URL?: string;
+  /** Comma-separated origins whose pages may call the account and login routes from a browser (default weft.mx, www.weft.mx and the site preview). */
   WEFT_SITE_ORIGINS?: string;
 }
 
@@ -44,13 +46,10 @@ export type BillingKit = {
 type Kit = BillingKit;
 
 const SPACE_ID = /^sp[a-z0-9]{10}$/;
-const SESSION_ID = /^cs_(test|live)_[A-Za-z0-9]{8,250}$/;
+export const ACCOUNT_ID = /^user_[A-Za-z0-9]{8,64}$/;
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
-const DEFAULT_WELCOME = "https://weft.mx/welcome/";
-const DEFAULT_PRICING = "https://weft.mx/pricing/";
+const DEFAULT_ACCOUNT_URL = "https://weft.mx/account/";
 const DEFAULT_SITE_ORIGINS = "https://weft.mx,https://www.weft.mx,https://weft-site-preview.elier.ai";
-/** Marketing parameters /buy passes into the Checkout Session's metadata (Stripe keeps them, the gateway does not). */
-const PASSTHROUGH = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "ref"] as const;
 
 function registry(env: BillingEnv) {
   return env.WEFT_REGISTRY.get(env.WEFT_REGISTRY.idFromName("registry"));
@@ -153,19 +152,99 @@ function proChoice(body: unknown, k: Pick<Kit, "fail">): { interval: Interval; s
   return { interval: interval as Interval, seats: seats! };
 }
 
-/** `POST /v1/space/billing/checkout`, `/portal` and `/claim`, after the space owner key has been verified. */
-export async function spaceBilling(req: Request, env: BillingEnv, k: Omit<Kit, "respond">, space: string, action: "checkout" | "portal" | "claim"): Promise<Response> {
+/** A Weft Pro Checkout Session for an account (client_reference_id = the Clerk user id), returning to `success`/`cancel`. */
+export async function accountCheckout(cfg: StripeConfig, account: string, customer: string | null, choice: { interval: Interval; seats: number }, back: { success: string; cancel: string }, utm: Utm = {}): Promise<string> {
+  const meta: Record<string, string> = { weft_account: account, weft_plan: "pro", ...(utm.source ? { utm_source: utm.source } : {}), ...(utm.campaign ? { utm_campaign: utm.campaign } : {}) };
+  const s = await stripeRequest<CheckoutSession>(cfg.key, "POST", "/v1/checkout/sessions", {
+    mode: "subscription",
+    line_items: [proLine(cfg, choice.interval, choice.seats)],
+    client_reference_id: account,
+    metadata: meta,
+    subscription_data: { metadata: { weft_account: account, weft_plan: "pro" } },
+    allow_promotion_codes: true,
+    // Bill in USD like the price (Adaptive Pricing would show and charge a converted amount).
+    adaptive_pricing: { enabled: false },
+    success_url: back.success,
+    cancel_url: back.cancel,
+    ...(customer ? { customer } : {}),
+  });
+  if (!s.url) throw new StripeError(502, "no_url", "Stripe returned no Checkout URL");
+  return s.url;
+}
+
+export type LicenseChoice = { term: "year" | "lifetime"; seats: number };
+
+/** `{term, seats}` for the Commercial License: term year|lifetime (default year), seats 1..MAX_SEATS (default 1). */
+export function licenseChoice(body: unknown, k: Pick<Kit, "fail">): LicenseChoice {
+  const b = (body ?? {}) as { term?: unknown; seats?: unknown };
+  const term = b.term === undefined ? "year" : b.term;
+  if (term !== "year" && term !== "lifetime") k.fail("invalid_message", "term must be year or lifetime", { issues: [{ path: "/term", message: "year|lifetime" }] });
+  const seats = b.seats === undefined ? 1 : parseSeats(b.seats);
+  if (seats === undefined) k.fail("invalid_message", `seats must be a whole number from 1 to ${MAX_SEATS}`, { issues: [{ path: "/seats", message: `1..${MAX_SEATS}` }] });
+  return { term: term as LicenseChoice["term"], seats: seats! };
+}
+
+/**
+ * A Commercial License Checkout Session for an account: yearly = a per-seat subscription, lifetime = a one-time
+ * payment per seat. The buyer can change the number of seats on the Checkout page. Metadata `weft_product=license`
+ * and the account id (also the client_reference_id) are how the webhook knows it.
+ */
+export async function licenseCheckout(cfg: StripeConfig, account: string, customer: string | null, choice: LicenseChoice, back: { success: string; cancel: string }, utm: Utm = {}): Promise<string> {
+  const lic = cfg.license!;
+  const tag = { weft_account: account, weft_product: "license", weft_term: choice.term };
+  const meta: Record<string, string> = { ...tag, ...(utm.source ? { utm_source: utm.source } : {}), ...(utm.campaign ? { utm_campaign: utm.campaign } : {}) };
+  const line = { price: choice.term === "year" ? lic.year : lic.lifetime, quantity: choice.seats, adjustable_quantity: { enabled: true, minimum: 1, maximum: MAX_SEATS } };
+  const s = await stripeRequest<CheckoutSession>(cfg.key, "POST", "/v1/checkout/sessions", {
+    mode: choice.term === "year" ? "subscription" : "payment",
+    line_items: [line],
+    client_reference_id: account,
+    metadata: meta,
+    ...(choice.term === "year"
+      ? { subscription_data: { metadata: tag } }
+      : { payment_intent_data: { metadata: tag }, invoice_creation: { enabled: true, invoice_data: { metadata: tag } }, ...(customer ? {} : { customer_creation: "always" }) }),
+    allow_promotion_codes: true,
+    adaptive_pricing: { enabled: false },
+    success_url: back.success,
+    cancel_url: back.cancel,
+    ...(customer ? { customer } : {}),
+  });
+  if (!s.url) throw new StripeError(502, "no_url", "Stripe returned no Checkout URL");
+  return s.url;
+}
+
+export async function portalUrl(cfg: StripeConfig, customer: string, returnUrl: string): Promise<string> {
+  const s = await stripeRequest<{ url: string }>(cfg.key, "POST", "/v1/billing_portal/sessions", { customer, return_url: returnUrl, ...(cfg.portalConfig ? { configuration: cfg.portalConfig } : {}) });
+  return s.url;
+}
+
+export const accountUrl = (env: BillingEnv) => env.WEFT_ACCOUNT_URL?.trim() || DEFAULT_ACCOUNT_URL;
+export { proChoice, requireBilling };
+
+/**
+ * `POST /v1/space/billing/checkout` and `/portal`, after the space owner key has been verified. A space on an account
+ * buys and manages the ACCOUNT's plan. On a gateway with accounts (Clerk configured), a space with no account is sent
+ * through `weft login` first (403, details.reason login_required). Without accounts (a self-hosted gateway that sells
+ * nothing has billing off anyway) the space itself is the customer, as before accounts existed.
+ */
+export async function spaceBilling(req: Request, env: BillingEnv, k: Omit<Kit, "respond">, space: string, action: "checkout" | "portal"): Promise<Response> {
   const cfg = requireBilling(env, k);
   const reg = registry(env);
-  if (action === "claim") return claimRedeem(req, env, k, cfg, space);
   const st = await reg.spaceUsage(space);
   if (!st) k.fail("unauthorized", "space not found");
-  const customer = (await reg.stripeCustomer(space)) ?? undefined;
+  const account = await reg.spaceAccount(space);
   const base = origin(env, req);
+  const back = { success: `${base}/billing/done`, cancel: `${base}/billing/cancelled` };
   try {
     if (action === "checkout") {
       const choice = proChoice(await k.readJson(req, true), k);
       if (st!.plan === "paid") k.fail("invalid_message", "this space is already on a paid plan; change seats or cancel with `npx @celador/weft billing`", { issues: [{ path: "", message: "already paid" }] });
+      if (account) {
+        const a = await reg.accountCustomer(account);
+        const url = await accountCheckout(cfg, account, a.customer, choice, back);
+        return k.json({ type: "billing.checkout", url, interval: choice.interval, seats: choice.seats, account: true }, 201);
+      }
+      if (clerkConfig(env)) k.fail("forbidden", "Weft Pro is bought by an account: run `npx @celador/weft login` (it keeps this space), then `npx @celador/weft upgrade` again", { reason: "login_required", login: "npx @celador/weft login" });
+      const customer = (await reg.stripeCustomer(space)) ?? undefined;
       const s = await stripeRequest<CheckoutSession>(cfg.key, "POST", "/v1/checkout/sessions", {
         mode: "subscription",
         line_items: [proLine(cfg, choice.interval, choice.seats)],
@@ -173,22 +252,17 @@ export async function spaceBilling(req: Request, env: BillingEnv, k: Omit<Kit, "
         metadata: { weft_space: space, weft_plan: "pro" },
         subscription_data: { metadata: { weft_space: space, weft_plan: "pro" } },
         allow_promotion_codes: true,
-        // Bill in USD like the price (Adaptive Pricing would show and charge a converted amount).
         adaptive_pricing: { enabled: false },
-        success_url: `${base}/billing/done`,
-        cancel_url: `${base}/billing/cancelled`,
+        success_url: back.success,
+        cancel_url: back.cancel,
         ...(customer ? { customer } : {}),
       });
       if (!s.url) throw new StripeError(502, "no_url", "Stripe returned no Checkout URL");
       return k.json({ type: "billing.checkout", url: s.url, interval: choice.interval, seats: choice.seats }, 201);
     }
+    const customer = account ? (await reg.accountCustomer(account)).customer : await reg.stripeCustomer(space);
     if (!customer) k.fail("invalid_message", "this space has no billing account yet; run `npx @celador/weft upgrade` first", { issues: [{ path: "", message: "no billing account" }] });
-    const s = await stripeRequest<{ url: string }>(cfg.key, "POST", "/v1/billing_portal/sessions", {
-      customer,
-      return_url: `${base}/billing/done`,
-      ...(cfg.portalConfig ? { configuration: cfg.portalConfig } : {}),
-    });
-    return k.json({ type: "billing.portal", url: s.url }, 201);
+    return k.json({ type: "billing.portal", url: await portalUrl(cfg, customer!, back.success) }, 201);
   } catch (e) {
     if (!(e instanceof StripeError)) throw e;
     console.error("billing: stripe", action, e.status, e.code ?? "", e.message);
@@ -196,208 +270,100 @@ export async function spaceBilling(req: Request, env: BillingEnv, k: Omit<Kit, "
   }
 }
 
-// ------------------------------------------------------------------ web-first purchase: /buy, claim codes
+export const clean = (v: string) => v.replace(/[^\w.~ -]/g, "").slice(0, 100);
 
-const clean = (v: string) => v.replace(/[^\w.~ -]/g, "").slice(0, 100);
-
-/**
- * `GET /buy?interval=month|year&seats=N`: a Weft Pro Checkout Session with no space yet, answered with a 303 to
- * Stripe. Optional utm_* / ref parameters go into the session's metadata (kept by Stripe, not by the gateway).
- * The buyer comes back to the welcome page with `?session_id=...`, which trades it for a claim code.
- */
-async function buy(req: Request, env: BillingEnv, k: Kit): Promise<Response> {
-  const cfg = stripeConfig(env);
-  if (!cfg) return page("Not on sale here", "This gateway does not sell Weft Pro. Local and self-hosted Weft are free: <code>npx @celador/weft</code>", 503);
-  try {
-    await k.throttle(req, "buy");
-  } catch {
-    return page("Slow down", "Too many checkouts from your network in the last minute. Wait a minute and try again.", 429);
-  }
-  const q = new URL(req.url).searchParams;
-  const interval = q.get("interval") ?? "month";
-  const seats = parseSeats(q.get("seats") ?? "1");
-  if (!isInterval(interval) || seats === undefined) return page("Check the link", `Use <code>/buy?interval=month</code> or <code>year</code> and <code>seats=</code> 1 to ${MAX_SEATS}.`, 400);
-  const meta: Record<string, string> = { weft_purchase: "web", weft_plan: "pro" };
-  for (const p of PASSTHROUGH) {
-    const v = q.get(p);
-    if (v && clean(v)) meta[p] = clean(v);
-  }
-  const welcome = env.WEFT_WELCOME_URL?.trim() || DEFAULT_WELCOME;
-  try {
-    const s = await stripeRequest<CheckoutSession>(cfg.key, "POST", "/v1/checkout/sessions", {
-      mode: "subscription",
-      line_items: [proLine(cfg, interval, seats)],
-      metadata: meta,
-      subscription_data: { metadata: { weft_purchase: "web", weft_plan: "pro" } },
-      allow_promotion_codes: true,
-      adaptive_pricing: { enabled: false },
-      // {CHECKOUT_SESSION_ID} is filled in by Stripe. The session id is what the welcome page trades for a claim code.
-      success_url: `${welcome}${welcome.includes("?") ? "&" : "?"}session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: env.WEFT_PRICING_URL?.trim() || DEFAULT_PRICING,
-    });
-    if (!s.url) throw new StripeError(502, "no_url", "Stripe returned no Checkout URL");
-    return new Response(null, { status: 303, headers: { location: s.url, "cache-control": "no-store", "referrer-policy": "no-referrer" } });
-  } catch (e) {
-    if (!(e instanceof StripeError)) throw e;
-    console.error("billing: stripe buy", e.status, e.code ?? "", e.message);
-    return page("Checkout is unavailable", "Stripe could not start checkout. Try again in a minute.", 503);
-  }
-}
-
-type SessionObject = { id?: unknown; mode?: unknown; status?: unknown; payment_status?: unknown; amount_total?: unknown; customer?: unknown; subscription?: unknown; metadata?: Record<string, unknown> | null; client_reference_id?: unknown };
-
-const idOf = (v: unknown): string | undefined => (typeof v === "string" ? v : v && typeof v === "object" && typeof (v as { id?: unknown }).id === "string" ? (v as { id: string }).id : undefined);
-
-/** A completed web purchase (ours, a subscription, paid or $0 due), as {session, customer, subscription, utm}; else null. */
-function webPurchase(o: SessionObject): { session: string; customer: string; subscription: string; utm: Utm } | null {
-  const session = idOf(o);
-  const customer = idOf(o.customer);
-  const subscription = idOf(o.subscription);
-  if (o.metadata?.weft_purchase !== "web" || o.mode !== "subscription" || !session || !customer || !subscription || o.client_reference_id) return null;
-  if (o.payment_status === "unpaid" && Number(o.amount_total ?? 0) > 0) return null;
-  const m = o.metadata;
-  const utm: Utm = {
-    ...(typeof m.utm_source === "string" && clean(m.utm_source) ? { source: clean(m.utm_source) } : {}),
-    ...(typeof m.utm_campaign === "string" && clean(m.utm_campaign) ? { campaign: clean(m.utm_campaign) } : {}),
-  };
-  return { session, customer, subscription, utm };
-}
-
-function corsHeaders(env: BillingEnv, req: Request): Record<string, string> {
+export function corsHeaders(env: BillingEnv, req: Request): Record<string, string> {
   const o = req.headers.get("origin");
   if (!o) return {};
   const allowed = (env.WEFT_SITE_ORIGINS ?? DEFAULT_SITE_ORIGINS).split(",").map((s) => s.trim()).filter(Boolean);
   if (!allowed.includes(o)) return {};
-  return { "access-control-allow-origin": o, vary: "Origin", "access-control-allow-methods": "POST, OPTIONS", "access-control-allow-headers": "content-type", "access-control-max-age": "600" };
+  return { "access-control-allow-origin": o, vary: "Origin", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", "access-control-allow-headers": "authorization, content-type", "access-control-max-age": "600" };
 }
 
-function withHeaders(r: Response, h: Record<string, string>): Response {
+export function withHeaders(r: Response, h: Record<string, string>): Response {
   if (!Object.keys(h).length) return r;
   const headers = new Headers(r.headers);
   for (const [k, v] of Object.entries(h)) headers.set(k, v);
   return new Response(r.body, { status: r.status, headers });
 }
 
-/**
- * `POST /v1/billing/claim {session_id}`: the welcome page trades the Checkout Session id Stripe put in its URL for a
- * one-time claim code (1 hour, single use). If Stripe's webhook has not arrived yet, the purchase is read from
- * Stripe directly. Rate limited per network like /v1/pair. The code is only ever in this response body.
- */
-async function claimStart(req: Request, env: BillingEnv, k: Kit): Promise<Response> {
-  const cfg = requireBilling(env, k);
-  await k.throttle(req, "claim");
-  const body = ((await k.readJson(req, true)) ?? {}) as { session_id?: unknown };
-  const session = body.session_id;
-  if (typeof session !== "string" || !SESSION_ID.test(session)) k.fail("invalid_message", "session_id must be the cs_... id from the welcome page's address", { issues: [{ path: "/session_id", message: "cs_..." }] });
-  const reg = registry(env);
-  if ((await reg.purchase(session as string)).status === "unknown") {
-    try {
-      const s = await stripeRequest<SessionObject>(cfg.key, "GET", `/v1/checkout/sessions/${encodeURIComponent(session as string)}`);
-      const p = s.status === "complete" ? webPurchase(s) : null;
-      const facts = p ? await fetchSubscription(cfg, p.subscription) : null;
-      if (p && facts?.pro && facts.seats && facts.interval)
-        await reg.recordPurchase({ ...p, seats: facts.seats, interval: facts.interval, plan: planOf(facts.status), created: Math.floor(Date.now() / 1000) });
-    } catch (e) {
-      if (!(e instanceof StripeError)) throw e;
-      if (e.status !== 404) {
-        console.error("billing: stripe claim lookup", e.status, e.code ?? "", e.message);
-        k.fail("unavailable", "could not reach Stripe to check the purchase; try again in a minute");
-      }
-    }
-  }
-  const r = await reg.claimCodeCreate(session as string);
-  if ("error" in r) {
-    if (r.code === "unknown") k.fail("not_found", r.error, { status: "unknown" });
-    // Already bound to a space: a 409 the welcome page tells apart from a failure.
-    if (r.code === "claimed") return k.json({ type: "error", error: { code: "already_claimed", message: r.error, retryable: false, details: { status: "claimed" } } }, 409);
-    k.fail("invalid_message", r.error, { status: r.code });
-  }
-  const ok = r as { code: string; expires_at: string; seats: number; interval: Interval; utm: Utm };
-  return k.json(
-    {
-      type: "billing.claim",
-      code: ok.code,
-      expires_at: ok.expires_at,
-      seats: ok.seats,
-      interval: ok.interval,
-      command: `npx @celador/weft --hosted --claim ${ok.code}`,
-      ...(ok.utm.source ? { utm_source: ok.utm.source } : {}),
-      ...(ok.utm.campaign ? { utm_campaign: ok.utm.campaign } : {}),
-    },
-    201,
-  );
-}
-
-/** `POST /v1/space/billing/claim {code}` (owner key): the space becomes Pro with the purchase's seats. */
-async function claimRedeem(req: Request, env: BillingEnv, k: Omit<Kit, "respond">, cfg: StripeConfig, space: string): Promise<Response> {
-  await k.throttle(req, "redeem", [`space:${space}`]);
-  const body = ((await k.readJson(req, true)) ?? {}) as { code?: unknown };
-  if (typeof body.code !== "string" || !body.code || body.code.length > 64) k.fail("invalid_message", "code is required", { issues: [{ path: "/code", message: "string" }] });
-  const r = await registry(env).claimRedeem(space, body.code as string);
-  if ("error" in r) k.fail(r.code === "invalid" || r.code === "gone" ? "unauthorized" : "invalid_message", r.error, { status: r.code });
-  const ok = r as { space: string; seats: number; interval: Interval; subscription: string | null };
-  live.delete(space);
-  // Best effort: label the subscription with its space in Stripe, so the operator can find it. The plan does not depend on it.
-  if (ok.subscription) {
-    try {
-      await stripeRequest(cfg.key, "POST", `/v1/subscriptions/${encodeURIComponent(ok.subscription)}`, { metadata: { weft_space: space } });
-    } catch (e) {
-      console.error("billing: could not label the claimed subscription", e instanceof Error ? e.message : String(e));
-    }
-  }
-  return k.json({ type: "billing.claimed", plan: "paid", product: "pro", seats: ok.seats, interval: ok.interval });
-}
+const idOf = (v: unknown): string | undefined => (typeof v === "string" ? v : v && typeof v === "object" && typeof (v as { id?: unknown }).id === "string" ? (v as { id: string }).id : undefined);
 
 // ------------------------------------------------------------------ webhook
 
 type StripeEvent = { id?: unknown; type?: unknown; created?: unknown; data?: { object?: Record<string, unknown> } };
 export type Intent = {
   space?: string;
+  /** A checkout an account started (weft.mx/account/, or `weft upgrade` in a space on an account): the Clerk user id. */
+  account?: string;
   customer?: string;
   plan: Plan;
   checkout: boolean;
   /** The subscription a checkout created (its seats and status are read from Stripe). */
   subscription?: string;
-  /** A web purchase (GET /buy): its Checkout Session id. */
-  purchase?: string;
   /** What a customer.subscription.* event says the subscription is now. */
   facts?: SubscriptionFacts;
-  /** A web purchase's marketing link (utm_source / utm_campaign from the /buy link). */
-  utm?: Utm;
+  /** A Commercial License purchase (never touches the Pro plan): a one-time Checkout (`session`) or a yearly subscription. */
+  license?: { term: "year" | "lifetime"; session?: string; subscription?: string; deleted?: boolean };
 };
 
 /**
  * What a Stripe event means for a space's plan, or null when it is none of our business. The same Stripe
  * account may send events for other products to this endpoint; a checkout session counts only if it is a
- * subscription we created (our space id as client_reference_id AND in metadata, or a /buy purchase marked
- * weft_purchase=web), the rest only through a customer we attached to a space or to a purchase.
+ * subscription we created (our account or space id as client_reference_id AND in metadata), the rest only
+ * through a customer we attached to an account or a space.
  */
-export function intentOf(ev: StripeEvent, prices?: { month: string; year: string }): Intent | null {
+const isLicenseMeta = (m: unknown) => Boolean(m && typeof m === "object" && (m as Record<string, unknown>).weft_product === "license");
+
+/** Whether an invoice belongs to a Commercial License subscription (by its subscription's metadata or its line's price). */
+function licenseInvoice(o: Record<string, unknown>, license?: { year: string; lifetime: string }): boolean {
+  const parent = (o.parent ?? {}) as { subscription_details?: { metadata?: unknown } };
+  if (isLicenseMeta(parent.subscription_details?.metadata) || isLicenseMeta((o.subscription_details as { metadata?: unknown } | undefined)?.metadata)) return true;
+  const lines = ((o.lines as { data?: unknown[] } | undefined)?.data ?? []) as Array<{ price?: { id?: unknown }; pricing?: { price_details?: { price?: unknown } } }>;
+  return Boolean(license && lines.some((l) => [l.price?.id, l.pricing?.price_details?.price].some((p) => p === license.year || p === license.lifetime)));
+}
+
+export function intentOf(ev: StripeEvent, prices?: { month: string; year: string }, license?: { year: string; lifetime: string }): Intent | null {
   const o = ev.data?.object;
   if (!o || typeof o !== "object") return null;
   const customer = idOf(o.customer);
   switch (ev.type) {
     case "checkout.session.completed": {
-      const web = webPurchase(o as SessionObject);
-      if (web) return { customer: web.customer, plan: "paid", checkout: true, subscription: web.subscription, purchase: web.session, ...(Object.keys(web.utm).length ? { utm: web.utm } : {}) };
-      const space = typeof o.client_reference_id === "string" ? o.client_reference_id : undefined;
+      const ref = typeof o.client_reference_id === "string" ? o.client_reference_id : undefined;
       const meta = (o.metadata ?? {}) as Record<string, unknown>;
-      if (o.mode !== "subscription" || !space || !SPACE_ID.test(space) || meta.weft_space !== space || !customer) return null;
+      // The Commercial License (accounts only): a one-time payment, or a yearly subscription.
+      if (isLicenseMeta(meta)) {
+        if (!ref || !ACCOUNT_ID.test(ref) || meta.weft_account !== ref || !customer || typeof o.id !== "string") return null;
+        if (o.mode === "payment") return o.payment_status === "paid" ? { account: ref, customer, plan: "paid", checkout: true, license: { term: "lifetime", session: o.id } } : null;
+        if (o.mode !== "subscription") return null;
+        if (o.payment_status === "unpaid" && Number(o.amount_total ?? 0) > 0) return null;
+        const subscription = idOf(o.subscription);
+        return subscription ? { account: ref, customer, plan: "paid", checkout: true, license: { term: "year", subscription } } : null;
+      }
+      if (o.mode !== "subscription" || !ref || !customer) return null;
+      const account = ACCOUNT_ID.test(ref) && meta.weft_account === ref ? ref : undefined;
+      const space = SPACE_ID.test(ref) && meta.weft_space === ref ? ref : undefined;
+      if (!account && !space) return null;
       // A $0 first invoice (a metered subscription, a 100% coupon) may leave the session `unpaid` (seen in test mode): the card
       // was collected and the subscription exists. Only a session that still owes money (a delayed payment method) waits;
       // customer.subscription.updated says when that subscription turns active.
       if (o.payment_status === "unpaid" && Number(o.amount_total ?? 0) > 0) return null;
       const subscription = idOf(o.subscription);
-      return { space, customer, plan: "paid", checkout: true, ...(subscription ? { subscription } : {}) };
+      return { ...(account ? { account } : { space: space! }), customer, plan: "paid", checkout: true, ...(subscription ? { subscription } : {}) };
     }
     case "customer.subscription.updated":
     case "customer.subscription.deleted": {
       if (!customer) return null;
-      const facts = subscriptionFacts(o, prices);
+      const facts = subscriptionFacts(o, prices, license);
+      // A yearly Commercial License: its own purchase row, never the account's Pro plan.
+      if (facts && ((license && facts.priceId === license.year) || isLicenseMeta(o.metadata)))
+        return { customer, plan: "paid", checkout: false, facts, license: { term: "year", subscription: facts.id, ...(ev.type === "customer.subscription.deleted" ? { deleted: true } : {}) } };
       const plan = ev.type === "customer.subscription.deleted" ? "free" : o.status === "active" || o.status === "trialing" ? "paid" : "free";
       return { customer, plan, checkout: false, ...(facts?.pro ? { facts } : {}) };
     }
     case "invoice.payment_failed":
+      // A failed license renewal is handled by its subscription's own update (past_due); it never ends Pro.
+      if (licenseInvoice(o, license)) return null;
       return customer ? { customer, plan: "free", checkout: false } : null;
     default:
       return null;
@@ -420,8 +386,9 @@ export async function stripeWebhook(req: Request, env: BillingEnv, k: Kit): Prom
     return k.fail("invalid_message", "body is not JSON");
   }
   if (typeof ev.id !== "string" || typeof ev.created !== "number") return k.fail("invalid_message", "not a Stripe event");
-  const intent = intentOf(ev, cfg.prices);
+  const intent = intentOf(ev, cfg.prices, cfg.license);
   if (!intent) return k.json({ received: true, result: "ignored" });
+  if (intent.license) return licenseWebhook(env, ev as StripeEvent & { id: string; created: number }, intent, cfg, k);
 
   // A checkout's seats, interval and status live on the subscription it created: read it (a failure is a 503, and Stripe retries).
   let plan = intent.plan;
@@ -442,30 +409,72 @@ export async function stripeWebhook(req: Request, env: BillingEnv, k: Kit): Prom
       return k.fail("unavailable", "could not read the subscription from Stripe; Stripe will retry");
     }
   }
-  const pro = facts?.pro && facts.seats && facts.interval ? { seats: facts.seats, interval: facts.interval } : undefined;
-
-  if (intent.purchase) {
-    // A web purchase is Pro by construction; anything else carrying our marker is not something we sold.
-    if (!pro || !intent.customer || !intent.subscription) return k.json({ received: true, result: "ignored" });
-    const r = await reg.recordPurchase({ session: intent.purchase, customer: intent.customer, subscription: intent.subscription, seats: pro.seats, interval: pro.interval, plan, created: ev.created, eventId: ev.id, ...(intent.utm ? { utm: intent.utm } : {}) });
-    return k.json({ received: true, result: r.result });
-  }
+  const pro = facts?.pro && facts.seats && facts.interval ? { seats: facts.seats, interval: facts.interval, ...(facts.periodEnd ? { periodEnd: facts.periodEnd } : {}) } : undefined;
 
   const r = await reg.applyBillingEvent({
     id: ev.id,
     created: ev.created,
     plan,
     ...(intent.space ? { space: intent.space } : {}),
+    ...(intent.account ? { account: intent.account } : {}),
     ...(intent.customer ? { customer: intent.customer } : {}),
     ...(pro ? { pro } : {}),
   });
   if (r.space) live.delete(r.space);
-  // A checkout finished for a space that is gone: do not leave its subscription running.
+  for (const sp of r.spaces ?? []) live.delete(sp);
+  // A checkout finished for a space or account that is gone: do not leave its subscription running.
   if (r.result === "ignored" && intent.checkout && intent.customer) {
     try {
       await cancelCustomerSubscriptions(cfg, intent.customer);
     } catch (e) {
       console.error("billing: could not cancel a subscription for a missing space", e instanceof Error ? e.message : String(e));
+      return k.fail("unavailable", "could not cancel the orphaned subscription; Stripe will retry");
+    }
+  }
+  return k.json({ received: true, result: r.result });
+}
+
+/**
+ * The license state a subscription's facts mean: active (or cancelling) until the end of the paid period; a renewal
+ * that failed is paid only up to the start of the unpaid period; a cancelled one keeps what was paid for.
+ */
+export function licenseFromFacts(f: SubscriptionFacts, deleted = false): { status: "active" | "canceling" | "past_due" | "canceled"; validUntil: number | null } {
+  if (deleted || f.status === "canceled" || f.status === "incomplete_expired") return { status: "canceled", validUntil: f.endedAt ?? f.periodEnd ?? null };
+  if (f.status === "active" || f.status === "trialing") return { status: f.cancelAtPeriodEnd ? "canceling" : "active", validUntil: f.periodEnd ?? null };
+  return { status: "past_due", validUntil: f.periodStart ?? Math.floor(Date.now() / 1000) };
+}
+
+/** Webhook, Commercial License part: record the purchase on the account (a Stripe read for a finished checkout). */
+async function licenseWebhook(env: BillingEnv, ev: StripeEvent & { id: string; created: number }, intent: Intent, cfg: StripeConfig, k: Kit): Promise<Response> {
+  const lic = intent.license!;
+  if (!cfg.license) return k.json({ received: true, result: "ignored" });
+  const reg = registry(env);
+  if (intent.checkout && (await reg.billingEventSeen(ev.id))) return k.json({ received: true, result: "duplicate" });
+  let row: Parameters<Registry["applyLicenseEvent"]>[0] | undefined;
+  try {
+    if (lic.term === "lifetime" && lic.session) {
+      // Seats are the quantity the buyer settled on in Checkout: read from Stripe, only for our one-time price.
+      const items = await stripeRequest<{ data?: Array<{ quantity?: number; price?: { id?: string } }> }>(cfg.key, "GET", `/v1/checkout/sessions/${encodeURIComponent(lic.session)}/line_items`, { limit: 10 });
+      const item = (items.data ?? []).find((i) => i.price?.id === cfg.license!.lifetime);
+      if (!item || !Number.isInteger(item.quantity) || item.quantity! < 1) return k.json({ received: true, result: "ignored" });
+      row = { id: ev.id, created: ev.created, ref: lic.session, term: "lifetime", seats: item.quantity!, status: "active", validUntil: null };
+    } else {
+      const facts = intent.checkout && lic.subscription ? await fetchSubscription(cfg, lic.subscription) : intent.facts;
+      if (!facts || facts.priceId !== cfg.license.year || !facts.quantity) return k.json({ received: true, result: "ignored" });
+      row = { id: ev.id, created: ev.created, ref: facts.id, term: "year", seats: facts.quantity, ...licenseFromFacts(facts, lic.deleted) };
+    }
+  } catch (e) {
+    if (!(e instanceof StripeError)) throw e;
+    console.error("billing: could not read a license purchase", e.status, e.code ?? "", e.message);
+    return k.fail("unavailable", "could not read the purchase from Stripe; Stripe will retry");
+  }
+  const r = await reg.applyLicenseEvent({ ...row, ...(intent.account ? { account: intent.account } : {}), ...(intent.customer ? { customer: intent.customer } : {}) });
+  // A yearly license bought for an account that is gone: do not leave it renewing.
+  if (r.result === "ignored" && intent.checkout && lic.term === "year" && lic.subscription) {
+    try {
+      await stripeRequest(cfg.key, "DELETE", `/v1/subscriptions/${encodeURIComponent(lic.subscription)}`, {});
+    } catch (e) {
+      console.error("billing: could not cancel a license for a missing account", e instanceof Error ? e.message : String(e));
       return k.fail("unavailable", "could not cancel the orphaned subscription; Stripe will retry");
     }
   }
@@ -489,17 +498,10 @@ function page(title: string, body: string, status = 200): Response {
   );
 }
 
-/** Routes that are not under /v1/space: /buy, the claim code, the webhook and the two return pages. Null for any other path. */
+/** Routes that are not under /v1/space: the webhook and the two return pages. Null for any other path. */
 export async function billingRoute(req: Request, env: BillingEnv, k: Kit, path: string): Promise<Response | null> {
   const m = req.method;
   if (path === "/v1/billing/stripe/webhook" && m === "POST") return stripeWebhook(req, env, k);
-  if (path === "/buy" && m === "GET") return buy(req, env, k);
-  if (path === "/v1/billing/claim") {
-    // Called from the welcome page on the site, cross-origin: CORS for the site's own origins only, no credentials.
-    const cors = corsHeaders(env, req);
-    if (m === "OPTIONS") return new Response(null, { status: 204, headers: { ...cors, "cache-control": "no-store" } });
-    if (m === "POST") return withHeaders(await claimStart(req, env, k).catch((e) => k.respond(e)), cors);
-  }
   if (path === "/billing/done" && m === "GET") return page("Done", "Return to your terminal and run <code>npx @celador/weft usage</code>. The plan can take a few seconds to update.");
   if (path === "/billing/cancelled" && m === "GET") return page("Nothing changed", "You can close this tab. Run <code>npx @celador/weft upgrade</code> again whenever you like.");
   return null;

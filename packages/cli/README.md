@@ -50,7 +50,8 @@ Website: <https://weft.mx> · Source: <https://github.com/celador/weft>
 | `npx @celador/weft --hosted` | opt in to a hosted space on Weft's Cloudflare gateway instead (5,000 agent events a month free; Weft Pro, per user, has no event cap) |
 | `npx @celador/weft usage` | your hosted space's plan (Free, or Weft Pro and its seats) and agent events this month |
 | `npx @celador/weft upgrade [--seats N] [--year]` | Weft Pro for your hosted space, per user, monthly or yearly: prints a Stripe Checkout link (only where the gateway sells one) |
-| `npx @celador/weft --hosted --claim CODE` | bought Weft Pro on weft.mx? the welcome page's one-time code makes this repo's hosted space Pro |
+| `npx @celador/weft login` | sign in to your Weft account (free, on weft.mx) for hosted spaces; an existing hosted space joins the account |
+| `npx @celador/weft logout` / `whoami` | this machine forgets its hosted key / shows which space and account it uses |
 | `npx @celador/weft billing` | change seats, payment method, invoices or cancel (Stripe's customer portal) |
 | `npx @celador/weft invite` | (space owner) a one-time invite code (30 minutes, single use) and the one command a teammate on another machine runs to join; `invite cancel` drops open codes |
 | `npx @celador/weft --hosted --join SPACE:CODE --repo NAME` | (teammate) join that space from your own clone, with your own member key; `--as NAME` is how the owner sees you (default: git's `user.name`) |
@@ -100,5 +101,9 @@ when the space has more people than seats.
 - **Your Cloudflare (`deploy`):** logs in with wrangler (browser OAuth) and deploys the gateway
   Worker with two Durable Objects to your account. Only you can create spaces on it.
 
-Requires Node.js 22 or newer and git. MIT licensed.
+Requires Node.js 22 or newer and git.
+
+License: this package is free for personal use; using it at work needs a Weft commercial license or
+Weft Pro (https://weft.mx/license/). The source code is AGPL-3.0-only (protocol and plugins MIT), and
+builds you make from it are under the AGPL only. Versions up to 0.3.0 are MIT. See `LICENSE`.
 Source and docs: https://github.com/celador/weft

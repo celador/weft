@@ -5,7 +5,7 @@
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -19,9 +19,13 @@ delete manifest.dependencies;
 delete manifest.devDependencies;
 writeFileSync(join(stage, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
 for (const f of ["README.md", "CHANGELOG.md"]) cpSync(join(root, f), join(stage, f));
-cpSync(join(root, "..", "..", "LICENSE"), join(stage, "LICENSE"));
 cpSync(join(root, "dist"), join(stage, "dist"), { recursive: true, filter: (s) => !s.endsWith(".map") });
 cpSync(join(root, "media"), join(stage, "media"), { recursive: true, filter: (s) => !s.endsWith(".map") });
+// LICENSE: the terms for builds Weft distributes (free for personal use, commercial use needs a
+// license; source under AGPL-3.0-only), the MIT notice for code released up to 0.3.0, and the
+// notices of any bundled third-party package (scripts/third-party-notices.mjs).
+const { buildLicense } = await import(pathToFileURL(join(root, "..", "..", "scripts", "third-party-notices.mjs")).href);
+writeFileSync(join(stage, "LICENSE"), buildLicense({ dists: [join(stage, "dist"), join(stage, "media")], root: join(root, "..", "..") }));
 writeFileSync(join(stage, ".vscodeignore"), "**/*.map\n");
 // No source maps ship (they name the original source files): none copied above, no dangling sourceMappingURL trailers, and a hard stop if one slips in.
 for (const f of readdirSync(stage, { recursive: true }).map(String)) {

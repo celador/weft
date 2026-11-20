@@ -30,8 +30,6 @@ describe("billing is inert without Stripe secrets", () => {
       ["POST", "/v1/space/billing/portal", a.owner],
       ["POST", "/v1/billing/stripe/webhook", undefined],
       ["POST", "/v1/admin/billing/report", ADMIN],
-      ["POST", "/v1/space/billing/claim", a.owner],
-      ["POST", "/v1/billing/claim", undefined],
     ] as const) {
       const r = await call(m, p, tok, {});
       expect(r.status, p).toBe(503);
@@ -40,10 +38,8 @@ describe("billing is inert without Stripe secrets", () => {
     // even a correctly shaped webhook is not read
     const w = await SELF.fetch(`${BASE}/v1/billing/stripe/webhook`, { method: "POST", headers: { "stripe-signature": "t=1,v1=" + "0".repeat(64) }, body: "{}" });
     expect(w.status).toBe(503);
-    // the web purchase link says Pro is not sold here, as a page, without calling Stripe
-    const b = await SELF.fetch(`${BASE}/buy?interval=year&seats=2`, { redirect: "manual" });
-    expect(b.status).toBe(503);
-    expect(b.headers.get("content-type")).toContain("text/html");
+    // the anonymous web purchase is gone (accounts): no /buy page at all
+    expect((await SELF.fetch(`${BASE}/buy?interval=year&seats=2`, { redirect: "manual" })).status).toBe(404);
   });
 
   it("nobody hits an allowance: over the allowance still works, and usage is still counted", async () => {

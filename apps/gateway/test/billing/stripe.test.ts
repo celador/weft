@@ -69,7 +69,12 @@ describe("stripeConfig", () => {
     expect(stripeConfig({ ...full, STRIPE_PRICE_PRO_YEAR: undefined })).toBeNull();
     expect(stripeConfig({ ...full, STRIPE_SECRET_KEY: "pk_test_x" })).toBeNull();
     expect(stripeConfig({ ...full, STRIPE_SECRET_KEY: "rk_live_x" })).not.toBeNull();
-    // the legacy metered price alone no longer switches billing on
+    // the Commercial License is optional and needs both of its prices
+    expect(stripeConfig(full)?.license).toBeUndefined();
+    expect(stripeConfig({ ...full, STRIPE_PRICE_LICENSE_YEAR: "price_ly" } as never)?.license).toBeUndefined();
+    expect(stripeConfig({ ...full, STRIPE_PRICE_LICENSE_YEAR: "price_ly", STRIPE_PRICE_LICENSE_LIFETIME: "price_ll" } as never)?.license).toEqual({ year: "price_ly", lifetime: "price_ll" });
+    expect(stripeConfig({ ...full, STRIPE_PRICE_LICENSE_YEAR: "price_ly", STRIPE_PRICE_LICENSE_LIFETIME: "prod_x" } as never)?.license).toBeUndefined();
+        // the legacy metered price alone no longer switches billing on
     expect(stripeConfig({ STRIPE_SECRET_KEY: "sk_test_x", STRIPE_WEBHOOK_SECRET: "whsec_x", STRIPE_PRICE_ID: "price_x" } as never)).toBeNull();
   });
 });
@@ -78,7 +83,13 @@ describe("subscriptionFacts", () => {
   const prices = { month: "price_m", year: "price_y" };
   const sub = (price: Record<string, unknown>, quantity?: number) => ({ id: "sub_1", status: "active", customer: "cus_1", items: { data: [{ ...(quantity !== undefined ? { quantity } : {}), price }] } });
   it("reads seats and interval from a Pro subscription", () => {
-    expect(subscriptionFacts(sub({ id: "price_y", recurring: { interval: "year", usage_type: "licensed" } }, 3), prices)).toEqual({ id: "sub_1", status: "active", customer: "cus_1", pro: true, seats: 3, interval: "year" });
+    expect(subscriptionFacts(sub({ id: "price_y", recurring: { interval: "year", usage_type: "licensed" } }, 3), prices)).toEqual({ id: "sub_1", status: "active", customer: "cus_1", pro: true, seats: 3, interval: "year", priceId: "price_y", quantity: 3 });
+  });
+  it("a Commercial License subscription is not Pro, and carries its period and cancellation", () => {
+    const f = subscriptionFacts({ ...sub({ id: "price_ly", recurring: { interval: "year", usage_type: "licensed" } }, 2), cancel_at_period_end: true, items: { data: [{ quantity: 2, current_period_start: 10, current_period_end: 20, price: { id: "price_ly", recurring: { interval: "year" } } }] } }, prices, { year: "price_ly" });
+    expect(f).toMatchObject({ pro: false, priceId: "price_ly", quantity: 2, periodStart: 10, periodEnd: 20, cancelAtPeriodEnd: true });
+    // the same price without the license config would look like a (non-Weft) yearly subscription, never like the license
+    expect(subscriptionFacts(sub({ id: "price_y", recurring: { interval: "year", usage_type: "licensed" } }, 1), prices, { year: "price_ly" })).toMatchObject({ pro: true });
   });
   it("a legacy metered subscription, or a price that is not ours, is not Pro", () => {
     expect(subscriptionFacts(sub({ id: "price_old", recurring: { interval: "month", usage_type: "metered" } }), prices)).toMatchObject({ pro: false });
@@ -120,13 +131,14 @@ describe("intentOf: which Stripe events change a plan", () => {
     expect(intentOf({ id: "e", type: "invoice.payment_failed", created: 1 })).toBeNull();
   });
 
-  it("a /buy checkout (no space yet) is a web purchase with its session, customer and subscription", () => {
-    const web = { id: "evt", type: "checkout.session.completed", created: 1, data: { object: { id: "cs_test_abc12345", mode: "subscription", metadata: { weft_purchase: "web" }, customer: "cus_9", subscription: "sub_9", payment_status: "paid" } } };
-    expect(intentOf(web)).toEqual({ customer: "cus_9", plan: "paid", checkout: true, subscription: "sub_9", purchase: "cs_test_abc12345" });
-    const o = web.data.object as Record<string, unknown>;
-    expect(intentOf({ ...web, data: { object: { ...o, subscription: undefined } } })).toBeNull();
-    expect(intentOf({ ...web, data: { object: { ...o, payment_status: "unpaid", amount_total: 1200 } } })).toBeNull();
-    expect(intentOf({ ...web, data: { object: { ...o, metadata: {} } } })).toBeNull();
+  it("an account's checkout (client_reference_id = Clerk user id, same id in metadata) is the account's", () => {
+    const acc = { id: "evt", type: "checkout.session.completed", created: 1, data: { object: { id: "cs_test_abc12345", mode: "subscription", client_reference_id: "user_2abcdefGHIJ", metadata: { weft_account: "user_2abcdefGHIJ", weft_plan: "pro" }, customer: "cus_9", subscription: "sub_9", payment_status: "paid" } } };
+    expect(intentOf(acc)).toEqual({ account: "user_2abcdefGHIJ", customer: "cus_9", plan: "paid", checkout: true, subscription: "sub_9" });
+    const o = acc.data.object as Record<string, unknown>;
+    // the metadata must name the same account; an old anonymous /buy session is not ours any more
+    expect(intentOf({ ...acc, data: { object: { ...o, metadata: { weft_account: "user_2someoneELSE" } } } })).toBeNull();
+    expect(intentOf({ ...acc, data: { object: { ...o, client_reference_id: null, metadata: { weft_purchase: "web" } } } })).toBeNull();
+    expect(intentOf({ ...acc, data: { object: { ...o, payment_status: "unpaid", amount_total: 1200 } } })).toBeNull();
   });
 
   it("a subscription event carries the Pro seats when the subscription is Pro", () => {

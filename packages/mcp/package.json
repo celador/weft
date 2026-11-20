@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Weft MCP server for harnesses without hooks: weft_check/claim/status/inbox/feed/negotiate/gate tools, the pending inbox on every tool result (delayed L1), and an embedded file watcher that reports every edit (guaranteed L0).",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "bin": {
     "weft-mcp": "./bin/weft-mcp.mjs"
   },

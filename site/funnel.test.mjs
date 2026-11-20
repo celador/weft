@@ -124,3 +124,17 @@ test("graphqlQuery throws other errors at once", async () => {
   assert.equal(f.calls.length + g.calls.length, 2);
   assert.deepEqual(sleeps, []);
 });
+
+test("accountCounts: sign-ups by created day, paid by paid day, per first-visit campaign; merged with site campaigns", async () => {
+  const { accountCounts, mergeCampaigns } = await import("./funnel.mjs");
+  const a = accountCounts([
+    { id: "user_1", created_at: "2026-11-17T10:00:00Z", paid_at: "2026-11-18T09:00:00Z", utm_campaign: "vid1" },
+    { id: "user_2", created_at: "2026-11-17T11:00:00Z", paid_at: null, utm_campaign: "vid1" },
+    { id: "user_3", created_at: "2026-11-18T11:00:00Z", paid_at: null },
+  ]);
+  assert.deepEqual(a.byDay, { "2026-11-17": { signups: 2 }, "2026-11-18": { paid: 1, signups: 1 } });
+  assert.deepEqual(a.byCampaign, { vid1: { signups: 2, paid: 1 }, "(none)": { signups: 1 } });
+  const m = mergeCampaigns({ vid1: { views: 14, copies: 0, pricingViews: 4, buyClicks: 2 } }, a.byCampaign);
+  assert.deepEqual(m.vid1, { views: 14, copies: 0, pricingViews: 4, buyClicks: 2, signups: 2, paid: 1 });
+  assert.deepEqual(Object.keys(m), ["vid1", "(none)"]);
+});

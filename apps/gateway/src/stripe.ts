@@ -16,6 +16,10 @@ export interface StripeEnv {
   STRIPE_PRICE_PRO_MONTH?: string;
   /** Weft Pro, per seat, billed yearly. */
   STRIPE_PRICE_PRO_YEAR?: string;
+  /** Weft Commercial License, per seat, billed yearly (optional: without both license prices the license is not on sale). */
+  STRIPE_PRICE_LICENSE_YEAR?: string;
+  /** Weft Commercial License, per seat, paid once (never renews). */
+  STRIPE_PRICE_LICENSE_LIFETIME?: string;
   /** Name of the Billing Meter's event (default weft_agent_events): legacy usage-plan subscriptions only. */
   STRIPE_METER_EVENT_NAME?: string;
   /** Optional Customer Portal configuration (bpc_...); the account default is used when unset. */
@@ -24,7 +28,15 @@ export interface StripeEnv {
   WEFT_PUBLIC_URL?: string;
 }
 
-export type StripeConfig = { key: string; webhookSecret: string; prices: { month: string; year: string }; meterEvent: string; portalConfig?: string };
+export type StripeConfig = {
+  key: string;
+  webhookSecret: string;
+  prices: { month: string; year: string };
+  /** The Commercial License prices, when both are set (docs/pricing.md). */
+  license?: { year: string; lifetime: string };
+  meterEvent: string;
+  portalConfig?: string;
+};
 
 /**
  * The billing configuration, or null when billing is off. The key, the webhook secret and both Pro
@@ -42,17 +54,42 @@ export function stripeConfig(env: StripeEnv): StripeConfig | null {
   if (!month || !month.startsWith("price_") || !year || !year.startsWith("price_")) return null;
   const meterEvent = env.STRIPE_METER_EVENT_NAME?.trim() || DEFAULT_METER_EVENT;
   const portalConfig = env.STRIPE_PORTAL_CONFIG_ID?.trim();
-  return { key, webhookSecret, prices: { month, year }, meterEvent, ...(portalConfig ? { portalConfig } : {}) };
+  const lYear = env.STRIPE_PRICE_LICENSE_YEAR?.trim();
+  const lOnce = env.STRIPE_PRICE_LICENSE_LIFETIME?.trim();
+  const license = lYear?.startsWith("price_") && lOnce?.startsWith("price_") ? { year: lYear, lifetime: lOnce } : undefined;
+  return { key, webhookSecret, prices: { month, year }, ...(license ? { license } : {}), meterEvent, ...(portalConfig ? { portalConfig } : {}) };
 }
 
 /** What the gateway needs from a Stripe subscription: status, and the Pro seats and interval when it is a Pro one. */
-export type SubscriptionFacts = { id: string; customer?: string; status: string; seats?: number; interval?: "month" | "year"; pro: boolean };
+export type SubscriptionFacts = {
+  id: string;
+  customer?: string;
+  status: string;
+  seats?: number;
+  interval?: "month" | "year";
+  pro: boolean;
+  periodEnd?: number;
+  /** The first item's price id and quantity (the Commercial License is told apart by its price). */
+  priceId?: string;
+  quantity?: number;
+  /** Start of the current period: a renewal that failed leaves the license paid only up to here. */
+  periodStart?: number;
+  cancelAtPeriodEnd?: boolean;
+  /** Set on a subscription the buyer cancelled (Stripe's `ended_at`). */
+  endedAt?: number;
+  metadata?: Record<string, string>;
+};
 
 type StripeSubscription = {
   id?: unknown;
   status?: unknown;
   customer?: unknown;
-  items?: { data?: Array<{ quantity?: unknown; price?: { id?: unknown; recurring?: { interval?: unknown; usage_type?: unknown } } }> };
+  current_period_end?: unknown;
+  current_period_start?: unknown;
+  cancel_at_period_end?: unknown;
+  ended_at?: unknown;
+  metadata?: unknown;
+  items?: { data?: Array<{ quantity?: unknown; current_period_end?: unknown; current_period_start?: unknown; price?: { id?: unknown; recurring?: { interval?: unknown; usage_type?: unknown } } }> };
 };
 
 /**
@@ -60,7 +97,7 @@ type StripeSubscription = {
  * item is one of our Pro prices; the seats are that item's quantity. A legacy metered subscription has no
  * quantity and is not Pro.
  */
-export function subscriptionFacts(o: unknown, prices?: { month: string; year: string }): SubscriptionFacts | null {
+export function subscriptionFacts(o: unknown, prices?: { month: string; year: string }, license?: { year: string }): SubscriptionFacts | null {
   const s = o as StripeSubscription;
   if (!s || typeof s !== "object" || typeof s.id !== "string" || typeof s.status !== "string") return null;
   const customer = typeof s.customer === "string" ? s.customer : typeof (s.customer as { id?: unknown })?.id === "string" ? (s.customer as { id: string }).id : undefined;
@@ -68,8 +105,12 @@ export function subscriptionFacts(o: unknown, prices?: { month: string; year: st
   const priceId = typeof item?.price?.id === "string" ? item.price.id : undefined;
   const interval = item?.price?.recurring?.interval;
   const licensed = item?.price?.recurring?.usage_type !== "metered";
-  const pro = Boolean(item && licensed && (prices ? priceId === prices.month || priceId === prices.year : true) && (interval === "month" || interval === "year"));
+  const isLicense = Boolean(license && priceId === license.year);
+  const pro = !isLicense && Boolean(item && licensed && (prices ? priceId === prices.month || priceId === prices.year : true) && (interval === "month" || interval === "year"));
   const q = item?.quantity;
+  const num = (v: unknown) => (typeof v === "number" ? v : undefined);
+  const start = num(item?.current_period_start) ?? num(s.current_period_start);
+  const meta = s.metadata && typeof s.metadata === "object" ? Object.fromEntries(Object.entries(s.metadata as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string> : undefined;
   return {
     id: s.id,
     status: s.status,
@@ -77,11 +118,19 @@ export function subscriptionFacts(o: unknown, prices?: { month: string; year: st
     pro,
     ...(pro && typeof q === "number" && Number.isInteger(q) && q > 0 ? { seats: q } : {}),
     ...(pro ? { interval: interval as "month" | "year" } : {}),
+    // The renewal date: on the item since Stripe API 2025-03-31, on the subscription before.
+    ...(typeof item?.current_period_end === "number" ? { periodEnd: item.current_period_end } : typeof s.current_period_end === "number" ? { periodEnd: s.current_period_end } : {}),
+    ...(priceId ? { priceId } : {}),
+    ...(typeof q === "number" && Number.isInteger(q) && q > 0 ? { quantity: q } : {}),
+    ...(start !== undefined ? { periodStart: start } : {}),
+    ...(typeof s.cancel_at_period_end === "boolean" ? { cancelAtPeriodEnd: s.cancel_at_period_end } : {}),
+    ...(num(s.ended_at) !== undefined ? { endedAt: num(s.ended_at)! } : {}),
+    ...(meta ? { metadata: meta } : {}),
   };
 }
 
 export async function fetchSubscription(cfg: StripeConfig, id: string): Promise<SubscriptionFacts | null> {
-  return subscriptionFacts(await stripeRequest<unknown>(cfg.key, "GET", `/v1/subscriptions/${encodeURIComponent(id)}`), cfg.prices);
+  return subscriptionFacts(await stripeRequest<unknown>(cfg.key, "GET", `/v1/subscriptions/${encodeURIComponent(id)}`), cfg.prices, cfg.license);
 }
 
 /** Stripe error text sometimes quotes a (masked) key; never let one reach a log or a response. */

@@ -13,6 +13,8 @@ const load = () => import(/* @vite-ignore */ SCRIPT) as Promise<{
   cents(usd: number): number;
   setup(request: unknown, cfg: unknown, log?: (l: string) => void): Promise<{ product: string; prices: { month: string; year: string }; portal: string }>;
   setupLegacyUsage(request: unknown, cfg: unknown, log?: (l: string) => void): Promise<{ meter: string; product: string; price: string; portal: string }>;
+  setupLicense(request: unknown, cfg: unknown, log?: (l: string) => void): Promise<{ product: string; prices: { year: string; lifetime: string } }>;
+  LICENSE_LOOKUP_KEYS: { year: string; lifetime: string };
   ensureWebhook(request: unknown, url: string, log?: (l: string) => void): Promise<{ id: string; secret?: string }>;
   stripeClient(key: string, f: typeof fetch): (m: string, p: string, params?: Record<string, unknown>) => Promise<any>;
   STRIPE_VERSION: string;
@@ -25,6 +27,7 @@ type Cfg = {
   free_events_per_month: number;
   pro: { product_id: string; product_name: string; usd_per_user_month: number; usd_per_user_year: number; fair_use_events_per_seat_month: number; max_seats: number };
   legacy_usage: { usd_per_1000_events: number; meter_event_name: string; product_name: string; meter_display_name: string };
+  commercial_license: { product_id: string; product_name: string; usd_per_user_year: number; usd_per_user_once: number; max_seats: number };
 };
 
 /** An in-memory Stripe: just enough of meters, products, prices, portal configurations and webhook endpoints. */
@@ -69,6 +72,38 @@ describe("scripts/stripe-setup.mjs", () => {
     expect(cfg.pro.usd_per_user_year).toBeGreaterThan(0);
     expect(() => m.parsePricingConfig("no block here")).toThrow(/pricing-config/);
     expect(() => m.parsePricingConfig('```json pricing-config\n{"currency":"usd","free_events_per_month":1}\n```')).toThrow(/pro/);
+  });
+
+  it("pins the Commercial License prices John approved: $29 per user per year, $58 per user once", async () => {
+    const cfg = await readCfg();
+    expect(cfg.commercial_license).toEqual({ product_id: "weft_license", product_name: "Weft Commercial License", usd_per_user_year: 29, usd_per_user_once: 58, max_seats: cfg.pro.max_seats });
+    expect(cfg.pro).toMatchObject({ usd_per_user_month: 12, usd_per_user_year: 98 });
+    const m = await load();
+    const { commercial_license: _c, ...without } = cfg;
+    expect(() => m.parsePricingConfig("```json pricing-config\n" + JSON.stringify(without) + "\n```")).toThrow(/commercial_license/);
+  });
+
+  it("creates the Commercial License (product, a yearly per-seat price, a one-time per-seat price) once; a second run creates nothing", async () => {
+    const m = await load();
+    const cfg = await readCfg();
+    const s = fakeStripe();
+    const log1: string[] = [];
+    const ids = await m.setupLicense(s.request, cfg, (l) => log1.push(l));
+    expect(log1).toHaveLength(3);
+    expect(log1.every((l) => /created/.test(l))).toBe(true);
+    expect(s.db.products.get("weft_license")).toMatchObject({ name: "Weft Commercial License" });
+    const [year, once] = s.db.prices;
+    expect(year).toMatchObject({ id: ids.prices.year, product: "weft_license", lookup_key: m.LICENSE_LOOKUP_KEYS.year, unit_amount: 2900, recurring: { interval: "year", usage_type: "licensed" } });
+    expect(once).toMatchObject({ id: ids.prices.lifetime, product: "weft_license", lookup_key: m.LICENSE_LOOKUP_KEYS.lifetime, unit_amount: 5800 });
+    expect(once.recurring).toBeUndefined(); // one-time: never renews
+    const posts = s.db.posts.length;
+    const log2: string[] = [];
+    expect(await m.setupLicense(s.request, cfg, (l) => log2.push(l))).toEqual(ids);
+    expect(log2.every((l) => /found/.test(l))).toBe(true);
+    expect(s.db.posts.length).toBe(posts);
+    // the Pro portal never offers the license (a portal plan switch must not turn Pro into a license or back)
+    await m.setup(s.request, cfg);
+    expect(JSON.stringify(s.db.portals[0].features.subscription_update.products)).not.toContain("weft_license");
   });
 
   it("converts dollars to Stripe amounts", async () => {

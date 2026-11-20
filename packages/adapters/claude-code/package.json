@@ -1,6 +1,7 @@
 {
   "name": "@weft/adapter-claude-code",
   "version": "0.1.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "description": "WCP v0.1 adapter for Claude Code (L3): PreToolUse check/deny, PostToolUse edit + inbox injection, Stop gate, git commit-msg trailers and pre-commit gate.",

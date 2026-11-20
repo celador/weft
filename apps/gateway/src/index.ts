@@ -20,12 +20,13 @@ import { REPO_NAME, Registry, sha256Hex, type SpaceGrant, type TokenSpec } from 
 import { readSessionCookie, spacesAdmin, spacesRoute, throttleNetwork, throttleSpace, type SpacesEnv, type SpacesKit } from "./spaces";
 import { artifactsAdmin, artifactsRoute, forwardApproval, handleArtifactsBatch, startRevert, type ArtifactsEnv, type Kit } from "./artifacts";
 import { billingAdmin, billingRoute, meterEvent, overAllowance, type BillingKit } from "./billing";
+import { accountsAdmin, accountsRoute, type AccountsEnv, type AccountsKit } from "./accounts";
 import { stripeConfig } from "./stripe";
 
 export { RepoCoordinator } from "@weft/sequencer";
 export { Registry };
 
-export interface Env extends ArtifactsEnv, SpacesEnv {
+export interface Env extends ArtifactsEnv, SpacesEnv, AccountsEnv {
   WEFT_REPO: DurableObjectNamespace<RepoCoordinator>;
   WEFT_REGISTRY: DurableObjectNamespace<Registry>;
   /** Operator secret for /v1/admin (wrangler secret). The admin API is disabled when unset. */
@@ -161,6 +162,25 @@ function billingKit(env: Env): BillingKit {
   };
 }
 
+/** Accounts and `weft login` (accounts.ts): the billing helpers plus the bearer, an optional owner grant, and grant cache reset. */
+function accountsKit(env: Env): AccountsKit {
+  return {
+    ...billingKit(env),
+    bearer,
+    async ownerGrant(req) {
+      if (!bearer(req)) return undefined;
+      try {
+        const g = await authenticate(req, env);
+        return g.role === "owner" && g.space ? g : undefined;
+      } catch (e) {
+        if (e instanceof HttpError && e.code === "unauthorized") return undefined;
+        throw e;
+      }
+    },
+    dropGrants: () => grantCache.clear(),
+  };
+}
+
 /** Scope + repo check. A repo outside the token's list is 404 (do not leak existence). */
 function authorize(g: Grant, scope: "agent" | "observe" | "human" | "system", repo?: string): void {
   if (repo !== undefined && !canAccessRepo(g, repo)) throw new HttpError("repo_not_found", `repo ${repo} not found`);
@@ -258,6 +278,10 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
     return json({ type: "health", service: "weft-gateway", protocol: `wcp/${WCP_VERSION}`, ok: true });
 
   if (path.startsWith("/v1/admin")) return admin(req, env, path, m);
+
+  // ----- accounts (Clerk users on weft.mx) and `weft login` (off without CLERK_ISSUER)
+  const ac = await accountsRoute(req, env, accountsKit(env), path);
+  if (ac) return ac;
 
   // ----- hosted usage billing: Stripe webhook and Checkout return pages (off without Stripe secrets)
   const bl = await billingRoute(req, env, billingKit(env), path);
@@ -582,6 +606,8 @@ async function admin(req: Request, env: Env, path: string, m: string): Promise<R
   }
   const ba = await billingAdmin(req, env, billingKit(env), path);
   if (ba) return ba;
+  const acA = await accountsAdmin(req, env, billingKit(env), path);
+  if (acA) return acA;
   const sa = await spacesAdmin(req, env, spacesKit(env), path);
   if (sa) return sa;
   const aa = await artifactsAdmin(req, env, kit(env), path);

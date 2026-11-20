@@ -486,8 +486,9 @@ describe("hosted spaces: no IP-derived data on the space", () => {
         keys: sql.exec<{ net_key: string }>(`SELECT net_key FROM signup_counters`).toArray().map((r) => r.net_key),
       };
     });
-    expect(cols.sort()).toEqual(["created_at", "deleted_at", "id", "label", "status"]);
-    expect(Object.keys(row).sort()).toEqual(["created_at", "deleted_at", "id", "label", "status"]);
+    // account_id: the Clerk user id of a space made by `weft login` (an id, nothing IP-derived)
+    expect(cols.sort()).toEqual(["account_id", "created_at", "deleted_at", "id", "label", "status"]);
+    expect(Object.keys(row).sort()).toEqual(["account_id", "created_at", "deleted_at", "id", "label", "status"]);
     expect(JSON.stringify(row)).not.toContain(ip);
     const today = new Date().toISOString().slice(0, 10);
     const k = await networkKey(ip, "test-admin-token", today);
