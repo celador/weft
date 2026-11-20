@@ -7,17 +7,38 @@
     python3 packages/adapters/hermes/scripts/install.py --status
     python3 packages/adapters/hermes/scripts/install.py --uninstall      # undo everything
 
-Projects: every git repo directly under ``--project-dirs`` (default ~/github,~/code) is one Weft
-repo named after its directory (sanitized; see ``discover_projects`` in plugin/weft/adapter.py,
-which the plugin uses too). Modes are per repo: ``--enforce weft`` (default) blocks on conflicts in
-weft; every other repo is ``advise`` (never blocks, never waits on the gateway).
+Projects: every git repo directly under the project dirs is one Weft repo. The dirs are
+``--project-dirs`` (comma list), else the config's ``projects.dirs``, else ~/github,~/code; they are
+saved as absolute paths in ``projects.dirs``, which every later ``--sync`` (and the Otto relay)
+uses. A checkout that ``npx @celador/weft`` already registered keeps the repo named in its
+``.weft/space.json`` (e.g. ``<space>-<folder>``); others are named after their directory
+(sanitized; see ``discover_projects`` in plugin/weft/adapter.py, which the plugin uses too). Modes
+are per repo: ``--enforce weft`` (default) blocks on conflicts in weft; every other repo is
+``advise`` (never blocks, never waits on the gateway).
+
+Gateway: ``--url`` is the address the plugin on THIS Mac uses (loopback when the gateway runs
+here: http://127.0.0.1:7878); ``--public-url`` is the address other devices use for the same
+gateway (e.g. a tailnet URL the Otto relay hands to phones). Both are kept in the config (``url``,
+``public_url``); a later run without the flags keeps them. With neither flag nor a configured
+``url``, a running local gateway (``npx @celador/weft``, ~/.config/weft/local) is preferred over the
+hosted preview. The admin token defaults to that local gateway's for a loopback ``--url`` on its
+port (~/.config/weft/local/port). An admin token is only ever sent to a loopback URL whose
+listening process runs as you (``admin_target_refusal``): a health answer alone proves nothing.
+Changing between ``url`` and ``public_url`` of one gateway keeps every token, and the shared
+human token (otto-human-token.json) is re-keyed to ``public_url`` (else ``url``), the key clients
+look it up under.
 
 What install does (idempotent):
   1. builds dist/analyze.mjs (bundled @weft/analyzer + typescript; node >= 22) + dist/grammars/
+     and probes it. A package dir you cannot write (another account's checkout) is built into a
+     temp dir instead; ``--build-dir DIR`` picks the output dir; ``--no-build`` uses the bundle
+     already in dist/ (or ``--build-dir``) after the same probe.
   2. sync: discovers projects, creates each missing Weft repo (POST /v1/admin/repos, admin token
      from --admin-token-file), and issues one agent token per (profile, repo), agent id
      ``hermes-<profile>`` (POST /v1/admin/tokens; agent tokens are single-repo by protocol §3)
-  3. writes ~/.config/weft/hermes-adapter.json (mode 600): url, projects, modes, per-profile tokens
+  3. writes ~/.config/weft/hermes-adapter.json (mode 600): url, public_url, projects, modes,
+     per-profile tokens, and ``plugin`` ({installed, version, profiles}: no secrets) so the relay
+     can tell phones whether the Hermes plugin is installed
   4. backs up each profile's config.yaml to ~/.hermes/cache/backups/weft-plugins-<date>/
   5. copies plugin/weft/* + analyze.mjs + grammars/ into <profile home>/plugins/weft/ (+ INSTALLED.json, no secrets)
   6. enables the plugin: ``hermes [-p <profile>] plugins enable weft --no-allow-tool-override``;
@@ -40,15 +61,18 @@ weft_land.py's system token). Repos are kept. Secrets are never printed.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -56,15 +80,210 @@ from pathlib import Path
 PKG = Path(__file__).resolve().parent.parent
 PLUGIN_SRC = PKG / "plugin" / "weft"
 PLUGIN_FILES = ["plugin.yaml", "__init__.py", "adapter.py", "wcp.py", "land.py",
-                "surface.py", "cli.py", "standalone.py", "status.py", "pyanalyze.py"]
+                "surface.py", "cli.py", "standalone.py", "status.py", "pyanalyze.py", "worktrees.py"]
 DEFAULT_URL = "https://weft-gateway-preview.elier.ai"
 DEFAULT_ADMIN = "~/.config/weft/preview-admin-token"
 DEFAULT_PROJECT_DIRS = "~/github,~/code"
 CONFIG = Path(os.environ.get("WEFT_HERMES_CONFIG", "~/.config/weft/hermes-adapter.json")).expanduser()
+LOCAL_PORT = 7878  # npx @celador/weft's local gateway (packages/cli/src/gateways.ts LOCAL_PORT)
+HUMAN_TOKEN_FILE = "otto-human-token.json"
 
 sys.path.insert(0, str(PLUGIN_SRC.parent))
 sys.path.insert(0, str(PKG / "installer"))
-from weft.adapter import NODE_MIN_MAJOR, discover_projects, probe_node, resolve_node  # noqa: E402
+from weft.adapter import ADAPTER_VERSION, NODE_MIN_MAJOR, discover_projects, probe_node, resolve_node  # noqa: E402
+
+
+def weft_dir() -> Path:
+    """~/.config/weft (``WEFT_CONFIG_DIR`` overrides; tests point it at a temp dir)."""
+    return Path(os.environ.get("WEFT_CONFIG_DIR", "~/.config/weft")).expanduser()
+
+
+def norm_url(url) -> str:
+    """Trimmed, no trailing slash, scheme and host lowercased (they are case-insensitive, so
+    ``https://Box.example`` and ``https://box.example`` are one gateway). Path case is kept."""
+    s = str(url or "").strip().rstrip("/")
+    try:
+        parts = urllib.parse.urlsplit(s)
+    except ValueError:
+        return s
+    if not parts.scheme or not parts.netloc:
+        return s
+    user, at, host = parts.netloc.rpartition("@")
+    return urllib.parse.urlunsplit((parts.scheme.lower(), f"{user}{at}{host.lower()}", parts.path,
+                                    parts.query, parts.fragment))
+
+
+def is_loopback(url: str) -> bool:
+    """Any loopback spelling: localhost, 127.0.0.0/8, ::1 in any form (``[0:0:0:0:0:0:0:1]``)."""
+    try:
+        host = urllib.parse.urlsplit(str(url or "")).hostname or ""
+    except ValueError:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def url_port(url: str):
+    try:
+        parts = urllib.parse.urlsplit(str(url or ""))
+        return parts.port or {"http": 80, "https": 443}.get(parts.scheme.lower())
+    except ValueError:
+        return None
+
+
+def listener_uids(port: int):
+    """UIDs of the processes listening on TCP ``port`` on this machine, or None when that cannot
+    be told. Linux: /proc/net/tcp{,6} (every user's sockets). macOS: lsof, which shows a normal
+    user only their own processes, so another user's listener shows up as no listener at all."""
+    found, readable = set(), False
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            lines = Path(table).read_text().splitlines()[1:]
+        except OSError:
+            continue
+        readable = True
+        for line in lines:
+            f = line.split()
+            # sl local_address rem_address st ... uid: st 0A = LISTEN
+            if len(f) > 7 and f[3] == "0A" and int(f[1].rsplit(":", 1)[1], 16) == port:
+                found.add(int(f[7]))
+    if readable:
+        return found
+    lsof = shutil.which("lsof") or ("/usr/sbin/lsof" if os.path.exists("/usr/sbin/lsof") else None)
+    if not lsof:
+        return None
+    try:
+        out = subprocess.run([lsof, "-nP", "-w", "-a", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fu"],
+                             capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return {int(x[1:]) for x in out.stdout.split() if x.startswith("u") and x[1:].isdigit()}
+
+
+_ADMIN_TARGETS: dict = {}
+
+
+def admin_target_refusal(url: str):
+    """Why the admin token must not go to ``url``, or None. A loopback port is whatever process
+    bound it first: when the real gateway is down another local user can listen there (and answer
+    /v1/health like a gateway). So an admin token goes to a loopback URL only when every process
+    listening on that port runs as this user (who can read the token file anyway)."""
+    if not is_loopback(url):
+        return None
+    if url in _ADMIN_TARGETS:
+        return _ADMIN_TARGETS[url]
+    port = url_port(url)
+    uids = listener_uids(port) if port else None
+    me = os.getuid()
+    if uids is None:
+        why = f"cannot tell who listens on port {port} (no /proc/net/tcp, no lsof)"
+    elif not uids:
+        why = f"no process of yours is listening on port {port}"
+    elif uids != {me}:
+        why = f"port {port} is held by another user (uid {', '.join(str(u) for u in sorted(uids - {me}))})"
+    else:
+        why = None
+    _ADMIN_TARGETS[url] = why
+    return why
+
+
+def healthy(url: str, timeout: float = 3.0) -> bool:
+    req = urllib.request.Request(norm_url(url) + "/v1/health", headers={"User-Agent": "weft-hermes-installer/0.2"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status == 200 and b"weft-gateway" in resp.read(4096)
+    except Exception:
+        return False
+
+
+def local_gateway():
+    """(loopback url, admin token path) of the gateway ``npx @celador/weft`` runs on this Mac
+    when it is up, else None."""
+    admin = weft_dir() / "local" / "admin-token"
+    port = local_port()
+    if not admin.exists():
+        return None
+    url = f"http://127.0.0.1:{port}"
+    # Its /v1/health answer proves nothing (any listener can say "weft-gateway"); the admin token
+    # is offered only when the listener is this user's own process.
+    return (url, admin) if healthy(url) and admin_target_refusal(url) is None else None
+
+
+def local_port() -> int:
+    try:
+        return int((weft_dir() / "local" / "port").read_text().strip())
+    except (OSError, ValueError):
+        return LOCAL_PORT
+
+
+def env_url_override() -> str:
+    """``WEFT_HERMES_URL`` from this environment or ~/.hermes/.env (only that one line is read;
+    the file's other values are never kept or printed)."""
+    if os.environ.get("WEFT_HERMES_URL", "").strip():
+        return norm_url(os.environ["WEFT_HERMES_URL"])
+    try:
+        text = (hermes_root() / ".env").read_text()
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        key, sep, value = line.strip().removeprefix("export ").partition("=")
+        if sep and key.strip() == "WEFT_HERMES_URL":
+            return norm_url(value.strip().strip("'\""))
+    return ""
+
+
+def resolve_gateway(args, cfg: dict) -> None:
+    """Fill args.url / args.public_url / args.admin_token_file from the flags, the config, a
+    running local gateway, then the defaults (see the module docstring)."""
+    url = norm_url(args.url) or norm_url(cfg.get("url"))
+    if (not args.url and args.public_url is None and url and not is_loopback(url)
+            and not norm_url(cfg.get("public_url"))):
+        # The old workaround: `url` = the address phones use, WEFT_HERMES_URL = loopback for the
+        # plugin. Same gateway under two addresses: keep both, in the fields made for them.
+        override = env_url_override()
+        if override and is_loopback(override) and healthy(override):
+            print(f"note: WEFT_HERMES_URL {override} is this Mac's address of gateway {url}: saving it as "
+                  f"url and {url} as public_url (the WEFT_HERMES_URL line can go)")
+            args.public_url, url = url, override
+    local = None
+    if not url:
+        local = local_gateway()
+        url = local[0] if local else DEFAULT_URL
+        if local:
+            print(f"note: using this Mac's local Weft gateway {url} (pass --url to choose another)")
+    args.url = url
+    public = args.public_url if args.public_url is not None else cfg.get("public_url")
+    args.public_url = norm_url(public) if norm_url(public) != url else ""
+    if not args.admin_token_file:
+        # The local admin token belongs to the gateway npx @celador/weft runs (its port file), not
+        # to every loopback URL.
+        local_admin = weft_dir() / "local" / "admin-token"
+        mine = is_loopback(url) and url_port(url) == local_port() and local_admin.exists()
+        args.admin_token_file = str(local_admin) if mine else DEFAULT_ADMIN
+
+
+def resolve_dirs(args, cfg: dict) -> list:
+    """Project dirs as absolute paths: --project-dirs, else the config's ``projects.dirs``,
+    else the defaults. The saved list is authoritative for every later sync."""
+    if args.project_dirs is not None:
+        raw = [d.strip() for d in args.project_dirs.split(",") if d.strip()]
+    else:
+        raw = [str(d) for d in ((cfg.get("projects") or {}).get("dirs") or []) if str(d).strip()]
+        raw = raw or DEFAULT_PROJECT_DIRS.split(",")
+    out = []
+    for d in raw:
+        p = os.path.abspath(os.path.expanduser(d))
+        if p not in out:
+            out.append(p)
+    return out
+
+
+def gateway_aliases(url, public_url) -> set:
+    return {u for u in (norm_url(url), norm_url(public_url)) if u}
 
 
 def hermes_root() -> Path:
@@ -101,6 +320,10 @@ def node_bin() -> str:
 
 
 def admin_call(url: str, admin: str, method: str, path: str, body=None):
+    refusal = admin_target_refusal(url)
+    if refusal:
+        print(f"refusing to send the admin token to {norm_url(url)}: {refusal}", file=sys.stderr)
+        return 0, {"error": f"admin token not sent: {refusal}"}
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(url.rstrip("/") + path, data=data, method=method)
     req.add_header("Authorization", f"Bearer {admin}")
@@ -171,8 +394,9 @@ def issue_land_token(url: str, admin: str, repo: str):
 def has_land_token(cfg: dict, url: str, repo: str) -> bool:
     entry = (cfg.get("land_tokens") or {}).get(repo) or {}
     legacy = cfg.get("land") or {}
-    return bool((entry.get("token") and entry.get("url") == url)
-                or (legacy.get("token") and legacy.get("url") == url and legacy.get("repo") == repo))
+    url = norm_url(url)
+    return bool((entry.get("token") and norm_url(entry.get("url")) == url)
+                or (legacy.get("token") and norm_url(legacy.get("url")) == url and legacy.get("repo") == repo))
 
 
 def hermes(profile: str, *args: str) -> subprocess.CompletedProcess:
@@ -203,21 +427,60 @@ def enabled_in_config(profile: str) -> bool:
         return "- weft" in text
 
 
-def build() -> Path:
-    out = PKG / "dist" / "analyze.mjs"
-    env = dict(os.environ, PATH=f"{Path(node_bin()).parent}:{os.environ.get('PATH', '')}")
-    subprocess.run([node_bin(), str(PKG / "scripts" / "build.mjs"), str(out)], check=True, env=env,
-                   capture_output=True)
-    probe = subprocess.run([node_bin(), str(out)], input='{"files":[{"path":"a.ts","before":"","after":"export const a = 1;"},'
+def probe_bundle(bundle: Path) -> Path:
+    """Run the analyzer bundle once (TS + tree-sitter Python); exit when it does not work."""
+    if not bundle.is_file() or not (bundle.parent / "grammars").is_dir():
+        sys.exit(f"no analyzer bundle at {bundle} (with grammars/ next to it); build one: "
+                 f"node {PKG / 'scripts' / 'build.mjs'} <dir>/analyze.mjs")
+    probe = subprocess.run([node_bin(), str(bundle)], input='{"files":[{"path":"a.ts","before":"","after":"export const a = 1;"},'
                            '{"path":"b.py","before":"","after":"def b():\\n    return 1\\n"}]}',
                            capture_output=True, text=True, timeout=30)
     if '"ok":true' not in probe.stdout or "b.py#b" not in probe.stdout:
         sys.exit(f"analyzer bundle probe failed (TS + tree-sitter): {probe.stdout} {probe.stderr}")
-    return out
+    return bundle
+
+
+def writable(directory: Path) -> bool:
+    """Whether a build can write ``directory`` (created if missing) and replace what is in it."""
+    d = directory
+    while not d.exists() and d != d.parent:
+        d = d.parent
+    if not os.access(d, os.W_OK | os.X_OK):
+        return False
+    if directory.exists():
+        return all(os.access(p, os.W_OK) for p in [directory / "analyze.mjs", directory / "grammars"] if p.exists())
+    return True
+
+
+def build(out_dir=None) -> Path:
+    """Build dist/analyze.mjs (+ grammars/) into ``out_dir`` (default: the package's dist/; a
+    temp dir when that is not writable, e.g. another account's read-only checkout) and probe it."""
+    target = Path(out_dir).expanduser().resolve() if out_dir else PKG / "dist"
+    if not writable(target):
+        if out_dir:
+            sys.exit(f"--build-dir {target} is not writable")
+        tmp = Path(tempfile.mkdtemp(prefix="weft-hermes-build-"))
+        print(f"note: {target} is not writable; building the analyzer bundle in {tmp}")
+        target = tmp
+    out = target / "analyze.mjs"
+    env = dict(os.environ, PATH=f"{Path(node_bin()).parent}:{os.environ.get('PATH', '')}")
+    subprocess.run([node_bin(), str(PKG / "scripts" / "build.mjs"), str(out)], check=True, env=env,
+                   capture_output=True)
+    return probe_bundle(out)
+
+
+def bundle_for(args) -> Path:
+    """--no-build: the existing bundle (dist/ or --build-dir), probed. Otherwise build()."""
+    if getattr(args, "no_build", False):
+        where = Path(args.build_dir).expanduser().resolve() if getattr(args, "build_dir", None) else PKG / "dist"
+        bundle = probe_bundle(where / "analyze.mjs")
+        print(f"using the existing analyzer bundle {bundle} (--no-build)")
+        return bundle
+    return build(getattr(args, "build_dir", None))
 
 
 def read_admin(args) -> str:
-    p = Path(args.admin_token_file).expanduser()
+    p = Path(args.admin_token_file or DEFAULT_ADMIN).expanduser()
     return p.read_text().strip() if p.exists() else ""
 
 
@@ -232,11 +495,21 @@ def migrate_entry(entry: dict, legacy_repo: str) -> dict:
 def sync(args, cfg: dict) -> dict:
     """Discover projects; create missing repos; issue missing (profile, repo) tokens."""
     admin = read_admin(args)
-    if cfg.get("url") and cfg["url"] != args.url:
+    old = gateway_aliases(cfg.get("url"), cfg.get("public_url"))
+    new = gateway_aliases(args.url, args.public_url)
+    if old and not (old & new):
         print(f"note: switching gateway {cfg['url']} -> {args.url}; existing tokens are dropped")
         cfg["agents"] = {}
+    elif cfg.get("url") and norm_url(cfg["url"]) != args.url:
+        # The same gateway under another address (loopback <-> tailnet): keep every token.
+        print(f"note: gateway address {cfg['url']} -> {args.url} (same gateway: tokens kept)")
+        for entry in [cfg.get("land") or {}] + list((cfg.get("land_tokens") or {}).values()):
+            if entry.get("url") and norm_url(entry["url"]) in old | new:
+                entry["url"] = args.url
+    if not old or old & new:
+        rekey_human_token(old | new, args.public_url or args.url)
     legacy_repo = cfg.get("repo") or "weft"
-    dirs = [d.strip() for d in args.project_dirs.split(",") if d.strip()]
+    dirs = args.project_dirs
     explicit = {r["path"]: r["repo"] for r in (cfg.get("roots") or []) if r.get("repo")}
     projects = discover_projects(dirs, explicit)
     modes = dict(cfg.get("modes") or {})
@@ -249,6 +522,10 @@ def sync(args, cfg: dict) -> dict:
         repo_name, _, branch = pair.partition("=")
         if repo_name and branch:
             trunks[repo_name.strip()] = branch.strip()
+    if args.public_url:
+        cfg["public_url"] = args.public_url
+    else:
+        cfg.pop("public_url", None)
     cfg.update({
         "url": args.url, "repo": legacy_repo,
         # 0.1 roots (weft + the hermes-ios weft-feed worktree under prefix ios/) are replaced by
@@ -329,6 +606,49 @@ def sync(args, cfg: dict) -> dict:
     return cfg
 
 
+def rekey_human_token(aliases: set, key: str) -> None:
+    """Clients look the shared human token (otto-human-token.json, minted by the Otto relay) up
+    under ``public_url or url``. When it was saved under another address of the same gateway,
+    move it to that key (the token itself is unchanged and never printed)."""
+    path = weft_dir() / HUMAN_TOKEN_FILE
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return
+    have = norm_url(data.get("url")) if isinstance(data, dict) else ""
+    if not have or have == norm_url(key) or have not in aliases:
+        return
+    data["url"] = norm_url(key)
+    tmp = path.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+    print(f"human token: re-keyed to {norm_url(key)} (same gateway)")
+
+
+def record_plugin(profiles_on: list, profiles_off: list = ()) -> None:
+    """``plugin`` in the config: whether the Hermes plugin is installed, its version and the
+    profiles that have it. No secrets; the Otto relay exposes it so phones can tell why a feed
+    has sessions but no edits."""
+    with _SAVE_LOCK:
+        cfg = load_config()
+        if not cfg:
+            return
+        prev = cfg.get("plugin") if isinstance(cfg.get("plugin"), dict) else {}
+        have = [p for p in (prev.get("profiles") or []) if isinstance(p, str)]
+        profiles = sorted((set(have) | set(profiles_on)) - set(profiles_off))
+        cfg["plugin"] = {"installed": bool(profiles), "version": ADAPTER_VERSION if profiles_on else prev.get("version"),
+                         "profiles": profiles}
+        if profiles_on:
+            cfg["plugin"]["installed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        elif prev.get("installed_at"):
+            cfg["plugin"]["installed_at"] = prev["installed_at"]
+        save_config(cfg)
+
+
 def prune(args, cfg: dict, admin: str, keep: set, dirs: list) -> dict:
     """Revoke and drop the agent + land tokens of repos whose project is gone (a deleted
     throwaway repo). Skipped when a projects dir is missing (unmounted disk): absence proves
@@ -364,10 +684,11 @@ def prune(args, cfg: dict, admin: str, keep: set, dirs: list) -> dict:
 
 def install(args) -> None:
     cfg = load_config()
-    bundle = build()
-    print(f"built analyzer bundle ({bundle.stat().st_size // 1024} KiB)")
+    bundle = bundle_for(args)
+    print(f"analyzer bundle ready ({bundle.stat().st_size // 1024} KiB)")
     cfg = sync(args, cfg)
     backups = hermes_root() / "cache" / "backups" / f"weft-plugins-{time.strftime('%Y%m%d-%H%M%S')}"
+    done = []
     for profile in args.profiles:
         home = profile_home(profile)
         if not (home / "config.yaml").exists():
@@ -409,6 +730,9 @@ def install(args) -> None:
         ok = enabled_in_config(profile)
         print(f"[{profile}] plugin -> {dest} ; enabled={ok}{reload_note}"
               + ("" if ok else f" ({res.stdout.strip()} {res.stderr.strip()})"))
+        if ok:
+            done.append(profile)
+    record_plugin(done)
     print(f"config: {CONFIG} (mode 600); config.yaml backups: {backups}")
 
 
@@ -440,6 +764,7 @@ def uninstall(args) -> None:
                 print(f"land system token {land['token_id']} revoked (HTTP {status})")
     if cfg.get("agents"):
         save_config(cfg)
+        record_plugin([], args.profiles)
     elif CONFIG.exists():
         CONFIG.unlink()
         print(f"removed {CONFIG}")
@@ -448,8 +773,12 @@ def uninstall(args) -> None:
 def status(args) -> None:
     cfg = load_config()
     repos = sorted(set(((cfg.get("projects") or {}).get("repos") or {}).values()))
-    print(f"config {CONFIG}: {'present' if cfg else 'absent'}; gateway {cfg.get('url')}; "
-          f"{len(repos)} project repos; modes {cfg.get('modes')} (default {cfg.get('default_mode')})")
+    plugin = cfg.get("plugin") or {}
+    print(f"config {CONFIG}: {'present' if cfg else 'absent'}; gateway {cfg.get('url')}"
+          + (f" (public {cfg['public_url']})" if cfg.get("public_url") else "")
+          + f"; project dirs {(cfg.get('projects') or {}).get('dirs')}; {len(repos)} project repos; "
+          f"modes {cfg.get('modes')} (default {cfg.get('default_mode')}); "
+          f"plugin {'installed ' + str(plugin.get('version')) + ' ' + str(plugin.get('profiles')) if plugin.get('installed') else 'not installed'}")
     for profile in args.profiles:
         dest = profile_home(profile) / "plugins" / "weft"
         entry = (cfg.get("agents") or {}).get(profile) or {}
@@ -462,10 +791,19 @@ def status(args) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--profiles", default="all", help="comma list, or 'all' (default + ~/.hermes/profiles/*)")
-    p.add_argument("--url", default=DEFAULT_URL)
-    p.add_argument("--project-dirs", default=DEFAULT_PROJECT_DIRS)
+    p.add_argument("--url", default=None,
+                   help="gateway URL the plugin on this Mac uses (loopback for a local gateway); "
+                        f"default: the config's url, else a running local gateway, else {DEFAULT_URL}")
+    p.add_argument("--public-url", default=None,
+                   help="the same gateway's URL for other devices (e.g. tailnet); '' removes it; default: the config's")
+    p.add_argument("--project-dirs", default=None,
+                   help=f"comma list of project dirs; default: the config's projects.dirs, else {DEFAULT_PROJECT_DIRS}")
     p.add_argument("--enforce", default="weft", help="comma list of repos in enforce mode (others: advise)")
-    p.add_argument("--admin-token-file", default=DEFAULT_ADMIN)
+    p.add_argument("--admin-token-file", default=None,
+                   help=f"default: ~/.config/weft/local/admin-token for a loopback --url, else {DEFAULT_ADMIN}")
+    p.add_argument("--no-build", action="store_true",
+                   help="use the analyzer bundle already in dist/ (or --build-dir) after a probe")
+    p.add_argument("--build-dir", default=None, help="build the analyzer bundle here instead of dist/")
     p.add_argument("--trunk", action="append", default=[],
                    help="REPO=BRANCH trunk override for auto-land (default: origin/HEAD, else main, else master)")
     g = p.add_mutually_exclusive_group()
@@ -478,6 +816,9 @@ def main() -> None:
     else:
         args.profiles = [x.strip() for x in args.profiles.split(",") if x.strip()]
     args.enforce = [x.strip() for x in args.enforce.split(",") if x.strip()]
+    cfg = load_config()
+    resolve_gateway(args, cfg)
+    args.project_dirs = resolve_dirs(args, cfg)
     if args.sync:
         sync(args, load_config())
     elif args.uninstall:

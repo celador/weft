@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Squiggle, normalize, squiggles } from "@weft/feed";
-import { configDir, DEFAULT_URL, localPath, readCheckout, resolveTarget, tokenCandidates } from "../../src/config";
+import { configDir, DEFAULT_URL, localPath, normGatewayUrl, readCheckout, resolveTarget, sharedHumanToken, tokenCandidates } from "../../src/config";
 import { diagnosticMessage, placeSymbol, severityOf } from "../../src/place";
 
 function scratch(): string {
@@ -169,4 +169,42 @@ it("severity mapping and the Problems-panel message carry the cause", () => {
   expect(m).toContain("calcTotal changed under you.");
   expect(m).toContain("Suggestion: Re-read src/pricing.ts.");
   expect(m).toContain("Edit blocked by Weft · caused by claude-a · event #4.");
+});
+
+describe("sharedHumanToken (the Otto relay's human token, otto-human-token.json)", () => {
+  const LOOP = "http://127.0.0.1:7878";
+  const PUBLIC = "https://box.tailnet.example:8710";
+  function home(adapter: unknown, human: unknown): NodeJS.ProcessEnv {
+    const d = scratch();
+    if (adapter) writeFileSync(join(d, "hermes-adapter.json"), JSON.stringify(adapter));
+    if (human) writeFileSync(join(d, "otto-human-token.json"), JSON.stringify(human));
+    return { WEFT_HOME: d };
+  }
+
+  it("asking for the config's url finds a token saved under its public_url", () => {
+    const env = home({ url: LOOP, public_url: PUBLIC + "/" }, { url: PUBLIC, token: "h1" });
+    expect(sharedHumanToken(LOOP, env)).toBe("h1");
+    expect(sharedHumanToken(PUBLIC + "/", env)).toBe("h1");
+  });
+
+  it("another gateway's token is never returned", () => {
+    const env = home({ url: LOOP, public_url: PUBLIC }, { url: PUBLIC, token: "h1" });
+    expect(sharedHumanToken("https://elsewhere.example", env)).toBeUndefined();
+    expect(sharedHumanToken(LOOP, home({ url: "http://127.0.0.1:9999", public_url: PUBLIC }, { url: PUBLIC, token: "h1" }))).toBeUndefined();
+  });
+
+  it("an empty url never matches a token file without a url", () => {
+    const env = home({ public_url: PUBLIC }, { token: "no-url" });
+    expect(sharedHumanToken("", env)).toBeUndefined();
+    expect(sharedHumanToken("   ", env)).toBeUndefined();
+    expect(sharedHumanToken("", home(null, { url: "", token: "blank-url" }))).toBeUndefined();
+  });
+
+  it("scheme and host case do not make another gateway; a blank token is no token", () => {
+    const env = home({ url: LOOP, public_url: "HTTPS://Box.Tailnet.Example:8710" }, { url: PUBLIC, token: "h3" });
+    expect(sharedHumanToken("HTTP://127.0.0.1:7878/", env)).toBe("h3");
+    expect(sharedHumanToken(PUBLIC, home(null, { url: PUBLIC, token: "  " }))).toBeUndefined();
+    expect(normGatewayUrl(" HTTPS://User@Box.Example/Path/ ")).toBe("https://User@box.example/Path");
+    expect(normGatewayUrl(undefined)).toBe("");
+  });
 });

@@ -68,8 +68,16 @@ child's stderr first line is logged when it dies. `install.py` writes only a pro
 
 Every Hermes profile reports edits in **every project**, one Weft repo per project:
 
-- a project is a git repo directly under `~/github` or `~/code`; its Weft repo is the directory
-  name (sanitized to `[A-Za-z0-9._-]`, e.g. `~/github/cto` → `cto`);
+- a project is a git repo directly under one of the project dirs (`projects.dirs` in the config,
+  set with `install.py --project-dirs`; default `~/github,~/code`);
+- a checkout that `npx @celador/weft` already registered keeps the repo named in its
+  `.weft/space.json` (`<space>-<folder>`), so its Hermes and Claude Code edits share one feed.
+  That file sits in the checkout the agent edits, so it only ever names a repo (never a gateway,
+  token or mode): `install.py --sync` ignores one git tracks (it came with a clone), and before a
+  sync the plugin accepts the name only when it is a repo the config already has and the folder
+  name is not;
+  any other project's Weft repo is the directory name (sanitized to `[A-Za-z0-9._-]`, e.g.
+  `~/github/cto` → `cto`);
 - its `.worktrees/*` (kanban worktrees) and any linked `git worktree` elsewhere whose common git
   dir is the project resolve to the same repo, with worktree-relative paths (all worktrees share keys);
 - explicit `roots` (`{path, prefix, repo}`) override discovery;
@@ -77,9 +85,35 @@ Every Hermes profile reports edits in **every project**, one Weft repo per proje
   `.git`, `node_modules`, caches and build outputs (`dist`, `build`, `.next`, `target`,
   `DerivedData`, `.venv`, …), and paths outside a project.
 
-`WeftRouter` keeps one `WeftAdapter` (= one WCP session) per repo, created on the first in-scope
-tool call. A project that has no token for the profile (no Weft repo yet) is a no-op with one log
-line per process; `install.py --sync` adds it.
+`WeftRouter` keeps one `WeftAdapter` (= one WCP session) per (repo, Hermes conversation), created
+on the first in-scope tool call. The conversation comes from each hook call's own ids
+(`conversation_id`, else `session_id` mapped back to its conversation, else `task_id`), never
+from process state: the gateway process runs many chats at once, and each chat's edits are
+reported as its own change (`hermes-<profile>/adhoc-<conversation>`). A kanban worker (or a
+pinned candidate run) is one task for the whole process. A conversation's sessions close on
+`on_session_finalize`, or after 2 h without a tool call (no heartbeats for a quiet chat).
+A project that has no token for the profile (no Weft repo yet) is a no-op with one log line per
+process; `install.py --sync` adds it.
+
+Terminal calls are located by their leading `cd <abs path> &&` or `git [opts] -C <abs path>
+[opts] <subcommand>` target (the Claude Code adapter's Bash forms, plus `'\''` quoting, git
+global options and leading blank lines) and by `workdir` (else the session's cwd): `cd
+~/github/x/.worktrees/t && rm f` run from another worktree's session edits `t`. Fail closed: a
+command that changes directory in any other spelling (`cd x;`, a second `cd` or `-C`, `pushd`,
+`--git-dir`, `sh -c`, ...) also has every in-scope worktree named by an absolute or `~` path in it
+snapshotted around the call, and each of those runs the commit gate for `git commit`.
+
+Kanban worktrees join the Claude Code adapter: on `on_kanban_worker_spawned` the plugin checks
+whether the worker's workspace is a linked git worktree of a checkout with `.weft/claude.json`
+and, if so, runs that checkout's adapter (`.weft/bin/weft install --dir <worktree> --task
+<kanban task id> --token-from <main token file>`). Claude Code sessions and commits in the
+worktree then report as the kanban task. (The dispatcher's `git worktree add` runs with git
+hooks off, so a `post-checkout` hook could not do this.) The Claude Code adapter itself stops its
+config search at a linked worktree without its own `.weft/claude.json`, so an unjoined worktree's
+commits are never stamped with the main checkout's Task-Id / Change-Id; while the main checkout
+enforces, its hook refuses edits and commands in such a worktree (except the join command) until
+it joins, so `git worktree add` is no way around enforcement. Setting:
+`join_worktrees` (default on).
 
 ### Modes
 
@@ -116,6 +150,24 @@ python3 packages/adapters/hermes/scripts/install.py --status
 python3 packages/adapters/hermes/scripts/install.py --uninstall  # reverses everything below
 ```
 
+Flags: `--project-dirs DIR,DIR` (saved absolute in `projects.dirs`; later runs reuse it);
+`--url` = the gateway address the plugin on this Mac uses (loopback for a local gateway, e.g.
+`http://127.0.0.1:7878`), `--public-url` = the same gateway's address for other devices (e.g. a
+tailnet URL the Otto relay hands to phones; `''` removes it). Both are saved (`url`,
+`public_url`) and kept by later runs. With no `--url` and none configured, a running local
+gateway (`npx @celador/weft`) is preferred over the hosted preview, and a loopback `--url` on its
+port uses that gateway's admin token. An admin token is sent to a loopback URL only when every
+process listening on that port runs as you (`/proc/net/tcp` or `lsof`): a `/v1/health` answer
+alone proves nothing, since any local user can bind the port while the gateway is down. URLs
+compare with scheme and host case ignored. Moving between the two addresses of one gateway keeps every token
+and re-keys the shared human token (`otto-human-token.json`) to `public_url or url`, the key
+clients look it up under. A config whose `url` is the public address while `WEFT_HERMES_URL`
+(env or `~/.hermes/.env`) points at a healthy loopback gateway is migrated to `url` = loopback,
+`public_url` = the old `url`. `--no-build` uses the bundle already in `dist/` (or `--build-dir`)
+after the usual probe; a package dir you cannot write is built into a temp dir instead, so a
+read-only checkout (another account's) installs as is. The config also gets `plugin`
+(`{installed, version, profiles, installed_at}`, no secrets) for the relay.
+
 Install (idempotent): builds `dist/analyze.mjs`; **sync** — discovers projects, creates each
 missing Weft repo (`POST /v1/admin/repos`, admin token from `~/.config/weft/preview-admin-token`)
 and issues one agent token per (profile, repo) (`POST /v1/admin/tokens`, agent
@@ -141,7 +193,8 @@ revokes the profile's tokens (`DELETE /v1/admin/tokens/<id>`), removes it from t
 (and the file when empty). Weft repos are kept. Manual equivalent: `hermes [-p P] plugins disable
 weft && rm -rf <home>/plugins/weft`, then `rm ~/.config/weft/hermes-adapter.json`.
 
-Overrides: `WEFT_HERMES_CONFIG`, `WEFT_HERMES_URL`, `WEFT_HERMES_TOKEN`, `WEFT_HERMES_MODE`,
+Overrides (none needed for a normal install): `WEFT_HERMES_CONFIG`, `WEFT_HERMES_URL` (wins over
+the config's `url`), `WEFT_HERMES_TOKEN`, `WEFT_HERMES_MODE`,
 `WEFT_HERMES_CACHE`.
 
 ## Tests

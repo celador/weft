@@ -100,7 +100,7 @@ class CatalogTests(unittest.TestCase):
             def inbox_now(self):
                 return 'x' * 9000 + 'IMPORTANT END'
         class Router:
-            def adapter_at(self, directory):
+            def adapter_at(self, directory, kw=None):
                 return Adapter()
         tool = surface.make_tools(lambda: Router())[1]
         data = json.loads(tool['handler']())

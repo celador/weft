@@ -25,7 +25,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CLAIM_USAGE, NEGOTIATE_USAGE, parseClaim, parseNegotiate } from "@weft/protocol";
 import { HttpTransport, type Transport } from "./client";
-import { BASH_TARGET_FORMS, CONFIG_REL, appendAdapterLog, bashTargetDir, configStarts, pinFromArgs, withoutPinnedOverrides, currentSession, findRoot, loadConfig, hasDotDot, pinMatches, throughSymlink, readConfigFile, readState, stateDir, type AdapterConfig, type Loaded, type Pin } from "./config";
+import { BASH_TARGET_FORMS, CONFIG_REL, appendAdapterLog, bashTargetDir, configStarts, pinFromArgs, withoutPinnedOverrides, currentSession, findRoot, loadConfig, hasDotDot, pinMatches, throughSymlink, readConfigFile, readState, stateDir, unjoinedWorktree, type AdapterConfig, type Loaded, type Pin } from "./config";
 import { EDIT_TOOLS, editPath } from "./edits";
 import { ClaudeAdapter, type HookInput } from "./hooks";
 import { flushJobs, type LspJob } from "./lsp-queue";
@@ -97,6 +97,71 @@ export const BY_PATH_SYMLINK =
 /** `--by-path` denial for an edit inside a joined checkout's own `.weft/` (its config and token). */
 export const BY_PATH_WEFT_DIR =
   "[weft] Files under the worktree's .weft/ are Weft's own (its config and token); a subagent does not edit them.";
+/** The one command that joins `worktree` to the enforcing checkout `owner` (its config `cfg`). `task` = the WCP task. */
+function joinWords(worktree: string, owner: string, cfg: Partial<AdapterConfig>, task: string): string[] {
+  const words = [`${owner}/.weft/bin/weft`, "install", "--dir", worktree, "--url", cfg.url ?? "", "--repo", cfg.repo ?? "",
+    "--agent", cfg.agent ?? "", "--task", task, "--mode", "enforce", "--token-from", resolve(owner, cfg.tokenFile ?? ".weft/token")];
+  return cfg.prefix ? [...words, "--prefix", cfg.prefix] : words;
+}
+
+const JOIN_TASK = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+/**
+ * Denial for an edit or command in a linked worktree that has not joined Weft while the checkout it
+ * belongs to enforces. Names the one command that joins it (no secret in it: the token is copied
+ * from the owner's token file by the adapter itself).
+ */
+export function unjoinedDenial(worktree: string, owner: string, cfg: Partial<AdapterConfig>): string {
+  const cmd = joinWords(worktree, owner, cfg, "TASK").map((w) => (w === "TASK" ? "<task id>" : shellQuote(w))).join(" ");
+  return `[weft] ${worktree} is a git worktree of ${owner}, which enforces Weft, but it has not joined Weft yet (no .weft/claude.json of its own), so edits and commands here are refused. Join it first (exactly this command, with your task id): ${cmd}`;
+}
+
+/** Shell words of a command made only of bare, '...' and "..." words (no expansion, no operators); undefined otherwise. */
+export function plainWords(command: string): string[] | undefined {
+  if (/[;&|`$<>()\n\r\\]/.test(command)) return undefined;
+  const words: string[] = [];
+  const re = /\s*(?:'([^']*)'|"([^"]*)"|([^\s'"]+))(?=\s|$)/y;
+  let i = 0;
+  const rest = command.trimEnd();
+  while (i < rest.length) {
+    re.lastIndex = i;
+    const m = re.exec(rest);
+    if (!m) return undefined;
+    words.push(m[1] ?? m[2] ?? m[3]!);
+    i = re.lastIndex;
+  }
+  return words;
+}
+
+/**
+ * True when a Bash command in an unjoined worktree is THE join (the owner's launcher, `install`,
+ * this worktree, the owner's url/repo/agent/prefix/token file, `--mode enforce`, any task id: no
+ * other flag, nothing else on the line), or works outside that worktree. Any other install (say
+ * `--mode advise`) would let the agent switch enforcement off, so it is refused like the rest.
+ */
+export function unjoinedAllows(command: string, cwd: string, worktree: string, owner: string, cfg: Partial<AdapterConfig> = readConfigFile(owner) ?? {}): boolean {
+  const words = plainWords(command.trim());
+  if (words && words.length >= 2 && words[1] === "install") {
+    const task = words[words.indexOf("--task") + 1] ?? "";
+    const want = joinWords(worktree, owner, cfg, task);
+    const flags = (ws: string[]) => {
+      const m = new Map<string, string>();
+      for (let i = 2; i < ws.length; i += 2) {
+        if (!ws[i]!.startsWith("--") || m.has(ws[i]!) || i + 1 >= ws.length) return undefined;
+        m.set(ws[i]!, ws[i + 1]!);
+      }
+      return m;
+    };
+    const got = flags(words);
+    const exp = flags(want)!;
+    // every planned flag present (so no other flag fits in the same count) with its planned value
+    const same = !!got && got.size === exp.size && [...exp].every(([k, v]) => got.has(k) && (k === "--dir" ? resolve(cwd, got.get(k)!) === v : got.get(k) === v));
+    return words[0] === want[0] && JOIN_TASK.test(task) && same && !!cfg.url && !!cfg.repo && !!cfg.agent;
+  }
+  const target = bashTargetDir(command, cwd);
+  return !!target && target !== worktree && !target.startsWith(worktree + sep);
+}
+
 /** `--by-path` note when the checkout's config does not match the pinned coordinator. */
 export const BY_PATH_REFUSED =
   "[weft] This checkout is not coordinated: its .weft/claude.json does not match the coordinator this subagent is pinned to (see .weft/log/adapter.log). Work only in the worktree you were given.";
@@ -146,6 +211,21 @@ async function hook(byPath: boolean, args: string[] = []): Promise<void> {
           break;
         }
         loaded = found;
+        break;
+      }
+    }
+    if (!loaded && !out && input.hook_event_name === "PreToolUse" && (EDIT_TOOLS.has(input.tool_name ?? "") || input.tool_name === "Bash")) {
+      // A linked worktree without its own config borrows nothing (findRoot), but if the checkout it
+      // belongs to enforces, `git worktree add` must not switch enforcement off: refuse until it joins.
+      const starts = byPath && target ? [file ? dirname(target) : target] : configStarts(input, byPath);
+      for (const start of starts.length ? starts : [cwd]) {
+        const u = unjoinedWorktree(start);
+        const owner = u ? readConfigFile(u.owner) : undefined;
+        if (!u || !owner || owner.mode === "advise") continue;
+        if ((byPath || pinned) && !pinMatches(u.owner, pin)) continue;
+        if (input.tool_name === "Bash" && unjoinedAllows(command, cwd, u.worktree, u.owner, owner)) continue;
+        appendAdapterLog(u.owner, `hook refused ${input.tool_name} in unjoined worktree ${u.worktree}`);
+        out = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: unjoinedDenial(u.worktree, u.owner, owner) } };
         break;
       }
     }
@@ -297,10 +377,15 @@ async function install(args: string[]): Promise<void> {
   // The plugin trusts this checkout's config only through what the user chose here, kept outside the repo.
   // Only an explicit --url/--repo counts: a config that was already in the checkout is not a choice.
   if (arg(args, "url") && arg(args, "repo")) recordPin(root, "claude-code", { url: config.url, repo: config.repo, mode: config.mode ?? "enforce" });
-  if (process.env.WEFT_TOKEN) {
+  // The token: WEFT_TOKEN, or --token-from <file> (another checkout's token file, e.g. the main
+  // checkout's when a kanban worktree joins: the caller never has to read the token itself).
+  const tokenFrom = arg(args, "token-from");
+  const tokenValue = process.env.WEFT_TOKEN?.trim() || (tokenFrom ? readFileSync(resolve(tokenFrom), "utf8").trim() : "");
+  if (tokenFrom && !tokenValue) throw new Error(`install: --token-from ${tokenFrom} is empty`);
+  if (tokenValue) {
     const tokenPath = resolve(root, config.tokenFile!);
     mkdirSync(dirname(tokenPath), { recursive: true });
-    writeFileSync(tokenPath, process.env.WEFT_TOKEN.trim() + "\n", { mode: 0o600 });
+    writeFileSync(tokenPath, tokenValue + "\n", { mode: 0o600 });
     chmodSync(tokenPath, 0o600);
   }
 
@@ -343,7 +428,7 @@ async function install(args: string[]): Promise<void> {
   mkdirSync(dirname(cliPath), { recursive: true });
   writeFileSync(cliPath, `#!/bin/sh\n# ${HOOK_MARK}: Weft CLI for the agent in this checkout (negotiate, inbox, claim)\nexec ${shellQuote(stableNodePath())} ${shellQuote(SELF)} "$@"\n`, { mode: 0o755 });
   chmodSync(cliPath, 0o755);
-  const hasToken = existsSync(resolve(root, config.tokenFile!)) || !!process.env.WEFT_TOKEN;
+  const hasToken = existsSync(resolve(root, config.tokenFile!)) || !!tokenValue;
   process.stdout.write(
     `weft: installed Claude Code adapter in ${root}\n` +
       `  coordinator ${config.url} repo ${config.repo} agent ${config.agent} task ${config.task.id} change ${config.change}\n` +
@@ -567,7 +652,7 @@ async function main(): Promise<void> {
       process.exitCode = await claimCmd(args);
       return;
     default:
-      process.stderr.write("usage: weft-adapter-claude install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--shared]\n       weft-adapter-claude hook [--by-path --url U --repo R [--mode M]]|install-agent [--dir D] [--name N] [--url U --repo R [--mode M]]|commit-msg FILE|pre-commit|status\n       weft-adapter-claude negotiate …|inbox (see negotiate --help)\n       weft-adapter-claude claim --keys path#symbol[,…] [--firm] [--ttl MS]\n");
+      process.stderr.write("usage: weft-adapter-claude install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--token-from FILE] [--shared]\n       weft-adapter-claude hook [--by-path --url U --repo R [--mode M]]|install-agent [--dir D] [--name N] [--url U --repo R [--mode M]]|commit-msg FILE|pre-commit|status\n       weft-adapter-claude negotiate …|inbox (see negotiate --help)\n       weft-adapter-claude claim --keys path#symbol[,…] [--firm] [--ttl MS]\n");
       process.exitCode = cmd ? 2 : 0;
   }
 }
