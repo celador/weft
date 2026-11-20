@@ -297,10 +297,15 @@ async function install(args: string[]): Promise<void> {
   // The plugin trusts this checkout's config only through what the user chose here, kept outside the repo.
   // Only an explicit --url/--repo counts: a config that was already in the checkout is not a choice.
   if (arg(args, "url") && arg(args, "repo")) recordPin(root, "claude-code", { url: config.url, repo: config.repo, mode: config.mode ?? "enforce" });
-  if (process.env.WEFT_TOKEN) {
+  // The token: WEFT_TOKEN, or --token-from <file> (another checkout's token file, e.g. the main
+  // checkout's when a kanban worktree joins: the caller never has to read the token itself).
+  const tokenFrom = arg(args, "token-from");
+  const tokenValue = process.env.WEFT_TOKEN?.trim() || (tokenFrom ? readFileSync(resolve(tokenFrom), "utf8").trim() : "");
+  if (tokenFrom && !tokenValue) throw new Error(`install: --token-from ${tokenFrom} is empty`);
+  if (tokenValue) {
     const tokenPath = resolve(root, config.tokenFile!);
     mkdirSync(dirname(tokenPath), { recursive: true });
-    writeFileSync(tokenPath, process.env.WEFT_TOKEN.trim() + "\n", { mode: 0o600 });
+    writeFileSync(tokenPath, tokenValue + "\n", { mode: 0o600 });
     chmodSync(tokenPath, 0o600);
   }
 
@@ -343,7 +348,7 @@ async function install(args: string[]): Promise<void> {
   mkdirSync(dirname(cliPath), { recursive: true });
   writeFileSync(cliPath, `#!/bin/sh\n# ${HOOK_MARK}: Weft CLI for the agent in this checkout (negotiate, inbox, claim)\nexec ${shellQuote(stableNodePath())} ${shellQuote(SELF)} "$@"\n`, { mode: 0o755 });
   chmodSync(cliPath, 0o755);
-  const hasToken = existsSync(resolve(root, config.tokenFile!)) || !!process.env.WEFT_TOKEN;
+  const hasToken = existsSync(resolve(root, config.tokenFile!)) || !!tokenValue;
   process.stdout.write(
     `weft: installed Claude Code adapter in ${root}\n` +
       `  coordinator ${config.url} repo ${config.repo} agent ${config.agent} task ${config.task.id} change ${config.change}\n` +
@@ -567,7 +572,7 @@ async function main(): Promise<void> {
       process.exitCode = await claimCmd(args);
       return;
     default:
-      process.stderr.write("usage: weft-adapter-claude install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--shared]\n       weft-adapter-claude hook [--by-path --url U --repo R [--mode M]]|install-agent [--dir D] [--name N] [--url U --repo R [--mode M]]|commit-msg FILE|pre-commit|status\n       weft-adapter-claude negotiate …|inbox (see negotiate --help)\n       weft-adapter-claude claim --keys path#symbol[,…] [--firm] [--ttl MS]\n");
+      process.stderr.write("usage: weft-adapter-claude install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--token-from FILE] [--shared]\n       weft-adapter-claude hook [--by-path --url U --repo R [--mode M]]|install-agent [--dir D] [--name N] [--url U --repo R [--mode M]]|commit-msg FILE|pre-commit|status\n       weft-adapter-claude negotiate …|inbox (see negotiate --help)\n       weft-adapter-claude claim --keys path#symbol[,…] [--firm] [--ttl MS]\n");
       process.exitCode = cmd ? 2 : 0;
   }
 }

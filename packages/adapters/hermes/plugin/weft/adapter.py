@@ -99,6 +99,8 @@ MAX_FILE_BYTES = 512 * 1024
 MAX_SNAPSHOT_FILES = 300
 DRAIN_EVERY_S = 20.0
 RELOAD_EVERY_S = 60.0  # long-lived processes re-read the config for unknown projects at most this often
+SESSION_IDLE_S = 6 * 3600.0  # a chat's adapters (one WCP session per repo) close after this long idle
+MAX_SESSION_KEYS = 4096      # remembered session id -> conversation id pairs
 RELEASE_AFTER_REFUSALS = 2
 SYMBOL_KEY = re.compile(r"^[^#\s]+#[^#\s]+$")  # WCP SymbolKey (schema $defs.SymbolKey)
 # Terminal commands that move other people's changes into the worktree: their file changes are
@@ -151,11 +153,24 @@ def _real(p: str) -> str:
     return os.path.realpath(os.path.expanduser(p))
 
 
+def space_repo(checkout: str) -> Optional[str]:
+    """The Weft repo ``npx @celador/weft`` registered this checkout as (``.weft/space.json``
+    ``repo``, e.g. ``<space>-<folder>``), when it names a valid one. Such a checkout already has a
+    feed: reporting it under a bare ``<folder>`` repo would split one project's events in two."""
+    try:
+        with open(os.path.join(checkout, ".weft", "space.json")) as f:
+            repo = json.loads(f.read(65536)).get("repo")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return repo if isinstance(repo, str) and REPO_NAME.match(repo) else None
+
+
 def discover_projects(dirs: List[str], explicit: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """{project dir (realpath): weft repo} for every top-level git repo in ``dirs``.
 
     A project is a direct child of a projects dir that is a git checkout (``.git`` dir or file).
-    Names come from the basename; a later dir's duplicate gets ``<dirbasename>-<name>``.
+    A checkout with ``.weft/space.json`` keeps the repo named there (``space_repo``); other names
+    come from the basename, and a later dir's duplicate gets ``<dirbasename>-<name>``.
     ``explicit`` (path -> repo) wins over discovery.
     """
     out: Dict[str, str] = {}
@@ -170,13 +185,60 @@ def discover_projects(dirs: List[str], explicit: Optional[Dict[str, str]] = None
             full = os.path.join(base, name)
             if name.startswith(".") or not os.path.isdir(full) or not os.path.exists(os.path.join(full, ".git")):
                 continue
-            repo = sanitize_repo(name)
-            if repo in taken and taken[repo] != full:
-                repo = sanitize_repo(f"{os.path.basename(base)}-{name}")
-            taken[repo] = full
+            repo = space_repo(full)
+            if repo is None:
+                repo = sanitize_repo(name)
+                if repo in taken and taken[repo] != full:
+                    repo = sanitize_repo(f"{os.path.basename(base)}-{name}")
+            taken.setdefault(repo, full)
             out[full] = repo
     for path, repo in (explicit or {}).items():
         out[_real(path)] = repo
+    return out
+
+
+# ------------------------------------------------------------------------------------------
+# terminal targets (the same accepted forms as the Claude Code adapter's Bash handling)
+# ------------------------------------------------------------------------------------------
+# Bare paths exclude glob/brace/expansion characters (the shell would rewrite them before cd
+# runs); double-quoted paths exclude `$`, backquote and `\`; single quotes keep everything
+# literal. Only a LEADING `cd <dir> &&` or `git -C <dir> <subcommand>` counts.
+_BASH_DIR = r"""(?:"([^"$`\\\n\r]+)"|'([^'\n\r]+)'|([^\s"'$`;&|<>()*?\[\]{},\\]+))"""
+_CD_TARGET = re.compile(r"^[ \t]*cd[ \t]+" + _BASH_DIR + r"[ \t]*&&")
+_GIT_C_TARGET = re.compile(r"^[ \t]*git[ \t]+-C[ \t]+" + _BASH_DIR + r"[ \t]+[a-z]")
+
+
+def bash_target_dir(command: Any) -> Optional[str]:
+    """The directory a shell command works in when it names one with a leading ``cd <dir> &&``
+    or ``git -C <dir> <subcommand>`` (absolute or ``~`` path; no ``..``, no variables). None
+    otherwise. Mirrors ``bashTargetDir`` in packages/adapters/claude-code/src/config.ts."""
+    if not isinstance(command, str):
+        return None
+    m = _CD_TARGET.match(command) or _GIT_C_TARGET.match(command)
+    if not m:
+        return None
+    raw = m.group(1) or m.group(2) or m.group(3)
+    if not raw or ".." in re.split(r"[\\/]", raw):
+        return None
+    quoted = m.group(1) is not None or m.group(2) is not None
+    if raw.startswith("~"):
+        if quoted:
+            return None  # a quoted ~ is a literal relative directory, not the home dir
+        if raw == "~":
+            return os.path.expanduser("~")
+        if raw.startswith("~/"):
+            return os.path.join(os.path.expanduser("~"), raw[2:])
+        return None
+    return os.path.normpath(raw) if raw.startswith("/") else None
+
+
+def terminal_dirs(args: dict, base: str) -> List[str]:
+    """Candidate directories of a terminal call, best first: the command's own leading
+    ``cd``/``git -C`` target, then its ``workdir``, then the session's directory."""
+    out: List[str] = []
+    for d in (bash_target_dir(args.get("command")), args.get("workdir") or base):
+        if isinstance(d, str) and d and d not in out:
+            out.append(d)
     return out
 
 
@@ -451,7 +513,8 @@ class Scope:
                 if proj in self.projects:
                     return Root(proj, "", self.projects[proj])
                 if os.path.exists(os.path.join(proj, ".git")):
-                    return Root(proj, "", sanitize_repo(name))  # unknown until `install.py --sync`
+                    # unknown until `install.py --sync`; named as discover_projects would name it
+                    return Root(proj, "", space_repo(proj) or sanitize_repo(name))
                 return None
         return None
 
@@ -559,6 +622,16 @@ class Scope:
         if not root:
             return None
         return self.worktree_of(d, root.path), self.repo_of(root)
+
+    def locate_terminal(self, args: dict, base: str) -> Optional[Tuple[str, str]]:
+        """(worktree root, repo) a terminal call works in: its leading ``cd <abs> &&`` /
+        ``git -C <abs>`` target when that is in scope (``cd ~/github/x/.worktrees/t && rm f`` run
+        from another worktree's session edits ``t``), else its workdir / the session's cwd."""
+        for d in terminal_dirs(args, base):
+            hit = self.locate_dir(d)
+            if hit:
+                return hit
+        return None
 
     def resolve_dir(self, directory: Any) -> Optional[str]:
         """Worktree root for an in-scope directory (terminal workdir), else None."""
@@ -1029,6 +1102,12 @@ def hermes_session_cwd(task_id: Any) -> Optional[str]:
     return cwd if isinstance(cwd, str) and os.path.isabs(cwd) and os.path.isdir(cwd) else None
 
 
+def process_pinned() -> bool:
+    """True when this whole process works on one task: a kanban worker (``HERMES_KANBAN_TASK``)
+    or a launcher-pinned candidate run (``WEFT_HERMES_TASK`` / ``WEFT_HERMES_CHANGE``)."""
+    return any(os.environ.get(k, "").strip() for k in ("HERMES_KANBAN_TASK", "WEFT_HERMES_TASK", "WEFT_HERMES_CHANGE"))
+
+
 def base_dir(task_id: Any = "") -> str:
     """Directory relative tool paths resolve against: kanban workspace, else the Hermes session's
     cwd, else this process's cwd."""
@@ -1063,8 +1142,13 @@ class Pending:
 class WeftAdapter:
     def __init__(self, config: Config, client: Optional[WcpClient] = None,
                  analyzer: Optional[Analyzer] = None, heartbeat: bool = True,
-                 scope: Optional[Scope] = None):
+                 scope: Optional[Scope] = None, session_key: str = ""):
         self.cfg = config
+        # The Hermes conversation this adapter reports for ("" = the whole process: a kanban
+        # worker, a pinned candidate, or a caller that passes no hook ids). One gateway process
+        # serves many chats, so the change must come from the hook call, never process state.
+        self.session_key = session_key
+        self.last_used = time.monotonic()
         self.scope = scope or config.scope()
         self.client = client or WcpClient(config.url, config.token, config.repo, config.timeout,
                                           breaker_cooldown=config.breaker_cooldown)
@@ -1088,7 +1172,12 @@ class WeftAdapter:
         self.event_cache: "collections.OrderedDict[int, dict]" = collections.OrderedDict()
         self.blocked_edits: "collections.OrderedDict[str, Tuple[List[str], str]]" = collections.OrderedDict()
         self.task = self._task_info()
-        self.change = os.environ.get("WEFT_HERMES_CHANGE", "").strip() or f"{config.agent}/{self.task['id']}"
+        change = f"{config.agent}/{self.task['id']}"
+        if config.links is not None and session_key:
+            # Standalone: the task is the checkout (sessions sharing one working tree are
+            # alternatives, never checked against each other), the change is the conversation.
+            change += f"/{session_key}"
+        self.change = os.environ.get("WEFT_HERMES_CHANGE", "").strip() or change
         self.rec = status.Recorder(
             status.status_dir(config.log_path.parent) if config.log_path else None,
             {"route": config.route_key, "repo": config.repo, "agent": config.agent, "change": self.change,
@@ -1171,7 +1260,9 @@ class WeftAdapter:
             # one: a gateway process serves many sessions under one HERMES_SESSION_ID.
             return {"id": f"hermes-{hashlib.sha256(self.cfg.route_key.encode()).hexdigest()[:12]}"}
         if not task_id:
-            sid = os.environ.get("HERMES_SESSION_ID", "").strip() or f"pid{os.getpid()}"
+            # The hook call's conversation (session_key) names the work; the env/pid fallbacks
+            # serve callers that pass no hook ids (a CLI process is one session).
+            sid = self.session_key or os.environ.get("HERMES_SESSION_ID", "").strip() or f"pid{os.getpid()}"
             return {"id": f"adhoc-{sid}"}
         info: Dict[str, Any] = {"id": task_id}
         db = os.environ.get("HERMES_KANBAN_DB")
@@ -1564,8 +1655,7 @@ class WeftAdapter:
             "new state.")}
 
     def _pre_terminal(self, name: str, args: dict, call_id: str, task_id: Any = "") -> Optional[dict]:
-        workdir = args.get("workdir") or self._base_dir(task_id)
-        hit = self.scope.locate_dir(workdir)
+        hit = self.scope.locate_terminal(args, self._base_dir(task_id))
         if not hit or hit[1] != self.cfg.route_key:
             return None  # SCOPE GUARD
         worktree = hit[0]
@@ -1977,8 +2067,13 @@ class WeftRouter:
                  clock: Callable[[], float] = time.monotonic):
         self.cfg = config
         self.scope = config.scope()
-        self.adapters: Dict[str, WeftAdapter] = {}
+        # (route key, session key) -> adapter: one WCP session per repo AND Hermes conversation.
+        self.adapters: Dict[Tuple[str, str], WeftAdapter] = {}
         self.unknown: Dict[str, float] = {}  # repo -> when it was last found to have no token
+        # physical Hermes session id -> conversation key (compression rotates the session id,
+        # the conversation id stays); filled from tool calls, read by hooks that carry only
+        # ``session_id`` (pre_verify, session start/end).
+        self._conversations: "collections.OrderedDict[str, str]" = collections.OrderedDict()
         self.client_factory = client_factory
         self.heartbeat = heartbeat
         self.lock = threading.RLock()
@@ -2026,14 +2121,40 @@ class WeftRouter:
             self._analyzer = Analyzer(self.cfg.node, self.cfg.analyzer, log=self.log)
         return self._analyzer
 
-    def adapter_for(self, repo: str) -> Optional[WeftAdapter]:
+    # -- sessions ----------------------------------------------------------------------------
+
+    def session_key(self, kw: Dict[str, Any]) -> str:
+        """The Hermes conversation a hook call belongs to, from the call's own ids (never from
+        process state: one gateway process runs many chats at once). ``conversation_id`` first
+        (stable across context compression, which rotates ``session_id``), then ``session_id``
+        (mapped back to its conversation when a tool call showed the pair), then ``task_id``.
+        "" for a process pinned to one task (kanban worker, candidate run): every call is it."""
+        if process_pinned():
+            return ""
+        conv = str(kw.get("conversation_id") or "").strip()[:200]
+        sid = str(kw.get("session_id") or "").strip()[:200]
+        with self.lock:
+            if conv:
+                if sid and sid != conv:
+                    self._conversations[sid] = conv
+                    self._conversations.move_to_end(sid)
+                    while len(self._conversations) > MAX_SESSION_KEYS:
+                        self._conversations.popitem(last=False)
+                return conv
+            if sid:
+                return self._conversations.get(sid, sid)
+        tid = kw.get("task_id")
+        return tid.strip()[:200] if isinstance(tid, str) else ""
+
+    def adapter_for(self, repo: str, session: str = "") -> Optional[WeftAdapter]:
         if not repo:
             return None
         with self.lock:
             if self.cfg.links is not None:
                 self._reload()  # rate-limited; picks up settings changed since the last look
-            hit = self.adapters.get(repo)
+            hit = self.adapters.get((repo, session))
             if hit:
+                hit.last_used = self._clock()
                 return hit
             cfg = self.cfg.for_repo(repo)
             if not cfg:
@@ -2051,13 +2172,28 @@ class WeftRouter:
                     return None
                 self.unknown.pop(repo, None)
                 self.log(f"config reloaded: project '{repo}' now has a Weft repo/token")
+            self._evict_idle()
             client = self.client_factory(cfg) if self.client_factory else None
             adapter = WeftAdapter(cfg, client=client, analyzer=self.analyzer, heartbeat=self.heartbeat,
-                                  scope=self.scope)
-            self.adapters[repo] = adapter
+                                  scope=self.scope, session_key=session)
+            adapter.last_used = self._clock()
+            self.adapters[(repo, session)] = adapter
             if adapter._pending_exists():  # a land a previous process could not post
                 adapter.request_land("retrying a pending land")
             return adapter
+
+    def _evict_idle(self) -> None:
+        """Close conversation adapters idle for ``SESSION_IDLE_S`` (the gateway lives for days and
+        serves many chats). A chat that comes back gets a fresh WCP session on the same change."""
+        now = self._clock()
+        idle = [k for k, a in self.adapters.items() if k[1] and now - a.last_used > SESSION_IDLE_S]
+        for k in idle:
+            self._retire(self.adapters.pop(k), "idle")
+
+    def _retire(self, adapter: WeftAdapter, why: str) -> None:
+        adapter.log(f"[{adapter.cfg.repo}] closing session {adapter.change} ({why})")
+        threading.Thread(target=adapter.close, kwargs={"close_analyzer": False}, name="weft-close",
+                         daemon=True).start()
 
     def _repos(self, name: str, args: dict, task_id: Any = "") -> List[str]:
         if self.cfg.links is not None:
@@ -2070,14 +2206,15 @@ class WeftRouter:
                 if t and t.repo not in repos:
                     repos.append(t.repo)
         elif name in TERMINAL_TOOLS:
-            hit = self.scope.locate_dir(args.get("workdir") or base)
+            hit = self.scope.locate_terminal(args, base)
             if hit:
                 repos.append(hit[1])
         return repos
 
-    def _live(self) -> List[WeftAdapter]:
+    def _live(self, session: Optional[str] = None) -> List[WeftAdapter]:
+        """Live adapters: all of them, or only one conversation's (``session``)."""
         with self.lock:
-            return list(self.adapters.values())
+            return [a for (_, s), a in self.adapters.items() if session is None or s == session]
 
     def set_mode(self, mode: str) -> None:
         """Switch every live checkout (and later ones) to ``advise`` / ``enforce`` right now."""
@@ -2086,22 +2223,24 @@ class WeftRouter:
             adapter.cfg = replace(adapter.cfg, mode=mode)
             adapter.rec.set_mode(mode)
 
-    def adapter_at(self, directory: Any) -> Optional[WeftAdapter]:
-        """The adapter for the checkout that contains ``directory`` (created if it is linked)."""
+    def adapter_at(self, directory: Any, kw: Optional[Dict[str, Any]] = None) -> Optional[WeftAdapter]:
+        """The adapter for the checkout that contains ``directory`` (created if it is linked), for
+        the conversation of the hook/tool call ``kw`` (none: the process-wide one)."""
         if self.cfg.links is not None:
             self._reload()
         hit = self.scope.locate_dir(directory) if isinstance(directory, str) else None
-        return self.adapter_for(hit[1]) if hit else None
+        return self.adapter_for(hit[1], self.session_key(kw or {})) if hit else None
 
     def pre_tool_call(self, tool_name: str = "", args: Optional[dict] = None, **kw: Any) -> Optional[dict]:
         name = normalize_tool(tool_name)
         args = args if isinstance(args, dict) else {}
         try:
+            session = self.session_key(kw)
             if name in COMPLETION_TOOLS:
-                targets = self._live()
+                targets = self._live(session)
             else:
-                targets = [a for a in (self.adapter_for(r) for r in self._repos(name, args, kw.get("task_id")))
-                           if a]
+                targets = [a for a in (self.adapter_for(r, session)
+                                       for r in self._repos(name, args, kw.get("task_id"))) if a]
         except Exception as err:  # fail open
             self.log(f"route {name} failed open: {err!r}")
             return None
@@ -2110,25 +2249,25 @@ class WeftRouter:
             if block:
                 return block
         if name in WATCH_TOOLS:
-            # Every repo this process works in watches its worktrees and trunk around the call,
-            # wherever the command runs (`cd ~/github/x && git merge ...` from a scratch dir).
+            # Every repo this conversation works in watches its worktrees and trunk around the
+            # call, wherever the command runs (`cd ~/github/x && git merge ...` from a scratch dir).
             command = str(args.get("command") or args.get("code") or "")
-            for adapter in self._live():
+            for adapter in self._live(session):
                 if adapter not in targets:
                     adapter.watch_begin(str(kw.get("tool_call_id") or ""), command)
         return None
 
     def post_tool_call(self, **kw: Any) -> None:
-        for adapter in self._live():
+        for adapter in self._live(self.session_key(kw)):
             adapter.post_tool_call(**kw)
 
-    def session_started(self, session_id: Any = "", **_: Any) -> None:
+    def session_started(self, session_id: Any = "", **kw: Any) -> None:
         """A Hermes session began: open this session's Weft session for its checkout *now* (off the
         turn's path), so its base is the log head at the start of the work. Opened lazily at the
         first edit instead, an agent that started before another agent's edit would count that
         edit as already seen and never be told it conflicts."""
         try:
-            adapter = self.adapter_at(base_dir(session_id))
+            adapter = self.adapter_at(base_dir(session_id), {**kw, "session_id": session_id})
         except Exception as err:  # fail open
             self.log(f"session start route failed open: {err!r}")
             return
@@ -2143,24 +2282,41 @@ class WeftRouter:
 
         threading.Thread(target=open_session, name="weft-hello", daemon=True).start()
 
+    def session_finalized(self, **kw: Any) -> None:
+        """The Hermes session closed for good: flush and say bye for its conversation's adapters
+        (off the caller's thread). The process-wide ones ("" key) live until exit."""
+        session = self.session_key(kw)
+        if not session:
+            return
+        with self.lock:
+            done = [k for k in self.adapters if k[1] == session]
+            adapters = [self.adapters.pop(k) for k in done]
+            sid = str(kw.get("session_id") or "")
+            if sid:
+                self._conversations.pop(sid, None)
+        for adapter in adapters:
+            self._retire(adapter, "session finalized")
+
     def transform_tool_result(self, result: Any = None, **kw: Any) -> Optional[str]:
         out, changed = result, False
-        for adapter in self._live():
+        for adapter in self._live(self.session_key(kw)):
             r = adapter.transform_tool_result(result=out, **kw)
             if r is not None:
                 out, changed = r, True
         return out if changed else None
 
     def pre_verify(self, **kw: Any) -> Optional[dict]:
-        for adapter in self._live():
+        for adapter in self._live(self.session_key(kw)):
             r = adapter.pre_verify(**kw)
             if r:
                 return r
         return None
 
-    def flush(self, timeout: float = 5.0) -> bool:
+    def flush(self, timeout: float = 5.0, kw: Optional[Dict[str, Any]] = None) -> bool:
+        """Wait (bounded) for deferred submissions: every adapter's, or one conversation's."""
         deadline = time.monotonic() + timeout
-        return all(a.flush(max(0.0, deadline - time.monotonic())) for a in self._live())
+        live = self._live(None if kw is None else self.session_key(kw))
+        return all(a.flush(max(0.0, deadline - time.monotonic())) for a in live)
 
     def close(self) -> None:
         for adapter in self._live():

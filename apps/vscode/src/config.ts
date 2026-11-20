@@ -125,7 +125,12 @@ export function hermesTarget(root: string, env: NodeJS.ProcessEnv = process.env,
 export const HUMAN_TOKEN_FILE = "otto-human-token.json";
 export function sharedHumanToken(url: string, env: NodeJS.ProcessEnv = process.env, home = homedir()): string | undefined {
   const j = readJson(join(configDir(env, home), HUMAN_TOKEN_FILE));
-  if (!j || str(j.url)?.replace(/\/+$/, "") !== url.replace(/\/+$/, "")) return undefined;
+  const norm = (u: unknown) => str(u)?.replace(/\/+$/, "") ?? "";
+  // The token is saved under the gateway's `public_url` when the Hermes adapter config has one
+  // (phones use that address); this Mac reaches the same gateway at the config's `url`.
+  const cfg = readJson(hermesConfigPath(env, home));
+  const aliases = [norm(url), ...(cfg && norm(cfg.url) === norm(url) && norm(cfg.public_url) ? [norm(cfg.public_url)] : [])];
+  if (!j || !aliases.includes(norm(j.url))) return undefined;
   return str(j.token);
 }
 

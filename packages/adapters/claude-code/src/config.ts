@@ -3,7 +3,7 @@
 // concurrently (parallel tool calls), so state is a JSON file guarded by a lock dir.
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { editPath } from "./edits";
 import type { HookInput } from "./hooks";
 
@@ -30,11 +30,33 @@ export type Loaded = { root: string; config: AdapterConfig; token: string };
 
 export const CONFIG_REL = ".weft/claude.json";
 
-/** Walk up from `start` to the first directory holding `.weft/claude.json`. */
+/**
+ * True when `dir` is a linked git worktree: its `.git` is a file whose gitdir lives in
+ * `<common git dir>/worktrees/` (a submodule's points into `modules/` instead).
+ */
+export function isLinkedWorktree(dir: string): boolean {
+  try {
+    const dotgit = join(dir, ".git");
+    if (!lstatSync(dotgit).isFile()) return false;
+    const m = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(readFileSync(dotgit, "utf8").slice(0, 4096));
+    return !!m && basename(dirname(resolve(dir, m[1]!))) === "worktrees";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Walk up from `start` to the first directory holding `.weft/claude.json`. The walk stops at a
+ * linked git worktree without its own config: kanban worktrees live inside the main checkout
+ * (`<main>/.worktrees/<task>`), and borrowing the main checkout's config there would report the
+ * worktree's edits, and stamp its commits (the shared commit-msg hook), as the main checkout's
+ * task and change. Such a worktree is not coordinated until it joins (`install --dir <worktree>`).
+ */
 export function findRoot(start: string, configRel: string = CONFIG_REL): string | undefined {
   let dir = resolve(start);
   for (;;) {
     if (existsSync(join(dir, configRel))) return dir;
+    if (isLinkedWorktree(dir)) return undefined;
     const parent = dirname(dir);
     if (parent === dir) return undefined;
     dir = parent;

@@ -98,11 +98,23 @@ export function hermesPointer(dirs: string[], env = process.env): HermesPointer 
   return undefined;
 }
 
-/** The shared human token, when it was minted for `url`. */
+/**
+ * The addresses of the gateway at `url`: itself, plus the Hermes adapter config's `public_url` when
+ * `url` is that config's `url` (the Mac reaches its own gateway on loopback, phones on the tailnet).
+ */
+export function gatewayAliases(url: string, env = process.env): string[] {
+  const norm = (u: unknown) => (typeof u === "string" ? u.trim().replace(/\/+$/, "") : "");
+  const out = [norm(url)];
+  const cfg = readJson<{ url?: unknown; public_url?: unknown } | null>(hermesConfigPath(env), null);
+  if (cfg && norm(cfg.url) === out[0] && norm(cfg.public_url)) out.push(norm(cfg.public_url));
+  return out;
+}
+
+/** The shared human token, when it was minted for `url` (or for the same gateway's `public_url`, the key it is saved under). */
 export function sharedHumanToken(url: string, env = process.env): string | undefined {
   const j = readJson<{ url?: unknown; token?: unknown } | null>(join(configDir(env), HUMAN_TOKEN_FILE), null);
   if (!j || typeof j.url !== "string" || typeof j.token !== "string") return undefined;
-  return j.url.replace(/\/+$/, "") === url.replace(/\/+$/, "") ? j.token.trim() || undefined : undefined;
+  return gatewayAliases(url, env).includes(j.url.replace(/\/+$/, "")) ? j.token.trim() || undefined : undefined;
 }
 
 export function writePointer(root: string, p: RepoPointer, key: string): void {

@@ -117,10 +117,11 @@ def others_for(me: Dict[str, Any], snaps: List[Dict[str, Any]]) -> List[Dict[str
 # status
 # ----------------------------------------------------------------------------------------------
 
-def status_data(router: Any, directory: str, refresh: bool = True) -> Dict[str, Any]:
-    """The structured answer behind ``weft_status`` and ``/weft``."""
+def status_data(router: Any, directory: str, refresh: bool = True, kw: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The structured answer behind ``weft_status`` and ``/weft`` (``kw``: the calling tool's or
+    command's hook ids, so a chat sees its own Weft session in a gateway that runs many)."""
     now = time.time()
-    adapter = router.adapter_at(directory) if router else None
+    adapter = router.adapter_at(directory, kw) if router else None
     if adapter is None:
         snaps = status.read_all()
         return {"linked": False, "checkout": directory,
@@ -199,7 +200,7 @@ def make_tools(get_router: Callable[[], Any]) -> List[Dict[str, Any]]:
 
     def weft_status(args: Optional[dict] = None, **kw: Any) -> str:
         try:
-            data = status_data(get_router(), _adapter.base_dir(kw.get("task_id") or ""))
+            data = status_data(get_router(), _adapter.base_dir(kw.get("task_id") or ""), kw=kw)
             data["summary"] = status_text(data)
             return json.dumps(data, ensure_ascii=False, default=str)
         except Exception as err:
@@ -208,7 +209,7 @@ def make_tools(get_router: Callable[[], Any]) -> List[Dict[str, Any]]:
     def weft_inbox(args: Optional[dict] = None, **kw: Any) -> str:
         try:
             router = get_router()
-            adapter = router.adapter_at(_adapter.base_dir(kw.get("task_id") or "")) if router else None
+            adapter = router.adapter_at(_adapter.base_dir(kw.get("task_id") or ""), kw) if router else None
             if adapter is None:
                 return json.dumps({"linked": False, "message": "Weft is not set up for this checkout (the user can run /weft setup)."})
             text = adapter.inbox_now()
@@ -236,7 +237,7 @@ def make_command(get_router: Callable[[], Any], set_config: Callable[[str, Any],
         directory = current_dir(kw.get("session_id") or "")
         router = get_router()
         if sub in ("status", "st", ""):
-            return status_text(status_data(router, directory))
+            return status_text(status_data(router, directory, kw=kw))
         if sub == "help":
             return HELP
         if sub == "setup":

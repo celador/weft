@@ -19,6 +19,7 @@ provides_hooks:
   - on_session_start
   - on_session_end
   - on_session_finalize
+  - on_kanban_worker_spawned
 config_schema:
   mode:
     type: str
@@ -31,6 +32,11 @@ config_schema:
     default: true
     label: Report edits
     description: "Turn off to keep the plugin loaded but silent."
+  join_worktrees:
+    type: bool
+    default: true
+    label: Join kanban worktrees
+    description: "When a kanban worker starts in a linked git worktree of a checkout where Claude Code reports to Weft (.weft/claude.json), install the same Claude Code adapter in the worktree with the kanban task id, so Claude Code sessions and commits there report as that task instead of the main checkout."
   trusted_gateways:
     type: list
     default: []
