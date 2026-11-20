@@ -9,8 +9,8 @@ the directory the adapter's log already lives in).
 Why files and not memory: Hermes runs plugin code in several processes (the gateway, kanban
 workers, a ``hermes chat`` CLI, an optional plugin host), and the Desktop pane's backend, the
 ``weft_status`` tool and ``/weft`` must see all of them, so two colliding sessions show up side by
-side. Files hold only symbol keys, file names, verdict words and Weft's own diagnostic text, never
-tokens and never file contents; they are mode 600 and a reader ignores any that stopped updating
+side. Files hold only symbol keys, file names, worktree paths, verdict words and Weft's own diagnostic
+text, never tokens and never file contents; they are mode 600 and a reader ignores any that stopped updating
 a day ago.
 """
 
@@ -79,6 +79,8 @@ class Recorder:
         self.session: Optional[str] = None
         self.reachable: Optional[bool] = None
         self.ended = False
+        # worktree -> {"busy": a terminal call is running there, "end": last tool call there}
+        self.worktrees: Dict[str, Dict[str, Any]] = {}
         self._last_write = 0.0
         self._dirty = True
 
@@ -93,6 +95,13 @@ class Recorder:
         if self.reachable != ok:
             self.reachable = ok
             self.flush(force=True)
+
+    def set_worktrees(self, worktrees: Dict[str, Dict[str, Any]]) -> None:
+        """Where this session works and whether a tool call is running there (another session's
+        terminal capture leaves changes in a worktree this one is working in to this one)."""
+        with self.lock:
+            self.worktrees = dict(worktrees)
+        self.flush(force=True)
 
     def set_mode(self, mode: str) -> None:
         self.identity["mode"] = mode
@@ -189,6 +198,7 @@ class Recorder:
                 "reachable": self.reachable, "ended": self.ended, "started_at": round(self.started, 3),
                 "updated_at": round(time.time(), 3), "counters": dict(self.counters),
                 "open": list(self.open.values()), "events": list(self.events),
+                "worktrees": dict(self.worktrees),
             }
 
     def flush(self, force: bool = False) -> None:

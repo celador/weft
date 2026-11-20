@@ -574,3 +574,22 @@ WCP v0.1 is specified in `docs/protocol/wcp-v0.md` (normative; implemented by `p
   already has company; changes that arrive while the head is mid-presubmit join the next
   batch. A dead leader workflow leaves its claimed entries `landing` until their own
   workflows time out (1 h at the default poll); they are not re-queued automatically.
+
+## Update 2026-11-20 (t_959cd359, Hermes terminal capture by structure)
+- The Hermes adapter no longer relies on parsing a terminal command to find the worktrees it
+  can change. Around every `terminal` and `execute_code` call it snapshots the worktrees the call
+  names (leading `cd`/`git -C`, workdir, literal paths), every worktree the conversation worked
+  in before, and, when the call is opaque (any `$`/backquote expansion, an unparsed directory
+  change, `..`, an absolute glob, inline code, `eval`/`xargs`/`source`, an unbalanced quote, a
+  word or path bound hit, every `execute_code`), every worktree of every repo the conversation
+  works in plus every project whose folder name the call mentions. Bounds make a call opaque;
+  they never drop paths. A snapshot keeps a stat signature (ctime included) of every dirty file,
+  so a change is detected however many files are dirty; only the before text is bounded.
+- Exactly-once attribution: each session publishes capture windows (terminal: between its two
+  snapshots of a worktree; edit tools: between the before and after reads of a file) in its
+  status file. A change whose ctime falls inside another live session's window is left to that
+  session. Two concurrent opaque calls can still both report a change in a worktree neither
+  works in.
+- Residual: a program that writes into a repo the conversation never touched, without naming
+  that repo's folder anywhere in the command, is not captured. Cost: 4-12 worktrees snapshot in
+  about 35 ms before and 35 ms after an opaque call (parallel `git status`).
