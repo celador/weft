@@ -247,6 +247,10 @@ rejected alternatives: docs/design.md "Auto-land".
 - New project → `install.py --sync`. Plugin 0.2.1+: the gateway re-reads
   `~/.config/weft/hermes-adapter.json` for an unknown project at most once a minute, so it starts
   reporting within ~60 s (log: `config reloaded: project '<repo>' now has a Weft repo/token`).
+  A project outside the project dirs (explicit `roots` entry, or a `projects.repos` path elsewhere)
+  added after the gateway started is picked up the same way: an edit in no known project re-reads
+  the config, roots included (log: `config reloaded: <path> now resolves to project '<repo>'`).
+  Before this fix explicit roots loaded only at process start and such edits were dropped silently.
   Up to 0.2.0 the gateway cached "project has no Weft repo/token" for its whole life and
   kept skipping the project until `hermes gateway restart`.
 - New plugin code → `install.py` (not `--sync`). `hermes plugins enable` on an already-enabled

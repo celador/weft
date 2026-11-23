@@ -199,7 +199,10 @@ created after install is skipped until someone runs `install.py --sync` (John, o
 Kanban workers are fresh processes and read the config at start. Every `hermes` / `hermes chat`
 turn (`-q`/`-Q` one-shots included) runs inside the long-lived gateway process, not the CLI
 process: there the plugin re-reads the config for an unknown project at most once a minute
-(`RELOAD_EVERY_S`), so a synced project starts reporting within a minute, no restart. New plugin
+(`RELOAD_EVERY_S`), so a synced project starts reporting within a minute, no restart. That
+includes a project outside the project dirs (an explicit `roots` entry or a `projects.repos`
+path anywhere on disk): an edit in no known project triggers the same rate-limited re-read, which
+refreshes `roots` too. A `projects.repos` path resolves wherever it lives. New plugin
 *code* reaches the gateway through `install.py` (when the code changed it runs `plugins disable`
 + `enable`, which makes the gateway force-reload plugins; the old router closes its sessions on
 unload) or a gateway restart.
