@@ -23,7 +23,8 @@ gateway (e.g. a tailnet URL the Otto relay hands to phones). Both are kept in th
 ``url``, a running local gateway (``npx @celador/weft``, ~/.config/weft/local) is preferred over the
 hosted preview. The admin token defaults to that local gateway's for a loopback ``--url`` on its
 port (~/.config/weft/local/port). An admin token is only ever sent to a loopback URL whose
-listening process runs as you (``admin_target_refusal``): a health answer alone proves nothing.
+listening process runs as you (``admin_target_refusal``, ``listener_uids``): a health answer
+alone proves nothing.
 Changing between ``url`` and ``public_url`` of one gateway keeps every token, and the shared
 human token (otto-human-token.json) is re-keyed to ``public_url`` (else ``url``), the key clients
 look it up under.
@@ -65,6 +66,7 @@ import ipaddress
 import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -136,22 +138,227 @@ def url_port(url: str):
 
 
 PROC_TCP = ("/proc/net/tcp", "/proc/net/tcp6")
+# macOS: listeners come from libproc in this process (no subprocess, no mount table, no vnode).
+LIBPROC = "/usr/lib/libproc.dylib" if sys.platform == "darwin" else None
+LISTENER_PROBE_S = 2.0  # per loopback address: connect, then find the process that accepted it
 LSOF_TIMEOUT_S = 10
 LSOF_ATTEMPTS = 2
 # Why listener_uids(port) last returned None (port -> reason), for the refusal message.
 _LISTENER_UNKNOWN: dict = {}
+# Children that outlived their timeout. A process stuck in the kernel (state U, e.g. lsof on a hung
+# smbfs mount) cannot die even from SIGKILL, so it is killed once and never waited for; the list
+# only keeps Popen from warning about it.
+_ABANDONED: list = []
 
 
-def listener_uids(port: int):
+def run_bounded(argv, timeout: float):
+    """(returncode, stdout, stderr) of ``argv``; raises subprocess.TimeoutExpired after ``timeout``
+    s. Unlike subprocess.run it never waits past the timeout: run() kills the child and then
+    wait()s for it, which blocks forever on a child in uninterruptible sleep."""
+    proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        for pipe in (proc.stdout, proc.stderr):
+            try:
+                pipe.close()
+            except OSError:
+                pass
+        _ABANDONED.append(proc)
+        raise
+    return proc.returncode, out, err
+
+
+class _Libproc:
+    """The few <libproc.h> calls lsof itself uses, through ctypes. Reading a process's fd table and
+    its sockets touches neither the mount table nor any vnode, so a hung mount cannot block it.
+    A normal user can read only their own processes (EPERM otherwise), like lsof; the caller's
+    connect probe covers the listeners it cannot see."""
+
+    PROC_PIDLISTFDS, PROC_PIDT_SHORTBSDINFO, PROC_PIDFDSOCKETINFO = 1, 13, 3
+    PROX_FDTYPE_SOCKET, SOCKINFO_TCP, TSI_S_LISTEN, INI_IPV4 = 2, 2, 1, 0x1
+
+    def __init__(self, path: str):
+        import ctypes
+        c = ctypes
+        self.c = c
+        self.lib = lib = c.CDLL(path, use_errno=True)
+        lib.proc_listallpids.argtypes = [c.c_void_p, c.c_int]
+        lib.proc_pidinfo.argtypes = [c.c_int, c.c_int, c.c_uint64, c.c_void_p, c.c_int]
+        lib.proc_pidfdinfo.argtypes = [c.c_int, c.c_int, c.c_int, c.c_void_p, c.c_int]
+        for fn in (lib.proc_listallpids, lib.proc_pidinfo, lib.proc_pidfdinfo):
+            fn.restype = c.c_int
+
+        class InSockinfo(c.Structure):  # struct in_sockinfo (sys/proc_info.h)
+            _fields_ = [("fport", c.c_int), ("lport", c.c_int), ("gencnt", c.c_uint64), ("flags", c.c_uint32),
+                        ("flow", c.c_uint32), ("vflag", c.c_uint8), ("ttl", c.c_uint8), ("rfu", c.c_uint32),
+                        ("faddr", c.c_uint8 * 16), ("laddr", c.c_uint8 * 16), ("v4_tos", c.c_uint8),
+                        ("v6_hlim", c.c_uint8), ("v6_cksum", c.c_int), ("v6_ifindex", c.c_ushort),
+                        ("v6_hops", c.c_short)]
+
+        class TcpSockinfo(c.Structure):  # struct tcp_sockinfo
+            _fields_ = [("ini", InSockinfo), ("state", c.c_int), ("timer", c.c_int * 4), ("mss", c.c_int),
+                        ("flags", c.c_uint32), ("rfu", c.c_uint32), ("tp", c.c_uint64)]
+
+        class SocketFdinfo(c.Structure):  # struct socket_fdinfo = proc_fileinfo + socket_info
+            _fields_ = [("pfi", c.c_uint8 * 24),
+                        ("vinfo_stat", c.c_uint8 * 136), ("so", c.c_uint64), ("pcb", c.c_uint64),
+                        ("type", c.c_int), ("protocol", c.c_int), ("family", c.c_int),
+                        ("shorts", c.c_short * 7), ("error", c.c_ushort), ("oobmark", c.c_uint32),
+                        ("sockbufs", c.c_uint8 * 48), ("kind", c.c_int), ("rfu", c.c_uint32),
+                        ("proto", c.c_uint8 * 528)]  # the soi_proto union; its largest member is 528
+
+        self.TcpSockinfo, self.SocketFdinfo = TcpSockinfo, SocketFdinfo
+        if (c.sizeof(SocketFdinfo), c.sizeof(TcpSockinfo)) != (792, 120):
+            raise OSError(f"unexpected libproc struct sizes {c.sizeof(SocketFdinfo)}/{c.sizeof(TcpSockinfo)}")
+
+    def pids(self) -> list:
+        c = self.c
+        n = self.lib.proc_listallpids(None, 0)
+        if n <= 0:
+            raise OSError(c.get_errno(), "proc_listallpids failed")
+        buf = (c.c_int * (n + 512))()
+        n = self.lib.proc_listallpids(buf, c.sizeof(buf))
+        if n <= 0:
+            raise OSError(c.get_errno(), "proc_listallpids failed")
+        return [p for p in buf[:n] if p > 0]
+
+    def euid(self, pid: int):
+        buf = self.c.create_string_buffer(64)  # struct proc_bsdshortinfo; pbsi_uid at offset 36
+        if self.lib.proc_pidinfo(pid, self.PROC_PIDT_SHORTBSDINFO, 0, buf, 64) != 64:
+            return None
+        return int.from_bytes(buf.raw[36:40], sys.byteorder)
+
+    @staticmethod
+    def _addr(raw: bytes, v4: bool) -> str:
+        if v4:
+            return str(ipaddress.IPv4Address(raw[12:16]))
+        a = ipaddress.IPv6Address(raw)
+        return str(a.ipv4_mapped or a)
+
+    def tcp_sockets(self, port: int) -> list:
+        """(pid, euid, listening, local ip, local port, foreign ip, foreign port) for every TCP
+        socket with ``port`` at either end, in every process this user may read."""
+        c, rows = self.c, []
+        si = self.SocketFdinfo()
+        for pid in self.pids():
+            need = self.lib.proc_pidinfo(pid, self.PROC_PIDLISTFDS, 0, None, 0)
+            if need <= 0:
+                continue  # another user's process (EPERM) or gone
+            fds = (c.c_uint8 * (need + 64 * 8))()
+            got = self.lib.proc_pidinfo(pid, self.PROC_PIDLISTFDS, 0, fds, c.sizeof(fds))
+            raw = bytes(fds[:max(got, 0)])
+            euid = None
+            for off in range(0, len(raw) - 7, 8):  # struct proc_fdinfo {int32 fd; uint32 type}
+                fd, kind = int.from_bytes(raw[off:off + 4], sys.byteorder, signed=True), \
+                    int.from_bytes(raw[off + 4:off + 8], sys.byteorder)
+                if kind != self.PROX_FDTYPE_SOCKET:
+                    continue
+                n = self.lib.proc_pidfdinfo(pid, fd, self.PROC_PIDFDSOCKETINFO, c.byref(si), c.sizeof(si))
+                if n <= 0:
+                    continue  # closed meanwhile
+                if n != c.sizeof(si):
+                    raise OSError(f"proc_pidfdinfo returned {n} bytes, expected {c.sizeof(si)}")
+                if si.kind != self.SOCKINFO_TCP:
+                    continue
+                tcp = self.TcpSockinfo.from_buffer_copy(bytes(si.proto)[:c.sizeof(self.TcpSockinfo)])
+                ini = tcp.ini
+                lport, fport = socket.ntohs(ini.lport & 0xFFFF), socket.ntohs(ini.fport & 0xFFFF)  # network order
+                if port not in (lport, fport):
+                    continue
+                if euid is None:
+                    euid = self.euid(pid)
+                v4 = bool(ini.vflag & self.INI_IPV4)
+                rows.append((pid, euid, tcp.state == self.TSI_S_LISTEN, self._addr(bytes(ini.laddr), v4), lport,
+                             self._addr(bytes(ini.faddr), v4), fport))
+        return rows
+
+
+def _ip(addr) -> str:
+    a = ipaddress.ip_address(str(addr).split("%", 1)[0])
+    return str(getattr(a, "ipv4_mapped", None) or a)
+
+
+def _darwin_listener_uids(port: int, host: str):
+    """libproc sees only this user's processes, so ``port`` looking free or mine there proves
+    nothing about another user's listener (e.g. theirs on 127.0.0.1, mine on ::1 or 127.0.0.2).
+    So connect to every address ``host`` resolves to (what urllib will try) and require that the
+    process holding the accepted end is one libproc can read; one that cannot be found within
+    LISTENER_PROBE_S is another user's (or does not accept), and the answer is None (unknown)."""
+    try:
+        lp = _Libproc(LIBPROC)
+    except (OSError, AttributeError) as err:
+        _LISTENER_UNKNOWN[port] = f"libproc unavailable: {err}"
+        return None
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as err:
+        _LISTENER_UNKNOWN[port] = f"cannot resolve {host}: {err}"
+        return None
+    probes, seen = [], set()
+    try:
+        for family, kind, proto, _, addr in infos:
+            if (family, addr[0]) in seen:
+                continue
+            seen.add((family, addr[0]))
+            s = socket.socket(family, kind, proto)
+            s.settimeout(LISTENER_PROBE_S)
+            try:
+                s.connect(addr)
+            except ConnectionRefusedError:
+                s.close()
+                continue
+            except OSError as err:
+                s.close()
+                _LISTENER_UNKNOWN[port] = f"probing {addr[0]} port {port} failed: {err}"
+                return None
+            probes.append(s)
+        want = {(_ip(s.getpeername()[0]), _ip(s.getsockname()[0]), s.getsockname()[1]) for s in probes}
+        deadline = time.monotonic() + LISTENER_PROBE_S
+        while True:
+            try:
+                rows = lp.tcp_sockets(port)
+            except OSError as err:
+                _LISTENER_UNKNOWN[port] = f"libproc failed: {err}"
+                return None
+            accepted = {(_ip(la), _ip(fa), fp): euid for _, euid, listening, la, lp_, fa, fp in rows
+                        if not listening and lp_ == port}
+            missing = want - accepted.keys()
+            if not missing:
+                break
+            if time.monotonic() >= deadline:
+                ip = sorted(missing)[0][0]
+                _LISTENER_UNKNOWN[port] = (f"{ip} port {port} accepted a connection that none of your processes "
+                                           f"holds within {LISTENER_PROBE_S:g} s: another user's listener, or one "
+                                           f"that does not accept")
+                return None
+            time.sleep(0.02)
+        uids = {euid for _, euid, listening, _la, lport, _fa, _fp in rows if listening and lport == port}
+        uids |= {accepted[k] for k in want}
+        if None in uids:
+            _LISTENER_UNKNOWN[port] = f"a process on port {port} exited while it was checked"
+            return None
+        return uids
+    finally:
+        for s in probes:
+            s.close()
+
+
+def listener_uids(port: int, host: str = "127.0.0.1"):
     """UIDs of the processes listening on TCP ``port`` on this machine, or None when that cannot
-    be told (the reason goes to ``_LISTENER_UNKNOWN[port]``). Linux: /proc/net/tcp{,6} (every
-    user's sockets). macOS: lsof, which shows a normal user only their own processes, so another
-    user's listener shows up as no listener at all.
+    be told (the reason goes to ``_LISTENER_UNKNOWN[port]``).
 
-    lsof runs with -b: without it lsof stat()s every mount point first and blocks on a hung or
-    unreachable one (Time Machine smbfs, another user's CoreDevice mount); one run took 90 s.
-    -b skips only those kernel calls; TCP sockets and their owners are listed as before. A
-    timeout is retried once, then the answer is None (unknown), which refuses the admin token."""
+    Linux: /proc/net/tcp{,6}, every user's sockets. macOS: libproc in-process, plus a connect probe
+    to ``host`` that refuses a listener no process of this user holds (see _darwin_listener_uids).
+    Not lsof: a normal user's lsof lists only their own processes (another user's listener shows up
+    as none), and on a hung mount (Time Machine smbfs) it sits in uninterruptible sleep even with
+    -b, past SIGKILL. Elsewhere: lsof through run_bounded (killed and abandoned on timeout, never
+    waited for), one retry, then None. Every unknown is None, which refuses the admin token."""
     _LISTENER_UNKNOWN.pop(port, None)
     found, readable = set(), False
     for table in PROC_TCP:
@@ -167,15 +374,16 @@ def listener_uids(port: int):
                 found.add(int(f[7]))
     if readable:
         return found
+    if LIBPROC:
+        return _darwin_listener_uids(port, host)
     lsof = shutil.which("lsof") or ("/usr/sbin/lsof" if os.path.exists("/usr/sbin/lsof") else None)
     if not lsof:
-        _LISTENER_UNKNOWN[port] = "no /proc/net/tcp, no lsof"
+        _LISTENER_UNKNOWN[port] = "no /proc/net/tcp, no libproc, no lsof"
         return None
     argv = [lsof, "-b", "-nP", "-w", "-a", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fu"]
     for _ in range(LSOF_ATTEMPTS):
         try:
-            out = subprocess.run(argv, capture_output=True, text=True, timeout=LSOF_TIMEOUT_S,
-                                 stdin=subprocess.DEVNULL)
+            _, out, _ = run_bounded(argv, LSOF_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             _LISTENER_UNKNOWN[port] = (f"lsof timed out {LSOF_ATTEMPTS}x after {LSOF_TIMEOUT_S} s each: "
                                        f"{' '.join(argv)}")
@@ -184,7 +392,7 @@ def listener_uids(port: int):
             _LISTENER_UNKNOWN[port] = f"lsof failed: {err}"
             return None
         _LISTENER_UNKNOWN.pop(port, None)
-        return {int(x[1:]) for x in out.stdout.split() if x.startswith("u") and x[1:].isdigit()}
+        return {int(x[1:]) for x in out.split() if x.startswith("u") and x[1:].isdigit()}
     return None
 
 
@@ -201,7 +409,11 @@ def admin_target_refusal(url: str):
     if url in _ADMIN_TARGETS:
         return _ADMIN_TARGETS[url]
     port = url_port(url)
-    uids = listener_uids(port) if port else None
+    try:
+        host = urllib.parse.urlsplit(str(url)).hostname or "localhost"
+    except ValueError:
+        host = "localhost"
+    uids = listener_uids(port, host) if port else None
     me = os.getuid()
     if uids is None:
         detail = _LISTENER_UNKNOWN.get(port) or ("no port in the url" if not port else "unknown")
