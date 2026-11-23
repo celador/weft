@@ -306,6 +306,112 @@ class GatewayProcessTests(Workspace):
         self.assertEqual(self.loads, 3)
         r.close()
 
+    def outside_project(self, name="outside"):
+        """A git checkout outside the project dirs (``~/<name>``, not ``~/github/<name>``)."""
+        proj = self.tmp / "home" / name
+        (proj / "src").mkdir(parents=True)
+        (proj / "src" / "a.md").write_text("one\n")
+        git(proj, "init", "-q")
+        commit_all(proj)
+        return proj
+
+    def write_raw(self, tokens, roots=(), repos=None, modes=None):
+        self.cfg_path.write_text(json.dumps({
+            "url": "http://fake", "default_mode": "advise", "modes": modes or {},
+            "roots": [{"path": str(p), "prefix": "", "repo": r} for p, r in roots],
+            "projects": {"dirs": [str(self.gh), str(self.code)], "repos": repos if repos is not None else self.projects},
+            "exclude": [str(self.hermes)],
+            "agents": {"test": {"agent": "hermes-test", "tokens": {r: {"token": t} for r, t in tokens.items()}}}}))
+
+    def test_explicit_root_added_after_start_reports_without_a_restart(self):
+        """A project registered outside the project dirs as an explicit root after the process
+        started: the reload refreshes ``roots`` and a miss triggers the (rate-limited) re-read."""
+        now = [1000.0]
+        out = self.outside_project()
+        self.write_raw({"alpha": "ta"})
+        r = self.router(now)
+        self.assertEqual(r.scope.roots, [])
+        f = out / "src" / "a.md"
+        # registered while the process runs: explicit root + project map + token + enforce
+        self.write_raw({"alpha": "ta", "outside": "to"}, roots=[(out, "outside")],
+                       repos={**self.projects, str(out): "outside"}, modes={"outside": "enforce"})
+        now[0] += 30
+        self.edit(r, f, "two\n", "c1")
+        self.assertEqual((self.clients, self.loads), ({}, 1), "re-read at most once a minute")
+        now[0] += 31
+        self.edit(r, f, "three\n", "c2")
+        self.assertEqual(self.loads, 2)
+        self.assertEqual([x.path for x in r.scope.roots], [str(out)])
+        self.assertTrue(r.flush(5))
+        self.assertEqual([c[3]["files"] for c in self.clients["outside"].submits("commit")], [["src/a.md"]])
+        a = r.adapter_for("outside")
+        self.assertEqual((a.cfg.token, a.cfg.mode), ("to", "enforce"))
+        log = (self.cache / "test.log").read_text()
+        self.assertIn(f"config reloaded: {out} now resolves to project 'outside'", log)
+        # a terminal call working there routes too (same scope, no second re-read)
+        r.pre_tool_call(tool_name="terminal", args={"command": "sed -i '' s/three/four/ src/a.md",
+                                                    "workdir": str(out)}, tool_call_id="t1")
+        f.write_text("four\n")
+        r.post_tool_call(tool_name="terminal", args={}, tool_call_id="t1")
+        self.assertTrue(r.flush(5))
+        self.assertEqual(len(self.clients["outside"].submits("commit")), 2)
+        self.assertEqual(self.loads, 2)
+        r.close()
+
+    def test_explicit_root_added_after_start_terminal_only(self):
+        """The first touch is a terminal call in the new root: it re-reads the config too."""
+        now = [1000.0]
+        out = self.outside_project()
+        self.write_raw({"alpha": "ta"})
+        r = self.router(now)
+        self.write_raw({"alpha": "ta", "outside": "to"}, roots=[(out, "outside")])
+        now[0] += 61
+        r.pre_tool_call(tool_name="terminal", args={"command": "echo x > src/b.md", "workdir": str(out)},
+                        tool_call_id="t1")
+        (out / "src" / "b.md").write_text("x\n")
+        r.post_tool_call(tool_name="terminal", args={}, tool_call_id="t1")
+        self.assertTrue(r.flush(5))
+        self.assertEqual(self.loads, 2)
+        self.assertEqual([c[3]["files"] for c in self.clients["outside"].submits("commit")], [["src/b.md"]])
+        r.close()
+
+    def test_mapped_project_outside_project_dirs_is_never_silent(self):
+        """A project the config maps outside the project dirs (no explicit root): its paths
+        resolve, so a missing token logs the usual line once instead of dropping silently."""
+        now = [1000.0]
+        out = self.outside_project()
+        self.write_raw({"alpha": "ta"}, repos={**self.projects, str(out): "outside"})
+        r = self.router(now)
+        self.assertEqual(r.scope.resolve(str(out / "src" / "a.md")).repo, "outside")
+        self.edit(r, out / "src" / "a.md", "two\n", "c1")
+        now[0] += 5
+        self.edit(r, out / "src" / "a.md", "three\n", "c2")
+        self.assertEqual(self.clients, {})
+        log = (self.cache / "test.log").read_text()
+        self.assertEqual(log.count("project 'outside' has no Weft repo/token"), 1, log)
+        # the token arrives later (`install.py --sync`): it reports, still no explicit root
+        self.write_raw({"alpha": "ta", "outside": "to"}, repos={**self.projects, str(out): "outside"})
+        now[0] += 61
+        self.edit(r, out / "src" / "a.md", "four\n", "c3")
+        self.assertTrue(r.flush(5))
+        self.assertEqual(len(self.clients["outside"].submits("commit")), 1)
+        # a linked worktree of that project elsewhere resolves to it as well
+        wt = self.tmp / "wt-outside"
+        git(out, "worktree", "add", "-q", str(wt))
+        self.assertEqual(r.scope.locate_dir(str(wt)), (str(wt), "outside"))
+        r.close()
+
+    def test_paths_in_no_project_reread_at_most_once_a_minute(self):
+        now = [1000.0]
+        self.write_raw({"alpha": "ta"})
+        r = self.router(now)
+        for i in range(12):
+            now[0] += 10
+            self.edit(r, self.tmp / "loose.md", f"{i}\n", f"l{i}")
+        self.assertEqual(self.clients, {})
+        self.assertEqual(self.loads, 1 + 2, "120 s of misses: two re-reads")
+        r.close()
+
     def test_relative_paths_resolve_against_the_hermes_session_cwd(self):
         import types
         os.environ.pop("HERMES_KANBAN_WORKSPACE", None)

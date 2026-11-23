@@ -704,7 +704,7 @@ class Scope:
     def __init__(self, roots: List[Root], projects: Optional[Dict[str, str]] = None,
                  project_dirs: Optional[List[str]] = None, excludes: Optional[List[str]] = None,
                  default_repo: str = "", known_repos: Optional[List[str]] = None):
-        self.roots = sorted(roots, key=lambda r: len(r.path), reverse=True)
+        self.roots = self.sort_roots(roots)
         self.projects = dict(projects or {})
         # repos the adapter config names: the only ones a checkout's space.json may pick
         self.known_repos = set(known_repos or ()) | set(self.projects.values())
@@ -713,8 +713,26 @@ class Scope:
         self.default_repo = default_repo
         self._ext: Dict[str, Optional[Root]] = {}  # external worktree dir -> root (cache)
 
+    @staticmethod
+    def sort_roots(roots: List[Root]) -> List[Root]:
+        """Explicit roots, longest path first (the deepest root containing a path wins)."""
+        return sorted(roots, key=lambda r: len(r.path), reverse=True)
+
     def repo_of(self, root: Root) -> str:
         return root.repo or self.default_repo
+
+    def _mapped_root(self, path: str) -> Optional[Root]:
+        """A project the config maps (``projects.repos``) anywhere on disk, not only as a direct
+        child of ``project_dirs``: a project registered outside the project dirs resolves even
+        without an explicit root. Deepest mapped project first."""
+        best = ""
+        for proj in self.projects:
+            if len(proj) > len(best) and _under(path, proj):
+                best = proj
+        return Root(best, "", self.projects[best]) if best else None
+
+    def _configured_root(self, path: str) -> Optional[Root]:
+        return self._explicit_root(path) or self._project_root(path) or self._mapped_root(path)
 
     def _project_root(self, path: str) -> Optional[Root]:
         for d in self.project_dirs:
@@ -784,7 +802,7 @@ class Scope:
         if os.path.basename(common) != ".git":
             return None
         main = os.path.dirname(common)
-        owner = self._explicit_root(main) or self._project_root(main)
+        owner = self._configured_root(main)
         if not owner or main != owner.path:
             return None
         return Root(worktree, owner.prefix, self.repo_of(owner))
@@ -798,7 +816,7 @@ class Scope:
     def root_for(self, path: str) -> Optional[Root]:
         if any(_under(path, x) for x in self.excludes):
             return None
-        root = self._explicit_root(path) or self._project_root(path)
+        root = self._configured_root(path)
         if root:
             return root
         if self.project_dirs or self.projects:
@@ -2614,8 +2632,8 @@ class WeftRouter:
 
     def _reload(self) -> bool:
         """Re-read the config (rate-limited to once per ``RELOAD_EVERY_S``); True when it was
-        re-read. Only token/mode/project maps change: the reload can add repos this profile
-        already holds tokens for in the config file, nothing else."""
+        re-read. Only token/mode/project maps and explicit roots change: the reload can add repos
+        this profile already holds tokens for in the config file, nothing else."""
         now = self._clock()
         if self._loader is None or now - self._loaded_at < RELOAD_EVERY_S:
             return False
@@ -2636,6 +2654,9 @@ class WeftRouter:
                 adapter.rec.set_mode(adapter.cfg.mode)
             return True
         # Shared with live adapters: update in place (single attribute stores, GIL-atomic).
+        # Explicit roots too: a project registered outside the project dirs (``roots`` entry)
+        # after this process started must resolve without a restart.
+        self.scope.roots = Scope.sort_roots(fresh.roots)
         self.scope.projects = dict(fresh.projects)
         self.scope.known_repos = set(fresh.known_repos())
         self.scope.project_dirs = list(fresh.project_dirs)
@@ -2775,13 +2796,34 @@ class WeftRouter:
         base = base_dir(task_id)
         repos: List[str] = []
         if name in EDIT_TOOLS:
-            for p in edit_paths(name, args):
+            paths = edit_paths(name, args)
+            missed = []
+            for p in paths:
                 t = self.scope.resolve(p, base)
-                if t and t.repo not in repos:
+                if not t:
+                    missed.append(p)
+                elif t.repo not in repos:
                     repos.append(t.repo)
+            # A path in no project may be in one registered since the last config read (an
+            # explicit root outside the project dirs): re-read (rate-limited) and retry.
+            if missed and self._reload_on_miss():
+                for p in missed:
+                    t = self.scope.resolve(p, base)
+                    if t and t.repo not in repos:
+                        self.log(f"config reloaded: {t.worktree} now resolves to project '{t.repo}'")
+                        repos.append(t.repo)
         elif name in WATCH_TOOLS:
             repos = self._terminal_repos(name, args, base, session)
         return repos
+
+    def _reload_on_miss(self) -> bool:
+        """Multi-project mode: a path resolved to no project. Re-read the config (at most once
+        per ``RELOAD_EVERY_S``, shared with the unknown-repo re-check); True when re-read.
+        Standalone mode already re-reads on every call."""
+        if self.cfg.links is not None:
+            return False
+        with self.lock:
+            return self._reload()
 
     def _terminal_repos(self, name: str, args: dict, base: str, session: str) -> List[str]:
         """Repos a terminal / ``execute_code`` call is captured in. The ones its directories and
@@ -2793,8 +2835,14 @@ class WeftRouter:
         dirs, scan = terminal_scan(name, args, base)
         repos: List[str] = []
         seeds: List[str] = []  # a checkout of each repo, for its worktree list
-        for d in dirs:
-            hit = self.scope.locate_dir(d)
+        hits = [self.scope.locate_dir(d) for d in dirs]
+        if not all(hits) and self._reload_on_miss():  # see ``_repos``
+            before = hits
+            hits = [self.scope.locate_dir(d) for d in dirs]
+            for old, hit in zip(before, hits):
+                if hit and not old:
+                    self.log(f"config reloaded: {hit[0]} now resolves to project '{hit[1]}'")
+        for hit in hits:
             if hit and hit[1] not in repos:
                 repos.append(hit[1])
                 seeds.append(hit[0])
@@ -2838,6 +2886,8 @@ class WeftRouter:
         if self.cfg.links is not None:
             self._reload()
         hit = self.scope.locate_dir(directory) if isinstance(directory, str) else None
+        if not hit and isinstance(directory, str) and directory and self._reload_on_miss():
+            hit = self.scope.locate_dir(directory)  # see ``_repos``
         return self.adapter_for(hit[1], self.session_key(kw or {})) if hit else None
 
     def pre_tool_call(self, tool_name: str = "", args: Optional[dict] = None, **kw: Any) -> Optional[dict]:
