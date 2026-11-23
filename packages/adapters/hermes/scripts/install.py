@@ -135,12 +135,26 @@ def url_port(url: str):
         return None
 
 
+PROC_TCP = ("/proc/net/tcp", "/proc/net/tcp6")
+LSOF_TIMEOUT_S = 10
+LSOF_ATTEMPTS = 2
+# Why listener_uids(port) last returned None (port -> reason), for the refusal message.
+_LISTENER_UNKNOWN: dict = {}
+
+
 def listener_uids(port: int):
     """UIDs of the processes listening on TCP ``port`` on this machine, or None when that cannot
-    be told. Linux: /proc/net/tcp{,6} (every user's sockets). macOS: lsof, which shows a normal
-    user only their own processes, so another user's listener shows up as no listener at all."""
+    be told (the reason goes to ``_LISTENER_UNKNOWN[port]``). Linux: /proc/net/tcp{,6} (every
+    user's sockets). macOS: lsof, which shows a normal user only their own processes, so another
+    user's listener shows up as no listener at all.
+
+    lsof runs with -b: without it lsof stat()s every mount point first and blocks on a hung or
+    unreachable one (Time Machine smbfs, another user's CoreDevice mount); one run took 90 s.
+    -b skips only those kernel calls; TCP sockets and their owners are listed as before. A
+    timeout is retried once, then the answer is None (unknown), which refuses the admin token."""
+    _LISTENER_UNKNOWN.pop(port, None)
     found, readable = set(), False
-    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+    for table in PROC_TCP:
         try:
             lines = Path(table).read_text().splitlines()[1:]
         except OSError:
@@ -155,13 +169,23 @@ def listener_uids(port: int):
         return found
     lsof = shutil.which("lsof") or ("/usr/sbin/lsof" if os.path.exists("/usr/sbin/lsof") else None)
     if not lsof:
+        _LISTENER_UNKNOWN[port] = "no /proc/net/tcp, no lsof"
         return None
-    try:
-        out = subprocess.run([lsof, "-nP", "-w", "-a", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fu"],
-                             capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return {int(x[1:]) for x in out.stdout.split() if x.startswith("u") and x[1:].isdigit()}
+    argv = [lsof, "-b", "-nP", "-w", "-a", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fu"]
+    for _ in range(LSOF_ATTEMPTS):
+        try:
+            out = subprocess.run(argv, capture_output=True, text=True, timeout=LSOF_TIMEOUT_S,
+                                 stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            _LISTENER_UNKNOWN[port] = (f"lsof timed out {LSOF_ATTEMPTS}x after {LSOF_TIMEOUT_S} s each: "
+                                       f"{' '.join(argv)}")
+            continue
+        except (OSError, subprocess.SubprocessError) as err:
+            _LISTENER_UNKNOWN[port] = f"lsof failed: {err}"
+            return None
+        _LISTENER_UNKNOWN.pop(port, None)
+        return {int(x[1:]) for x in out.stdout.split() if x.startswith("u") and x[1:].isdigit()}
+    return None
 
 
 _ADMIN_TARGETS: dict = {}
@@ -180,7 +204,8 @@ def admin_target_refusal(url: str):
     uids = listener_uids(port) if port else None
     me = os.getuid()
     if uids is None:
-        why = f"cannot tell who listens on port {port} (no /proc/net/tcp, no lsof)"
+        detail = _LISTENER_UNKNOWN.get(port) or ("no port in the url" if not port else "unknown")
+        why = f"cannot tell who listens on port {port} ({detail})"
     elif not uids:
         why = f"no process of yours is listening on port {port}"
     elif uids != {me}:
@@ -544,7 +569,9 @@ def sync(args, cfg: dict) -> dict:
         sys.exit(f"admin token not found at {args.admin_token_file}")
     status, body = admin_call(args.url, admin, "GET", "/v1/admin/repos")
     if status != 200:
-        sys.exit(f"listing repos failed: HTTP {status}")
+        # HTTP 0 = no answer: the admin token was withheld or the request never got through.
+        err = (body or {}).get("error") if isinstance(body, dict) else None
+        sys.exit(f"listing repos failed: HTTP {status}" + (f": {err}" if err else ""))
     existing = {r["repo"] for r in body.get("repos", [])}
     created = []
     for repo in repos:

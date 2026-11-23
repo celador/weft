@@ -545,6 +545,7 @@ class InstallerCase(unittest.TestCase):
         self.addCleanup(sys.path.remove, str(PKG / "scripts"))
         import install  # noqa: WPS433
         self.install = install
+        self.real_admin_call = install.admin_call
         stack = contextlib.ExitStack()
         self.addCleanup(stack.close)
         stack.enter_context(env(WEFT_CONFIG_DIR=str(self.weft_dir), HERMES_REAL_HOME=str(self.tmp / "home")))
@@ -775,6 +776,103 @@ class AdminCallGuardTests(unittest.TestCase):
             self.assertTrue(lo(u), u)
         for u in ("http://localhost.example", "http://10.0.0.1", "https://box.example", "not a url"):
             self.assertFalse(lo(u), u)
+
+
+class LsofListenerTests(InstallerCase):
+    """macOS path of listener_uids: lsof -b (a hung smbfs/CoreDevice mount must not stall it),
+    one retry on timeout, and a refusal that names the cause. Fail-closed throughout."""
+
+    PORT = 7878
+
+    def setUp(self):
+        super().setUp()
+        self.install._ADMIN_TARGETS.clear()
+        self.addCleanup(self.install._ADMIN_TARGETS.clear)
+        self.install._LISTENER_UNKNOWN.clear()
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        # force the lsof branch on Linux too
+        stack.enter_context(mock.patch.object(self.install, "PROC_TCP", (str(self.tmp / "no-proc-net-tcp"),)))
+        stack.enter_context(mock.patch.object(self.install.shutil, "which",
+                                              lambda name: "/usr/sbin/lsof" if name == "lsof" else None))
+
+    def lsof(self, *results):
+        """subprocess.run replacement: each result is a uid list (lsof -Fu output) or an exception."""
+        self.argvs, todo, real_run = [], list(results), subprocess.run
+
+        def run(argv, **kw):
+            if not str(argv[0]).endswith("lsof"):
+                return real_run(argv, **kw)
+            self.argvs.append(argv)
+            self.assertEqual(kw.get("timeout"), self.install.LSOF_TIMEOUT_S)
+            r = todo.pop(0)
+            if isinstance(r, BaseException):
+                raise r
+            return subprocess.CompletedProcess(argv, 0, "".join(f"p1\nu{u}\nf3\n" for u in r), "")
+        return mock.patch.object(self.install.subprocess, "run", run)
+
+    def timeout(self):
+        return subprocess.TimeoutExpired(["lsof"], self.install.LSOF_TIMEOUT_S)
+
+    def test_argv_avoids_blocking_kernel_calls_and_asks_for_listen_owners(self):
+        with self.lsof([os.getuid()]):
+            self.assertEqual(self.install.listener_uids(self.PORT), {os.getuid()})
+        argv = self.argvs[0]
+        for flag in ("-b", "-w", "-nP", "-a", f"-iTCP:{self.PORT}", "-sTCP:LISTEN", "-Fu"):
+            self.assertIn(flag, argv)
+
+    def test_a_timeout_is_retried_once(self):
+        with self.lsof(self.timeout(), [os.getuid()]):
+            self.assertEqual(self.install.listener_uids(self.PORT), {os.getuid()})
+        self.assertEqual(len(self.argvs), 2)
+        with self.lsof(self.timeout(), [os.getuid()]):
+            self.assertIsNone(self.install.admin_target_refusal(f"http://127.0.0.1:{self.PORT}"))
+
+    def test_retry_keeps_the_every_listener_is_mine_rule(self):
+        with self.lsof(self.timeout(), [os.getuid(), os.getuid() + 1]):
+            why = self.install.admin_target_refusal(f"http://127.0.0.1:{self.PORT}")
+        self.assertIn("another user", why)
+        with self.lsof(self.timeout(), []):
+            self.install._ADMIN_TARGETS.clear()
+            self.assertIn("no process of yours", self.install.admin_target_refusal(f"http://127.0.0.1:{self.PORT}"))
+
+    def test_two_timeouts_refuse_and_say_lsof_timed_out(self):
+        with self.lsof(self.timeout(), self.timeout()):
+            self.assertIsNone(self.install.listener_uids(self.PORT))
+        self.assertEqual(len(self.argvs), 2)
+        with self.lsof(self.timeout(), self.timeout()):
+            why = self.install.admin_target_refusal(f"http://127.0.0.1:{self.PORT}")
+        self.assertIn("cannot tell who listens", why)
+        self.assertIn("lsof timed out", why)
+        self.assertNotIn("no lsof", why)
+
+    def test_no_lsof_says_so(self):
+        with mock.patch.object(self.install.shutil, "which", return_value=None), \
+                mock.patch.object(self.install.os.path, "exists", return_value=False):
+            why = self.install.admin_target_refusal(f"http://127.0.0.1:{self.PORT}")
+        self.assertIn("no lsof", why)
+        self.assertNotIn("timed out", why)
+
+    def test_lsof_error_is_named(self):
+        with self.lsof(PermissionError(13, "Permission denied")):
+            why = self.install.admin_target_refusal(f"http://127.0.0.1:{self.PORT}")
+        self.assertIn("lsof failed", why)
+        self.assertEqual(len(self.argvs), 1, "only a timeout is retried")
+
+    def test_install_exits_with_the_cause_and_never_sends_the_admin_token(self):
+        sent = []
+        with self.lsof(self.timeout(), self.timeout()), \
+                mock.patch.object(self.install, "admin_call", self.real_admin_call), \
+                mock.patch.object(self.install.urllib.request, "urlopen", lambda *a, **k: sent.append(a)), \
+                contextlib.redirect_stderr(io.StringIO()) as err, \
+                self.assertRaises(SystemExit) as exit_:
+            self.run_main("--sync", "--url", f"http://127.0.0.1:{self.PORT}", "--project-dirs", str(self.projects))
+        msg = str(exit_.exception.code)
+        self.assertIn("listing repos failed: HTTP 0", msg)
+        self.assertIn("lsof timed out", msg)
+        self.assertIn("lsof timed out", err.getvalue())
+        self.assertEqual(sent, [])
+        self.assertNotIn("admin-secret", msg + err.getvalue())
 
 
 class InstallBuildTests(InstallerCase):
