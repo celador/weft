@@ -174,8 +174,12 @@ tailnet URL the Otto relay hands to phones; `''` removes it). Both are saved (`u
 `public_url`) and kept by later runs. With no `--url` and none configured, a running local
 gateway (`npx @celador/weft`) is preferred over the hosted preview, and a loopback `--url` on its
 port uses that gateway's admin token. An admin token is sent to a loopback URL only when every
-process listening on that port runs as you (`/proc/net/tcp` or `lsof`): a `/v1/health` answer
-alone proves nothing, since any local user can bind the port while the gateway is down. URLs
+process listening on that port runs as you: a `/v1/health` answer alone proves nothing, since
+any local user can bind the port while the gateway is down. Linux reads `/proc/net/tcp`. macOS
+reads its own processes' sockets through libproc in-process (no `lsof`: on a hung mount it never
+returns, even with `-b`) and connects to each address the URL resolves to; a connection whose
+accepted end none of your processes holds is another user's listener, and the token is refused.
+Elsewhere `lsof` runs with a timeout and is abandoned, never waited for, when it hangs. URLs
 compare with scheme and host case ignored. Moving between the two addresses of one gateway keeps every token
 and re-keys the shared human token (`otto-human-token.json`) to `public_url or url`, the key
 clients look it up under. A config whose `url` is the public address while `WEFT_HERMES_URL`

@@ -12,10 +12,12 @@ import io
 import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -55,6 +57,52 @@ def env(**values):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+
+REAL_POPEN = subprocess.Popen
+
+
+class NoRealListerPopen(REAL_POPEN):
+    """The real lsof/netstat are never run by these tests: on a hung mount lsof sits in state U
+    forever (even with -b, even after SIGKILL), and the suite would hang with it."""
+
+    def __init__(self, args, *a, **k):
+        prog = str(args[0] if isinstance(args, (list, tuple)) else str(args).split()[0])
+        name = os.path.basename(prog)
+        if name in ("lsof", "netstat") and (prog == name or prog.startswith(("/usr/", "/bin/", "/sbin/"))):
+            raise AssertionError(f"test ran the real {name}: mock it")
+        super().__init__(args, *a, **k)
+
+
+def setUpModule():
+    patcher = mock.patch.object(subprocess, "Popen", NoRealListerPopen)
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
+
+
+def accepting_listener(case: unittest.TestCase, family, host: str, accepted=None):
+    """A listening socket on an ephemeral port whose thread accepts and keeps each connection open,
+    as a gateway does. The socket and the connections close at the end of ``case``."""
+    srv = socket.socket(family)
+    srv.bind((host, 0))
+    srv.listen(16)
+    conns = [] if accepted is None else accepted
+
+    def loop():
+        while True:
+            try:
+                conn, _ = srv.accept()
+            except OSError:
+                return
+            conns.append(conn)
+    threading.Thread(target=loop, daemon=True).start()
+
+    def close():
+        srv.close()
+        for conn in conns:
+            conn.close()
+    case.addCleanup(close)
+    return srv
 
 
 def node() -> str:
@@ -545,6 +593,7 @@ class InstallerCase(unittest.TestCase):
         self.addCleanup(sys.path.remove, str(PKG / "scripts"))
         import install  # noqa: WPS433
         self.install = install
+        self.real_admin_call = install.admin_call
         stack = contextlib.ExitStack()
         self.addCleanup(stack.close)
         stack.enter_context(env(WEFT_CONFIG_DIR=str(self.weft_dir), HERMES_REAL_HOME=str(self.tmp / "home")))
@@ -757,14 +806,14 @@ class AdminCallGuardTests(unittest.TestCase):
         self.assertNotIn("ADMIN-SECRET", err.getvalue() + json.dumps(body))
 
     def test_a_listener_of_this_user_passes(self):
-        import socket
-        srv = socket.socket()
-        srv.bind(("127.0.0.1", 0))
-        srv.listen()
-        self.addCleanup(srv.close)
+        # The real listener source (Linux /proc/net/tcp, macOS libproc in-process): no lsof, so a
+        # hung mount cannot stall it. The listener accepts, as a gateway does.
+        srv = accepting_listener(self, socket.AF_INET, "127.0.0.1")
         url = f"http://127.0.0.1:{srv.getsockname()[1]}"
-        self.assertEqual(self.install.listener_uids(srv.getsockname()[1]), {os.getuid()})
+        start = time.monotonic()
+        self.assertEqual(self.install.listener_uids(srv.getsockname()[1], "127.0.0.1"), {os.getuid()})
         self.assertIsNone(self.install.admin_target_refusal(url))
+        self.assertLess(time.monotonic() - start, 1.5)
 
     def test_url_normalization_and_loopback_spellings(self):
         n, lo = self.install.norm_url, self.install.is_loopback
@@ -775,6 +824,325 @@ class AdminCallGuardTests(unittest.TestCase):
             self.assertTrue(lo(u), u)
         for u in ("http://localhost.example", "http://10.0.0.1", "https://box.example", "not a url"):
             self.assertFalse(lo(u), u)
+
+
+class LsofListenerTests(InstallerCase):
+    """lsof path of listener_uids (no /proc/net/tcp, no libproc): lsof -b through run_bounded, one
+    retry on timeout, and a refusal that names the cause. Fail-closed throughout. The real lsof is
+    never run (setUpModule refuses it): on a hung mount it never returns."""
+
+    PORT = 7878
+
+    def setUp(self):
+        super().setUp()
+        self.install._ADMIN_TARGETS.clear()
+        self.addCleanup(self.install._ADMIN_TARGETS.clear)
+        self.install._LISTENER_UNKNOWN.clear()
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        # force the lsof branch on Linux and macOS
+        stack.enter_context(mock.patch.object(self.install, "PROC_TCP", (str(self.tmp / "no-proc-net-tcp"),)))
+        stack.enter_context(mock.patch.object(self.install, "LIBPROC", None))
+        stack.enter_context(mock.patch.object(self.install.shutil, "which",
+                                              lambda name: "/usr/sbin/lsof" if name == "lsof" else None))
+
+    def lsof(self, *results):
+        """run_bounded replacement: each result is a uid list (lsof -Fu output) or an exception."""
+        self.argvs, todo = [], list(results)
+
+        def run(argv, timeout):
+            self.argvs.append(argv)
+            self.assertEqual(timeout, self.install.LSOF_TIMEOUT_S)
+            r = todo.pop(0)
+            if isinstance(r, BaseException):
+                raise r
+            return 0, "".join(f"p1\nu{u}\nf3\n" for u in r), ""
+        return mock.patch.object(self.install, "run_bounded", run)
+
+    def timeout(self):
+        return subprocess.TimeoutExpired(["lsof"], self.install.LSOF_TIMEOUT_S)
+
+    def test_argv_avoids_blocking_kernel_calls_and_asks_for_listen_owners(self):
+        with self.lsof([os.getuid()]):
+            self.assertEqual(self.install.listener_uids(self.PORT), {os.getuid()})
+        argv = self.argvs[0]
+        for flag in ("-b", "-w", "-nP", "-a", f"-iTCP:{self.PORT}", "-sTCP:LISTEN", "-Fu"):
+            self.assertIn(flag, argv)
+
+    def test_a_timeout_is_retried_once(self):
+        with self.lsof(self.timeout(), [os.getuid()]):
+            self.assertEqual(self.install.listener_uids(self.PORT), {os.getuid()})
+        self.assertEqual(len(self.argvs), 2)
+        with self.lsof(self.timeout(), [os.getuid()]):
+            self.assertIsNone(self.install.admin_target_refusal(f"http://127.0.0.1:{self.PORT}"))
+
+    def test_retry_keeps_the_every_listener_is_mine_rule(self):
+        with self.lsof(self.timeout(), [os.getuid(), os.getuid() + 1]):
+            why = self.install.admin_target_refusal(f"http://127.0.0.1:{self.PORT}")
+        self.assertIn("another user", why)
+        with self.lsof(self.timeout(), []):
+            self.install._ADMIN_TARGETS.clear()
+            self.assertIn("no process of yours", self.install.admin_target_refusal(f"http://127.0.0.1:{self.PORT}"))
+
+    def test_two_timeouts_refuse_and_say_lsof_timed_out(self):
+        with self.lsof(self.timeout(), self.timeout()):
+            self.assertIsNone(self.install.listener_uids(self.PORT))
+        self.assertEqual(len(self.argvs), 2)
+        with self.lsof(self.timeout(), self.timeout()):
+            why = self.install.admin_target_refusal(f"http://127.0.0.1:{self.PORT}")
+        self.assertIn("cannot tell who listens", why)
+        self.assertIn("lsof timed out", why)
+        self.assertNotIn("no lsof", why)
+
+    def test_no_lsof_says_so(self):
+        with mock.patch.object(self.install.shutil, "which", return_value=None), \
+                mock.patch.object(self.install.os.path, "exists", return_value=False):
+            why = self.install.admin_target_refusal(f"http://127.0.0.1:{self.PORT}")
+        self.assertIn("no lsof", why)
+        self.assertNotIn("timed out", why)
+
+    def test_lsof_error_is_named(self):
+        with self.lsof(PermissionError(13, "Permission denied")):
+            why = self.install.admin_target_refusal(f"http://127.0.0.1:{self.PORT}")
+        self.assertIn("lsof failed", why)
+        self.assertEqual(len(self.argvs), 1, "only a timeout is retried")
+
+    def test_install_exits_with_the_cause_and_never_sends_the_admin_token(self):
+        sent = []
+        with self.lsof(self.timeout(), self.timeout()), \
+                mock.patch.object(self.install, "admin_call", self.real_admin_call), \
+                mock.patch.object(self.install.urllib.request, "urlopen", lambda *a, **k: sent.append(a)), \
+                contextlib.redirect_stderr(io.StringIO()) as err, \
+                self.assertRaises(SystemExit) as exit_:
+            self.run_main("--sync", "--url", f"http://127.0.0.1:{self.PORT}", "--project-dirs", str(self.projects))
+        msg = str(exit_.exception.code)
+        self.assertIn("listing repos failed: HTTP 0", msg)
+        self.assertIn("lsof timed out", msg)
+        self.assertIn("lsof timed out", err.getvalue())
+        self.assertEqual(sent, [])
+        self.assertNotIn("admin-secret", msg + err.getvalue())
+
+
+class StuckLsofTests(InstallerCase):
+    """lsof in uninterruptible sleep (state U on a hung smbfs mount, seen with -b too): SIGKILL
+    does not end it and wait() never returns. A real fake lsof that hangs, with kill() a no-op and
+    an unbounded wait() an error, must still give a refusal within ~LSOF_ATTEMPTS x timeout."""
+
+    PORT = 7878
+
+    def setUp(self):
+        super().setUp()
+        self.install._LISTENER_UNKNOWN.clear()
+        self.fake = self.tmp / "lsof"
+        self.fake.write_text("#!/bin/sh\nexec sleep 30\n")
+        self.fake.chmod(0o755)
+        self.children, self.waits, real_init = [], [], subprocess.Popen.__init__
+        test = self
+
+        def init(popen, args, *a, **k):
+            real_init(popen, args, *a, **k)
+            test.children.append(popen)
+
+        def wait(popen, timeout=None):
+            test.waits.append(timeout)
+            if timeout is None:
+                raise AssertionError("unbounded wait() on a child that may never exit")
+            raise subprocess.TimeoutExpired(popen.args, timeout)
+
+        stack = contextlib.ExitStack()
+        self.addCleanup(self.reap)
+        self.addCleanup(stack.close)
+        stack.enter_context(mock.patch.object(self.install, "PROC_TCP", (str(self.tmp / "no-proc-net-tcp"),)))
+        stack.enter_context(mock.patch.object(self.install, "LIBPROC", None))
+        stack.enter_context(mock.patch.object(self.install.shutil, "which",
+                                              lambda name: str(self.fake) if name == "lsof" else None))
+        stack.enter_context(mock.patch.object(self.install, "LSOF_TIMEOUT_S", 0.3))
+        stack.enter_context(mock.patch.object(subprocess.Popen, "__init__", init))
+        stack.enter_context(mock.patch.object(subprocess.Popen, "kill", lambda popen: None))  # U: no effect
+        stack.enter_context(mock.patch.object(subprocess.Popen, "wait", wait))
+
+    def reap(self):
+        for p in self.children:  # the fake can die; the real stuck lsof could not
+            with contextlib.suppress(OSError):
+                os.kill(p.pid, 9)
+            with contextlib.suppress(ChildProcessError):
+                os.waitpid(p.pid, 0)
+            p.returncode = -9
+            with contextlib.suppress(ValueError):
+                self.install._ABANDONED.remove(p)
+
+    def test_a_stuck_lsof_is_abandoned_and_refused_in_bounded_time(self):
+        start = time.monotonic()
+        self.assertIsNone(self.install.listener_uids(self.PORT))
+        took = time.monotonic() - start
+        self.assertLess(took, 2 * self.install.LSOF_ATTEMPTS * self.install.LSOF_TIMEOUT_S)
+        self.assertIn("lsof timed out 2x", self.install._LISTENER_UNKNOWN[self.PORT])
+        self.assertEqual(len(self.children), 2, "one retry")
+        self.assertNotIn(None, self.waits)
+        for p in self.children:
+            self.assertIsNone(p.returncode, "never reaped: abandoned")
+            self.assertTrue(p.stdout.closed and p.stderr.closed, "pipes closed")
+            self.assertIn(p, self.install._ABANDONED)
+
+    def test_the_refusal_reaches_admin_call_in_bounded_time(self):
+        start = time.monotonic()
+        with mock.patch.object(self.install, "admin_call", self.real_admin_call), \
+                mock.patch.object(self.install.urllib.request, "urlopen", side_effect=AssertionError("sent")), \
+                contextlib.redirect_stderr(io.StringIO()):
+            status, body = self.install.admin_call(f"http://127.0.0.1:{self.PORT}", "ADMIN", "GET", "/v1/admin/repos")
+        self.assertEqual(status, 0)
+        self.assertIn("lsof timed out", body["error"])
+        self.assertLess(time.monotonic() - start, 2 * self.install.LSOF_ATTEMPTS * self.install.LSOF_TIMEOUT_S)
+
+    def test_subprocess_run_would_have_hung(self):
+        # the old call: run() kills on timeout, then wait()s with no timeout
+        with self.assertRaisesRegex(AssertionError, "unbounded wait"):
+            subprocess.run([str(self.fake)], capture_output=True, timeout=0.2)
+
+
+class RunBoundedTests(unittest.TestCase):
+    def test_output_of_a_child_that_exits(self):
+        sys.path.insert(0, str(PKG / "scripts"))
+        self.addCleanup(sys.path.remove, str(PKG / "scripts"))
+        import install  # noqa: WPS433
+        rc, out, err = install.run_bounded(["/bin/sh", "-c", "echo p1; echo u501; echo oops >&2; exit 3"], 10)
+        self.assertEqual((rc, out, err), (3, "p1\nu501\n", "oops\n"))
+
+
+class DarwinListenerTests(InstallerCase):
+    """macOS path: libproc (in-process; the mount table is never touched) plus a connect probe.
+    libproc, like lsof, shows a normal user only their own processes, so the probe's accepted end
+    must be found in one of them; otherwise another user holds that address and the token is
+    refused even when this user also listens on the port elsewhere. libproc is faked here from
+    the real accepted sockets so the other-user cases can be shown; the real one is tested below."""
+
+    def setUp(self):
+        super().setUp()
+        self.install._ADMIN_TARGETS.clear()
+        self.addCleanup(self.install._ADMIN_TARGETS.clear)
+        self.install._LISTENER_UNKNOWN.clear()
+        self.accepted, self.rows, self.hidden = [], [], False
+        test = self
+
+        class FakeLibproc:
+            def __init__(self, path):
+                test.assertEqual(path, "/usr/lib/libproc.dylib")
+
+            def tcp_sockets(self, port):
+                rows = list(test.rows)
+                if not test.hidden:  # the accepting process is readable (this user's)
+                    for conn in test.accepted:
+                        la, fa = conn.getsockname(), conn.getpeername()
+                        rows.append((os.getpid(), os.getuid(), False, la[0], la[1], fa[0], fa[1]))
+                return rows
+
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(mock.patch.object(self.install, "PROC_TCP", (str(self.tmp / "no-proc-net-tcp"),)))
+        stack.enter_context(mock.patch.object(self.install, "LIBPROC", "/usr/lib/libproc.dylib"))
+        stack.enter_context(mock.patch.object(self.install, "_Libproc", FakeLibproc))
+        stack.enter_context(mock.patch.object(self.install, "LISTENER_PROBE_S", 0.3))
+        stack.enter_context(mock.patch.object(self.install, "run_bounded",
+                                              side_effect=AssertionError("no subprocess on macOS")))
+        self.srv = accepting_listener(self, socket.AF_INET, "127.0.0.1", self.accepted)
+        self.port = self.srv.getsockname()[1]
+        self.url = f"http://127.0.0.1:{self.port}"
+
+    def listening(self, uid, ip="127.0.0.1"):
+        return (4242, uid, True, ip, self.port, "0.0.0.0", 0)
+
+    def test_the_accepting_process_is_mine(self):
+        self.rows = [self.listening(os.getuid())]
+        self.assertEqual(self.install.listener_uids(self.port, "127.0.0.1"), {os.getuid()})
+        self.assertIsNone(self.install.admin_target_refusal(self.url))
+        self.assertEqual(len(self.accepted), 2, "one probe connection per check")
+
+    def test_an_accepted_end_no_process_of_mine_holds_is_refused(self):
+        self.hidden = True  # another user's listener: libproc cannot read its process
+        start = time.monotonic()
+        why = self.install.admin_target_refusal(self.url)
+        self.assertLess(time.monotonic() - start, 1.5)
+        self.assertIn("cannot tell who listens", why)
+        self.assertIn("none of your processes holds", why)
+
+    def test_my_listener_elsewhere_on_the_port_does_not_vouch_for_this_address(self):
+        # mine on ::1, another user's on 127.0.0.1 (separate tables, so the kernel allows both):
+        # lsof by port would list only mine and answer "every listener is mine"
+        self.hidden = True
+        self.rows = [self.listening(os.getuid(), "::1")]
+        self.assertIsNone(self.install.listener_uids(self.port, "127.0.0.1"))
+        self.assertIn("another user's listener", self.install._LISTENER_UNKNOWN[self.port])
+
+    def test_another_users_visible_listener_is_refused(self):
+        self.rows = [self.listening(os.getuid()), self.listening(0, "::1")]
+        self.assertIn("another user (uid 0)", self.install.admin_target_refusal(self.url))
+
+    def test_localhost_probes_every_address(self):
+        self.hidden = True
+        why = self.install.admin_target_refusal(f"http://localhost:{self.port}")
+        self.assertIn("another user's listener", why)
+        self.install._ADMIN_TARGETS.clear()
+        self.hidden = False
+        self.assertIsNone(self.install.admin_target_refusal(f"http://localhost:{self.port}"))
+
+    def test_nothing_listening(self):
+        free = socket.socket()
+        free.bind(("127.0.0.1", 0))
+        port = free.getsockname()[1]
+        free.close()  # (a port bound without listen() drops SYNs on macOS: a timeout, not a refusal)
+        self.assertEqual(self.install.listener_uids(port, "localhost"), set())
+        self.assertIn("no process of yours", self.install.admin_target_refusal(f"http://127.0.0.1:{port}"))
+
+    def test_libproc_failures_refuse(self):
+        with mock.patch.object(self.install, "_Libproc", side_effect=OSError("no such file")):
+            self.assertIsNone(self.install.listener_uids(self.port, "127.0.0.1"))
+        self.assertIn("libproc unavailable", self.install._LISTENER_UNKNOWN[self.port])
+        with mock.patch.object(self.install._Libproc, "tcp_sockets", side_effect=OSError("returned 7 bytes"),
+                               create=True):
+            self.assertIsNone(self.install.listener_uids(self.port, "127.0.0.1"))
+        self.assertIn("libproc failed: returned 7 bytes", self.install._LISTENER_UNKNOWN[self.port])
+
+    def test_admin_call_never_sends_when_the_listener_is_not_mine(self):
+        self.hidden = True
+        with mock.patch.object(self.install, "admin_call", self.real_admin_call), \
+                mock.patch.object(self.install.urllib.request, "urlopen", side_effect=AssertionError("sent")), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            status, body = self.install.admin_call(self.url, "ADMIN-SECRET", "GET", "/v1/admin/repos")
+        self.assertEqual(status, 0)
+        self.assertIn("admin token not sent", body["error"])
+        self.assertNotIn("ADMIN-SECRET", err.getvalue() + json.dumps(body))
+
+
+@unittest.skipUnless(sys.platform == "darwin", "libproc is macOS")
+class RealLibprocTests(unittest.TestCase):
+    """The real libproc structs against the running kernel (no subprocess, no mount access, so it
+    finishes while a mount is hung)."""
+
+    def setUp(self):
+        sys.path.insert(0, str(PKG / "scripts"))
+        self.addCleanup(sys.path.remove, str(PKG / "scripts"))
+        import install  # noqa: WPS433
+        self.install = install
+        install._LISTENER_UNKNOWN.clear()
+
+    def test_ipv4_ipv6_and_localhost_listeners_are_mine(self):
+        for family, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+            srv = accepting_listener(self, family, host)
+            port = srv.getsockname()[1]
+            for name in (host, "localhost"):
+                start = time.monotonic()
+                self.assertEqual(self.install.listener_uids(port, name), {os.getuid()}, (host, name))
+                self.assertLess(time.monotonic() - start, 1.0)
+        rows = self.install._Libproc(self.install.LIBPROC).tcp_sockets(port)
+        self.assertIn((os.getpid(), os.getuid(), True, "::1", port, "::", 0), rows)
+
+    def test_a_listener_that_never_accepts_is_not_attributed(self):
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen()
+        self.addCleanup(srv.close)
+        with mock.patch.object(self.install, "LISTENER_PROBE_S", 0.3):
+            self.assertIsNone(self.install.listener_uids(srv.getsockname()[1], "127.0.0.1"))
 
 
 class InstallBuildTests(InstallerCase):
