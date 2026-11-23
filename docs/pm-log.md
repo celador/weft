@@ -380,3 +380,8 @@ Append-only. One dated entry per heartbeat that changed something.
 - Decision: follow-up t_2f15897e (wt/lsof-hang, parent t_475bd4c1, dispatched): abandon a stuck child instead of waiting, evaluate a mount-free listener source (netstat -anv / libproc), mock lsof in tests. PM lands both branches when it's done.
 - t_88c0c1a3 (lawnstarter plugin) and t_ba7a935b (otto relay copy) done: the earlier Need-from-John (lawnstarter login) is resolved. t_be804fb4 stays unlanded by design (competitor recon; public repo).
 - Security impact: none (board ops); the admin-token rule stays fail-closed on both branches.
+
+## 2026-11-23 19:25 — Landed lsof fixes (t_475bd4c1 + t_2f15897e)
+- Merged wt/lsof-hang (269e86b; contains parent 6899189 from wt/lsof-listener-uids). On macOS install.py reads listeners via libproc (no lsof, no mount access) plus a connect probe; elsewhere a stuck lsof is killed and abandoned, never waited on. Hermes typecheck + 13 vitest + 219 Python tests green in the worktree with the Time Machine mount ("Backups of Nano") still hung; full gate green on main (GATE_EXIT 0). Spot-check: `admin_target_refusal('http://127.0.0.1:22')` refused in 2.07 s ("none of your processes holds"). Weft lands #3198/#3199 recorded. Worktrees + 3 branches removed; pushed.
+- Security impact: tighter (another user's listener on the URL's exact address is now refused even when this user listens on the same port elsewhere; every unknown still refuses).
+- Still open: t_52c6e0ad go-live paused (John on pricing), t_619cbda1 triage (needs John's "use Chrome"), t_be804fb4 unlanded by design.
