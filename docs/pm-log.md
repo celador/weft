@@ -390,3 +390,5 @@ Append-only. One dated entry per heartbeat that changed something.
 - John: Omer (barnessomer) is trusted; fix all open issues. Carded #17 (t_1f6e94b5), #8+#10+#18 subagent items (t_bc837869), #3 (t_dba80921), #15 (t_38695084); after #17: #18 coordinator/claims/conflicts (t_66780d00), #5-#7 dependencies (t_fc67c5fc); after #8/#10: #11 (t_7016c4d3).
 - Decisions (rationale in card bodies): open errors belong to the change and survive release/bye; hello for another agent's change rejected; claims never refused by block mode; claim renewal capped at own deadline; overload proposals not a sanctioned stale_assumption response; PM landing rebase-retry kept (integration, not adoption).
 - #18 closes manually once both t_66780d00 and t_bc837869 have landed (commits say Refs #18).
+
+- 2026-11-26: carded revert history for agents (t_f8bc12a1, after #3 t_dba80921): weft_history MCP tool + info-level "previously reverted" note at edit time, derived from the log; answers an inbound question (ValorBrain DevRel) without an outside memory service.

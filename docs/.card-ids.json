@@ -32,5 +32,6 @@
  "issue-15-no-adapt-text": "t_38695084",
  "issue-18-coordinator-followups": "t_66780d00",
  "issue-5-7-dependencies": "t_fc67c5fc",
- "issue-11-adapter-routing": "t_7016c4d3"
+ "issue-11-adapter-routing": "t_7016c4d3",
+ "revert-history": "t_f8bc12a1"
 }
