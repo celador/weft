@@ -593,3 +593,27 @@ WCP v0.1 is specified in `docs/protocol/wcp-v0.md` (normative; implemented by `p
 - Residual: a program that writes into a repo the conversation never touched, without naming
   that repo's folder anywhere in the command, is not captured. Cost: 4-12 worktrees snapshot in
   about 35 ms before and 35 ms after an opaque call (parallel `git status`).
+
+## Update 2026-11-26 (t_bc837869, Claude Code subagents in worktrees: #8, #10, #18)
+- A Claude Code session runs the hooks of the checkout it was started in; a session in the main
+  checkout never runs a joined worktree's `.claude/` hooks, and its subagents work in its cwd.
+  Subagent work in a worktree is coordinated by a per-worktree worker: `install-agent --worktree W`
+  writes `.claude/agents/weft-worker-<dir>.md` into the orchestrating checkout, whose frontmatter
+  hooks run `hook --root W` pinned to the session's coordinator (url, repo, mode). The worktree is
+  explicit, so calls without a file path act for it: the worker's Bash `git commit` is gated
+  against W's session, and its frontmatter `Stop` (run by Claude Code as `SubagentStop`) is the
+  stop gate and then the worker's session end (bye). Each subagent gets its own state and WCP
+  session (`session_id` + `agent_id`). Edits in another checkout and Bash commands that do not
+  start in W are denied. `hook --by-path` stays for the path-inferred worker (no stop gate).
+- Worker hooks never fall back to another checkout's agent: a config that exists but does not
+  load is logged with its reason in that checkout's `.weft/log/adapter.log` and the call is not
+  coordinated (the agent is told on PreToolUse).
+- Bash reconcile is opaque, like the Hermes adapter's: after a worker's Bash call every joined
+  checkout the command names anywhere in its text is reconciled as its own agent, instead of
+  parsing the shell beyond the leading `cd`/`git -C` that decides whether the command may run.
+- Pre-call snapshots are bounded (dropped after 15 min without PostToolUse; at most 8 Bash
+  snapshots, 8 MiB), and an Edit running in parallel with a Bash call is submitted once.
+- No protocol or coordinator change: the events are the same `edit`/`leave` shapes as before.
+- Residual: project subagents' frontmatter hooks run only in a folder trusted in Claude Code's
+  trust dialog (`claude -p` is never trusted); headless runs pass the definition through
+  `claude --agents` (`install-agent --print-json`).

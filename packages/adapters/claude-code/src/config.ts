@@ -1,6 +1,7 @@
 // Adapter configuration and per-Claude-session state, both under `<checkout>/.weft/`
 // (excluded from git by the installer). Hook processes are short-lived and may run
 // concurrently (parallel tool calls), so state is a JSON file guarded by a lock dir.
+import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -246,19 +247,30 @@ export function appendAdapterLog(root: string, message: string, at: number = Dat
  * Plain `hook` and the other commands read `tokenFile` as before (`install --token-file` may put it anywhere).
  */
 export function loadConfig(start: string, env: NodeJS.ProcessEnv = process.env, configRel: string = CONFIG_REL, confineToken = false): Loaded | undefined {
+  return loadConfigResult(start, env, configRel, confineToken).loaded;
+}
+
+/**
+ * `loadConfig` with the reason it failed. `root` is set once a checkout with a config file was
+ * found, so a caller can log a config that exists but does not load into that checkout's own
+ * `.weft/log` (`problem` never contains the token).
+ */
+export function loadConfigResult(start: string, env: NodeJS.ProcessEnv = process.env, configRel: string = CONFIG_REL, confineToken = false): { loaded?: Loaded; root?: string; problem?: string } {
   const root = env.WEFT_ROOT ? resolve(env.WEFT_ROOT) : findRoot(start, configRel);
-  if (!root) return undefined;
+  if (!root) return { problem: "no config" };
   let config: AdapterConfig;
   try {
-    if (confineToken && (!lstatSync(join(root, dirname(configRel))).isDirectory() || !lstatSync(join(root, configRel)).isFile())) return undefined;
+    if (confineToken && !lstatSync(join(root, dirname(configRel))).isDirectory()) return { root, problem: `${dirname(configRel)} is not a directory` };
+    if (confineToken && !lstatSync(join(root, configRel)).isFile()) return { root, problem: `${configRel} is not a regular file` };
     config = JSON.parse(readFileSync(join(root, configRel), "utf8")) as AdapterConfig;
-    if (!config || typeof config !== "object") return undefined; // a config of `null` or a number is not a config
-  } catch {
-    return undefined;
+    if (!config || typeof config !== "object") return { root, problem: `${configRel} is not a JSON object` }; // `null` or a number is not a config
+  } catch (err) {
+    return { root, problem: `${configRel} is unreadable or not JSON (${err instanceof SyntaxError ? "invalid JSON" : (err as NodeJS.ErrnoException).code ?? "error"})` };
   }
   if (env.WEFT_URL) config.url = env.WEFT_URL;
   if (env.WEFT_MODE === "advise" || env.WEFT_MODE === "enforce") config.mode = env.WEFT_MODE;
   let token = env.WEFT_TOKEN ?? "";
+  let tokenProblem = "no token (empty or missing token file)";
   if (!token) {
     try {
       const tokenPath = resolve(root, config.tokenFile ?? ".weft/token");
@@ -270,12 +282,59 @@ export function loadConfig(start: string, env: NodeJS.ProcessEnv = process.env, 
         if (!realpathSync(tokenPath).startsWith(realpathSync(resolve(root, ".weft")) + sep)) throw new Error("tokenFile outside .weft/");
       }
       token = readFileSync(tokenPath, "utf8").trim();
-    } catch {
+    } catch (err) {
       token = "";
+      if (err instanceof Error && !(err as NodeJS.ErrnoException).code) tokenProblem = `token not read: ${err.message}`;
     }
   }
-  if (!config.url || !config.repo || !config.agent || !config.change || !config.task?.id || !token) return undefined;
-  return { root, config, token };
+  const missing: string[] = (["url", "repo", "agent", "change"] as const).filter((k) => !config[k]);
+  if (!config.task?.id) missing.push("task.id");
+  if (missing.length) return { root, problem: `${configRel} lacks ${missing.join(", ")}` };
+  if (!token) return { root, problem: tokenProblem };
+  return { loaded: { root, config, token }, root };
+}
+
+/**
+ * Append lines to the checkout's `info/exclude` (what never enters git: `.weft/`, machine-specific
+ * hook settings, generated agent files). One helper for every installer; lines already there are kept once.
+ */
+export function excludeFromGit(root: string, lines: string[]): void {
+  const exclude = resolve(root, execFileSync("git", ["-C", root, "rev-parse", "--git-path", "info/exclude"], { encoding: "utf8" }).trim());
+  mkdirSync(dirname(exclude), { recursive: true });
+  const ex = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
+  const have = new Set(ex.split("\n"));
+  const want = [...new Set(lines)].filter((l) => !have.has(l));
+  if (want.length) writeFileSync(exclude, `${ex}${ex && !ex.endsWith("\n") ? "\n" : ""}${want.join("\n")}\n`);
+}
+
+/** The git checkout holding `path`: the nearest directory, `path` itself included, that has a `.git`. Lexical (no symlinks resolved). */
+export function checkoutOf(path: string): string | undefined {
+  for (let p = resolve(path); ; p = dirname(p)) {
+    if (existsSync(join(p, ".git"))) return p;
+    if (dirname(p) === p) return undefined;
+  }
+}
+
+/**
+ * Every git checkout a shell command names, read OPAQUELY: any absolute or `~/` path anywhere in
+ * the text (after any `cd`, in a subshell, on a later line, inside quotes) counts, whatever the
+ * shell would make of it. The hook reconciles each of these checkouts after the command instead
+ * of parsing the shell. Paths with a `..` segment are skipped (resolved after symlinks, not lexically).
+ */
+export function namedCheckouts(command: string, max = 64): string[] {
+  const tokens = new Set<string>();
+  for (const t of command.split(/[\s'"`;&|<>()=,]+/)) tokens.add(t);
+  for (const m of command.matchAll(/'([^']*)'|"([^"]*)"/g)) tokens.add(m[1] ?? m[2] ?? "");
+  const roots: string[] = [];
+  for (const raw of tokens) {
+    if (roots.length >= max) break;
+    const t = raw.trim(); // `--file=/x` and `2>/x` were split at `=` and `>` above
+    const abs = t.startsWith("~/") ? join(homedir(), t.slice(2)) : t === "~" ? homedir() : t.startsWith("/") ? t : undefined;
+    if (!abs || hasDotDot(abs)) continue;
+    const root = checkoutOf(abs);
+    if (root && !roots.includes(root)) roots.push(root);
+  }
+  return roots;
 }
 
 /**
@@ -298,6 +357,12 @@ export type PendingEdit = {
   shown: string[];
   /** Files that existed but could not be read before the tool ran: never submitted for this call. */
   unreadable?: string[];
+  /**
+   * Edit tools: sha256 of the text the edit will leave (when it can be derived). A parallel Bash
+   * call's reconcile leaves a file in this exact state to this edit's own PostToolUse, so the
+   * change is submitted once.
+   */
+  expect?: string;
   at: number;
 };
 

@@ -12,7 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import type { Capabilities } from "@weft/protocol";
 import { NEGOTIATE_USAGE, parseNegotiate } from "@weft/protocol";
 import { HttpTransport, type Transport } from "./client";
-import { currentSession, loadConfig, loadPinned, pinFromArgs, readState, stateDir, withLock, writeState, type AdapterConfig, type Loaded } from "./config";
+import { currentSession, excludeFromGit, loadConfig, loadPinned, pinFromArgs, readState, stateDir, withLock, writeState, type AdapterConfig, type Loaded } from "./config";
 import { ClaudeAdapter, type HookInput, type HookOutput } from "./hooks";
 import { flushJobs, type LspJob } from "./lsp-queue";
 import { stableNodePath } from "./node-path";
@@ -259,11 +259,7 @@ export class Host {
       writeFileSync(tokenPath, process.env.WEFT_TOKEN.trim() + "\n", { mode: 0o600 });
       chmodSync(tokenPath, 0o600);
     }
-    const exclude = resolve(root, git(root, ["rev-parse", "--git-path", "info/exclude"]));
-    mkdirSync(dirname(exclude), { recursive: true });
-    const ex = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
-    const want = [".weft/", ...(spec.excludes ?? [])].filter((l) => !ex.split("\n").includes(l));
-    if (want.length) writeFileSync(exclude, `${ex}${ex && !ex.endsWith("\n") ? "\n" : ""}${want.join("\n")}\n`);
+    excludeFromGit(root, [".weft/", ...(spec.excludes ?? [])]);
 
     const hookCommand = `${shellQuote(stableNodePath())} ${shellQuote(spec.self)} hook`;
     const harnessLines = spec.installHarness(root, hookCommand, args);
