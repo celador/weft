@@ -18,7 +18,7 @@ WEFT_TOKEN=... node dist/weft-opencode.mjs install \
 | `.weft/opencode.json`, `.weft/token` (0600) | coordinator, repo, agent, task, `change` (Change-Id); the token never enters config, logs or git |
 | `.opencode/plugin/weft.js` | generated bridge (absolute node + bundle paths; excluded from git) |
 | git `commit-msg` / `pre-commit` | Change-Id/Task-Id/Agent-Id trailers; refuse commits while the session has open errors |
-| `.weft/bin/weft` | the agent's `negotiate` / `inbox` command |
+| `.weft/bin/weft` | the agent's `negotiate` / `inbox` / `claim` command |
 
 ## Hook mapping
 

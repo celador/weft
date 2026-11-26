@@ -2,7 +2,7 @@
 //
 //   install   .weft/opencode.json (+ token), .opencode/plugin/weft.js, git hooks, agent CLI
 //   hook      plugin bridge: one OpenCode plugin message on stdin -> answer JSON on stdout
-//   (+ the shared commit-msg, pre-commit, heartbeat-loop, status, negotiate, inbox)
+//   (+ the shared commit-msg, pre-commit, heartbeat-loop, status, negotiate, inbox, claim)
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

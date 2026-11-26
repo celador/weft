@@ -13,6 +13,7 @@ export const CLAIM_USAGE = [
   "  path    repo-relative POSIX path as it appears in Weft diagnostics (no leading /, no . or .. segments)",
   "  symbol  dotted declaration name (SessionStore.get) or * for the whole file",
   "  --firm  a firm claim: others' overlapping edits are refused until it expires or you release it",
+  "          (without it the claim is soft: they are only warned)",
   "  --ttl   firm claims only: how long, in ms; at most the repo's firm limit (default 10 min)",
 ].join("\n");
 

@@ -282,13 +282,24 @@ cd <checkout>
 - Keys are `path#symbol` exactly as they appear in Weft diagnostics: a repo-relative POSIX path
   (no leading `/`, no `.` or `..` segments, no spaces), `#`, then a dotted declaration name
   (`SessionStore.get`) or `*` for the whole file. Anything else is refused before it is sent.
-- A plain claim is a **lease** (2 minutes by default): it stays while the agent keeps working
+- A plain claim is **soft**, a **lease** (2 minutes by default): it stays while the agent keeps working
   (every edit and the adapter's 30 s heartbeat renew it) and is released within 2 minutes after
   the agent dies, or at once when its session ends.
-- `--firm` makes others' overlapping edits fail instead of warn. A firm claim has a hard limit
-  counted from the claim: `--ttl MS` (firm claims only), at most the repo's firm limit (10 minutes
-  by default; the CLI refuses more). Heartbeats do not extend it; run `weft claim` again to extend
-  it, which shows up in the log.
+- Soft also means another agent's overlapping edit only gets a `claim_wait` warning and goes
+  through. `--firm` sends `firm: true`, which turns that warning into an error: the
+  coordinator rejects the edit and the other agent's adapter denies it (in its default `enforce`
+  mode; an `--mode advise` install only shows "this edit would be blocked"), and its stop gate
+  stays shut until the error clears. A firm claim also refuses others' claims on the keys; a
+  soft one never does. On a repo created with `enforcement: "block"` a soft claim already
+  rejects overlapping edits (not claims).
+- Firm protects against agents that are *junior* to the claimer (under the default `wound-wait`
+  policy): the same or lower task priority, started after it. A higher-priority (or older) agent
+  still overrides it, and the claimer gets `claim_wounded` (protocol §7.1, §7.5).
+- A firm claim has a hard limit counted from the claim: `--ttl MS` (firm claims only), at most the
+  repo's firm limit (10 minutes by default; the CLI refuses more). Heartbeats do not extend it;
+  run `weft claim` again to extend it, which shows up in the log.
+- The same command works as `npx @celador/weft claim …` from anywhere in the checkout, and
+  agents on the MCP server use `weft_claim` with `{"keys": […], "firm": true}`.
 
 Repos created before claim leases existed keep the old 30-minute claim TTL until the operator
 switches them over (this is recorded in the repo's journal, so its history replays unchanged):

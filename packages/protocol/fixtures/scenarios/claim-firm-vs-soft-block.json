@@ -1,0 +1,282 @@
+{
+  "name": "claim-firm-vs-soft-block",
+  "description": "§7.2/§7.5 under enforcement block: edits into a soft hold are rejected too; claims are refused only by a firm holder, never by the mode.",
+  "covers": [
+    "6.2 R3",
+    "7.2",
+    "7.5"
+  ],
+  "repo": "demo",
+  "start": "2026-10-05T14:00:00.000Z",
+  "enforcement": "block",
+  "steps": [
+    {
+      "op": "hello",
+      "as": "A",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "claude-a",
+          "harness": "claude-code"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-1"
+        },
+        "change": "I-a"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s1",
+        "head_seq": 1,
+        "delivered_through": 1
+      }
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "codex-b",
+          "harness": "codex"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s2",
+        "head_seq": 2,
+        "delivered_through": 2
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "claim",
+          "base_seq": 1,
+          "payload": {
+            "firm": false,
+            "source": "explicit"
+          },
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 3,
+        "diagnostics": [],
+        "summary": "claude-a claimed refreshToken"
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "claim",
+          "base_seq": 3,
+          "payload": {
+            "firm": true,
+            "source": "explicit"
+          },
+          "writes": [
+            {
+              "key": "src/auth/session.ts#SessionStore.get",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 4,
+        "diagnostics": [],
+        "summary": "claude-a firmly claimed SessionStore.get"
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 2,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "reject",
+        "seq": 5,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "claim_wait",
+            "symbol": "src/auth/session.ts#refreshToken",
+            "caused_by_seq": 3,
+            "caused_by_agent": "claude-a"
+          }
+        ]
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 2,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#SessionStore.get",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "reject",
+        "seq": 6,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "claim_wait",
+            "symbol": "src/auth/session.ts#SessionStore.get",
+            "caused_by_seq": 4,
+            "caused_by_agent": "claude-a",
+            "arbitration": {
+              "outcome": "wait"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "op": "drain",
+      "as": "A",
+      "ack": "last",
+      "expect": {
+        "items": [],
+        "open_errors": []
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "claim",
+          "base_seq": 2,
+          "payload": {
+            "firm": false,
+            "source": "explicit"
+          },
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 7,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "claim_wait",
+            "symbol": "src/auth/session.ts#refreshToken",
+            "caused_by_seq": 3,
+            "caused_by_agent": "claude-a"
+          }
+        ]
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "claim",
+          "base_seq": 2,
+          "payload": {
+            "firm": true,
+            "source": "explicit"
+          },
+          "writes": [
+            {
+              "key": "src/auth/session.ts#SessionStore.get",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "reject",
+        "seq": 8,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "claim_wait",
+            "symbol": "src/auth/session.ts#SessionStore.get",
+            "caused_by_seq": 4,
+            "caused_by_agent": "claude-a"
+          }
+        ]
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "stop",
+      "expect": {
+        "allow": false
+      }
+    }
+  ]
+}

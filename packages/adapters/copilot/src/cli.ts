@@ -3,7 +3,7 @@
 //   install   .weft/copilot.json (+ token), .github/hooks/weft.json (Copilot hooks), git hooks, agent CLI
 //   hook EVT  Copilot hook entry: JSON on stdin -> JSON on stdout (always exit 0). EVT is the
 //             event the entry is registered under (camelCase payloads carry no event name).
-//   (+ the shared commit-msg, pre-commit, heartbeat-loop, status, negotiate, inbox)
+//   (+ the shared commit-msg, pre-commit, heartbeat-loop, status, negotiate, inbox, claim)
 //
 // One hooks file serves Copilot CLI, VS Code agent mode (Local harness and Copilot sessions on
 // the Agent Host both read `.github/hooks/*.json`) and the Copilot cloud agent (which reads it
