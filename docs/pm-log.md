@@ -385,3 +385,8 @@ Append-only. One dated entry per heartbeat that changed something.
 - Merged wt/lsof-hang (269e86b; contains parent 6899189 from wt/lsof-listener-uids). On macOS install.py reads listeners via libproc (no lsof, no mount access) plus a connect probe; elsewhere a stuck lsof is killed and abandoned, never waited on. Hermes typecheck + 13 vitest + 219 Python tests green in the worktree with the Time Machine mount ("Backups of Nano") still hung; full gate green on main (GATE_EXIT 0). Spot-check: `admin_target_refusal('http://127.0.0.1:22')` refused in 2.07 s ("none of your processes holds"). Weft lands #3198/#3199 recorded. Worktrees + 3 branches removed; pushed.
 - Security impact: tighter (another user's listener on the URL's exact address is now refused even when this user listens on the same port elsewhere; every unknown still refuses).
 - Still open: t_52c6e0ad go-live paused (John on pricing), t_619cbda1 triage (needs John's "use Chrome"), t_be804fb4 unlanded by design.
+
+## 2026-11-26 — Omer's open issues carded
+- John: Omer (barnessomer) is trusted; fix all open issues. Carded #17 (t_1f6e94b5), #8+#10+#18 subagent items (t_bc837869), #3 (t_dba80921), #15 (t_38695084); after #17: #18 coordinator/claims/conflicts (t_66780d00), #5-#7 dependencies (t_fc67c5fc); after #8/#10: #11 (t_7016c4d3).
+- Decisions (rationale in card bodies): open errors belong to the change and survive release/bye; hello for another agent's change rejected; claims never refused by block mode; claim renewal capped at own deadline; overload proposals not a sanctioned stale_assumption response; PM landing rebase-retry kept (integration, not adoption).
+- #18 closes manually once both t_66780d00 and t_bc837869 have landed (commits say Refs #18).
