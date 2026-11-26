@@ -85,6 +85,8 @@ export type SessionState = {
   head?: string;
   stopRefusals?: { fingerprint: string; count: number };
   lastContact: number;
+  /** Claim limits from the last welcome (bounds `weft claim --ttl`, spec §7.5). */
+  claimLimits?: { claim_ttl_ms: number; claims?: { lease_ms: number; firm_max_ms: number } };
 };
 
 export function stateDir(root: string): string {
