@@ -24,3 +24,15 @@ export function contractError(rec: EventRecord, w: { key: SymbolKey; kind: Write
     ...(rec.task ? { caused_by_task: rec.task } : {}),
   };
 }
+
+/**
+ * Suggestion of the `contract_changed` warning on a reads amendment (spec §6.2 R2a): `who` changed
+ * the signature of (or removed) `key` in #`seq` after the amending change's base. Under
+ * `conflicts: continue` it says to keep editing other tasks instead of adapting (spec §8.4); the
+ * `hold` text is unchanged.
+ */
+export function amendmentSuggestion(key: SymbolKey, seq: number, who: string, continueMode: boolean): string {
+  return continueMode
+    ? `Keep editing your other tasks instead of adapting your call sites to ${who}'s new ${key} (event #${seq}); do not adopt their partial work. ${who} owns the change; negotiate with ${who} if you need the old contract.`
+    : `Re-read ${key} (event #${seq}) and adapt your call sites, or negotiate with ${who}.`;
+}

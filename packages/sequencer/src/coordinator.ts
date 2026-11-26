@@ -11,6 +11,7 @@
 import {
   addresseeOf,
   agreementOf,
+  amendmentSuggestion,
   answererOf,
   counterpartAway,
   contractError,
@@ -938,7 +939,7 @@ export class SqlCoordinator {
           message: strong
             ? `${who} ${strong.w.kind === "deleted" ? "removed" : "changed the signature of"} ${key} (#${strong.r.seq}) after your base #${e.base_seq}, and your change uses it.`
             : `${key} body changed in #${hit.r.seq} by ${who} after your base #${e.base_seq}; its contract is unchanged.`,
-          ...(strong ? { suggestion: `Re-read ${key} (event #${strong.r.seq}) and adapt your call sites, or negotiate with ${who}.` } : {}),
+          ...(strong ? { suggestion: amendmentSuggestion(key, strong.r.seq, who, this.conflicts === "continue") } : {}),
           ...cause(hit.r),
         });
       }

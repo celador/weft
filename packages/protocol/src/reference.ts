@@ -44,6 +44,7 @@ import type {
 } from "./types";
 import { claimsPolicyError, DEFAULT_CLAIMS_POLICY, WCP_VERSION } from "./types";
 import { validate } from "./validate";
+import { amendmentSuggestion } from "./contract";
 
 export type CoordinatorOptions = {
   repo: string;
@@ -687,7 +688,7 @@ export class ReferenceCoordinator {
           message: strong
             ? `${who} ${strong.w.kind === "deleted" ? "removed" : "changed the signature of"} ${key} (#${strong.r.seq}) after your base #${e.base_seq}, and your change uses it.`
             : `${key} body changed in #${hit.r.seq} by ${who} after your base #${e.base_seq}; its contract is unchanged.`,
-          ...(strong ? { suggestion: `Re-read ${key} (event #${strong.r.seq}) and adapt your call sites, or negotiate with ${who}.` } : {}),
+          ...(strong ? { suggestion: amendmentSuggestion(key, strong.r.seq, who, this.continueMode) } : {}),
           ...cause(hit.r),
         });
       }

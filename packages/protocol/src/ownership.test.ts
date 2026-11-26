@@ -29,6 +29,29 @@ describe("default (hold): unchanged from today", () => {
   });
 });
 
+describe("reads amendment (§6.2 R2a) contract_changed suggestion per mode", () => {
+  /** B's change started before A's signature change of calcTotal; B's amendment then adds the read. */
+  function amended(conflicts?: "hold" | "continue") {
+    const coord = new ReferenceCoordinator({ repo: "demo", ...(conflicts ? { conflicts } : {}) });
+    const a = hello(coord, "claude-a", "I-a");
+    const b = hello(coord, "claude-b", "I-b");
+    const eb = coord.submit(b.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: b.delivered_through, files: ["src/cart.ts"], reads: [], writes: [{ key: "src/cart.ts#cartSummary", kind: "body" }] } });
+    coord.submit(a.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: a.delivered_through, files: ["src/pricing.ts"], reads: [], writes: [{ key: "src/pricing.ts#calcTotal", kind: "signature" }] } });
+    const r = coord.submit(b.session, { type: "submit", mode: "commit", event: { kind: "intent", base_seq: eb.seq!, reads: ["src/pricing.ts#calcTotal"] } });
+    return r.diagnostics.find((d) => d.code === "contract_changed")!;
+  }
+
+  it("continue: keep editing other tasks instead of adapting; hold keeps 'adapt your call sites'", () => {
+    expect(amended("continue").suggestion).toBe(
+      "Keep editing your other tasks instead of adapting your call sites to claude-a's new src/pricing.ts#calcTotal (event #4); do not adopt their partial work. claude-a owns the change; negotiate with claude-a if you need the old contract.",
+    );
+    expect(amended("hold").suggestion).toBe(amended().suggestion);
+    expect(amended().suggestion).toContain("adapt your call sites, or negotiate");
+    // A warning: it is not an open error, so it must not use the phrase harnesses stop on (#15).
+    expect(amended("continue").suggestion).not.toContain("owns the conflict");
+  });
+});
+
 describe("conflicts: continue (opt-in): the hit agent is still gated, the owner is told", () => {
   it("stop and commit are refused with the conflict open; the owner gets a warning, not a block", () => {
     const coord = new ReferenceCoordinator({ repo: "demo", conflicts: "continue" });
