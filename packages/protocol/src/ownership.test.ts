@@ -52,6 +52,38 @@ describe("reads amendment (§6.2 R2a) contract_changed suggestion per mode", () 
   });
 });
 
+describe("pushed contract_changed (§6.3) suggestion per mode", () => {
+  /** As in the R2a test, B's reads amendment adds calcTotal and quote; A then changes quote's signature, so B is pushed a warning. */
+  function pushed(conflicts?: "hold" | "continue") {
+    const coord = new ReferenceCoordinator({ repo: "demo", ...(conflicts ? { conflicts } : {}) });
+    const a = hello(coord, "claude-a", "I-a");
+    const b = hello(coord, "claude-b", "I-b");
+    const eb = coord.submit(b.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: b.delivered_through, files: ["src/cart.ts"], reads: [], writes: [{ key: "src/cart.ts#cartSummary", kind: "body" }] } });
+    const ea = coord.submit(a.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: a.delivered_through, files: ["src/pricing.ts"], reads: [], writes: [{ key: "src/pricing.ts#calcTotal", kind: "signature" }] } });
+    const am = coord.submit(b.session, { type: "submit", mode: "commit", event: { kind: "intent", base_seq: eb.seq!, reads: ["src/pricing.ts#calcTotal", "src/pricing.ts#Pricer.quote"] } });
+    const before = coord.drain(a.session, 0).items.length;
+    coord.submit(a.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: Math.max(ea.seq!, am.seq!), files: ["src/pricing.ts"], reads: [], writes: [{ key: "src/pricing.ts#Pricer.quote", kind: "signature" }] } });
+    const d = coord.drain(b.session, 0).items.flatMap((i) => (i.kind === "diagnostic" && i.diagnostic?.code === "contract_changed" && i.diagnostic.symbol === "src/pricing.ts#Pricer.quote" ? [i.diagnostic] : []))[0]!;
+    const owner = coord.drain(a.session, 0).items.slice(before).filter((i) => i.kind === "diagnostic");
+    return { d, owner };
+  }
+
+  it("continue: no claim that the owner is told, and the owner really gets nothing; hold text unchanged", () => {
+    const cont = pushed("continue");
+    expect(cont.d.severity).toBe("warning");
+    expect(cont.d.suggestion).toBe(
+      "Keep editing your other tasks instead of adapting your call sites to claude-a's change; do not adopt their partial work. claude-a owns the change; negotiate with claude-a if you need the old contract.",
+    );
+    expect(cont.d.suggestion).not.toContain("is told about it");
+    // Warnings never notify the owner (only open errors do), even under continue.
+    expect(cont.owner).toEqual([]);
+    expect(pushed("hold").d.suggestion).toBe(
+      "Re-read src/pricing.ts#Pricer.quote and adapt your call sites before your next edit, or negotiate (e.g. keep the old signature as an overload).",
+    );
+    expect(pushed().d.suggestion).toBe(pushed("hold").d.suggestion);
+  });
+});
+
 describe("conflicts: continue (opt-in): the hit agent is still gated, the owner is told", () => {
   it("stop and commit are refused with the conflict open; the owner gets a warning, not a block", () => {
     const coord = new ReferenceCoordinator({ repo: "demo", conflicts: "continue" });

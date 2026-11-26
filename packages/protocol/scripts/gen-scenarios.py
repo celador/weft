@@ -507,7 +507,7 @@ def reads_amendment_text(cont):
         amended = (f"Keep editing your other tasks instead of adapting your call sites to claude-a's new {P_CALC} (event #4); "
                    f"do not adopt their partial work. claude-a owns the change; negotiate with claude-a if you need the old contract.")
         pushed = ("Keep editing your other tasks instead of adapting your call sites to claude-a's change; do not adopt their partial work. "
-                  "claude-a owns the change and is told about it if it has a live session.")
+                  "claude-a owns the change; negotiate with claude-a if you need the old contract.")
     else:
         amended = f"Re-read {P_CALC} (event #4) and adapt your call sites, or negotiate with claude-a."
         pushed = f"Re-read {P_QUOTE} and adapt your call sites before your next edit, or negotiate (e.g. keep the old signature as an overload)."

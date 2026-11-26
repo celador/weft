@@ -209,7 +209,7 @@
               "symbol": "shop/pricing.py#Pricer.quote",
               "caused_by_seq": 6,
               "caused_by_agent": "claude-a",
-              "suggestion": "Keep editing your other tasks instead of adapting your call sites to claude-a's change; do not adopt their partial work. claude-a owns the change and is told about it if it has a live session."
+              "suggestion": "Keep editing your other tasks instead of adapting your call sites to claude-a's change; do not adopt their partial work. claude-a owns the change; negotiate with claude-a if you need the old contract."
             }
           }
         ],

@@ -44,7 +44,7 @@ import type {
 } from "./types";
 import { claimsPolicyError, DEFAULT_CLAIMS_POLICY, WCP_VERSION } from "./types";
 import { validate } from "./validate";
-import { amendmentSuggestion } from "./contract";
+import { amendmentSuggestion, signatureChangeSuggestion } from "./contract";
 
 export type CoordinatorOptions = {
   repo: string;
@@ -1150,9 +1150,7 @@ export class ReferenceCoordinator {
                 file: fileOf(w.key),
                 symbol: w.key,
                 message: `${rec.agent ?? rec.actor.id} ${w.kind === "deleted" ? "removed" : "changed the signature of"} ${w.key} (#${rec.seq}), which your change uses.`,
-                suggestion: this.continueMode
-                  ? `Keep editing your other tasks instead of adapting your call sites to ${rec.agent ?? rec.actor.id}'s change; do not adopt their partial work. ${rec.agent ?? rec.actor.id} owns the change and is told about it if it has a live session.`
-                  : `Re-read ${w.key} and adapt your call sites before your next edit, or negotiate (e.g. keep the old signature as an overload).`,
+                suggestion: signatureChangeSuggestion(w.key, rec.agent ?? rec.actor.id, this.continueMode),
                 caused_by_seq: rec.seq,
                 caused_by_agent: rec.agent ?? rec.actor.id,
                 ...(rec.task ? { caused_by_task: rec.task } : {}),
