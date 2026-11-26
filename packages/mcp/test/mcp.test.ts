@@ -224,7 +224,13 @@ describe("MCP server against a coordinator (in-process MCP transport, real HTTP 
     // claims: valid keys go to the log, invalid keys are refused before they reach it
     const c = text(await client.callTool({ name: "weft_claim", arguments: { keys: ["src/cart.ts#cartSummary"] } }));
     expect(c).toContain("[weft] sent #");
-    expect(coord.log.some((r) => r.kind === "claim" && r.agent === "zed-a")).toBe(true);
+    expect(coord.log.filter((r) => r.kind === "claim" && r.agent === "zed-a").at(-1)).toMatchObject({ status: "accepted", payload: { firm: false, source: "explicit" } });
+    // firm: true reaches the log as a firm claim with its ttl
+    const f = text(await client.callTool({ name: "weft_claim", arguments: { keys: ["src/cart.ts#cartLines"], firm: true, ttl_ms: 60_000 } }));
+    expect(f).toContain("zed-a firmly claimed cartLines");
+    expect(coord.log.filter((r) => r.kind === "claim" && r.agent === "zed-a").at(-1)).toMatchObject({ status: "accepted", writes: [{ key: "src/cart.ts#cartLines" }], payload: { firm: true, source: "explicit", ttl_ms: 60_000 } });
+    const softTtl = (await client.callTool({ name: "weft_claim", arguments: { keys: ["src/cart.ts#cartLines"], ttl_ms: 60_000 } })) as Text;
+    expect(softTtl.isError).toBe(true);
     const bad = (await client.callTool({ name: "weft_claim", arguments: { keys: ["/etc/passwd#x"] } })) as Text;
     expect(bad.isError).toBe(true);
 

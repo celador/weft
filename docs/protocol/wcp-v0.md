@@ -180,7 +180,7 @@ present (possibly empty).
 | `intent` | agent | — (with `reads` and no `writes`: a reads amendment, §6.2 R2a) | R2a when it carries `reads` |
 | `edit` | agent | — (`writes` required, non-empty) | R0–R3 |
 | `checkpoint` | agent, system | `{sha, ref?}` (a push of the change's fork; the system appends it when the Artifacts `pushed` event arrives, attributed to the change) | R0 (agent only) |
-| `claim` | agent | `{firm, source: explicit\|predicted, ttl_ms?}`; keys in `writes` | R0, R3 |
+| `claim` | agent | `{firm, source: explicit\|predicted, ttl_ms?}`; keys in `writes`; `firm:true` makes a junior's overlapping edit an error (§7.5) | R0, R3 |
 | `release` | agent, system | `{keys?, reason?}`; no keys = all of the change's claims; system reasons `expired`, `session_ended`, `session_expired` (§7.5) | no |
 | `negotiate.propose` | agent | `{to: {agent?\|change?}, keys[], terms: {kind, text}}` | refs (§7.4) |
 | `negotiate.counter` | agent | `{reply_to, terms}` | refs |
@@ -554,6 +554,25 @@ two tasks — §7.6).
   it; only a new explicit `claim` event (visible in the log) sets a new deadline
   (`max(old, new)`). A firm hold therefore never outlives `firm_max_ms` without the
   holder saying so again in the log.
+- **What `firm` changes.** The flag only decides the severity of a `claim_wait` (§7.2): what a
+  requester that must *wait* gets when it writes into the held key. That is a requester junior
+  to the holder under `wound-wait` (the default), a senior one under `wait-die`:
+
+  | holder's claim | repo `enforcement` | waiting requester's `edit` | its `claim` |
+  |---|---|---|---|
+  | soft (`edit`, or `firm:false`) | `advise` (default) | `claim_wait` **warning**, accepted | warning, accepted |
+  | soft | `block` | `claim_wait` **error**, rejected | warning, accepted |
+  | firm (`firm:true`) | either | `claim_wait` **error**, rejected | error, rejected |
+
+  A rejected edit is an open error of the junior's session, so its stop gate refuses until
+  the error clears (§6.5). The holder learns nothing of a rejected attempt; an accepted one
+  sends it an info `claim_contended`. `firm` does not change arbitration: under `wound-wait` a
+  requester **senior** to the holder still wounds it (the holder gets `claim_wounded`), and
+  under `wait-die` a junior gets `claim_die` (error) whatever the flag. Seniority is §7.1
+  (task priority, then the earlier first accepted event), so under `wound-wait` a firm claim
+  protects against agents that started after the holder at the same or lower priority. Executable: scenarios `claim-firm-vs-soft` and `claim-firm-vs-soft-block`.
+  (Weft: `.weft/bin/weft claim --keys … --firm [--ttl MS]` in an agent's checkout, or the
+  MCP tool `weft_claim {keys, firm: true, ttl_ms?}`; see docs/try-it.md.)
 - **Predicted claims**: `expires_at = now + (ttl_ms ?? claim_ttl_ms)`, never renewed
   (unchanged).
 - **Expiry**: the coordinator MUST release expired claims by appending a `release` record
@@ -915,7 +934,9 @@ An implementation conforms to WCP v0.1 if:
    `gate`, `heartbeat`, `bye`, `action`, `system`, `tick`, `events`, `event`), it
    passes all `fixtures/scenarios/*.json`. Scenarios use a deterministic clock: each
    step advances 1 ms from `start`, `advance` steps add more; `tick` runs expiry (claims,
-   sessions) and returns appended records.
+   sessions) and returns appended records. A scenario's repo config (`policy`,
+   `enforcement`, `escalation`, `claims`, TTLs) is what the coordinator is created with
+   (`scenarioInit()`).
 
 Hook-level conformance (an adapter's hook command at its native wire, levels L0–L3) is
 tested by the core's suite, not here: `packages/conformance` (hooks-core-v0 §11), which uses
@@ -930,7 +951,8 @@ redelivery (`negotiation-overload-dues`), escalation and merged groups (`escalat
 `escalation-human`, `merge-by-agreement`), inbox redelivery/ack + base
 rule + check logging (`inbox-and-base`), human actions (`human-actions`), claim TTL and
 session expiry (`claim-ttl-and-session-expiry`), trunk notification + predicted claims
-(`trunk-advanced-and-predicted`), claim leases and the hard firm limit
+(`trunk-advanced-and-predicted`), soft vs firm explicit claims under `advise` and `block`
+(`claim-firm-vs-soft`, `claim-firm-vs-soft-block`), claim leases and the hard firm limit
 (`lease-soft-claim`, `lease-firm-hard-limit`), release on exit (`release-on-exit`), open
 errors that survive release/bye/hello/expiry (`open-errors-persist`), release, bye + hello
 and a hello for another agent's change against the commit gate (`conflict-bypass`), a session that joins
@@ -1094,3 +1116,7 @@ Proposed for `docs/design.md` (rule 7 of agent-rules):
   a different agent is `403 forbidden` instead of joining it (§3, §8.2). `bye` stays
   allowed and still clears nothing. Scenarios `conflict-bypass` (new),
   `open-errors-persist`, `arbitration-wound-wait`.
+- 0.1 editorial (2026-11-26; no wire or coordinator change): §7.5 states what `firm` changes
+  (only the severity of a `claim_wait`, by enforcement mode, for edits and for claims) and
+  what it does not (seniority, wound, die). Scenarios may set `enforcement`; new scenarios
+  `claim-firm-vs-soft` and `claim-firm-vs-soft-block` pin the table in both coordinators.
