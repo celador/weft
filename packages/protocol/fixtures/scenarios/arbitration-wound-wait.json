@@ -1,6 +1,6 @@
 {
   "name": "arbitration-wound-wait",
-  "description": "§7 asymmetry under wound-wait: the junior writer gets the diagnostic (warning on a soft claim, error on a firm one) and the holder only an info; a higher-priority writer wounds every holder.",
+  "description": "§7 asymmetry under wound-wait: the junior writer gets the diagnostic (warning on a soft claim, error on a firm one) and the holder only an info; a higher-priority writer wounds every holder. A wounded agent's release gives up the claim but does not clear the wound (#17); redoing its edit after the winner does.",
   "covers": [
     "6.2 R3",
     "7.1",
@@ -413,9 +413,46 @@
     {
       "op": "gate",
       "as": "A",
-      "gate": "stop",
+      "gate": "commit",
       "expect": {
-        "allow": true
+        "allow": false,
+        "open_errors": [
+          {
+            "code": "claim_wounded",
+            "symbol": "src/auth/session.ts#refreshToken"
+          }
+        ]
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 9,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 10
+      }
+    },
+    {
+      "op": "gate",
+      "as": "A",
+      "gate": "commit",
+      "expect": {
+        "allow": true,
+        "open_errors": []
       }
     }
   ]

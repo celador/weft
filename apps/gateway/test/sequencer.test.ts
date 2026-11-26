@@ -40,6 +40,24 @@ async function world(init: Record<string, unknown> = {}) {
 }
 
 describe("sequencer behaviours (HTTP → DO)", () => {
+  it("#17: a hello for another agent's change is 403 forbidden over HTTP; release and bye + hello leave the commit gate closed", async () => {
+    const w = await world();
+    await w.submit("b", { kind: "edit", writes: [{ key: K.fetch, kind: "body" }] }); // #3
+    await w.submit("a", { kind: "edit", writes: [{ key: K.refresh, kind: "signature" }] }); // #4
+    const denied = await w.submit("b", { kind: "edit", base_seq: 3, reads: [K.refresh], writes: [{ key: K.fetch, kind: "body" }] }, "check"); // #5
+    expect(denied).toMatchObject({ verdict: "reject", diagnostics: [{ code: "stale_assumption", symbol: K.refresh }] });
+    const commitGate = (sid: string) =>
+      wcp<{ allow: boolean; open_errors: Diagnostic[] }>("POST", `${w.base}/sessions/${sid}/gate`, w.tb, { type: "gate", gate: "commit" });
+    await w.submit("b", { kind: "release", payload: { keys: [K.refresh], reason: "abandoned" } });
+    expect(await commitGate(w.b.session)).toMatchObject({ allow: false, open_errors: [{ code: "stale_assumption", symbol: K.refresh }] });
+    // claude-a holds a valid agent token for this repo, but I-b is codex-b's change.
+    const r = await call("POST", `${w.base}/sessions`, w.ta, hello("claude-a", "I-b"));
+    expect(r.status).toBe(403);
+    expect(await r.json()).toMatchObject({ type: "error", error: { code: "forbidden", details: { change: "I-b" } } });
+    expect(await call("DELETE", `${w.base}/sessions/${w.b.session}`, w.tb, { type: "bye", reason: "crash" }).then((x) => x.status)).toBe(204);
+    const b2 = await wcp<Welcome>("POST", `${w.base}/sessions`, w.tb, hello("codex-b", "I-b"));
+    expect(await commitGate(b2.session)).toMatchObject({ allow: false, open_errors: [{ code: "stale_assumption", symbol: K.refresh }] });
+  });
   it("accept: assigns gapless seqs, summary, delivered_through, and soft claims", async () => {
     const w = await world();
     expect(w.a.head_seq).toBe(1);

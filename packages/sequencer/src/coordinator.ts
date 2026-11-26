@@ -14,7 +14,7 @@ import {
   answererOf,
   counterpartAway,
   contractError,
-  RELEASABLE,
+  NOT_IN_WORKSPACE,
   ownedElsewhere,
   ownerNotice,
   sameNotice,
@@ -30,6 +30,7 @@ import {
   UNSEEN_NOTE,
   WCP_VERSION,
   WcpProtocolError,
+  changeOwnedError,
   type ActionResult,
   type Actor,
   type Arbitration,
@@ -445,11 +446,12 @@ export class SqlCoordinator {
 
   /**
    * Map.set semantics: an existing key keeps its position, its value is replaced — except that an
-   * origin a release cannot clear (commit, contract) is never turned into one it can (§6.5).
+   * origin whose code is in the workspace (commit, contract) is never turned into one whose code is
+   * not (check, push) (§6.5). Origins are informational: no release clears any of them (#17).
    */
   private openSet(changeId: string, d: Diagnostic, origin: OpenOrigin, seq: Seq): void {
     const prev = one<{ origin: OpenOrigin }>(this.sql, `SELECT origin FROM change_errors WHERE change_id = ? AND key = ?`, changeId, d.symbol)?.origin;
-    if (prev && !RELEASABLE.includes(prev) && RELEASABLE.includes(origin)) origin = prev;
+    if (prev && !NOT_IN_WORKSPACE.includes(prev) && NOT_IN_WORKSPACE.includes(origin)) origin = prev;
     run(
       this.sql,
       `INSERT INTO change_errors (change_id, key, ord, origin, seq, diagnostic) VALUES (?, ?, ?, ?, ?, ?)
@@ -496,6 +498,8 @@ export class SqlCoordinator {
 
     const changeId = h.change ?? `${h.agent.id}/${h.task?.id ?? "adhoc"}`;
     let change = this.getChange(changeId);
+    // A change belongs to the agent whose hello created it (spec §8.2, #17).
+    if (change && change.agent !== h.agent.id) throw changeOwnedError(changeId);
     if (!change) {
       run(
         this.sql,
@@ -1344,11 +1348,9 @@ export class SqlCoordinator {
         const keys = p.keys as SymbolKey[] | undefined;
         if (keys) for (const k of keys) run(this.sql, `DELETE FROM claims WHERE change_id IS ? AND key = ?`, rec.change ?? null, k);
         else run(this.sql, `DELETE FROM claims WHERE change_id IS ?`, rec.change ?? null);
-        // An agent's release is a retreat: it clears only errors whose edit never reached the
-        // workspace (check) or wounds (push) on the released keys — never commit-mode or contract
-        // ones, whose code is in the workspace (§6.5).
-        if (s && change)
-          for (const r of this.openRows(change.id)) if ((!keys || keys.includes(r.key)) && RELEASABLE.includes(r.origin)) this.openDelete(change.id, r.key);
+        // A release gives up claims and nothing else: it never clears an open error, whatever its
+        // origin (§6.5, #17). The coordinator cannot tell a retreat from code written around a
+        // denied edit, so only an accepted edit, a landing, a transfer/share or a merge clears one.
         break;
       }
       case "land": {
