@@ -86,7 +86,10 @@ languages via tree-sitter (Python first). Support matrix: [languages.md](languag
 Arbitration: earlier seq keeps the area by default. Higher-priority task may wound a
 younger one (wound-wait). The losing agent may: retreat (rework), wait (until the other
 lands), or negotiate (`negotiate.propose` to the owner, e.g. "keep old signature as
-overload"), or escalate to coordinator (merge tasks).
+overload"), or escalate to coordinator (merge tasks). Under the opt-in repo policy
+`conflicts: continue` (spec §8.4) a cross-agent `stale_overwrite` / `stale_assumption` means stop
+and report to the change's owner; harness text defers to each error's suggestion and never tells
+an agent to adapt to, rebase onto or absorb a neighbor's change on its own (issue #15).
 
 ## 5. Injection points (per harness)
 

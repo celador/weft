@@ -92,6 +92,20 @@ SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
 QUOTE_CODES = {"stale_assumption", "stale_overwrite", "contract_changed"}
 # A byte-identical retry of an edit blocked for these is blocked once more (see _pre_edit).
 RETRY_GUARD_CODES = {"stale_assumption", "stale_overwrite"}
+# What the plugin says around the coordinator's diagnostics (issue #15). Byte-identical copies of
+# OPEN_ERROR_ADVICE / BLOCKED_EDIT_ADVICE in packages/protocol/src/ownership.ts (pinned by
+# src/advice-text.test.ts). The suggestions carry the repo's `conflicts` mode (spec §8.4): `hold`
+# says to update the code against the other agent's change, `continue` says that agent owns the
+# conflict and this agent stops and reports it. The plugin does not know the mode, so it defers to
+# the suggestion and never tells the agent, by itself, to adapt to another agent's change.
+OPEN_ERROR_ADVICE = (
+    "Do what each error's suggestion says. If it says another agent owns the conflict, stop working on that code and report it "
+    "(negotiate with that agent, or say so in your task report): do not adapt your code to their change, rebase onto it or work around it to clear the error. "
+    "Otherwise re-edit the cited code as the suggestion says (an accepted edit that touches the symbol clears the error), or retreat from that code.")
+BLOCKED_EDIT_ADVICE = (
+    "Do not retry the same edit. Do what each error's suggestion says. If it says another agent owns the conflict, leave this edit and report it "
+    "(negotiate with that agent, or say so in your task report): do not adapt your code to their change or work around it. "
+    "Otherwise change your code as the suggestion says, then edit again: your next attempt is checked against the current log.")
 MAX_QUOTE_LINES = 30
 MAX_QUOTE_LINE_CHARS = 200
 MAX_QUOTED_CAUSES = 3
@@ -1963,8 +1977,11 @@ class WeftAdapter:
                     f"({', '.join(codes)}), unchanged. While the other agent's change is not in your checkout, "
                     "re-reading the file here shows the OLD code. The diagnostics again:\n"
                     f"{shown}\n"
-                    "Change your edit to match the new declaration (or negotiate with that agent). If you "
-                    "have checked it and this exact edit is still right (for example, the new parameter is "
+                    "Do what each error's suggestion says. If it says the other agent owns the conflict, leave "
+                    "this edit and report it (negotiate with that agent, or say so in your task report): do not "
+                    "adapt your edit to their change. If it says to update your code, change your edit to match "
+                    "the new declaration (or negotiate with that agent). If you have checked it and this exact "
+                    "edit is still right without adapting to their change (for example, the new parameter is "
                     "optional), retry it unchanged once more and Weft will validate it against the current log.")}
         reads, writes = self.analyzer.analyze([(t.rel, pend.before[t.abs], after)], t.worktree,
                                               self.scope.prefix_for(t.worktree))
@@ -1994,18 +2011,16 @@ class WeftAdapter:
                     self.blocked_edits.popitem(last=False)
         self.log(f"check rejected {t.rel} seq {verdict.get('seq')}")
         if notes:
-            advice = ("The new declaration and diff quoted above come from the Weft log, not from your "
-                      "checkout: while the other agent's change is not in your checkout, re-reading the file "
-                      "here shows the OLD code. Work from the quote, follow the suggestion, then retry.")
+            where = ("The new declaration and diff quoted above come from the Weft log, not from your "
+                     "checkout: while the other agent's change is not in your checkout, re-reading the file "
+                     "here shows the OLD code.")
         else:
-            advice = ("Follow the suggestion above and adapt your edit, then retry. If another agent changed "
-                      "code you use, their change may not be in your checkout yet: re-reading the file here "
-                      "can show the old code.")
+            where = ("If another agent changed code you use, their change may not be in your checkout yet: "
+                     "re-reading the file here can show the old code.")
         return {"action": "block", "message": (
             "[weft] Edit blocked by Weft edit-time coordination (another agent's change conflicts "
             f"with this edit to {t.rel}). Diagnostics:\n{context}\n"
-            f"{advice} The log base has advanced, so a corrected edit will be validated against the "
-            "new state.")}
+            f"{BLOCKED_EDIT_ADVICE} {where}")}
 
     def _pre_terminal(self, name: str, args: dict, call_id: str, task_id: Any = "") -> Optional[dict]:
         """Snapshot every worktree of this repo the call may change, before it runs:
@@ -2217,8 +2232,7 @@ class WeftAdapter:
         self.log(f"gate {gate} refused ({len(open_errors)} open errors) for {what}")
         return {"action": "block", "message": (
             f"[weft] {what} refused by the Weft {gate} gate: {result.get('reason') or 'open errors'}\n"
-            "Resolve each error by re-editing the cited symbols against the current code (an "
-            "accepted edit that touches the symbol clears it). If you deliberately retreated from "
+            f"{OPEN_ERROR_ADVICE} If you deliberately retreated from "
             f"these symbols, retry {what} {RELEASE_AFTER_REFUSALS} more time(s) and Weft will "
             "release them (recorded in the Weft feed).")}
 
@@ -2283,7 +2297,7 @@ class WeftAdapter:
         self.log(f"pre_verify refused ({len(result.get('open_errors') or [])} open errors)")
         return {"action": "continue", "message": (
             f"[weft] Not done yet: {result.get('reason') or 'open Weft errors'}\n"
-            "Fix these conflicts (re-edit the cited symbols against the current code) before finishing. "
+            f"{OPEN_ERROR_ADVICE} "
             "If you deliberately retreated from these symbols, try to finish "
             f"{RELEASE_AFTER_REFUSALS} more time(s) and Weft will release them (recorded in the Weft feed).")}
 

@@ -98,7 +98,9 @@ appended with a `system`-scope token. It
 
 - makes the landed symbols *committed*: other agents whose base predates it get
   `stale_overwrite` if they edit those symbols, until their checkout contains the land sha
-  (`git merge-base --is-ancestor`), i.e. until they rebase or merge trunk;
+  (`git merge-base --is-ancestor`), i.e. until they rebase or merge trunk. Whether an agent should
+  do that is the error's suggestion: yes under the default `conflicts: hold`; under `continue` it
+  stops working on that code and reports the conflict to the owner instead (spec §8.4);
 - pushes a `trunk_advanced` notice (`requires_rebase`) to every live change that reads, writes
   or claims what landed;
 - releases the landed change's claims.

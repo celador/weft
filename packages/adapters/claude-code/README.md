@@ -188,9 +188,17 @@ weft inbox [--wait SECONDS]
 
 - Without `--to`/`--keys`, `propose` and `escalate` target the agent behind this session's newest
   open error, with the symbols it blocks. `--wait` blocks until the reply arrives (or times out).
-- Every loser-side error the adapter injects (`stale_assumption`, `claim_wait`, `claim_die`,
-  `claim_wounded`) ends with a `↳ Your options:` line naming retreat, wait, the exact
-  `negotiate propose` command and the `negotiate escalate` command.
+- Every loser-side error the adapter injects ends with a `↳ Your options:` line. For the claim
+  errors (`claim_wait`, `claim_die`, `claim_wounded`) it names retreat, wait, the exact
+  `negotiate propose` command and the `negotiate escalate` command. For `stale_assumption` it
+  defers to the error's suggestion (update the call site, or stop and report when the suggestion
+  says the other agent owns the conflict, under `conflicts: continue`) and names the exact
+  `negotiate propose overload` command, a request the owner decides on; retreat and escalate are
+  not offered, because under `continue` they would work around or absorb the owner's change.
+- The text the adapter adds around diagnostics (blocked edit, stop and commit refusals, the
+  SessionStart rule) is `@weft/protocol`'s `BLOCKED_EDIT_ADVICE` / `OPEN_ERROR_ADVICE` /
+  `ERROR_RULE`, shared by every harness: do what the suggestion says, and never adapt to, rebase
+  onto or work around another agent's change by the adapter's own say-so (issue #15).
 - Proposals addressed to this agent arrive as `[weft negotiation] #n …` lines (any hook that
   injects context) with the answer commands; the Stop hook refuses to finish while one is
   unanswered, or while an accepted `overload` has not been made (`[weft negotiation due]`).
