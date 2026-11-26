@@ -2,7 +2,7 @@
 //
 //   install   .weft/cursor.json (+ token), .cursor/hooks.json (project hooks), git hooks, agent CLI
 //   hook      Cursor hook entry: Cursor JSON on stdin -> Cursor JSON on stdout (always exit 0)
-//   (+ the shared commit-msg, pre-commit, heartbeat-loop, status, negotiate, inbox)
+//   (+ the shared commit-msg, pre-commit, heartbeat-loop, status, negotiate, inbox, claim)
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";

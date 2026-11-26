@@ -63,6 +63,8 @@ export type Scenario = {
   covers: string[];
   repo: string;
   policy?: "wound-wait" | "wait-die";
+  /** Repo enforcement mode (spec §7.2). Absent: `advise`. */
+  enforcement?: "advise" | "block";
   escalation?: "auto" | "human";
   claim_ttl_ms?: number;
   session_ttl_ms?: number;
@@ -80,6 +82,7 @@ export type Scenario = {
 export function scenarioInit(sc: Scenario): {
   repo: string;
   policy?: "wound-wait" | "wait-die";
+  enforcement?: "advise" | "block";
   escalation?: "auto" | "human";
   claim_ttl_ms?: number;
   session_ttl_ms?: number;
@@ -88,6 +91,7 @@ export function scenarioInit(sc: Scenario): {
   return {
     repo: sc.repo,
     ...(sc.policy ? { policy: sc.policy } : {}),
+    ...(sc.enforcement ? { enforcement: sc.enforcement } : {}),
     ...(sc.escalation ? { escalation: sc.escalation } : {}),
     ...(sc.claim_ttl_ms ? { claim_ttl_ms: sc.claim_ttl_ms } : {}),
     ...(sc.session_ttl_ms ? { session_ttl_ms: sc.session_ttl_ms } : {}),

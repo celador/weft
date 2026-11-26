@@ -52,7 +52,10 @@ directory on the way is refused too). A file it cannot read that way is treated 
 text, so an edit to it is not coordinated rather than leaking the target's content into a diff.
 
 `.weft/bin/weft claim --keys path#symbol[,…] [--firm] [--ttl MS]` submits an explicit claim
-(spec §7.5); see docs/try-it.md.
+(spec §7.5); see docs/try-it.md. Without `--firm` it is soft: another agent's overlapping edit
+only gets a `claim_wait` warning. `--firm` sends `firm: true`, and a junior agent's overlapping
+edit is rejected (`claim_wait` error). The translators that share this core (Cursor, OpenCode,
+Gemini CLI, Copilot, Antigravity) get the same command from `src/host.ts`.
 
 Declared capabilities: `{level: 3, observe: sync, inject: immediate, deny_edit, refuse_stop, commit_gate: tool_interception}`.
 

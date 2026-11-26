@@ -701,6 +701,55 @@ scenarios.append({
     ],
 })
 
+# ------------------------------------------------------------------ firm vs soft explicit claims
+def firm_vs_soft(block):
+    """claude-a (senior) claims X soft and Z firm; codex-b (junior) then edits and claims both.
+
+    The firm flag alone decides the outcome under advise; under block a soft hold also
+    denies edits, but a claim is never refused by the mode, only by a firm holder.
+    """
+    soft_edit = {"verdict": "reject", "seq": 5, "diagnostics": [diag("error", "claim_wait", X, 3, "claude-a")]} if block else {
+        "verdict": "accept", "seq": 5, "diagnostics": [diag("warning", "claim_wait", X, 3, "claude-a", arbitration={
+            "policy": "wound-wait", "outcome": "wait", "winner": {"agent": "claude-a", "change": "I-a"}, "loser": {"agent": "codex-b", "change": "I-b"}})]}
+    # An accepted junior event tells the holder (info); a rejected one tells it nothing.
+    holder_items = [] if block else [{"seq": 5, "kind": "diagnostic", "diagnostic": diag("info", "claim_contended", X, 5, "codex-b")}]
+    return [
+        step_hello("A", A(), "s1", 1),
+        step_hello("B", B(), "s2", 2),
+        {"op": "submit", "as": "A", "submit": submit("claim", 1, {"firm": False, "source": "explicit"}, writes=[(X, "body")]),
+         "expect": {"verdict": "accept", "seq": 3, "diagnostics": [], "summary": "claude-a claimed refreshToken"}},
+        {"op": "submit", "as": "A", "submit": submit("claim", 3, {"firm": True, "source": "explicit"}, writes=[(Z, "body")]),
+         "expect": {"verdict": "accept", "seq": 4, "diagnostics": [], "summary": "claude-a firmly claimed SessionStore.get"}},
+        # Soft hold: a warning under advise (the edit lands), an error under block.
+        {"op": "submit", "as": "B", "submit": edit(2, [(X, "body")]), "expect": soft_edit},
+        # Firm hold: an error in either mode; the edit is rejected.
+        {"op": "submit", "as": "B", "submit": edit(2, [(Z, "body")]),
+         "expect": {"verdict": "reject", "seq": 6, "diagnostics": [diag("error", "claim_wait", Z, 4, "claude-a", arbitration={"outcome": "wait"})]}},
+        {"op": "drain", "as": "A", "ack": "last", "expect": {"items": holder_items, "open_errors": []}},
+        # A claim is only ever refused by a firm holder, never by the enforcement mode.
+        {"op": "submit", "as": "B", "submit": submit("claim", 2, {"firm": False, "source": "explicit"}, writes=[(X, "body")]),
+         "expect": {"verdict": "accept", "seq": 7, "diagnostics": [diag("warning", "claim_wait", X, 3, "claude-a")]}},
+        {"op": "submit", "as": "B", "submit": submit("claim", 2, {"firm": True, "source": "explicit"}, writes=[(Z, "body")]),
+         "expect": {"verdict": "reject", "seq": 8, "diagnostics": [diag("error", "claim_wait", Z, 4, "claude-a")]}},
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": False}},
+    ]
+
+
+scenarios.append({
+    "name": "claim-firm-vs-soft",
+    "description": "§7.2/§7.5 under advise (the default): an overlapping edit by a junior agent is only warned on a soft explicit claim (firm:false) and lands, but is rejected with an error on a firm claim (firm:true).",
+    "covers": ["6.2 R3", "7.2", "7.5"],
+    "steps": firm_vs_soft(block=False),
+})
+
+scenarios.append({
+    "name": "claim-firm-vs-soft-block",
+    "description": "§7.2/§7.5 under enforcement block: edits into a soft hold are rejected too; claims are refused only by a firm holder, never by the mode.",
+    "covers": ["6.2 R3", "7.2", "7.5"],
+    "enforcement": "block",
+    "steps": firm_vs_soft(block=True),
+})
+
 os.makedirs(OUT, exist_ok=True)
 # Only (re)write the generated scenarios; hand-written ones (alternatives-best-of-n.json)
 # live in the same directory and must survive a regeneration.

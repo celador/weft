@@ -132,7 +132,7 @@ tests: [research/distribution-2026-10.md](research/distribution-2026-10.md).
 
 - `GET /v1/repos/{repo}/events` (an `observe` token): the ordered log, one record per edit,
   check, land, message; `GET /v1/feed` for all repos a token can see.
-- `.weft/bin/weft status | inbox | negotiate ...`, run inside the checkout: the agent's own view, also used by
+- `.weft/bin/weft status | inbox | negotiate ... | claim ...`, run inside the checkout: the agent's own view, also used by
   the model to negotiate with other agents (see the Claude Code adapter README).
 - The web UI (`apps/web`) renders the same log; the public demo is at
   [demo.weft.mx](https://demo.weft.mx).

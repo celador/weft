@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { detectHarnesses, HARNESSES, pruneHooks, startOrder } from "../src/adapters";
-import { DEMO_FILES, DEMO_PROMPTS, main, mcpArgs, nextNotes, parseArgs } from "../src/main";
+import { claimCli, DEMO_FILES, DEMO_PROMPTS, main, mcpArgs, nextNotes, parseArgs } from "../src/main";
 import { slug } from "../src/util";
 import { pairingStub } from "./pairing-stub";
 
@@ -632,5 +632,42 @@ describe("a repo the Hermes adapter already reports (one feed everywhere)", () =
     writeFileSync(join(base, "config", "otto-human-token.json"), JSON.stringify({ url: "https://elsewhere.example", token: "weft_human_other" }));
     await expect(main(["feed", "--dir", repo])).rejects.toThrow(/no human token/);
     expect(seen.some((s) => s.auth.includes("weft_human_other"))).toBe(false);
+  });
+});
+
+describe("weft claim", () => {
+  const base = mkdtempSync(join(tmpdir(), "weft-cli-claim-"));
+  const repo = join(base, "app");
+  const cli = join(__dirname, "..", "dist", "weft.mjs");
+  mkdirSync(join(repo, "src"), { recursive: true });
+  execFileSync("git", ["init", "-q", repo]);
+  // Stand-in for the adapter's agent CLI: prints where it ran and what it was given.
+  const agentCli = join(repo, ".weft", "bin", "weft");
+  mkdirSync(join(repo, ".weft", "bin"), { recursive: true });
+  writeFileSync(agentCli, `#!/bin/sh\necho "cwd=$(pwd -P) args=$*"\n[ "$3" = "bad" ] && exit 2\nexit 0\n`);
+  chmodSync(agentCli, 0o755);
+
+  it("runs the checkout's .weft/bin/weft claim with the flags as given (--firm included), from a subdirectory", () => {
+    const r = claimCli(["--keys", "src/a.ts#f", "--firm", "--ttl", "60000"], join(repo, "src"));
+    expect(r).toEqual({ cli: join(realpathSync(repo), ".weft/bin/weft"), root: realpathSync(repo), argv: ["claim", "--keys", "src/a.ts#f", "--firm", "--ttl", "60000"] });
+    expect(claimCli(["--dir", repo, "--keys", "src/a.ts#f"], "/").argv).toEqual(["claim", "--keys", "src/a.ts#f"]);
+    const out = execFileSync(process.execPath, [cli, "claim", "--keys", "src/a.ts#f", "--firm"], { cwd: join(repo, "src"), env: { ...process.env, WEFT_CLI_MAIN: "1" }, encoding: "utf8" });
+    expect(out.trim()).toBe(`cwd=${realpathSync(repo)} args=claim --keys src/a.ts#f --firm`);
+  });
+
+  it("passes the agent CLI's exit code through", () => {
+    let code = 0;
+    try {
+      execFileSync(process.execPath, [cli, "claim", "--keys", "bad"], { cwd: repo, env: { ...process.env, WEFT_CLI_MAIN: "1" }, stdio: "pipe" });
+    } catch (err) {
+      code = (err as { status: number }).status;
+    }
+    expect(code).toBe(2);
+  });
+
+  it("outside a set-up checkout says what to run", async () => {
+    const other = mkdtempSync(join(tmpdir(), "weft-cli-claim-none-"));
+    execFileSync("git", ["init", "-q", other]);
+    await expect(main(["claim", "--dir", other, "--keys", "src/a.ts#f", "--firm"])).rejects.toThrow(/not set up/);
   });
 });
