@@ -16,6 +16,18 @@ cursor-agent -p --trust --force "..."     # project hooks only run in a trusted 
 `.cursor/hooks.json` (foreign hooks kept; excluded from git because the paths are absolute),
 the git `commit-msg`/`pre-commit` hooks and `.weft/bin/weft`.
 
+## Delegated work (`install --by-path`)
+
+Cursor subagents (Task tool, foreground or `is_background`) work in the parent's workspace, and `.cursor/agents/*.md` carries no hooks, so the session's `.cursor/hooks.json` is the only hook layer. By default the hook finds the session's checkout from the
+session's directory, so an edit inside another joined worktree is reported as the session's agent,
+or not coordinated at all. Opt in with `install --by-path`. The hook command then becomes
+`weft-cursor.mjs hook --by-path --url U --repo R --mode M`, pinned to the coordinator this checkout
+joined. A call whose file lies in another checkout joined with the same url, repo and mode acts as
+that checkout's agent, using that checkout's own token. Anything else is handled exactly as
+without the flag. The rule is shared with the other adapters (`routeTargets` in
+`claude-code/src/config.ts`). The stop gate and session end stay with the session's checkout. An *isolated* subagent's Cursor-created worktree is never joined, so it stays uncoordinated. Cloud agents and cloud subagents are unsupported: the cloud clone has no Weft hook, because this `hooks.json` is machine-specific and git-excluded. Per-harness detail:
+[harness-coverage.md §1a](../../../docs/harness-coverage.md#1a-delegated-work-subagents-child-sessions-background-agents-issue-11).
+
 ## Hook mapping
 
 | Cursor hook | core event | output | level |

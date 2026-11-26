@@ -16,6 +16,18 @@ WEFT_TOKEN=... node dist/weft-gemini.mjs install --url … --repo … --agent ge
 foreign groups kept; excluded from git), plus `.weft/gemini.json`, the token, git hooks and
 `.weft/bin/weft`.
 
+## Delegated work (`install --by-path`)
+
+A Gemini subagent is a tool call in the main session (same process, same cwd), and agent definitions (`.gemini/agents/*.md`) carry no hooks. By default the hook finds the session's checkout from the
+session's directory, so an edit inside another joined worktree is reported as the session's agent,
+or not coordinated at all. Opt in with `install --by-path`. The hook command then becomes
+`weft-gemini.mjs hook --by-path --url U --repo R --mode M`, pinned to the coordinator this checkout
+joined. A call whose file lies in another checkout joined with the same url, repo and mode acts as
+that checkout's agent, using that checkout's own token. Anything else is handled exactly as
+without the flag. The rule is shared with the other adapters (`routeTargets` in
+`claude-code/src/config.ts`). Gemini delegated work is **unsupported**: there is no scoped-hook mechanism, and the docs do not say whether `BeforeTool`/`AfterTool` run for a subagent's own tool calls. If they do, `--by-path` routes those edits too (fixture-tested only). Per-harness detail:
+[harness-coverage.md §1a](../../../docs/harness-coverage.md#1a-delegated-work-subagents-child-sessions-background-agents-issue-11).
+
 | Gemini event | core event | output (documented) | level |
 |---|---|---|---|
 | `SessionStart` | SessionStart | `hookSpecificOutput.additionalContext` (prepended to the prompt headless) | L1 |

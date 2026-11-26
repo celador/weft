@@ -2,6 +2,8 @@
 // HTTP coordinator, a second agent that changes calcTotal's signature, and a runner that
 // pipes one fixture payload through a real adapter bundle (`node dist/<bundle>.mjs hook`).
 import { execFile, execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { ReferenceCoordinator } from "@weft/protocol";
 import { analyzeChanges, unifiedDiff } from "../src/analysis";
 import { PRICING_V1, PRICING_V2, checkout, serve } from "./helpers";
@@ -57,3 +59,18 @@ export async function gitCommit(root: string, msg: string): Promise<{ ok: boolea
 }
 
 export const gitLog = (root: string) => execFileSync("git", ["-C", root, "log", "-1", "--format=%B"], { encoding: "utf8" });
+
+/** `hook --by-path` arguments pinned to the kit's coordinator (issue #11: `install --by-path` writes these). */
+export const byPathArgs = (url: string, repo = "demo"): string[] => ["hook", "--by-path", "--url", url, "--repo", repo, "--mode", "enforce"];
+
+/** Agents that said hello to the coordinator, in order. */
+export const joinedAgents = (coord: ReferenceCoordinator): string[] => coord.log.filter((r) => r.kind === "join").map((r) => r.actor.id);
+
+/** `<root>/.weft/log/adapter.log`, or "" when absent. */
+export function adapterLog(root: string): string {
+  try {
+    return readFileSync(join(root, ".weft", "log", "adapter.log"), "utf8");
+  } catch {
+    return "";
+  }
+}

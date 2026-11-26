@@ -52,7 +52,7 @@ for cloud agents, git push events). **d** is an ACP proxy, which is experimental
 | Aider | CLI | L1 via `--lint-cmd` | c (+ lint shim) | watcher only | `weft check` as the lint command |
 | Roo Code | IDE | discontinued (May 2026) | c | watcher only | none |
 | Claude Code on the web | cloud | L3 (repo `.claude/settings.json` runs) | a | adapter works if the sandbox can reach the gateway | document + probe |
-| Cursor cloud agents | cloud | L3 (repo `.cursor/hooks.json` runs) | a | adapter works if egress allows | probe |
+| Cursor cloud agents | cloud | L3 (repo `.cursor/hooks.json` runs) | a | not with the default install: Weft's `.cursor/hooks.json` is machine-specific and git-excluded, so a cloud clone has no Weft hook (§1a) | committed, portable hooks + egress probe |
 | Copilot coding agent | cloud | L2 (repo `.github/hooks/*.json`) | a | — | covered by the Copilot card |
 | Devin (cloud) | cloud | L0 push + L1 message API | c | — | GitHub push observer (later) |
 | Google Jules | cloud | L0 push + L1 `sendMessage` | c | — | GitHub push observer |
@@ -75,6 +75,35 @@ What the table says:
 - **The holdouts use their own dialects:** Cursor, Gemini/Antigravity, Windsurf, Cline, Kiro, and
   the in-process plugin APIs (OpenCode, Kilo, Amp). Writing each adapter is mostly translation,
   200–300 lines on the shared core (see [integrate.md](integrate.md)).
+
+### 1a. Delegated work: subagents, child sessions, background agents (issue #11)
+
+A harness that delegates work (a subagent, a child session, a background agent) usually runs it
+with the parent's working directory and the parent's hooks. When that work edits its own git
+worktree, the parent's hooks find the parent's checkout and report the edit as the parent's agent,
+or ignore it. What each harness offers, and what Weft does with it:
+
+| Harness | Delegated work runs with the parent's directory? | How it gets Weft hooks | Weft today |
+|---|---|---|---|
+| Claude Code (subagents) | Yes: subagents work in the session's cwd, and their hooks carry the parent's `session_id` plus an `agent_id`. | A subagent definition can carry its own frontmatter hooks. `install-agent --worktree W` writes a per-worktree `weft-worker` whose hooks run `hook --root W`. | **Supported**: edit and commit gates, the stop gate (`SubagentStop`) and session end, per worker ([README](../packages/adapters/claude-code/README.md#subagents-install-agent-hook---root-and-hook---by-path)). |
+| Codex (subagents) | Yes: hooks carry the parent's `session_id` and the session `cwd`. Subagents inherit the parent's sandbox and approvals. `SessionEnd` and `Interrupt` do not run for subagents. | No scoped hooks: a custom agent file (`.codex/agents/*.toml`) cannot carry hooks, so the session's `.codex/hooks.json` serves its subagents too. | **Edits: supported with `install --by-path`.** Each `apply_patch` (or patch run through the shell, or Bash call starting `cd W &&` / `git -C W`) acts as the agent of the joined checkout its files are in. One patch across two checkouts is refused. **Stop gate and session end: unsupported** for delegated work: `SubagentStop` names no worktree, and subagents share the parent's session id. W's own `pre-commit` hook still gates commits there. |
+| OpenCode (subagents in child sessions) | Yes: child sessions run in the same OpenCode instance, and the plugin gets the instance `directory`. | The project plugin is instance-wide, so `tool.execute.before/after` run for child sessions under the child's `sessionID` (OpenCode's plugin model; not yet run live with a child session). There is no per-agent plugin. | **Edits: supported with `install --by-path`.** A tool call on a file in another joined checkout (also each file of an `apply_patch`) acts as that checkout's agent. **Stop gate and session end** go to the session's own checkout, so they are unsupported for the worktree. |
+| Cursor (local subagents, foreground or `is_background`) | Yes for a plain subagent: it works in the parent's workspace. An *isolated* subagent gets its own Cursor-created git worktree (or a cloud VM). | No scoped hooks: `.cursor/agents/*.md` has no hooks field. Project `.cursor/hooks.json` is the only layer. Cursor's docs do not say whether `preToolUse` runs for a subagent's own tool calls, and no live run has checked it (no Cursor login). | **Edits: supported with `install --by-path`** wherever the session's hooks run for the subagent and its file is in a joined checkout. An isolated subagent's worktree is created by Cursor and never joined, so it stays uncoordinated. **Stop gate and session end**: unsupported for the worktree. |
+| Cursor (cloud agents, cloud subagents) | No: they run on a VM, in a clone of the repo. | Cloud agents run the repo's committed `.cursor/hooks.json`. Weft's is machine-specific (absolute node and bundle paths, a local token) and git-excluded, so it is not in the clone. | **Unsupported**: the cloud VM has no Weft hook, bundle or token. Coordinate cloud work at L0 through pushes. |
+| Gemini CLI (subagents) | Yes: a subagent is a tool call in the main session (same process, same cwd), and subagents cannot start other subagents. | No scoped hooks: agent definitions (`.gemini/agents/*.md`) have no hooks field. Gemini's docs do not say whether `BeforeTool`/`AfterTool` run for a subagent's own tool calls. | **Unsupported for delegated work** (no scoped-hook mechanism). If the session hooks do run inside a subagent, `install --by-path` routes its edits the same way (fixture-tested only, like the whole Gemini adapter). |
+
+`--by-path` is opt-in, so existing installs behave as before. It is the same rule in every
+TypeScript adapter (`routeTargets` in `packages/adapters/claude-code/src/config.ts`):
+- A call acts in another checkout only when that checkout (the nearest directory holding `.git`
+  above the file) joined with this harness's config, and its url, repo and mode equal the pin
+  written into the hook command at install time.
+- The routed checkout's own token file is used: the parent's `WEFT_TOKEN`, `WEFT_URL` and
+  `WEFT_MODE` are dropped.
+- Everything else stays exactly as the plain hook: the session's checkout, an unjoined
+  checkout, a path with `..`, or a path through a symlink.
+- A joined checkout whose config does not load or does not match the pin is not coordinated.
+  The reason goes to its `.weft/log/adapter.log`, and the Codex agent is also told on the call.
+  The parent's agent never stands in for it.
 
 ## 2. Tiers
 

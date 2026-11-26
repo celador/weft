@@ -2,6 +2,8 @@
 //
 //   install   .weft/cursor.json (+ token), .cursor/hooks.json (project hooks), git hooks, agent CLI
 //   hook      Cursor hook entry: Cursor JSON on stdin -> Cursor JSON on stdout (always exit 0)
+//             (`hook --by-path --url U --repo R`, from `install --by-path`: an edit inside another
+//             joined checkout, e.g. a subagent's worktree, acts as that checkout's agent)
 //   (+ the shared commit-msg, pre-commit, heartbeat-loop, status, negotiate, inbox)
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -9,7 +11,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Capabilities } from "@weft/protocol";
 import { Host, readStdin } from "../../claude-code/src/host";
-import { ADAPTER_VERSION } from "../../claude-code/src/hooks";
+import { ADAPTER_VERSION, type HookInput } from "../../claude-code/src/hooks";
+import type { Loaded } from "../../claude-code/src/config";
 import { beforeFromEdits, cwdOf, fromCore, sessionOf, toCore, type CursorInput } from "./translate";
 
 const SELF = fileURLToPath(import.meta.url);
@@ -72,17 +75,21 @@ export const host = new Host({
 
 const hash = (s: string | null) => (s === null ? "null" : createHash("sha1").update(s).digest("hex"));
 
-async function hook(): Promise<void> {
+async function hook(args: string[] = []): Promise<void> {
   let json: Record<string, unknown> = {};
   try {
     const raw = JSON.parse(await readStdin()) as CursorInput;
     const event = raw.hook_event_name;
     if (event === "preToolUse") json = { permission: "allow" }; // fail open with a valid answer
-    const loaded = host.load(cwdOf(raw));
+    const cwd = cwdOf(raw);
+    // Routed by the edited file under --by-path (afterFileEdit names it in file_path).
+    const routeInput: HookInput | undefined =
+      event === "afterFileEdit" ? (raw.file_path ? { hook_event_name: "PostToolUse", session_id: "", cwd, tool_name: "Write", tool_input: { file_path: raw.file_path } } : undefined) : toCore(raw);
+    const loaded = host.load(cwd, { args, input: routeInput });
     const session = sessionOf(raw);
     if (loaded && session) {
       if (event === "afterFileEdit") {
-        await afterFileEdit(raw, loaded.root, session);
+        await afterFileEdit(raw, loaded, session);
         json = {};
       } else {
         const input = toCore(raw);
@@ -123,9 +130,9 @@ function remember(root: string, session: string, toolInput: Record<string, unkno
  * edit tool that Cursor does not route through pre/postToolUse). Its before-text is
  * reconstructed from the edit records when possible.
  */
-async function afterFileEdit(raw: CursorInput, root: string, session: string): Promise<void> {
-  const loaded = host.load(root);
-  if (!loaded || !raw.file_path) return;
+async function afterFileEdit(raw: CursorInput, loaded: Loaded, session: string): Promise<void> {
+  const root = loaded.root;
+  if (!raw.file_path) return;
   const abs = resolve(root, raw.file_path);
   const rel = relative(root, abs);
   if (rel.startsWith("..")) return;
