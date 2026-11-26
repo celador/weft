@@ -4,8 +4,12 @@
 import type { Diagnostic, EventRecord, SymbolKey, WriteKind } from "./types";
 import { fileOf } from "./summary";
 
-/** Open-error origins a change's own `release` may clear (spec §6.5 rule 4). */
-export const RELEASABLE: readonly string[] = ["check", "push"];
+/**
+ * Open-error origins whose code never reached the workspace: a denied check, or a wound (spec §6.5).
+ * Informational only — no origin is releasable (#17) — but a later one of these never replaces a
+ * `commit`/`contract` origin on the same key, so the entry keeps saying the code is in the workspace.
+ */
+export const NOT_IN_WORKSPACE: readonly string[] = ["check", "push"];
 
 /** The `stale_assumption` pushed to (and opened on) a change whose code uses `w.key`. */
 export function contractError(rec: EventRecord, w: { key: SymbolKey; kind: WriteKind }, continueMode: boolean): Diagnostic {

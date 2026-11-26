@@ -123,6 +123,9 @@ message per frame.
 - Agent tokens are **repo-scoped**: one token per (repo, agent). A `hello` whose
   `agent.id` (or `change`) differs from the token binding MUST be refused with
   `403 forbidden`.
+- A change is bound to the agent whose `hello` created it. A `hello` naming an existing
+  change (explicitly, or through the default `<agent>/<task>` id) of a different agent MUST
+  be refused with `403 forbidden` (`details.change`) and appends nothing (§8.2).
 - Observer tokens are read-only and MAY list several repos; they are distinct from
   agent tokens and MUST NOT be accepted on agent or human endpoints.
 - `human` tokens imply `observe`. Human actions are attributed to the token's principal
@@ -369,8 +372,8 @@ Applied atomically with the append, in this order:
    whose lease ends at `now + lease` (a firm claim the change already holds on the key
    keeps its hard deadline); `claim` events create explicit or predicted claims (`firm`
    from payload; deadline per §7.5); `release` removes the listed (or all) claims of `c`
-   and clears only the open errors §6.5 allows a release to clear; `land` removes all
-   claims of the change and clears its open errors.
+   and clears no open error (§6.5); `land` removes all claims of the change and clears its
+   open errors.
 5. Routing: `negotiate.*` and `message` go to the addressee's sessions (§7.4, §7.6);
    `control` to the target agent's sessions (`merge`: every session of the merged group).
 6. Broadcast, for `edit`, `land`, `revert`, to every other unlanded change whose
@@ -419,29 +422,33 @@ record — the edit was denied before it reached the workspace), `commit` (a rej
 `mode:"commit"` record — the edit is in the workspace but not in the log), `push`
 (`claim_wounded`) or `contract` (§6.3 step 6 — the call site is in the workspace and in
 the log, but its callee changed under it). A later error on the same key replaces the
-entry, except that an origin a release cannot clear (`commit`, `contract`) is kept when
-the new one could be (`check`, `push`): a denied retry does not take the earlier code out
-of the workspace.
+entry, except that an origin whose code is in the workspace (`commit`, `contract`) is kept
+when the new one's is not (`check`, `push`): a denied retry does not take the earlier code
+out of the workspace. The origin is informational (feed, debugging); no clearing rule
+depends on it.
 
 Open errors belong to the change, not to a session. A `bye`, a session expiry, a new
-`hello` (with or without `resume_session`) and a session's own `release` never make them
-disappear, so an agent cannot reset its gate by reconnecting. A `claim_wounded` push is
-recorded on the change even when it has no live session. An entry is cleared only when:
+`hello` (with or without `resume_session`) and any `release` never make them disappear, so
+an agent cannot reset its gate by reconnecting or by giving up its claims. `bye` is always
+allowed (a crashing agent must be able to leave); the next session of the change gets the
+errors redelivered. A `claim_wounded` push is recorded on the change even when it has no
+live session. An entry is cleared only when:
 
 1. the change has an accepted `edit` that reads or writes the key (§6.3 step 2) — the
    agent redid the work against the current log. Other accepted kinds that carry keys
    (`intent`, `claim`) do not clear anything: they say nothing about the workspace;
 2. the change lands;
 3. a negotiated `transfer`/`share` on the key is accepted (§7.4), or a merge forgives it
-   (§7.6);
-4. the change's agent `release`s the key (or releases everything) **and** the entry's
-   origin is `check` or `push`: the agent retreats from an area it never wrote (a denied
-   edit) or lost (wounded). A release never clears a `commit`-origin entry, because that
-   edit exists in the workspace and is unknown to the log, nor a `contract`-origin one,
-   because the call site is in the workspace; the agent must redo it so that it is
-   accepted (rule 1) or have it resolved by rules 2–3.
+   (§7.6).
 
-System `release` records (expiry, session end; §7.5) never clear open errors.
+A `release` — the agent's own (by key or of everything, any `reason`) or a system one
+(expiry, session end; §7.5) — gives up claims and never clears an open error, whatever its
+origin. The coordinator cannot tell a retreat from the same code written around a denied
+edit (a shell write after a denied edit tool call never reaches the log), and a wounded
+change's accepted code is still in its workspace; so the agent redoes the work (rule 1),
+lands, or has it resolved by rule 3. A human may override a gate refusal (§8.4); the open
+errors then stay visible in the feed. (Before 2026-11-26 an agent `release` cleared
+`check`- and `push`-origin entries on the released keys, issue #17.)
 
 A **new** session (not `resume_session`) of a change with open errors receives one
 `kind:"diagnostic"` inbox item per entry (`seq` = the record that opened it), after any
@@ -655,6 +662,11 @@ required output field is rejected.
   unsupported_version` with `details.supported`.
 - The change id defaults to `<agent>/<task id|adhoc>`; adapters SHOULD pass the
   commit's `Change-Id` trailer value.
+- The first `hello` naming a change creates it and binds it to that `agent.id`. A later
+  `hello` for the same change from the same agent joins it (a restart, a second
+  harness); from a different agent it is `403 forbidden` with `details.change`, and
+  nothing is appended. Change ids are guessable, and a session of a change receives its
+  open errors, owed negotiations and owner notices (§3, issue #17).
 - Sessions expire after `session_ttl_ms` (default 5 min) without any request; the
   coordinator appends `leave` (system actor) and later calls get `410 session_expired`.
   Adapters SHOULD heartbeat every `heartbeat_interval_ms` (default 30 s) while the
@@ -878,7 +890,7 @@ Body: `{"type":"error","error":{"code","message","retryable","details?"}}`.
 | `invalid_message` | 400 | 4400 | no | schema failure, task/change mismatch |
 | `unsupported_version` | 400 | 4400 | no | `hello.protocol` major not served |
 | `unauthorized` | 401 | 4401 | no | missing/invalid token |
-| `forbidden` | 403 | 4403 | no | scope missing; kind not allowed for the role; token binding mismatch |
+| `forbidden` | 403 | 4403 | no | scope missing; kind not allowed for the role; token binding mismatch; `hello` for a change another agent created |
 | `repo_not_found` | 404 | 4404 | no | repo unknown or not visible to the token |
 | `not_found` | 404 | 4404 | no | seq / resource unknown |
 | `base_ahead` | 409 | 4409 | no (fix base) | `base_seq > delivered_through` |
@@ -920,7 +932,8 @@ rule + check logging (`inbox-and-base`), human actions (`human-actions`), claim 
 session expiry (`claim-ttl-and-session-expiry`), trunk notification + predicted claims
 (`trunk-advanced-and-predicted`), claim leases and the hard firm limit
 (`lease-soft-claim`, `lease-firm-hard-limit`), release on exit (`release-on-exit`), open
-errors that survive release/bye/hello/expiry (`open-errors-persist`), a session that joins
+errors that survive release/bye/hello/expiry (`open-errors-persist`), release, bye + hello
+and a hello for another agent's change against the commit gate (`conflict-bypass`), a session that joins
 after a peer's unlanded signature change (`join-after-unmerged-change`), and repos created
 before the claims policy plus the policy migration (`claims-legacy-and-migration`). The
 reference coordinator passes all of them and its log replays deterministically.
@@ -937,8 +950,9 @@ reference coordinator passes all of them and its log replays deterministically.
 - Rate-limit `check` submissions per session; they are cheap to send and expensive to
   evaluate on large W sets.
 - One agent's state must not be resettable by that agent alone. Open errors live on the
-  change (§6.5) so that reconnecting, `bye`, expiry or a blanket `release` cannot open a
-  gate; claims are leases (§7.5) so a crashed agent cannot block others for long, and a
+  change (§6.5) so that reconnecting, `bye`, expiry or any `release` cannot open a gate,
+  and a change is bound to the agent that created it (§8.2) so that another agent cannot
+  join it under a guessed id; claims are leases (§7.5) so a crashed agent cannot block others for long, and a
   firm hold is bounded by `firm_max_ms` unless it is re-asserted in the log, where humans
   see it. The claims policy is repo configuration (journaled), never environment.
 
@@ -1074,3 +1088,9 @@ Proposed for `docs/design.md` (rule 7 of agent-rules):
   analyzer used to read the whole edited file, so an accepted edit anywhere in a file cleared
   open errors on keys only another function of that file used (§6.5 rule 1); see
   docs/languages.md, "Reads are scoped to the edit".
+- 0.1 change (2026-11-26, issue #17; behaviour change, listed per §10; no schema change): a
+  `release` never clears an open error (§6.5; before, an agent's release cleared `check`-
+  and `push`-origin entries on the released keys), and a `hello` for an existing change of
+  a different agent is `403 forbidden` instead of joining it (§3, §8.2). `bye` stays
+  allowed and still clears nothing. Scenarios `conflict-bypass` (new),
+  `open-errors-persist`, `arbitration-wound-wait`.

@@ -7,9 +7,9 @@
 import { ownedElsewhere, ownerNotice, sameNotice, type ConflictMode } from "./ownership";
 import { renderContext, renderDue } from "./context";
 import { addresseeOf, agreementOf, answererOf, counterpartAway, negotiationDues } from "./negotiation";
-import { WcpProtocolError } from "./errors";
+import { changeOwnedError, WcpProtocolError } from "./errors";
 import { fileOf } from "./summary";
-import { contractError, RELEASABLE } from "./contract";
+import { contractError, NOT_IN_WORKSPACE } from "./contract";
 import { summarize } from "./summary";
 import type {
   ActionResult,
@@ -213,6 +213,9 @@ export class ReferenceCoordinator {
 
     const changeId = h.change ?? `${h.agent.id}/${h.task?.id ?? "adhoc"}`;
     let change = this.changes.get(changeId);
+    // A change belongs to the agent whose hello created it (spec §8.2, #17): change ids are
+    // guessable, and joining would hand another agent its open errors, dues and owner notices.
+    if (change && change.agent !== h.agent.id) throw changeOwnedError(changeId);
     if (!change) {
       change = {
         id: changeId,
@@ -322,15 +325,16 @@ export class ReferenceCoordinator {
   // ---------------------------------------------------------------- open errors (§6.5)
 
   /**
-   * A later error on the same key replaces the entry, but never turns an origin a release cannot
-   * clear (commit, contract) into one it can (check, push): the code is still in the workspace (§6.5).
+   * A later error on the same key replaces the entry, but never turns an origin whose code is in the
+   * workspace (commit, contract) into one whose code is not (check, push) (§6.5). Origins are
+   * informational: no release clears any of them (#17).
    */
   private openSet(changeId: string, d: Diagnostic, origin: OpenOrigin, seq: Seq): void {
     const c = this.changes.get(changeId);
     if (!c) return;
     const prev = c.openMeta.get(d.symbol)?.origin;
     c.open.set(d.symbol, d);
-    c.openMeta.set(d.symbol, { origin: prev && !RELEASABLE.includes(prev) && RELEASABLE.includes(origin) ? prev : origin, seq });
+    c.openMeta.set(d.symbol, { origin: prev && !NOT_IN_WORKSPACE.includes(prev) && NOT_IN_WORKSPACE.includes(origin) ? prev : origin, seq });
   }
 
   private openDelete(changeId: string | undefined, key: string): void {
@@ -1038,12 +1042,10 @@ export class ReferenceCoordinator {
       }
       case "release": {
         const keys = p.keys as SymbolKey[] | undefined;
+        // A release gives up claims and nothing else: it never clears an open error, whatever its
+        // origin (§6.5, #17). The coordinator cannot tell a retreat from code written around a
+        // denied edit, so only an accepted edit, a landing, a transfer/share or a merge clears one.
         this.claims = this.claims.filter((c) => !(c.change === rec.change && (!keys || keys.includes(c.key))));
-        // An agent's release is a retreat: it clears only errors whose edit never reached the
-        // workspace (check) or wounds (push) on the released keys — never commit-mode or contract
-        // ones, whose code is in the workspace (§6.5).
-        if (s && change)
-          for (const [k, m] of [...change.openMeta]) if ((!keys || keys.includes(k)) && RELEASABLE.includes(m.origin)) this.openDelete(change.id, k);
         break;
       }
       case "land": {

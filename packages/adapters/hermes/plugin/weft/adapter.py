@@ -2219,15 +2219,17 @@ class WeftAdapter:
             f"[weft] {what} refused by the Weft {gate} gate: {result.get('reason') or 'open errors'}\n"
             "Resolve each error by re-editing the cited symbols against the current code (an "
             "accepted edit that touches the symbol clears it). If you deliberately retreated from "
-            f"these symbols, retry {what} {RELEASE_AFTER_REFUSALS} more time(s) and Weft will "
-            "release them (recorded in the Weft feed).")}
+            f"these symbols, retry {what} {RELEASE_AFTER_REFUSALS} more time(s) and Weft will let it "
+            "through as a retreat: it releases them in the Weft feed, but the errors stay open on "
+            "your change for humans and the coordinator's gates.")}
 
     def _retreat(self, gate: str, what: str, result: dict) -> bool:
         """Count a refusal; once the agent has insisted past ``RELEASE_AFTER_REFUSALS`` refusals
-        over the same open errors, treat it as a deliberate retreat and release those keys
-        (spec §6.3: release clears matching open errors). The release record is visible in the
-        feed, so humans see what was walked away from. Returns True when the caller should let
-        the action through."""
+        over the same open errors, treat it as a deliberate retreat: release those keys and let
+        the action through locally. The release gives up the claims only — it never clears an
+        open error (spec §6.5, #17) — so the errors stay on the change, the release record shows
+        humans what was walked away from, and the coordinator's own gates keep refusing. Returns
+        True when the caller should let the action through."""
         open_errors = result.get("open_errors") or []
         keys = sorted({d.get("symbol") for d in open_errors
                        if isinstance(d.get("symbol"), str) and SYMBOL_KEY.match(d["symbol"])})
@@ -2285,7 +2287,8 @@ class WeftAdapter:
             f"[weft] Not done yet: {result.get('reason') or 'open Weft errors'}\n"
             "Fix these conflicts (re-edit the cited symbols against the current code) before finishing. "
             "If you deliberately retreated from these symbols, try to finish "
-            f"{RELEASE_AFTER_REFUSALS} more time(s) and Weft will release them (recorded in the Weft feed).")}
+            f"{RELEASE_AFTER_REFUSALS} more time(s) and Weft will let you finish as a retreat (recorded "
+            "in the Weft feed; the errors stay open on your change).")}
 
     # -- hook: post_tool_call --------------------------------------------------------------
 

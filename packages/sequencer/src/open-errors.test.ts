@@ -179,11 +179,55 @@ describe.each([
     }
   });
 
-  it("a check-mode error (edit denied, never applied) is cleared by releasing the key: a retreat", () => {
+  it("a check-mode error (edit denied) is not cleared by releasing the key, nor by releasing everything (#17)", () => {
+    // The coordinator cannot tell a retreat from the same code written around the denied edit
+    // (a shell write after a denied Edit tool call), so a release clears nothing (§6.5).
     const c = make();
     const { b } = setup(c, "check");
-    expect(c.submit(b, ev("release", 5, { payload: { keys: [X] } }))).toMatchObject({ verdict: "accept" });
-    expect(closed(c.gate(b, "stop"))).toEqual({ allow: true, open: [] });
+    expect(c.submit(b, ev("release", 5, { payload: { keys: [X], reason: "abandoned" } }))).toMatchObject({ verdict: "accept" });
+    expect(closed(c.gate(b, "commit"))).toEqual(STILL_OPEN);
+    expect(c.submit(b, ev("release", 6, { payload: {} }))).toMatchObject({ verdict: "accept" });
+    expect(closed(c.gate(b, "commit"))).toEqual(STILL_OPEN);
+    expect(closed(c.gate(b, "stop"))).toEqual(STILL_OPEN);
+  });
+
+  it("a release still gives up the claims it names", () => {
+    const c = make();
+    const { a, b } = setup(c, "check");
+    c.submit(b, ev("release", 5, { payload: { keys: [Y] } })); // #6: B's edit claim on Y (from #3) goes
+    // claude-a can now edit Y without a claim diagnostic naming codex-b.
+    const v = c.submit(a, edit(4, [[Y, "body"]]));
+    expect(v.verdict).toBe("accept");
+    expect(v.diagnostics.filter((d) => d.code.startsWith("claim_"))).toEqual([]);
+  });
+
+  it("a wound (claim_wounded) is not cleared by release; redoing the edit after the winner clears it (#17)", () => {
+    const c = make();
+    const senior = c.hello(hello("gemini-c", "I-c", 5));
+    const junior = c.hello(hello("codex-b", "I-b"));
+    c.submit(junior.session, edit(2, [[X, "body"]])); // #3: soft claim of I-b
+    expect(c.submit(senior.session, edit(1, [[X, "body"]]))).toMatchObject({ verdict: "accept" }); // #4 wounds I-b
+    expect(c.gate(junior.session, "commit")).toMatchObject({ allow: false, open_errors: [{ code: "claim_wounded", symbol: X }] });
+    c.submit(junior.session, ev("release", 3, { payload: { keys: [X], reason: "abandoned" } })); // #5
+    expect(c.gate(junior.session, "commit")).toMatchObject({ allow: false, open_errors: [{ code: "claim_wounded", symbol: X }] });
+    expect(c.submit(junior.session, edit(5, [[X, "body"]]))).toMatchObject({ verdict: "accept" });
+    expect(c.gate(junior.session, "commit")).toMatchObject({ allow: true, open_errors: [] });
+  });
+
+  it("a hello for a change another agent created is forbidden; the owner's gate stays closed (#17)", () => {
+    const c = make();
+    const { b } = setup(c);
+    expect(() => c.hello(hello("mallory", "I-b"))).toThrow(expect.objectContaining({ code: "forbidden", details: { change: "I-b" } }));
+    // ... also for a peer that has its own change, and for the guessable default id <agent>/<task>.
+    expect(() => c.hello(hello("claude-a", "I-b"))).toThrow(expect.objectContaining({ code: "forbidden" }));
+    const { change: _none, ...noChange } = hello("gemini-c", "unused");
+    const dflt = c.hello(noChange); // change gemini-c/T-gemini-c
+    expect(() => c.hello(hello("mallory", "gemini-c/T-gemini-c"))).toThrow(expect.objectContaining({ code: "forbidden" }));
+    expect(closed(c.gate(b, "commit"))).toEqual(STILL_OPEN);
+    expect(c.gate(dflt.session, "commit")).toMatchObject({ allow: true });
+    // The owner may still re-join its own change.
+    const b2 = c.hello(hello("codex-b", "I-b"));
+    expect(closed(c.gate(b2.session, "commit"))).toEqual(STILL_OPEN);
   });
 
   it("a contract change to a symbol B already uses is not cleared by release, nor downgraded by a later denied check", () => {
