@@ -1,0 +1,48 @@
+{
+  "schema": "EventRecord",
+  "value": {
+    "seq": 6,
+    "repo": "weft-demo",
+    "status": "accepted",
+    "kind": "edit",
+    "ts": "2026-11-26T12:00:00.006Z",
+    "actor": {
+      "type": "agent",
+      "id": "codex-b",
+      "harness": "codex"
+    },
+    "agent": "codex-b",
+    "task": "T-2",
+    "change": "I9c01",
+    "session": "s2",
+    "base_seq": 5,
+    "mode": "commit",
+    "files": [
+      "src/routes/signup.ts"
+    ],
+    "reads": [
+      "src/auth/session.ts#createSession",
+      "src/auth/session.ts#refreshToken"
+    ],
+    "writes": [
+      {
+        "key": "src/routes/signup.ts#signup",
+        "kind": "body"
+      }
+    ],
+    "summary": "codex-b edited signup in src/routes/signup.ts",
+    "diagnostics": [],
+    "depends_on": [
+      {
+        "change": "I4f2a",
+        "agent": "claude-a",
+        "task": "T-1",
+        "seq": 4,
+        "keys": [
+          "src/auth/session.ts#createSession",
+          "src/auth/session.ts#refreshToken"
+        ]
+      }
+    ]
+  }
+}

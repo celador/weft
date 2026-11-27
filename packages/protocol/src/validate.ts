@@ -191,6 +191,7 @@ const BY_TYPE: Record<string, MessageType> = {
   ping: "StreamFrame",
   action: "HumanAction",
   "action.result": "ActionResult",
+  dependencies: "Dependencies",
   error: "WcpError",
 };
 

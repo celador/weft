@@ -9,6 +9,14 @@
 // every conformance scenario and require identical outputs, step by step.
 
 import {
+  abandonedNotice,
+  collectDependsOn,
+  dependenciesOf,
+  isAbandonment,
+  mergeDependencies,
+  type Dependencies,
+  type DependencyRef,
+  type DependencyState,
   addresseeOf,
   agreementOf,
   amendmentSuggestion,
@@ -222,6 +230,11 @@ export type QueueEntry = {
   batch: number | null;
   created_at: string;
   updated_at: string;
+  /**
+   * `queued` entries only, present when non-empty: the recorded dependencies that hold the change
+   * (spec §6.7). The landing workflow skips a held entry, and a batch never claims one.
+   */
+  held_by?: string[];
 };
 
 const AGENT_KINDS = new Set<EventKind>([
@@ -716,7 +729,9 @@ export class SqlCoordinator {
     if (msg.mode === "check" && !reject) {
       out = this.verdict(s, "accept", "check", null, [...diagnostics, ...notes]);
     } else {
-      const rec = this.append({ kind: e.kind, actor, session: s, draft: e, diagnostics, status: reject ? "rejected" : "accepted", mode: msg.mode });
+      // An accepted edit records the unlanded neighbor changes it relies on (§6.7): an annotation, it decides nothing.
+      const depends_on = !reject && e.kind === "edit" ? this.dependsOn(s, e) : [];
+      const rec = this.append({ kind: e.kind, actor, session: s, draft: e, diagnostics, status: reject ? "rejected" : "accepted", mode: msg.mode, depends_on });
       for (const d of diagnostics) if (TELLS.has(d.code) && d.symbol) this.tell(s.change, d.symbol, d.caused_by_seq);
       if (reject) {
         for (const d of diagnostics) if (d.severity === "error" && d.code !== "agent_paused") this.openSet(s.change, d, msg.mode, rec.seq);
@@ -1163,6 +1178,112 @@ export class SqlCoordinator {
     return out;
   }
 
+  // ---------------------------------------------------------------- dependencies (§6.7)
+
+  /** Mirrors ReferenceCoordinator.dependsOn: the unlanded neighbor changes an accepted edit relies on. */
+  private dependsOn(s: Session, e: EventDraft): DependencyRef[] {
+    return collectDependsOn(uniq(e.reads ?? []), e.writes ?? [], (key) => {
+      const out: Array<{ change: string; agent: string; task?: string; kind: WriteKind; seq: Seq }> = [];
+      const rows = all<ChangeRow & { wkind: WriteKind }>(
+        this.sql,
+        `SELECT c.id, c.agent, c.task, c.priority, c.birth, c.landed, c.approved, c.merged_into, w.wkind AS wkind
+           FROM change_writes w JOIN changes c ON c.id = w.change_id WHERE w.key = ? ORDER BY c.ord`,
+        key,
+      );
+      for (const d of rows) {
+        if (d.id === s.change || d.landed || this.sameGroup(d.id, s.change) || this.alternatives(d.id, s.change)) continue;
+        const seq = one<{ s: number | null }>(this.sql, `SELECT MAX(seq) AS s FROM event_writes WHERE change_id = ? AND key = ? AND committed = 0`, d.id, key)?.s ?? null;
+        if (seq === null || this.abandonedAt(d.id) !== undefined) continue;
+        out.push({ change: d.id, agent: d.agent, ...(d.task ? { task: d.task } : {}), kind: d.wkind, seq });
+      }
+      return out;
+    });
+  }
+
+  /**
+   * The record that abandoned change `id` (spec §6.7): a system `release` with reason `abandoned`
+   * and no keys, or the landing of one of its alternatives (§7.7). Mirrors the reference.
+   */
+  private abandonedAt(id: string): Seq | undefined {
+    const c = this.getChange(id);
+    if (!c || c.landed) return undefined;
+    const r = one<{ s: number | null }>(
+      this.sql,
+      `SELECT MIN(seq) AS s FROM events WHERE status = 'accepted' AND (
+         (kind = 'release' AND change_id = ? AND actor_type = 'system'
+           AND json_extract(record, '$.payload.reason') = 'abandoned' AND json_type(record, '$.payload.keys') IS NULL)
+         OR (kind = 'land' AND ? IS NOT NULL AND change_id IS NOT ? AND change_id IN (SELECT id FROM changes WHERE task = ?)))`,
+      id,
+      c.task,
+      id,
+      c.task,
+    )?.s;
+    return r === null || r === undefined ? undefined : r;
+  }
+
+  private depState(id: string): { status: DependencyState; status_seq?: Seq } {
+    if (this.getChange(id)?.landed) {
+      const land = one<{ seq: number }>(this.sql, `SELECT seq FROM events WHERE change_id = ? AND kind = 'land' AND status = 'accepted' ORDER BY seq LIMIT 1`, id);
+      return { status: "landed", ...(land ? { status_seq: land.seq } : {}) };
+    }
+    const ab = this.abandonedAt(id);
+    return ab !== undefined ? { status: "abandoned", status_seq: ab } : { status: "pending" };
+  }
+
+  /** The accepted edits of `id` that recorded dependencies, ascending. */
+  private depRecords(id: string): EventRecord[] {
+    return all<{ record: string }>(
+      this.sql,
+      `SELECT record FROM events WHERE change_id = ? AND kind = 'edit' AND status = 'accepted' AND json_type(record, '$.depends_on') IS NOT NULL ORDER BY seq`,
+      id,
+    ).map((r) => JSON.parse(r.record) as EventRecord);
+  }
+
+  /** What `change` relies on and whether that holds its landing (spec §6.7, §9.8). Read-only. */
+  dependencies(change: string): Dependencies {
+    const c = this.getChange(change);
+    if (!c) throw new WcpProtocolError("not_found", `unknown change ${change}`);
+    return dependenciesOf({
+      repo: this.repo,
+      change: { id: c.id, agent: c.agent, ...(c.task ? { task: c.task } : {}), landed: Boolean(c.landed) },
+      records: (x) => this.depRecords(x),
+      state: (x) => this.depState(x),
+      sameGroup: (a, b) => this.sameGroup(a, b),
+    });
+  }
+
+  /**
+   * A change abandoned by `rec` stops holding the changes that rely on it (spec §6.7); the owner of
+   * each is told by a system `message`, appended after `rec`'s own effects. Mirrors the reference.
+   */
+  private dependencyNotices(rec: EventRecord): void {
+    const changes = () => all<ChangeRow>(this.sql, `SELECT * FROM changes ORDER BY ord`);
+    const gone =
+      rec.kind === "release"
+        ? rec.change !== undefined && isAbandonment(rec)
+          ? [rec.change]
+          : []
+        : changes()
+            .filter((x) => this.alternatives(x.id, rec.change))
+            .map((x) => x.id);
+    for (const x of gone) {
+      if (!this.getChange(x) || this.abandonedAt(x) !== rec.seq) continue;
+      for (const c of changes()) {
+        if (c.id === x || c.landed || this.sameGroup(c.id, x) || this.abandonedAt(c.id) !== undefined) continue;
+        const entry = mergeDependencies(this.depRecords(c.id)).find((d) => d.change === x);
+        if (!entry) continue;
+        const msg = this.append({
+          kind: "message",
+          actor: { type: "system", id: "coordinator" },
+          draft: { kind: "message", base_seq: this.head, payload: { to: { change: c.id }, text: abandonedNotice(entry, c.id, entry.keys, rec), intent: "info" } },
+          diagnostics: [],
+          status: "accepted",
+        });
+        this.applyAccepted(msg);
+      }
+    }
+  }
+
   // ---------------------------------------------------------------- append + effects
 
   private append(a: {
@@ -1176,6 +1297,8 @@ export class SqlCoordinator {
     agent?: string;
     change?: string;
     task?: string;
+    /** Accepted edits only: the unlanded changes it relies on (§6.7). Empty = the field is left out. */
+    depends_on?: DependencyRef[];
   }): EventRecord {
     const d = a.draft;
     const writes = d.writes ?? [];
@@ -1222,6 +1345,8 @@ export class SqlCoordinator {
       ...(d.payload ? { payload: d.payload } : {}),
       ...(d.tool ? { tool: d.tool } : {}),
       ...(d.transcript ? { transcript: d.transcript } : {}),
+      // Stamped by the coordinator, never copied from the draft (a client cannot forge a dependency).
+      ...(a.depends_on?.length ? { depends_on: a.depends_on } : {}),
     };
     run(
       this.sql,
@@ -1566,6 +1691,8 @@ export class SqlCoordinator {
         }
       }
     }
+    // A change this record abandoned no longer holds the changes relying on it; their owners are told (§6.7).
+    if (rec.kind === "release" || rec.kind === "land") this.dependencyNotices(rec);
   }
 
   private recordOp(rec: EventRecord): void {
@@ -1920,7 +2047,8 @@ export class SqlCoordinator {
     const out = [this.queueEntry(leader)!];
     for (const id of [...new Set(ids)].filter((x) => x !== leader).sort((a, b) => a - b)) {
       const e = this.queueEntry(id);
-      if (!e || e.status !== "queued" || e.batch !== null || id < leader) continue;
+      // A held entry (spec §6.7) waits for its dependencies: no batch takes it.
+      if (!e || e.status !== "queued" || e.batch !== null || id < leader || e.held_by?.length) continue;
       run(this.sql, `UPDATE submit_queue SET status = 'landing', batch = ?, note = COALESCE(?, note), updated_at = ? WHERE id = ?`, leader, note ?? null, ts, id);
       out.push(this.queueEntry(id)!);
     }
@@ -1935,7 +2063,9 @@ export class SqlCoordinator {
     );
     if (!r) return undefined;
     const { change_id, ...rest } = r;
-    return { ...rest, batch: rest.batch ?? null, change: change_id };
+    // A queued change whose recorded dependencies have not landed is held (spec §6.7).
+    const held = r.status === "queued" && this.getChange(change_id) ? this.dependencies(change_id).held_by : [];
+    return { ...rest, batch: rest.batch ?? null, change: change_id, ...(held.length ? { held_by: held } : {}) };
   }
 
   queue(statuses: string[] = ["queued", "landing"]): QueueEntry[] {

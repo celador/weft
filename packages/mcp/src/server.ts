@@ -5,7 +5,7 @@
 //   - an embedded file watcher (packages/adapters/watcher) reports each changed file as a
 //     WCP `commit` edit — L0 is guaranteed even if the model never calls a tool;
 //   - weft_check / weft_claim / weft_status / weft_inbox / weft_feed / weft_history /
-//     weft_negotiate / weft_gate run on the same WCP session as the watcher (one agent, one change);
+//     weft_deps / weft_negotiate / weft_gate run on the same WCP session as the watcher (one agent, one change);
 //   - every tool result ends with the session's pending inbox (delayed L1): squiggles the
 //     watcher or the coordinator produced since the model last called a tool.
 //
@@ -16,6 +16,7 @@ import { watch, type FSWatcher } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   claimKeyError,
+  dependencyText,
   OPEN_ERROR_ADVICE,
   DAY_MS,
   HISTORY_DEFAULT_DAYS,
@@ -24,6 +25,7 @@ import {
   historyKeyError,
   renderHistoryEntry,
   type Capabilities,
+  type Dependencies,
   type Diagnostic,
   type EventPage,
   type EventRecord,
@@ -133,6 +135,18 @@ export const TOOLS: ToolDef[] = [
         limit: { type: "integer", minimum: 1, maximum: HISTORY_MAX_LIMIT, description: "How many entries (default 20)." },
       },
       required: ["keys"],
+    },
+  },
+  {
+    name: "weft_deps",
+    description:
+      "The unlanded changes your change relies on, as recorded by the coordinator (spec §6.7), and whether they hold your landing. With pr: true, the lines to paste into your pull request description (\"Relies on <change>, not yet in main: <symbols>\"). Read from the record only; no GitHub access.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pr: { type: "boolean", description: "Print the pull request lines instead of the listing." },
+        change: { type: "string", description: "Another change id (default: this checkout's change)." },
+      },
     },
   },
   {
@@ -386,6 +400,8 @@ export class WeftMcp {
         return this.feed(a);
       case "weft_history":
         return this.history(a);
+      case "weft_deps":
+        return this.deps(a);
       case "weft_negotiate":
         return this.negotiate(a);
       case "weft_gate":
@@ -447,16 +463,29 @@ export class WeftMcp {
   }
 
   private async events(repo: string, limit: number): Promise<EventRecord[]> {
+    return (await this.get<EventPage>(`/v1/repos/${encodeURIComponent(repo)}/events?tail=1&limit=${limit}`)).events ?? [];
+  }
+
+  /** An observer read with this checkout's token. */
+  private async get<T>(path: string): Promise<T> {
     const { config, token } = this.loaded;
     const base = config.url.replace(/\/+$/, "").replace(/\/v1$/, "");
     const f = this.opts.fetchImpl ?? fetch;
-    const res = await f(`${base}/v1/repos/${encodeURIComponent(repo)}/events?tail=1&limit=${limit}`, {
+    const res = await f(`${base}${path}`, {
       headers: { authorization: `Bearer ${token}`, "wcp-version": "0.1" },
       signal: AbortSignal.timeout(config.timeoutMs ?? 8000),
     });
-    const json = (await res.json().catch(() => undefined)) as (EventPage & { error?: { code?: string; message?: string } }) | undefined;
+    const json = (await res.json().catch(() => undefined)) as (T & { error?: { code?: string; message?: string } }) | undefined;
     if (!res.ok) throw new WcpError(json?.error?.code ?? "http", json?.error?.message ?? `HTTP ${res.status}`, res.status);
-    return json?.events ?? [];
+    return json as T;
+  }
+
+  /** weft_deps: what the change relies on (spec §6.7); `pr` = pull request text, from the record only. */
+  private async deps(a: Record<string, unknown>): Promise<ToolResult> {
+    const { config } = this.loaded;
+    const change = str(a.change)?.trim() || config.change;
+    const d = await this.get<Dependencies>(`/v1/repos/${encodeURIComponent(config.repo)}/dependencies?change=${encodeURIComponent(change)}`);
+    return { text: dependencyText(d, { pr: a.pr === true }) };
   }
 
   private async status(): Promise<ToolResult> {

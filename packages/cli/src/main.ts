@@ -25,8 +25,10 @@
 //   weft members [revoke <id|handle>|--all]   (owner) who joined; remove one or all (their keys stop working)
 import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { dependencyText } from "@weft/protocol/deps";
+import type { Dependencies } from "@weft/protocol";
 import { Api, statusOf, type FeedEvent, type Member, type Viewer } from "./api";
 import { MCP, WATCHER, adapterBin, detectHarnesses, ensureRuntime, harnessName, HARNESSES, installAdapter, installedIn, removeAdapters, startOrder, type HarnessId } from "./adapters";
 import {
@@ -81,13 +83,17 @@ type Opts = {
   join?: { space: string; code: string };
   /** `--as NAME`: how a joining teammate is shown to the owner (default: git's user.name). */
   as?: string;
+  /** `weft deps`: the change to report (default: this checkout's), PR text, raw JSON. */
+  change?: string;
+  pr: boolean;
+  json: boolean;
   positional: string[];
 };
 
 export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
-  const o: Opts = { local: false, hosted: false, yes: false, open: true, space: false, all: false, year: false, positional: [] };
+  const o: Opts = { local: false, hosted: false, yes: false, open: true, space: false, all: false, year: false, pr: false, json: false, positional: [] };
   let cmd = "init";
-  const known = new Set(["init", "demo", "add", "status", "pair", "viewers", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "usage", "upgrade", "billing", "invite", "members", "login", "logout", "whoami", "license", "help", "version"]);
+  const known = new Set(["init", "demo", "add", "status", "pair", "viewers", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "usage", "upgrade", "billing", "invite", "members", "login", "logout", "whoami", "license", "deps", "help", "version"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     const val = () => {
@@ -117,6 +123,9 @@ export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
       if (!j) throw new WeftError("--join takes <space>:<code>, e.g. sp0abc1def2g:K7M2P-9XQ4T", "Copy the whole command the space's owner sent you (they run: npx @celador/weft invite).");
       o.join = j;
     } else if (a === "--as") o.as = val();
+    else if (a === "--change") o.change = val();
+    else if (a === "--pr") o.pr = true;
+    else if (a === "--json") o.json = true;
     else if (a === "-h" || a === "--help") cmd = "help";
     else if (a === "-v" || a === "--version") cmd = "version";
     else if (a.startsWith("-")) throw new WeftError(`unknown option ${a}`, "Run `npx @celador/weft help`.");
@@ -156,6 +165,9 @@ ${c.bold("npx @celador/weft")}            in a git repo: a gateway on this machi
   viewers                     paired devices: label, created, last seen
   viewers revoke <id>|--all   unpair one device, or all of them
   feed                        live feed in this terminal
+  deps [--pr] [--change ID]   the unlanded changes this checkout's change relies on, as the coordinator
+                              recorded them, and whether they hold its landing; --pr prints the lines for
+                              the pull request ("Relies on <change>, not yet in main: <symbols>"); --json raw
   open                        open the live feed in your browser (prints a pairing code)
   watch                       report edits made here by tools without hooks (file watcher)
   mcp                         MCP server for this checkout, for agents with MCP but no hooks
@@ -740,6 +752,53 @@ async function feed(o: Opts): Promise<void> {
   }
 }
 
+/**
+ * This checkout's agent, from its adapter config (`.weft/<harness>.json`, any harness): the gateway,
+ * repo and change it reports, and its token from `.weft/token`. The token is sent only to the URL of
+ * the config next to it, so it must be a regular file under a real `.weft/` directory: a repo that
+ * ships a `.weft/` (config URL of its choosing plus a symlinked token, or a `tokenFile` pointing
+ * elsewhere) cannot make `weft deps` send another credential there. WEFT_TOKEN is not used here for
+ * the same reason.
+ */
+function checkoutAgent(root: string): { url?: string; repo: string; change: string; token?: string } | undefined {
+  const dir = join(root, ".weft");
+  if (!existsSync(dir) || !lstatSync(dir).isDirectory()) return undefined;
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".json")).sort()) {
+    const j = readJson<{ url?: unknown; repo?: unknown; change?: unknown } | null>(join(dir, f), null);
+    if (!j || typeof j.repo !== "string" || typeof j.change !== "string" || !j.repo || !j.change) continue;
+    const tokPath = join(dir, "token");
+    const token = existsSync(tokPath) && lstatSync(tokPath).isFile() ? readSecret(tokPath) : undefined;
+    return { ...(typeof j.url === "string" && j.url ? { url: j.url.replace(/\/+$/, "").replace(/\/v1$/, "") } : {}), repo: j.repo, change: j.change, ...(token ? { token } : {}) };
+  }
+  return undefined;
+}
+
+/**
+ * `weft deps [--pr] [--change ID] [--json]` (spec §6.7, issue #6): what a change relies on, read from
+ * the coordinator's record (GET /v1/repos/{repo}/dependencies?change=). No GitHub access: --pr prints
+ * the text to paste into the pull request. The change defaults to this checkout's agent's change, then
+ * to HEAD's Change-Id trailer. Read with the checkout's agent token, else the space's viewer key, else
+ * the Hermes adapter's shared human token.
+ */
+async function deps(o: Opts): Promise<void> {
+  const { root, main, ptr, hp } = here(o);
+  const agent = checkoutAgent(root) ?? (root === main ? undefined : checkoutAgent(main));
+  const trailer = tryGit(root, ["log", "-1", "--format=%(trailers:key=Change-Id,valueonly)"])?.trim();
+  const change = o.change ?? agent?.change ?? (trailer || undefined);
+  if (!change) throw new WeftError("no change to report", "Pass --change <change id>, or run it in a checkout whose agent reports to Weft.");
+  let d: Dependencies;
+  if (agent?.url && agent.token) d = await new Api(agent.url).dependencies(agent.token, agent.repo, change);
+  else if (ptr) {
+    const { api, member } = spaceHere(o);
+    d = await withViewer(api, ptr.url, (v) => api.dependencies(v, ptr.repo, change), member ? ptr.space : undefined);
+  } else if (hp) {
+    const tok = process.env.WEFT_TOKEN?.trim() || sharedHumanToken(hp.url);
+    if (!tok) throw new WeftError(`no human token for ${hp.url}`, humanTokenHint(hp.url));
+    d = await new Api(hp.url).dependencies(tok, hp.repo, change);
+  } else throw new WeftError("Weft is not set up in this repo", "Run npx @celador/weft first.");
+  console.log(o.json ? JSON.stringify(d, null, 2) : dependencyText(d, { pr: o.pr }));
+}
+
 /** The live feed of the repo the Hermes adapter reports to, read with the shared human token. */
 async function hermesFeed(hp: HermesPointer): Promise<void> {
   const tok = process.env.WEFT_TOKEN?.trim() || sharedHumanToken(hp.url);
@@ -1080,6 +1139,9 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     case "feed":
       await feed(o);
+      return 0;
+    case "deps":
+      await deps(o);
       return 0;
     case "pair":
       await pair(o);

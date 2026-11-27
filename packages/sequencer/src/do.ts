@@ -195,8 +195,16 @@ export class RepoCoordinator extends DurableObject<SequencerEnv> {
   private async flushSummary(): Promise<void> {
     if (this.inflight.size) await Promise.all([...this.inflight]);
   }
-  async queue(statuses?: string[]): Promise<Result<ReturnType<SqlCoordinator["queue"]>>> {
+  /**
+   * The landing queue. Not named `queue`: that is a reserved handler name, so a stub call to
+   * `queue()` failed with "The RPC receiver does not implement the method" (GET /system/queue was a 500).
+   */
+  async landingQueue(statuses?: string[]): Promise<Result<ReturnType<SqlCoordinator["queue"]>>> {
     return this.read(() => this.j.coord.queue(statuses));
+  }
+  /** A change's recorded dependencies and whether they hold its landing (spec §6.7, §9.8). */
+  async dependencies(change: string): Promise<Result<ReturnType<SqlCoordinator["dependencies"]>>> {
+    return this.read(() => this.j.coord.dependencies(change));
   }
   async ops(): Promise<Result<ReturnType<SqlCoordinator["ops"]>>> {
     return this.read(() => this.j.coord.ops());

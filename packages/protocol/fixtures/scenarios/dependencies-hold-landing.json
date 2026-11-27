@@ -1,0 +1,635 @@
+{
+  "name": "dependencies-hold-landing",
+  "description": "Recorded dependencies (§6.7, issues #5-#7). B adapts to A's unlanded signature change and calls A's new function: the accepted edit carries depends_on naming A's change and the keys, an annotation that decided nothing (a rejected record carries none). B's landing is held while A is pending. B also relies on C's new type; when the platform abandons C (a system release, reason abandoned, no keys), C stops holding B and B's owner gets a system message. Once A lands, nothing holds B. D and E rely on each other: neither holds the other, since holding a cycle would keep both queued forever.",
+  "covers": [
+    "6.7",
+    "9.8",
+    "4.2"
+  ],
+  "repo": "deps",
+  "start": "2026-11-26T12:00:00.000Z",
+  "steps": [
+    {
+      "op": "hello",
+      "as": "A",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "claude-a",
+          "harness": "claude-code"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-1"
+        }
+      },
+      "expect": {
+        "head_seq": 1
+      }
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "codex-b",
+          "harness": "codex"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        }
+      },
+      "expect": {
+        "head_seq": 2
+      }
+    },
+    {
+      "op": "hello",
+      "as": "C",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "gemini-c",
+          "harness": "gemini"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-3"
+        }
+      },
+      "expect": {
+        "head_seq": 3
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 1,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#createSession",
+              "kind": "new"
+            },
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "signature"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 4
+      }
+    },
+    {
+      "op": "drain",
+      "as": "B",
+      "expect": {
+        "delivered_through": 4
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "check",
+        "event": {
+          "kind": "edit",
+          "base_seq": 4,
+          "writes": [
+            {
+              "key": "src/routes/signup.ts#signup",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "src/auth/session.ts#createSession",
+            "src/auth/session.ts#refreshToken"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "reject",
+        "seq": 5,
+        "diagnostics": [
+          {
+            "code": "stale_assumption",
+            "symbol": "src/auth/session.ts#refreshToken",
+            "caused_by_seq": 4
+          }
+        ]
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 5,
+          "writes": [
+            {
+              "key": "src/routes/signup.ts#signup",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "src/auth/session.ts#createSession",
+            "src/auth/session.ts#refreshToken"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 6,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "event",
+      "seq": 6,
+      "expect": {
+        "seq": 6,
+        "status": "accepted",
+        "change": "codex-b/T-2",
+        "depends_on": [
+          {
+            "change": "claude-a/T-1",
+            "agent": "claude-a",
+            "task": "T-1",
+            "seq": 4,
+            "keys": [
+              "src/auth/session.ts#createSession",
+              "src/auth/session.ts#refreshToken"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "op": "event",
+      "seq": 5,
+      "expect": {
+        "status": "rejected",
+        "depends_on": "$absent"
+      }
+    },
+    {
+      "op": "event",
+      "seq": 4,
+      "expect": {
+        "seq": 4,
+        "depends_on": "$absent"
+      }
+    },
+    {
+      "op": "dependencies",
+      "change": "codex-b/T-2",
+      "expect": {
+        "type": "dependencies",
+        "repo": "deps",
+        "change": "codex-b/T-2",
+        "agent": "codex-b",
+        "task": "T-2",
+        "landed": false,
+        "held": true,
+        "held_by": [
+          "claude-a/T-1"
+        ],
+        "depends_on": [
+          {
+            "change": "claude-a/T-1",
+            "agent": "claude-a",
+            "task": "T-1",
+            "seq": 4,
+            "keys": [
+              "src/auth/session.ts#createSession",
+              "src/auth/session.ts#refreshToken"
+            ],
+            "status": "pending",
+            "holds": true,
+            "mutual": "$absent"
+          }
+        ]
+      }
+    },
+    {
+      "op": "dependencies",
+      "change": "claude-a/T-1",
+      "expect": {
+        "held": false,
+        "held_by": [],
+        "depends_on": []
+      }
+    },
+    {
+      "op": "submit",
+      "as": "C",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 3,
+          "writes": [
+            {
+              "key": "src/billing/plan.ts#Plan",
+              "kind": "new"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 7
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 6,
+          "writes": [
+            {
+              "key": "src/routes/signup.ts#signupPlan",
+              "kind": "new"
+            }
+          ],
+          "reads": [
+            "src/billing/plan.ts#Plan"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 8
+      }
+    },
+    {
+      "op": "event",
+      "seq": 8,
+      "expect": {
+        "depends_on": [
+          {
+            "change": "gemini-c/T-3",
+            "agent": "gemini-c",
+            "task": "T-3",
+            "seq": 7,
+            "keys": [
+              "src/billing/plan.ts#Plan"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "op": "dependencies",
+      "change": "codex-b/T-2",
+      "expect": {
+        "held": true,
+        "held_by": [
+          "claude-a/T-1",
+          "gemini-c/T-3"
+        ],
+        "depends_on": [
+          {
+            "change": "claude-a/T-1",
+            "status": "pending",
+            "holds": true
+          },
+          {
+            "change": "gemini-c/T-3",
+            "status": "pending",
+            "holds": true
+          }
+        ]
+      }
+    },
+    {
+      "op": "system",
+      "draft": {
+        "kind": "release",
+        "base_seq": 8,
+        "change": "gemini-c/T-3",
+        "payload": {
+          "reason": "abandoned"
+        }
+      },
+      "actor": {
+        "type": "system",
+        "id": "artifacts"
+      },
+      "expect": {
+        "seq": 9,
+        "status": "accepted",
+        "kind": "release",
+        "change": "gemini-c/T-3"
+      }
+    },
+    {
+      "op": "event",
+      "seq": 10,
+      "expect": {
+        "seq": 10,
+        "kind": "message",
+        "status": "accepted",
+        "actor": {
+          "type": "system",
+          "id": "coordinator"
+        },
+        "payload": {
+          "to": {
+            "change": "codex-b/T-2"
+          },
+          "intent": "info",
+          "text": "gemini-c/T-3 (gemini-c, task T-3) will not land: abandoned in #9. Your change codex-b/T-2 relies on it for src/billing/plan.ts#Plan. Its landing no longer waits for gemini-c/T-3; those symbols will not reach main through it."
+        }
+      }
+    },
+    {
+      "op": "drain",
+      "as": "B",
+      "expect": {
+        "items": {
+          "$contains": [
+            {
+              "kind": "message",
+              "seq": 10,
+              "record": {
+                "payload": {
+                  "text": "gemini-c/T-3 (gemini-c, task T-3) will not land: abandoned in #9. Your change codex-b/T-2 relies on it for src/billing/plan.ts#Plan. Its landing no longer waits for gemini-c/T-3; those symbols will not reach main through it."
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "op": "dependencies",
+      "change": "codex-b/T-2",
+      "expect": {
+        "held": true,
+        "held_by": [
+          "claude-a/T-1"
+        ],
+        "depends_on": [
+          {
+            "change": "claude-a/T-1",
+            "status": "pending",
+            "holds": true
+          },
+          {
+            "change": "gemini-c/T-3",
+            "status": "abandoned",
+            "status_seq": 9,
+            "holds": false
+          }
+        ]
+      }
+    },
+    {
+      "op": "system",
+      "draft": {
+        "kind": "land",
+        "base_seq": 10,
+        "change": "claude-a/T-1",
+        "payload": {
+          "sha": "a1b2c3d",
+          "op_id": "op-a-1"
+        }
+      },
+      "expect": {
+        "seq": 11,
+        "status": "accepted"
+      }
+    },
+    {
+      "op": "dependencies",
+      "change": "codex-b/T-2",
+      "expect": {
+        "held": false,
+        "held_by": [],
+        "depends_on": [
+          {
+            "change": "claude-a/T-1",
+            "status": "landed",
+            "status_seq": 11,
+            "holds": false
+          },
+          {
+            "change": "gemini-c/T-3",
+            "status": "abandoned",
+            "status_seq": 9,
+            "holds": false
+          }
+        ]
+      }
+    },
+    {
+      "op": "hello",
+      "as": "D",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "kimi-d",
+          "harness": "cursor"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-4"
+        }
+      },
+      "expect": {
+        "head_seq": 12
+      }
+    },
+    {
+      "op": "hello",
+      "as": "E",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "qwen-e",
+          "harness": "opencode"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-5"
+        }
+      },
+      "expect": {
+        "head_seq": 13
+      }
+    },
+    {
+      "op": "submit",
+      "as": "D",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 12,
+          "writes": [
+            {
+              "key": "src/x.ts#xd",
+              "kind": "new"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 14
+      }
+    },
+    {
+      "op": "submit",
+      "as": "E",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 13,
+          "writes": [
+            {
+              "key": "src/x.ts#xe",
+              "kind": "new"
+            }
+          ],
+          "reads": [
+            "src/x.ts#xd"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 15
+      }
+    },
+    {
+      "op": "submit",
+      "as": "D",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 12,
+          "writes": [
+            {
+              "key": "src/x.ts#xd2",
+              "kind": "new"
+            }
+          ],
+          "reads": [
+            "src/x.ts#xe"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 16
+      }
+    },
+    {
+      "op": "dependencies",
+      "change": "kimi-d/T-4",
+      "expect": {
+        "held": false,
+        "held_by": [],
+        "depends_on": [
+          {
+            "change": "qwen-e/T-5",
+            "status": "pending",
+            "holds": false,
+            "mutual": true
+          }
+        ]
+      }
+    },
+    {
+      "op": "dependencies",
+      "change": "qwen-e/T-5",
+      "expect": {
+        "held": false,
+        "held_by": [],
+        "depends_on": [
+          {
+            "change": "kimi-d/T-4",
+            "status": "pending",
+            "holds": false,
+            "mutual": true
+          }
+        ]
+      }
+    },
+    {
+      "op": "dependencies",
+      "change": "nobody/T-9",
+      "expect": {
+        "type": "error",
+        "error": {
+          "code": "not_found"
+        }
+      }
+    }
+  ]
+}

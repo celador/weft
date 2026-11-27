@@ -28,7 +28,7 @@ function counted() {
         events: rec("events", (q: Parameters<typeof stub.events>[0]) => stub.events(q)),
         history: rec("history", (q: Parameters<typeof stub.history>[0]) => stub.history(q)),
         op: rec("op", (o: Parameters<typeof stub.op>[0], args: unknown[]) => stub.op(o, args)),
-        queue: rec("queue", (s?: string[]) => stub.queue(s)),
+        landingQueue: rec("landingQueue", (s?: string[]) => stub.landingQueue(s)),
         ops: rec("ops", () => stub.ops()),
         fetch: rec("fetch", (r: Request) => stub.fetch(r)),
       };

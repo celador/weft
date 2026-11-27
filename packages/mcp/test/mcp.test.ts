@@ -32,7 +32,7 @@ describe("declared surface", () => {
     expect(CAPABILITIES).toEqual({ level: 0, observe: "async", inject: "delayed", deny_edit: false, refuse_stop: false, commit_gate: "native" });
   });
   it("exposes exactly the tools named in harness-coverage §2b", () => {
-    expect(TOOLS.map((t) => t.name)).toEqual(["weft_check", "weft_claim", "weft_status", "weft_inbox", "weft_feed", "weft_history", "weft_negotiate", "weft_gate"]);
+    expect(TOOLS.map((t) => t.name)).toEqual(["weft_check", "weft_claim", "weft_status", "weft_inbox", "weft_feed", "weft_history", "weft_deps", "weft_negotiate", "weft_gate"]);
   });
   it("keeps the server instructions short and names weft_check + weft_gate", () => {
     expect(Buffer.byteLength(INSTRUCTIONS)).toBeLessThan(2000);
@@ -223,6 +223,17 @@ describe("MCP server against a coordinator (in-process MCP transport, real HTTP 
     const g2 = text(await client.callTool({ name: "weft_gate", arguments: { gate: "commit" } }));
     expect(g2).toContain("gate commit: allowed");
 
+    // weft_deps (#6): the accepted edit calls claude-a's new calcTotal signature, so the record says
+    // it relies on claude-a's unlanded change; with pr, the line for the pull request.
+    const accepted = coord.log.filter((r) => r.agent === "zed-a" && r.kind === "edit" && r.status === "accepted" && r.mode === "commit").pop()!;
+    const dep = accepted.depends_on?.[0];
+    expect(dep).toMatchObject({ agent: "claude-a", keys: ["src/pricing.ts#calcTotal"] });
+    const pr = text(await client.callTool({ name: "weft_deps", arguments: { pr: true } }));
+    expect(pr).toContain(`Relies on ${dep!.change} (claude-a, task T-1), not yet in main: src/pricing.ts#calcTotal`);
+    expect(pr).not.toContain("github");
+    const listing = text(await client.callTool({ name: "weft_deps", arguments: {} }));
+    expect(listing).toContain(`landing held until ${dep!.change} lands`);
+
     // claims: valid keys go to the log, invalid keys are refused before they reach it
     const c = text(await client.callTool({ name: "weft_claim", arguments: { keys: ["src/cart.ts#cartSummary"] } }));
     expect(c).toContain("[weft] sent #");
@@ -346,7 +357,7 @@ describe("MCP server against a coordinator (in-process MCP transport, real HTTP 
     const client = new Client({ name: "warp", version: "1" });
     await client.connect(transport);
     closers.push(() => client.close());
-    expect((await client.listTools()).tools).toHaveLength(8);
+    expect((await client.listTools()).tools).toHaveLength(9);
     const st = text(await client.callTool({ name: "weft_status", arguments: {} }));
     expect(st).toContain("[weft] status for warp-a");
     expect(st).toContain("Open errors: none.");

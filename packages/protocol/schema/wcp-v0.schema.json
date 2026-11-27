@@ -675,6 +675,40 @@
         "level"
       ]
     },
+    "DependencyRef": {
+      "type": "object",
+      "properties": {
+        "change": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task": {
+          "type": "string",
+          "minLength": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "keys": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SymbolKey"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "change",
+        "agent",
+        "seq",
+        "keys"
+      ]
+    },
     "EventDraft": {
       "type": "object",
       "properties": {
@@ -1201,6 +1235,12 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/Diagnostic"
+          }
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DependencyRef"
           }
         }
       },
@@ -2622,6 +2662,88 @@
         "type",
         "seq",
         "record"
+      ]
+    },
+    "Dependencies": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "dependencies"
+        },
+        "repo": {
+          "$ref": "#/$defs/RepoId"
+        },
+        "change": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task": {
+          "type": "string",
+          "minLength": 1
+        },
+        "landed": {
+          "type": "boolean"
+        },
+        "held": {
+          "type": "boolean"
+        },
+        "held_by": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/DependencyRef"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "pending",
+                      "landed",
+                      "abandoned"
+                    ]
+                  },
+                  "status_seq": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "holds": {
+                    "type": "boolean"
+                  },
+                  "mutual": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "status",
+                  "holds"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "type",
+        "repo",
+        "change",
+        "agent",
+        "landed",
+        "held",
+        "held_by",
+        "depends_on"
       ]
     },
     "WcpError": {

@@ -495,6 +495,63 @@ carries one diagnostic per such key:
   inside the submit (no extra call) and is part of the **verdict only**: the appended record's
   `diagnostics` are the validation diagnostics, so the log stores nothing new.
 - An agent-paused submit (R0) gets no note.
+### 6.7 Dependencies on unlanded changes
+
+An accepted edit can rely on code that exists only in a neighbor's unlanded change: it calls a
+function the neighbor added, or the neighbor's new signature. The coordinator records that
+reliance on the record, lets the change's owner name it in the pull request, and holds the
+change's landing until the dependency is in trunk. The record is an **annotation**: it never
+accepts or rejects anything, and it is computed after the verdict.
+
+**Recording.** When an `edit` with `mode:"commit"` is accepted for change `c`, the
+coordinator stamps `depends_on` on its record: one `DependencyRef {change, agent, task?, seq,
+keys}` per neighbor change `d` the edit relies on, in the order the first key appears (the
+edit's reads, then its writes). `d` is any other unlanded, not abandoned change, not in `c`'s
+merged group (§7.6) and not an alternative of `c` (one task's candidates, §7.7), whose accepted
+edits wrote the key; the edit relies on `d` for key k (`reliesOn`) when:
+
+- the edit **writes** k: only if `d`'s net write of k is `new` and the edit's is not (the
+  declaration exists only in `d`). Both changes writing the same symbol is a conflict, which
+  claims arbitrate (§7), not reliance;
+- the edit only **reads** k: if `d`'s net write of k is `new` or `signature`. Code that calls a
+  body-only change works without it, and nothing relies on a deletion.
+
+`seq` is the latest accepted edit of `d` that wrote one of the keys (for an entry merged from
+several records, the highest). The field is omitted when empty, and never set on a check, a
+rejected record or another kind. Coordinators MUST NOT copy it from the client's draft: a
+client can neither forge a dependency nor drop one.
+
+**Status and holds.** A change's dependencies are the merge of the `depends_on` of its records
+(`mergeDependencies`: one entry per neighbor, keys in first-recorded order). Each is `pending`,
+`landed` (`status_seq` = its `land`), or `abandoned` (`status_seq` = the record that abandoned
+it). A change is **abandoned** by a system `release` with `payload.reason:"abandoned"` and no
+`keys` (the platform appends one when the change is closed, e.g. the gateway's
+`DELETE /v1/repos/{repo}/changes/{id}`), or by the landing of one of its alternatives (it lost
+the selection, §7.7). An agent's own `release` is a retreat, not an abandonment.
+
+A pending dependency **holds** the dependent's landing, unless it is **mutual**: it relies on
+the dependent too, directly or through other pending dependencies, or the two are in one merged
+group. Holding a cycle would keep every member queued forever; its members land in queue order
+and presubmit decides whether the result builds. A landed change holds nothing.
+
+**Landing.** The landing queue (design §6.5) reports each `queued` entry's `held_by` (the
+dependencies that hold it). A held entry is not its queue's turn: the first entry the
+coordinator does not hold is, so a held change does not block the changes behind it, and a batch
+never takes a held entry. When the last holding dependency lands or is abandoned, the entry is
+free and lands in queue order. A landing workflow whose queue wait runs out while held fails,
+naming the dependencies it waited for.
+
+**Abandonment notice.** When a record abandons a change `d`, the coordinator appends, after
+that record's own effects and once per abandonment, one system `message`
+(`actor:{type:"system", id:"coordinator"}`, `intent:"info"`) addressed to each unlanded, not
+abandoned change that relies on `d` (outside `d`'s group). It reaches the owner's sessions
+through the inbox (§7.6) and stays in the log for an owner who is offline. Text
+(`abandonedNotice`): `<d> (<agent>, task <task>) will not land: abandoned in #<seq>. Your change
+<c> relies on it for <keys>. Its landing no longer waits for <d>; those symbols will not reach
+main through it.` For a lost selection the reason reads `<winner> landed instead (#<seq>)`.
+
+The rules live in `packages/protocol/src/deps.ts`, shared by both coordinators; the conformance
+scenario is `dependencies-hold-landing`.
 
 ## 7. Arbitration (normative)
 
@@ -853,6 +910,7 @@ HTTP only; the socket serves long-lived adapters and delayed-L1 injection.
 | `GET /v1/feed/stream?after={cursor}` (WS, SHOULD) | observe | `StreamFrame`s across repos |
 | `POST /v1/repos/{repo}/actions` | human | `HumanAction` → `ActionResult` |
 | `POST /v1/repos/{repo}/system/events` | system | `EventDraft` → `EventRecord` |
+| `GET /v1/repos/{repo}/dependencies?change={id}` | agent (own repo) or observe | `Dependencies` (§9.8) |
 
 ### 9.2 `GET /v1/repos`
 
@@ -880,7 +938,8 @@ live session), `active_changes`, `open_conflicts` (total open errors across chan
 
 `GET /v1/repos/{repo}/events/{seq}` returns the complete record: `diff`, `reads`,
 `writes`, `diagnostics`, `intent`, `payload` (negotiation thread links via
-`reply_to`), `tool`, `transcript` pointer. Unknown seq: `404 not_found`.
+`reply_to`), `tool`, `transcript` pointer, and `depends_on` on an accepted edit that relies on
+unlanded changes (§6.7; in list views too). Unknown seq: `404 not_found`.
 
 ### 9.4 Stream with resume
 
@@ -967,6 +1026,26 @@ MCP tool `weft_history` does):
 ```text
 #4 3d ago REVERT of land #3 (change I-a by claude-a) by john: error spike after landing: TypeError: … — evidence: at f (src/x.ts:3:7) [src/x.ts#f]
 ```
+### 9.8 Dependencies of a change
+
+`GET /v1/repos/{repo}/dependencies?change={id}` (a query parameter, because change ids contain
+`/`) returns `Dependencies` (§6.7), read-only. Like history (§9.7) it is open to an agent token of
+the repo, so an agent can write its own pull request text, and to observers:
+
+```json
+{"type":"dependencies","repo":"weft-demo","change":"I9c01","agent":"codex-b","task":"T-2",
+ "landed":false,"held":true,"held_by":["I4f2a"],
+ "depends_on":[{"change":"I4f2a","agent":"claude-a","task":"T-1","seq":4,
+   "keys":["src/auth/session.ts#createSession"],"status":"pending","holds":true}]}
+```
+
+Each entry is the merged `DependencyRef` plus `status`, `status_seq`, `holds` and `mutual`.
+Missing `change`: `400 invalid_message`; unknown change: `404 not_found`. Clients render it from
+the record only, with no forge access: `weft deps` lists it, and `weft deps --pr` and the MCP tool
+`weft_deps` (`pr:true`) print the lines for a pull request description (`dependencyText`):
+`Relies on <change> (<agent>, task <task>), not yet in main: <keys>` per pending dependency, and
+`Relied on <change> (…), which was abandoned and will not land: <keys>` per abandoned one. Landed
+dependencies are in main already and left out.
 
 ## 10. Versioning and extensibility
 

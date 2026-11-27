@@ -8,7 +8,8 @@
 //   GET  /v1/repos/{repo}/tasks                     observe board: tasks + candidates + evidence tally
 //   GET  /v1/repos/{repo}/changes/{change}          observe change + revisions + evidence
 //   POST /v1/repos/{repo}/changes/{change}/token    system  re-mint a fork token
-//   DELETE /v1/repos/{repo}/changes/{change}        system  abandon: unsubscribe + delete fork
+//   DELETE /v1/repos/{repo}/changes/{change}        system  abandon: unsubscribe + delete fork, and tell the
+//                                                           coordinator (releases dependency holds, WCP §6.7)
 //   POST /v1/repos/{repo}/system/trunk-token        system  short-lived trunk token (landing, B8)
 //   POST /v1/admin/artifacts/repos                  admin   bind (or create) a repo's Artifacts trunk
 //   GET|POST /v1/admin/artifacts/subscriptions      admin   pending subscriptions (operator reconcile)
@@ -210,7 +211,10 @@ export async function artifactsRoute(req: Request, env: ArtifactsEnv, k: Kit, re
         .prepare(`UPDATE changes SET status = 'abandoned', subscription_status = CASE WHEN subscription_id IS NULL THEN subscription_status ELSE 'deleted' END, updated_at = ? WHERE id = ?`)
         .bind(Date.now(), id)
         .run();
-      return k.json({ type: "change.abandoned", change: id, fork_deleted: deleted, ...(notes.length ? { notes } : {}) });
+      // Tell the coordinator (spec §6.7): a system `release` with reason `abandoned` and no keys gives up the
+      // change's claims and releases the landing hold of every change that relies on it (each owner gets a message).
+      const abandoned = await abandonInCoordinator(env, row!.repo, id).catch((e) => (notes.push(`coordinator: ${(e as Error).message}`), null));
+      return k.json({ type: "change.abandoned", change: id, fork_deleted: deleted, ...(abandoned ? { seq: abandoned } : {}), ...(notes.length ? { notes } : {}) });
     }
     return null;
   }
@@ -573,6 +577,24 @@ async function record(push: Push, env: ArtifactsEnv, d: D1Database): Promise<Ing
     .run();
   await triggerProcessing(env, d, change, push.after);
   return { key: push.key, status: "recorded", seq, change: change.id };
+}
+
+/**
+ * An abandoned change, told to its repo's coordinator (spec §6.7): a system `release` with reason
+ * `abandoned` and no keys. Returns its seq, or null when the coordinator does not know the change
+ * (no agent session ever named it, so nothing relies on it).
+ */
+export async function abandonInCoordinator(env: ArtifactsEnv, repo: string, change: string): Promise<number | null> {
+  const stub = env.WEFT_REPO.get(env.WEFT_REPO.idFromName(repo));
+  // A change no agent session ever named is unknown to the coordinator: nothing relies on it, nothing to log.
+  const known = (await stub.dependencies(change)) as unknown as Result<unknown>;
+  if (!known.ok) return null;
+  const sum = (await stub.summary()) as unknown as Result<{ head_seq: number }>;
+  if (!sum.ok) throw new Error(sum.error.error.message);
+  const draft: EventDraft = { kind: "release", base_seq: sum.value.head_seq, change, payload: { reason: "abandoned" } };
+  const r = (await stub.op("system", [draft, { type: "system", id: "artifacts" }])) as unknown as Result<EventRecord>;
+  if (!r.ok) throw new Error(r.error.error.message);
+  return r.value.seq;
 }
 
 /**

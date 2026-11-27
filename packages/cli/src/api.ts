@@ -1,4 +1,5 @@
 // HTTP client for a Weft gateway: health, hosted spaces, observer feed. Never logs tokens.
+import type { Dependencies } from "@weft/protocol";
 import { WeftError } from "./util";
 
 export type SpaceCreated = { space: { id: string; created_at: string }; token: string; limits?: Record<string, number> };
@@ -186,6 +187,10 @@ export class Api {
   }
   events(token: string, repo: string, q = "") {
     return this.call<{ events: FeedEvent[]; head_seq: number; has_more?: boolean }>("GET", `/v1/repos/${encodeURIComponent(repo)}/events${q}`, token);
+  }
+  /** A change's recorded dependencies (spec §6.7): GET /v1/repos/{repo}/dependencies?change=. */
+  dependencies(token: string, repo: string, change: string) {
+    return this.call<Dependencies>("GET", `/v1/repos/${encodeURIComponent(repo)}/dependencies?change=${encodeURIComponent(change)}`, token);
   }
   feed(token: string, q: string) {
     return this.call<{ events: FeedEvent[]; cursor?: string; has_more?: boolean }>("GET", `/v1/feed${q}`, token);

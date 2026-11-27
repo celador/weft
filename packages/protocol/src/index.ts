@@ -23,6 +23,7 @@ export { WcpProtocolError, ERROR_STATUS, closeCode, changeOwnedError } from "./e
 export { ownedElsewhere, ownerNotice, sameNotice, OPEN_ERROR_ADVICE, BLOCKED_EDIT_ADVICE, ERROR_RULE, type ConflictMode } from "./ownership";
 export { contractError, NOT_IN_WORKSPACE } from "./contract";
 export { encodeCursor, decodeCursor, mergeFeed, compareFeed, type FeedCursor } from "./feed";
+export { reliesOn, collectDependsOn, mergeDependencies, isAbandonment, dependenciesOf, abandonedNotice, dependencyText, type DependencyLookup } from "./deps";
 export { ReferenceCoordinator, listView, mergeWriteKind, UNSEEN_NOTE, type CoordinatorOptions } from "./reference";
 export {
   DAY_MS,

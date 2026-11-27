@@ -423,6 +423,16 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
     authorize(g, "observe", repo);
     return json(unwrap(await stub.event(Number(em[1]))));
   }
+  // Recorded dependencies of a change and whether they hold its landing (spec §6.7, §9.8). A query
+  // parameter, since change ids contain `/` (default `<agent>/<task>`). Open to the repo's agents as
+  // history is (§9.7): `weft deps --pr` and MCP `weft_deps` read it with the checkout's agent token.
+  if (rest === "/dependencies" && m === "GET") {
+    if (!canAccessRepo(g, repo)) throw new HttpError("repo_not_found", `repo ${repo} not found`);
+    if (!((hasScope(g, "agent") && g.agent) || hasScope(g, "observe"))) throw new HttpError("forbidden", "dependencies needs an agent token of this repo or the observe scope");
+    const change = u.searchParams.get("change");
+    if (!change) throw new HttpError("invalid_message", "change required", { issues: [{ path: "/change", message: "query parameter change=<change id>" }] });
+    return json(unwrap(await stub.dependencies(change)));
+  }
   if (rest === "/stream") throw new HttpError("invalid_message", "stream requires a WebSocket upgrade", { issues: [{ path: "", message: "upgrade: websocket" }] });
 
   // ----- human actions (spec §9.6); attributed to the token's principal, never the body
@@ -449,7 +459,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   }
   if (rest === "/system/queue" && m === "GET") {
     authorize(g, "system", repo);
-    return json({ type: "queue", repo, entries: unwrap(await stub.queue(list(u.searchParams.get("status")))) });
+    return json({ type: "queue", repo, entries: unwrap(await stub.landingQueue(list(u.searchParams.get("status")))) });
   }
   if (rest === "/system/queue" && m === "POST") {
     authorize(g, "system", repo);
