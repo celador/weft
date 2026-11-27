@@ -2,6 +2,8 @@
 //
 //   install   .weft/gemini.json (+ token), .gemini/settings.json hooks, git hooks, agent CLI
 //   hook      Gemini CLI hook entry: JSON on stdin -> JSON on stdout (always exit 0)
+//             (`hook --by-path --url U --repo R`, from `install --by-path`: an edit inside another
+//             joined checkout acts as that checkout's agent)
 //   (+ the shared commit-msg, pre-commit, heartbeat-loop, status, negotiate, inbox)
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -65,12 +67,13 @@ export const host = new Host({
   },
 });
 
-async function hook(): Promise<void> {
+async function hook(args: string[] = []): Promise<void> {
   let json: Record<string, unknown> = {};
   try {
     const raw = JSON.parse(await readStdin()) as GeminiInput;
-    const loaded = host.load(raw.cwd ?? process.env.GEMINI_PROJECT_DIR ?? process.cwd());
-    const input = loaded ? toCore(raw) : undefined;
+    const core = toCore(raw);
+    const loaded = host.load(raw.cwd ?? process.env.GEMINI_PROJECT_DIR ?? process.cwd(), { args, input: core });
+    const input = loaded ? core : undefined;
     if (loaded && input) {
       const out = await host.run(loaded, input, { gemini_event: raw.hook_event_name });
       const canInject = ["AfterTool", "AfterAgent", "BeforeAgent", "SessionStart"].includes(raw.hook_event_name);

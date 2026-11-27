@@ -1,9 +1,10 @@
 // Adapter configuration and per-Claude-session state, both under `<checkout>/.weft/`
 // (excluded from git by the installer). Hook processes are short-lived and may run
 // concurrently (parallel tool calls), so state is a JSON file guarded by a lock dir.
+import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { editPath } from "./edits";
 import type { HookInput } from "./hooks";
 
@@ -144,23 +145,93 @@ export function bashTargetDir(command: string, cwd: string): string | undefined 
  * `weft-worker` subagent's hooks) the edited file's own checkout comes first: a subagent runs in
  * the parent session's cwd but edits inside its own joined worktree, which must be the agent it
  * acts as. Lives here, not in cli.ts, because host.ts (the shared Host for Cursor, OpenCode and
- * Gemini) cannot import cli.ts.
+ * Gemini) cannot import cli.ts. `configRel` names the adapter's config (`.weft/claude.json` here,
+ * `.weft/<harness>.json` for the others, which route through `routeTargets`).
  */
-export function configStarts(input: HookInput, byPath: boolean, fallback: string = process.cwd()): string[] {
+export function configStarts(input: HookInput, byPath: boolean, fallback: string = process.cwd(), configRel: string = CONFIG_REL): string[] {
   const cwd = input.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? fallback;
   if (!byPath) return [cwd];
-  const ti = (input.tool_input ?? {}) as Record<string, unknown>;
-  const file = editPath(ti);
-  const dir0 = file ? dirname(resolve(cwd, file)) : input.tool_name === "Bash" && typeof ti.command === "string" ? bashTargetDir(ti.command, cwd) : undefined;
-  if (!dir0) return [cwd];
+  const target = callTargets(input, cwd)[0];
+  if (target === undefined) return [cwd];
   // Only the target's own checkout counts: an unjoined worktree nested inside a joined one must
   // not resolve to its parent's agent.
-  for (let dir = dir0; ; dir = dirname(dir)) {
-    // The target's checkout has no config: not coordinated. Falling back to the cwd would attribute the edit to the parent agent.
-    // A checkout with a config is only ever its own: no fallback to the cwd if its config fails to load.
-    if (existsSync(join(dir, ".git"))) return existsSync(join(dir, CONFIG_REL)) ? [dir] : [];
-    if (dirname(dir) === dir) return [];
+  // The target's checkout has no config: not coordinated. Falling back to the cwd would attribute the edit to the parent agent.
+  // A checkout with a config is only ever its own: no fallback to the cwd if its config fails to load.
+  const own = checkoutOf(resolve(cwd, target));
+  return own && existsSync(join(own, configRel)) ? [own] : [];
+}
+
+/**
+ * What a Claude-shaped hook call writes or works in, for path routing: the edited file, or a Bash
+ * command's leading target (`bashTargetDir`). Empty for every other call (Stop, SessionStart, a
+ * Bash command that names no accepted target). Paths are as given (maybe relative to `cwd`).
+ */
+export function callTargets(input: HookInput, cwd: string): string[] {
+  const ti = (input.tool_input ?? {}) as Record<string, unknown>;
+  const file = editPath(ti);
+  if (file) return [file];
+  const dir = input.tool_name === "Bash" && typeof ti.command === "string" ? bashTargetDir(ti.command, cwd) : undefined;
+  return dir ? [dir] : [];
+}
+
+/** How `routeTargets` routed one hook call. */
+export type PathRoute =
+  /** Act in the session's own checkout, exactly as without `--by-path`. */
+  | { kind: "plain" }
+  /** Act in another joined checkout, as that checkout's agent (its config matched the pin). */
+  | { kind: "routed"; loaded: Loaded }
+  /** The call's own checkout has a config that does not load or does not match the pin: not coordinated (logged there). */
+  | { kind: "refused"; root: string; problem: string }
+  /** One call writes into more than one checkout (a multi-file patch): each needs its own agent. */
+  | { kind: "split"; roots: string[] };
+
+/**
+ * `hook --by-path --url U --repo R [--mode M]` for adapters whose ONE hook configuration serves a
+ * session and the work it delegates (Cursor, OpenCode, Gemini, Codex; opt-in with `install
+ * --by-path`). Delegated work runs in the session's directory, so the session's checkout is the
+ * wrong agent for an edit inside another joined worktree. Each target path counts for its own
+ * checkout (the nearest directory holding `.git`, as in `configStarts`):
+ *   - in another checkout that joined with `configRel`: that checkout, loaded with the env
+ *     overrides dropped (a parent's WEFT_TOKEN must not act as the worktree) and the token kept
+ *     under its `.weft/`, and trusted only when its url/repo/mode equal the pin. A repo can ship
+ *     its own `.weft/`, so an unpinned config never receives diffs.
+ *   - anywhere else (the session's own checkout, an unjoined checkout, no checkout, a path with a
+ *     `..` or through a symlink, whose checkout cannot be told lexically): plain, i.e. exactly
+ *     what the hook did before `--by-path`. Routing never makes a call less coordinated than that,
+ *     except that a joined checkout whose config is broken or unpinned is not coordinated at all
+ *     rather than reported as the session's agent.
+ * Targets in two checkouts (or one routed checkout plus the session's own) are `split`.
+ */
+export function routeTargets(targets: string[], cwd: string, pin: Pin | undefined, configRel: string, env: NodeJS.ProcessEnv = process.env): PathRoute {
+  const plainRoot = env.WEFT_ROOT ? resolve(env.WEFT_ROOT) : findRoot(cwd, configRel);
+  const routed = new Set<string>();
+  let plainHit = false;
+  for (const raw of targets) {
+    const abs = resolve(cwd, raw);
+    const own = hasDotDot(raw) || throughSymlink(abs) ? undefined : checkoutOf(abs);
+    if (own && own !== plainRoot && existsSync(join(own, configRel))) routed.add(own);
+    else if (plainRoot && !relative(plainRoot, abs).startsWith("..") && !isAbsolute(relative(plainRoot, abs))) plainHit = true;
   }
+  if (!routed.size) return { kind: "plain" };
+  if (routed.size > 1 || plainHit) return { kind: "split", roots: [...routed, ...(plainHit && plainRoot ? [plainRoot] : [])] };
+  const root = [...routed][0]!;
+  const r = loadConfigResult(root, withoutPinnedOverrides(env), configRel, true);
+  if (!r.loaded || r.root !== root) {
+    const problem = `${join(root, configRel)} exists but does not load (${r.problem ?? "it is not this checkout's"})`;
+    appendAdapterLog(root, `hook --by-path: ${problem}; call not coordinated`);
+    return { kind: "refused", root, problem };
+  }
+  if (!pinMatches(root, pin, configRel)) {
+    const problem = `${join(root, configRel)} url/repo/mode do not match the pinned coordinator`;
+    appendAdapterLog(root, `hook --by-path refused: ${problem}`);
+    return { kind: "refused", root, problem };
+  }
+  return { kind: "routed", loaded: r.loaded };
+}
+
+/** `install --by-path`: the hook arguments that turn path routing on, pinned to the coordinator this checkout joined (see `routeTargets`). */
+export function byPathHookArgs(config: Pick<AdapterConfig, "url" | "repo" | "mode">): string[] {
+  return ["--by-path", "--url", config.url, "--repo", config.repo, "--mode", config.mode ?? "enforce"];
 }
 
 /** The coordinator a worker definition was installed for (pinned by `install-agent`). */
@@ -246,19 +317,30 @@ export function appendAdapterLog(root: string, message: string, at: number = Dat
  * Plain `hook` and the other commands read `tokenFile` as before (`install --token-file` may put it anywhere).
  */
 export function loadConfig(start: string, env: NodeJS.ProcessEnv = process.env, configRel: string = CONFIG_REL, confineToken = false): Loaded | undefined {
+  return loadConfigResult(start, env, configRel, confineToken).loaded;
+}
+
+/**
+ * `loadConfig` with the reason it failed. `root` is set once a checkout with a config file was
+ * found, so a caller can log a config that exists but does not load into that checkout's own
+ * `.weft/log` (`problem` never contains the token).
+ */
+export function loadConfigResult(start: string, env: NodeJS.ProcessEnv = process.env, configRel: string = CONFIG_REL, confineToken = false): { loaded?: Loaded; root?: string; problem?: string } {
   const root = env.WEFT_ROOT ? resolve(env.WEFT_ROOT) : findRoot(start, configRel);
-  if (!root) return undefined;
+  if (!root) return { problem: "no config" };
   let config: AdapterConfig;
   try {
-    if (confineToken && (!lstatSync(join(root, dirname(configRel))).isDirectory() || !lstatSync(join(root, configRel)).isFile())) return undefined;
+    if (confineToken && !lstatSync(join(root, dirname(configRel))).isDirectory()) return { root, problem: `${dirname(configRel)} is not a directory` };
+    if (confineToken && !lstatSync(join(root, configRel)).isFile()) return { root, problem: `${configRel} is not a regular file` };
     config = JSON.parse(readFileSync(join(root, configRel), "utf8")) as AdapterConfig;
-    if (!config || typeof config !== "object") return undefined; // a config of `null` or a number is not a config
-  } catch {
-    return undefined;
+    if (!config || typeof config !== "object") return { root, problem: `${configRel} is not a JSON object` }; // `null` or a number is not a config
+  } catch (err) {
+    return { root, problem: `${configRel} is unreadable or not JSON (${err instanceof SyntaxError ? "invalid JSON" : (err as NodeJS.ErrnoException).code ?? "error"})` };
   }
   if (env.WEFT_URL) config.url = env.WEFT_URL;
   if (env.WEFT_MODE === "advise" || env.WEFT_MODE === "enforce") config.mode = env.WEFT_MODE;
   let token = env.WEFT_TOKEN ?? "";
+  let tokenProblem = "no token (empty or missing token file)";
   if (!token) {
     try {
       const tokenPath = resolve(root, config.tokenFile ?? ".weft/token");
@@ -270,12 +352,59 @@ export function loadConfig(start: string, env: NodeJS.ProcessEnv = process.env, 
         if (!realpathSync(tokenPath).startsWith(realpathSync(resolve(root, ".weft")) + sep)) throw new Error("tokenFile outside .weft/");
       }
       token = readFileSync(tokenPath, "utf8").trim();
-    } catch {
+    } catch (err) {
       token = "";
+      if (err instanceof Error && !(err as NodeJS.ErrnoException).code) tokenProblem = `token not read: ${err.message}`;
     }
   }
-  if (!config.url || !config.repo || !config.agent || !config.change || !config.task?.id || !token) return undefined;
-  return { root, config, token };
+  const missing: string[] = (["url", "repo", "agent", "change"] as const).filter((k) => !config[k]);
+  if (!config.task?.id) missing.push("task.id");
+  if (missing.length) return { root, problem: `${configRel} lacks ${missing.join(", ")}` };
+  if (!token) return { root, problem: tokenProblem };
+  return { loaded: { root, config, token }, root };
+}
+
+/**
+ * Append lines to the checkout's `info/exclude` (what never enters git: `.weft/`, machine-specific
+ * hook settings, generated agent files). One helper for every installer; lines already there are kept once.
+ */
+export function excludeFromGit(root: string, lines: string[]): void {
+  const exclude = resolve(root, execFileSync("git", ["-C", root, "rev-parse", "--git-path", "info/exclude"], { encoding: "utf8" }).trim());
+  mkdirSync(dirname(exclude), { recursive: true });
+  const ex = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
+  const have = new Set(ex.split("\n"));
+  const want = [...new Set(lines)].filter((l) => !have.has(l));
+  if (want.length) writeFileSync(exclude, `${ex}${ex && !ex.endsWith("\n") ? "\n" : ""}${want.join("\n")}\n`);
+}
+
+/** The git checkout holding `path`: the nearest directory, `path` itself included, that has a `.git`. Lexical (no symlinks resolved). */
+export function checkoutOf(path: string): string | undefined {
+  for (let p = resolve(path); ; p = dirname(p)) {
+    if (existsSync(join(p, ".git"))) return p;
+    if (dirname(p) === p) return undefined;
+  }
+}
+
+/**
+ * Every git checkout a shell command names, read OPAQUELY: any absolute or `~/` path anywhere in
+ * the text (after any `cd`, in a subshell, on a later line, inside quotes) counts, whatever the
+ * shell would make of it. The hook reconciles each of these checkouts after the command instead
+ * of parsing the shell. Paths with a `..` segment are skipped (resolved after symlinks, not lexically).
+ */
+export function namedCheckouts(command: string, max = 64): string[] {
+  const tokens = new Set<string>();
+  for (const t of command.split(/[\s'"`;&|<>()=,]+/)) tokens.add(t);
+  for (const m of command.matchAll(/'([^']*)'|"([^"]*)"/g)) tokens.add(m[1] ?? m[2] ?? "");
+  const roots: string[] = [];
+  for (const raw of tokens) {
+    if (roots.length >= max) break;
+    const t = raw.trim(); // `--file=/x` and `2>/x` were split at `=` and `>` above
+    const abs = t.startsWith("~/") ? join(homedir(), t.slice(2)) : t === "~" ? homedir() : t.startsWith("/") ? t : undefined;
+    if (!abs || hasDotDot(abs)) continue;
+    const root = checkoutOf(abs);
+    if (root && !roots.includes(root)) roots.push(root);
+  }
+  return roots;
 }
 
 /**
@@ -298,6 +427,12 @@ export type PendingEdit = {
   shown: string[];
   /** Files that existed but could not be read before the tool ran: never submitted for this call. */
   unreadable?: string[];
+  /**
+   * Edit tools: sha256 of the text the edit will leave (when it can be derived). A parallel Bash
+   * call's reconcile leaves a file in this exact state to this edit's own PostToolUse, so the
+   * change is submitted once.
+   */
+  expect?: string;
   at: number;
 };
 

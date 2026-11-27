@@ -68,6 +68,12 @@ copy-paste configs for Zed, Claude Code, Codex, Cursor, VS Code, JetBrains and W
 the watcher in its checkout.
 Every known harness, its hook surface and Weft's plan for it: [harness-coverage.md](harness-coverage.md).
 
+Delegated work (subagents, child sessions, background agents) usually runs with the parent's
+directory and hooks. Claude Code gets per-worktree `weft-worker` subagents (`install-agent`).
+Codex, OpenCode, Cursor and Gemini have no per-subagent hook layer: `install --by-path` (opt-in)
+makes their one hook act as the agent of the joined checkout an edit's file is in. What is and is
+not covered per harness: [harness-coverage.md §1a](harness-coverage.md#1a-delegated-work-subagents-child-sessions-background-agents-issue-11).
+
 ## Advise vs enforce
 
 `install --mode enforce|advise` (or `WEFT_MODE` at run time):

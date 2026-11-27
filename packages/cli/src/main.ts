@@ -281,7 +281,7 @@ export function nextNotes(order: Array<{ id: string; name: string; run: string; 
     `When one agent changes code another agent depends on, the second one gets a red ${c.squiggle("squiggle")}`,
     `(a diagnostic with the other agent's diff) before it writes a conflicting edit.`,
     c.dim(`Agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode, ...): add the MCP server ${MCP.run} --dir ${roots.length > 1 ? "<checkout>" : tilde(roots[0] ?? ".")}`),
-    c.dim(`Agents already running must be restarted to load the hooks. More: npx @celador/weft status · feed · add · uninstall`),
+    c.dim(`Restart agents that were already running, each in its own checkout: a session runs the hooks of the checkout it started in. More: npx @celador/weft status · feed · add · uninstall`),
     "",
   );
   return lines.join("\n");

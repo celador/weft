@@ -615,3 +615,56 @@ WCP v0.1 is specified in `docs/protocol/wcp-v0.md` (normative; implemented by `p
   warnings/infos on accepted records, never an error.
 - Scenario `conflict-bypass` (both coordinators and the gateway DO) checks the commit gate
   after each of the three submissions.
+
+## Update 2026-11-26 (t_bc837869, Claude Code subagents in worktrees: #8, #10, #18)
+- A Claude Code session runs the hooks of the checkout it was started in; a session in the main
+  checkout never runs a joined worktree's `.claude/` hooks, and its subagents work in its cwd.
+  Subagent work in a worktree is coordinated by a per-worktree worker: `install-agent --worktree W`
+  writes `.claude/agents/weft-worker-<dir>.md` into the orchestrating checkout, whose frontmatter
+  hooks run `hook --root W` pinned to the session's coordinator (url, repo, mode). The worktree is
+  explicit, so calls without a file path act for it: the worker's Bash `git commit` is gated
+  against W's session, and its frontmatter `Stop` (run by Claude Code as `SubagentStop`) is the
+  stop gate and then the worker's session end (bye). Each subagent gets its own state and WCP
+  session (`session_id` + `agent_id`). Edits in another checkout and Bash commands that do not
+  start in W are denied. `hook --by-path` stays for the path-inferred worker (no stop gate).
+- Worker hooks never fall back to another checkout's agent: a config that exists but does not
+  load is logged with its reason in that checkout's `.weft/log/adapter.log` and the call is not
+  coordinated (the agent is told on PreToolUse).
+- Bash reconcile is opaque, like the Hermes adapter's: after a worker's Bash call every joined
+  checkout the command names anywhere in its text is reconciled as its own agent, instead of
+  parsing the shell beyond the leading `cd`/`git -C` that decides whether the command may run.
+- Pre-call snapshots are bounded (dropped after 15 min without PostToolUse; at most 8 Bash
+  snapshots, 8 MiB), and an Edit running in parallel with a Bash call is submitted once.
+- No protocol or coordinator change: the events are the same `edit`/`leave` shapes as before.
+- Residual: project subagents' frontmatter hooks run only in a folder trusted in Claude Code's
+  trust dialog (`claude -p` is never trusted); headless runs pass the definition through
+  `claude --agents` (`install-agent --print-json`).
+
+## Update 2026-11-26 (t_7016c4d3, path routing for Codex, OpenCode, Cursor and Gemini: #11)
+- These harnesses have no per-subagent hook layer: one hook config serves a session and the work
+  it delegates, which runs in the session's directory. `install --by-path` (opt-in) writes the
+  hook command as `hook --by-path --url U --repo R --mode M`, pinned to the coordinator the
+  checkout joined. A call whose file lies in ANOTHER joined checkout then acts as that checkout's
+  agent. That covers the edited file (Cursor/Gemini/OpenCode edit tools, Cursor `afterFileEdit`),
+  each file of an `apply_patch` (Codex, and OpenCode after the fact), and a Bash command's leading
+  `cd <dir> &&` / `git -C <dir>`.
+- One shared rule: `routeTargets` in `adapters/claude-code/src/config.ts`, called from `Host.load`
+  (Cursor, OpenCode, Gemini) and from the Codex hook in place of its own `loadConfig`. It reuses
+  `configStarts`' rule (the target's own checkout is the nearest `.git`) and the worker's trust
+  rules (pin match, token confined to `.weft/`, parent env overrides dropped). Unlike a Claude
+  Code worker, a target outside every other joined checkout falls back to the plain hook rather
+  than being refused. The same hook also serves the parent session, so `--by-path` never
+  coordinates a call less than the plain hook did. The one exception is a joined checkout whose
+  config is broken or unpinned: it is logged there and not coordinated, never reported as the
+  parent's agent.
+- Codex refuses one patch that writes into two checkouts (each needs its own agent); the Host
+  harnesses' edit tools name one file per call. OpenCode routes each file of a patch on its own.
+- Not covered: the stop gate and session end stay with the session's checkout. Codex subagents
+  share the parent's session id and `SubagentStop` names no worktree. Cursor and Gemini agent
+  definitions carry no hooks. A routed worktree's session never gets a SessionStart, so no
+  heartbeat loop runs for it: like a Claude Code `--by-path` worker's, it lives while calls arrive
+  and the coordinator expires it when they stop (`session_expired`, spec §7.5). Its `pre-commit`
+  git hook still gates commits there. Per-harness detail:
+  [harness-coverage.md §1a](harness-coverage.md#1a-delegated-work-subagents-child-sessions-background-agents-issue-11).
+- No protocol or coordinator change: routed calls submit the same `edit` events, as the routed
+  checkout's agent.

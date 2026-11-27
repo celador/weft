@@ -126,8 +126,11 @@ The per-harness config files are in [packages/mcp/README.md](../packages/mcp/REA
 | `npx @celador/weft use local\|hosted\|URL` | choose the default gateway; local is the default (`--local` is still accepted and does nothing extra) |
 | `npx @celador/weft deploy [--domain HOST]` | your own gateway in your Cloudflare account |
 
-Agents that were already running when you ran the command must be restarted: hooks load when a
-session starts. If you used the hosted space before, `npx @celador/weft` keeps using it and tells
+Restart agents that were already running when you ran the command, each in its own checkout: not
+every harness reloads hook files mid-session, and a session only ever runs the hooks of the
+checkout it was started in. A Claude Code session started in the main checkout does not run a
+worktree's hooks, so its subagents' edits in that worktree are not coordinated unless you give it a
+per-worktree `weft-worker` subagent (see [Subagents](../packages/adapters/claude-code/README.md#subagents-install-agent-hook---root-and-hook---by-path)). If you used the hosted space before, `npx @celador/weft` keeps using it and tells
 you how to switch (`npx @celador/weft use local`). How the hosted gateway keeps spaces apart, its
 limits, and how to run your own are in [hosted.md](hosted.md).
 
@@ -256,8 +259,20 @@ node scripts/local-quickstart.mjs ~/code/myapp ~/code/myapp-b      # [--repo NAM
 It prints what it did and the next steps. Agent tokens go to `<checkout>/.weft/token` (mode 0600;
 `.weft/` is added to `.git/info/exclude`), the system token to
 `apps/gateway/.wrangler/weft-local/<repo>.system-token`; no token is printed. Then start `claude`
-in each checkout. **Claude Code reads hooks when a session starts**: restart any session that was
-already open.
+in each checkout. **A Claude Code session runs the hooks of the checkout it was started in**, from
+its `.claude/settings.local.json` (Claude Code's docs say its file watcher picks up edits to that
+file; restart a session that was already open if the hooks do not fire). A session started in
+another checkout never runs them. To coordinate subagents that one session sends into several
+worktrees, join each worktree and write one worker per worktree into the orchestrating checkout:
+
+```sh
+node packages/adapters/claude-code/dist/weft-claude.mjs install-agent --dir ~/code/myapp --worktree ~/code/myapp-b
+```
+
+That writes `.claude/agents/weft-worker-myapp-b.md`, whose own hooks act for `~/code/myapp-b`:
+edits, Bash commands, `git commit` (gated) and its stop (gated, then the session ends). Project
+subagents' hooks run only once the folder is trusted in Claude Code's trust dialog (a `claude -p`
+run is not trusted: pass `--print-json` output to `claude --agents` instead).
 
 While it runs:
 
@@ -361,8 +376,11 @@ Found while walking this guide on a clean Mac without a Cloudflare account.
   runaway guard lets it stop after five refusals).
 - **Fail open.** If the gateway is down or slow (5 s timeout), edits run uncoordinated and the
   agent is told so; nothing is blocked.
-- **Hooks load at session start**, so an install into a running Claude Code session has no effect
-  until that session restarts.
+- **Hooks come from the session's own checkout.** A session runs the hooks of the checkout it was
+  started in; an install into another checkout (a worktree joined later) never reaches it, and its
+  subagents work with its hooks. Use per-worktree `weft-worker` subagents (`install-agent
+  --worktree`) or a session per worktree. Restart a session that was open before the install if its
+  hooks do not fire.
 - **Local state lives in `apps/gateway/.wrangler/`** (event logs, registry, system-token files).
   Deleting it resets everything; agent installs then hold tokens the gateway no longer knows, so
   re-run the quickstart.

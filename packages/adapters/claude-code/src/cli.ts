@@ -3,12 +3,17 @@
 //   install        configure a checkout: .weft/claude.json (+ token file), .claude/settings.json
 //                  hooks, git commit-msg (Change-Id/Task-Id/Agent-Id trailers) + pre-commit gate
 //   hook           Claude Code hook entry: JSON on stdin -> JSON on stdout (always exit 0)
+//                  --root W --url U --repo R: a per-worktree weft-worker subagent; every call
+//                  (edits, Bash, its Stop = SubagentStop) acts for worktree W. Edits in another
+//                  checkout and Bash commands that do not start in W are denied.
 //                  --by-path --url U --repo R: find the checkout from the edited file first
 //                  (weft-worker subagents). Only a checkout whose config has exactly that url,
 //                  repo and mode (--mode, default enforce) is trusted; a Bash command with no
 //                  accepted cd/git -C target, and an edit through a symlink, are denied.
-//   install-agent  write .claude/agents/weft-worker.md: a subagent whose own hooks run
-//                  `hook --by-path --url U --repo R --mode M`, pinned to the parent session's config
+//                  Worker hooks reconcile, after a Bash call, every joined checkout the command
+//                  names (read opaquely), and log a config that exists but does not load.
+//   install-agent  write .claude/agents/weft-worker[-<worktree>].md: a subagent whose own hooks run
+//                  `hook --root W|--by-path --url U --repo R --mode M`, pinned to the parent session's config
 //   commit-msg F   git commit-msg hook
 //   pre-commit     git pre-commit hook (last gate: refuses while the session has open errors)
 //   heartbeat-loop keep a WCP session alive between hooks (spawned detached by SessionStart)
@@ -19,15 +24,15 @@
 //   inbox          print what is waiting for this agent (inbox, open errors, negotiations owed)
 //   claim          explicit claim on symbols: claim --keys path#sym[,…] [--firm] [--ttl MS]
 import { execFileSync } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync, readdirSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync, readdirSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CLAIM_USAGE, NEGOTIATE_USAGE, parseClaim, parseNegotiate } from "@weft/protocol";
 import { HttpTransport, type Transport } from "./client";
-import { BASH_TARGET_FORMS, CONFIG_REL, appendAdapterLog, bashTargetDir, configStarts, pinFromArgs, withoutPinnedOverrides, currentSession, findRoot, loadConfig, hasDotDot, pinMatches, throughSymlink, readConfigFile, readState, stateDir, unjoinedWorktree, type AdapterConfig, type Loaded, type Pin } from "./config";
+import { BASH_TARGET_FORMS, CONFIG_REL, appendAdapterLog, bashTargetDir, checkoutOf, configStarts, excludeFromGit, pinFromArgs, withoutPinnedOverrides, currentSession, findRoot, loadConfig, loadConfigResult, hasDotDot, namedCheckouts, pinMatches, throughSymlink, readConfigFile, readState, stateDir, unjoinedWorktree, type AdapterConfig, type Loaded, type Pin } from "./config";
 import { EDIT_TOOLS, editPath } from "./edits";
-import { ClaudeAdapter, type HookInput } from "./hooks";
+import { ClaudeAdapter, type HookInput, type HookOutput } from "./hooks";
 import { flushJobs, type LspJob } from "./lsp-queue";
 import { stableNodePath } from "./node-path";
 import { recordPin } from "./pins";
@@ -49,7 +54,7 @@ async function readStdin(): Promise<string> {
   return text;
 }
 
-function adapterFor(loaded: Loaded, calls?: Call[], lspJobs?: LspJob[]): ClaudeAdapter {
+function adapterFor(loaded: Loaded, calls?: Call[], lspJobs?: LspJob[], worker = false): ClaudeAdapter {
   const http = new HttpTransport(loaded.config.url, loaded.token, loaded.config.repo, loaded.config.timeoutMs ?? 8000);
   const transport = calls ? timed(http, calls) : http;
   return new ClaudeAdapter(loaded, {
@@ -59,6 +64,7 @@ function adapterFor(loaded: Loaded, calls?: Call[], lspJobs?: LspJob[]): ClaudeA
     cli: cliFor(loaded.root),
     ...(lspJobs ? { lsp: (job: LspJob) => void lspJobs.push(job) } : {}),
     startHeartbeat: (claudeSession) => spawnHeartbeat(SELF, claudeSession, loaded.root),
+    ...(worker ? { worker: true } : {}),
   });
 }
 
@@ -170,77 +176,218 @@ export const BY_PATH_REFUSED =
 export const PINNED_REFUSED =
   "[weft] Weft is off in this checkout: its .weft/claude.json does not match the coordinator chosen when Weft was set up here (see .weft/log/adapter.log). Run `npx @celador/weft` in a checkout you trust to turn it on.";
 
-async function hook(byPath: boolean, args: string[] = []): Promise<void> {
-  let out: unknown;
+/** Worker-hook note when a checkout's config exists but does not load (the reason is logged in that checkout). */
+export const NOT_LOADED =
+  "[weft] This checkout is not coordinated: its .weft/claude.json exists but does not load (the reason is in its .weft/log/adapter.log). This call was not checked; ask for the worktree to be joined again.";
+
+/** `--root` denial: an edit outside the worktree the worker is bound to, inside another git checkout. */
+export function rootBound(root: string): string {
+  return `[weft] You are bound to the worktree ${root}. This file is in another git checkout, so the edit is refused: edit files only under ${root}, by that absolute path (no symlink, no \`..\`).`;
+}
+
+/** `--root` denial: a Bash command that does not start in the worktree the worker is bound to. */
+export function rootBashTarget(root: string): string {
+  return `[weft] You are bound to the worktree ${root}. Start every Bash command with \`cd ${shellQuote(root)} && ...\` (or \`git -C ${shellQuote(root)} ...\`), using exactly that absolute path. Accepted forms: ${BASH_TARGET_FORMS}.`;
+}
+
+/** `--root` denial: the agent file names a worktree that is not the top of a git checkout. */
+export function rootInvalid(root: string): string {
+  return `[weft] This worker's hooks name ${root} as its worktree, but that is not the top of a git checkout (or the path has a symlink or a \`..\`), so nothing it does can be coordinated. Re-run \`install-agent --worktree <absolute worktree path>\`.`;
+}
+
+/** `--root` note: the worker's worktree has not joined Weft. */
+export function rootUnjoined(root: string): string {
+  return `[weft] ${root} has not joined Weft (no .weft/claude.json), so this call is not coordinated. Join it (\`install --dir ${shellQuote(root)} ...\`) before giving it to a worker.`;
+}
+
+type Route = { out?: HookOutput; starts: string[] };
+
+const denyPre = (reason: string): HookOutput => ({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } });
+
+/**
+ * Other joined checkouts a worker's Bash command names (read opaquely, see namedCheckouts): each
+ * is reconciled after the command as its own agent. The session's own checkout (the cwd's) is left
+ * out: the session's settings hooks already reconcile it, also inside subagents.
+ */
+function extraCheckouts(command: string, cwd: string, have: string[]): string[] {
+  const own = checkoutOf(cwd);
+  return namedCheckouts(command).filter((r) => !have.includes(r) && r !== own && existsSync(join(r, CONFIG_REL)) && !throughSymlink(r));
+}
+
+/** `hook --by-path`: the edited file's (or the Bash target's) own checkout, plus every other one the command names. */
+function routeByPath(input: HookInput, cwd: string, command: string): Route {
+  const pre = input.hook_event_name === "PreToolUse";
+  const bash = input.tool_name === "Bash";
+  const bashDir = pre && bash ? bashTargetDir(command, cwd) : undefined;
+  const file = pre && EDIT_TOOLS.has(input.tool_name ?? "") ? editPath(input.tool_input ?? {}) : undefined;
+  const target = bashDir ?? (file ? resolve(cwd, file) : undefined);
+  // Fail closed: a command with no accepted target is not run, and no checkout is coordinated for it.
+  if (pre && bash && !bashDir) return { out: denyPre(BASH_NEEDS_TARGET), starts: [] };
+  // The checkout is found lexically: through a link, the write (or the config) would be another checkout's.
+  if (target && ((file && hasDotDot(file)) || throughSymlink(target))) return { out: denyPre(BY_PATH_SYMLINK), starts: [] };
+  const starts = configStarts(input, true);
+  // Fail closed: a leading target in no joined checkout coordinates nothing, while the rest of the command may write one.
+  if (pre && bash && !starts.length) return { out: denyPre(BASH_NEEDS_TARGET), starts: [] };
+  // Case-insensitive: on macOS and Windows defaults `.WEFT/token` is the same file.
+  if (file && starts.some((root) => relative(root, resolve(cwd, file)).split(sep)[0]!.toLowerCase() === ".weft")) return { out: denyPre(BY_PATH_WEFT_DIR), starts: [] };
+  return { starts: bash ? [...starts, ...extraCheckouts(command, cwd, starts)] : starts };
+}
+
+/**
+ * `hook --root <worktree>` (a per-worktree weft-worker): the worktree is given, not inferred, so
+ * calls without a file path (Bash, the worker's Stop = SubagentStop) act for it too. Edits in
+ * another checkout and Bash commands that start elsewhere are refused.
+ */
+function routeRoot(input: HookInput, rootArg: string, cwd: string, command: string): Route {
+  const pre = input.hook_event_name === "PreToolUse";
+  const edit = EDIT_TOOLS.has(input.tool_name ?? "");
+  const bash = input.tool_name === "Bash";
+  const refuse = (reason: string): Route => ({ out: pre && (edit || bash) ? denyPre(reason) : undefined, starts: [] });
+  const root = resolve(rootArg);
+  if (!isAbsolute(rootArg) || hasDotDot(rootArg) || checkoutOf(root) !== root || throughSymlink(root)) return refuse(rootInvalid(rootArg));
+  if (edit) {
+    const file = editPath(input.tool_input ?? {});
+    if (!file) return { starts: [] };
+    const target = resolve(cwd, file);
+    if (pre && (hasDotDot(file) || throughSymlink(target))) return refuse(BY_PATH_SYMLINK);
+    const home = checkoutOf(target);
+    // A file in no checkout at all (a scratch file in /tmp) is not this hook's business.
+    if (home !== root) return home ? refuse(rootBound(root)) : { starts: [] };
+    if (relative(root, target).split(sep)[0]!.toLowerCase() === ".weft") return refuse(BY_PATH_WEFT_DIR);
+    return { starts: [root] };
+  }
+  if (bash && pre) {
+    const dir = bashTargetDir(command, cwd);
+    if (!dir || checkoutOf(dir) !== root) return refuse(rootBashTarget(root));
+    if (throughSymlink(dir)) return refuse(BY_PATH_SYMLINK);
+  }
+  // Bash is reconciled opaquely: the whole worktree, whatever the command did in it, plus every other joined checkout it names.
+  return { starts: bash ? [root, ...extraCheckouts(command, cwd, [root])] : [root] };
+}
+
+/** One answer from several checkouts' answers: any deny or block wins; context is concatenated. */
+export function mergeOutputs(event: string, outs: HookOutput[]): HookOutput {
+  const list = outs.filter((o): o is Record<string, any> => !!o);
+  if (list.length <= 1) return list[0];
+  const denies = list.filter((o) => o.hookSpecificOutput?.permissionDecision === "deny");
+  if (denies.length) return denyPre(denies.map((o) => o.hookSpecificOutput.permissionDecisionReason).join("\n\n"));
+  const blocks = list.filter((o) => o.decision === "block");
+  if (blocks.length) return { decision: "block", reason: blocks.map((o) => o.reason).join("\n\n") };
+  const ctx = list.map((o) => o.hookSpecificOutput?.additionalContext).filter((t): t is string => typeof t === "string" && !!t);
+  return ctx.length ? { hookSpecificOutput: { hookEventName: event, additionalContext: ctx.join("\n") } } : undefined;
+}
+
+/** Add notes to a PreToolUse answer that is not a denial. */
+function withNotes(out: HookOutput, notes: string[]): HookOutput {
+  if (!notes.length) return out;
+  const o = (out ?? {}) as Record<string, any>;
+  if (o.hookSpecificOutput?.permissionDecision === "deny") return out;
+  const ctx = [o.hookSpecificOutput?.additionalContext, ...new Set(notes)].filter(Boolean).join("\n");
+  return { ...o, hookSpecificOutput: { ...(o.hookSpecificOutput ?? {}), hookEventName: "PreToolUse", additionalContext: ctx } };
+}
+
+async function hook(args: string[] = []): Promise<void> {
+  let out: HookOutput;
   let input: HookInput | undefined;
-  let loaded: Loaded | undefined;
+  const loaded: Loaded[] = [];
   const calls: Call[] = [];
-  const lspJobs: LspJob[] = [];
+  const lspJobs = new Map<string, LspJob[]>();
   const handleStart = performance.now();
-  // `--pinned` (the plugin): the cwd's checkout, trusted only through the pin. `--by-path` (a subagent): the edited file's checkout, same rule.
+  // `--pinned` (the plugin): the cwd's checkout, trusted only through the pin. `--by-path` (a subagent): the edited
+  // file's checkout, same rule. `--root <worktree>` (a per-worktree subagent): that worktree, same rule.
+  const rootArg = arg(args, "root");
+  const byPath = args.includes("--by-path");
   const pinned = args.includes("--pinned");
   const pin: Pin | undefined = pinFromArgs(args);
+  const worker = byPath || rootArg !== undefined;
+  const how = rootArg !== undefined ? "--root" : byPath ? "--by-path" : "--pinned";
   try {
     input = JSON.parse(await readStdin()) as HookInput;
+    // Inside a subagent the hook still gets the parent session's id: each worker gets its own state and WCP session.
+    if (worker && typeof input.agent_id === "string" && input.agent_id) input = { ...input, session_id: `${input.session_id}.agent-${input.agent_id}` };
     const command = typeof input.tool_input?.command === "string" ? input.tool_input.command : "";
     const cwd = input.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
-    const pre = byPath && input.hook_event_name === "PreToolUse";
-    const bashDir = pre && input.tool_name === "Bash" ? bashTargetDir(command, cwd) : undefined;
-    const file = pre && EDIT_TOOLS.has(input.tool_name ?? "") ? editPath(input.tool_input ?? {}) : undefined;
-    const target = bashDir ?? (file ? resolve(cwd, file) : undefined);
-    if (pre && input.tool_name === "Bash" && !bashDir) {
-      // Fail closed: a command with no accepted target is not run, and no checkout is coordinated for it.
-      out = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: BASH_NEEDS_TARGET } };
-    } else if (target && ((file && hasDotDot(file)) || throughSymlink(target))) {
-      // The checkout is found lexically: through a link, the write (or the config) would be another checkout's.
-      out = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: BY_PATH_SYMLINK } };
-    } else if (pre && input.tool_name === "Bash" && !configStarts(input, true).length) {
-      // Fail closed: a leading target in no joined checkout coordinates nothing, while the rest of the command may write one.
-      out = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: BASH_NEEDS_TARGET } };
-    } else if (file && configStarts(input, true).some((root) => relative(root, resolve(cwd, file)).split(sep)[0]!.toLowerCase() === ".weft")) {
-      // Case-insensitive: on macOS and Windows defaults `.WEFT/token` is the same file.
-      out = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: BY_PATH_WEFT_DIR } };
-    } else {
-      for (const start of configStarts(input, byPath)) {
-        const found = byPath || pinned ? loadConfig(start, withoutPinnedOverrides(process.env, pinned), CONFIG_REL, true) : loadConfig(start);
-        if (!found) continue;
-        if ((byPath || pinned) && !pinMatches(found.root, pin)) {
-          // A checkout whose config does not match the pinned coordinator is not coordinated.
-          appendAdapterLog(found.root, `hook ${pinned ? "--pinned" : "--by-path"} refused: ${found.root}/${CONFIG_REL} url/repo/mode do not match the pinned coordinator`);
-          if (input.hook_event_name === "PreToolUse") out = { hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: pinned ? PINNED_REFUSED : BY_PATH_REFUSED } };
+    const pre = input.hook_event_name === "PreToolUse";
+    const route: Route = rootArg !== undefined ? routeRoot(input, rootArg, cwd, command) : byPath ? routeByPath(input, cwd, command) : { starts: configStarts(input, false) };
+    out = route.out;
+    const notes: string[] = [];
+    if (!out) {
+      for (const start of route.starts) {
+        if (!worker) {
+          // The session's own checkout (plain, or the plugin's --pinned): first match only.
+          const found = pinned ? loadConfig(start, withoutPinnedOverrides(process.env, true), CONFIG_REL, true) : loadConfig(start);
+          if (!found) continue;
+          if (pinned && !pinMatches(found.root, pin)) {
+            appendAdapterLog(found.root, `hook --pinned refused: ${found.root}/${CONFIG_REL} url/repo/mode do not match the pinned coordinator`);
+            notes.push(PINNED_REFUSED);
+            break;
+          }
+          loaded.push(found);
           break;
         }
-        loaded = found;
-        break;
+        // A worker: every routed checkout, each trusted only through the pin. A config that exists but does not
+        // load is logged in that checkout and the call is not coordinated there (never another checkout's agent).
+        if (rootArg !== undefined && !existsSync(join(start, CONFIG_REL))) continue;
+        const r = loadConfigResult(start, withoutPinnedOverrides(process.env), CONFIG_REL, true);
+        if (!r.root || loaded.some((l) => l.root === r.root)) continue;
+        if (!r.loaded || (rootArg !== undefined && r.root !== start)) {
+          appendAdapterLog(r.root, `hook ${how}: ${join(r.root, CONFIG_REL)} exists but does not load (${r.problem ?? "it is not this worktree's"}); ${input.hook_event_name} ${input.tool_name ?? ""} not coordinated`);
+          notes.push(NOT_LOADED);
+          continue;
+        }
+        if (!pinMatches(r.root, pin)) {
+          // A checkout whose config does not match the pinned coordinator is not coordinated.
+          appendAdapterLog(r.root, `hook ${how} refused: ${r.root}/${CONFIG_REL} url/repo/mode do not match the pinned coordinator`);
+          notes.push(BY_PATH_REFUSED);
+          continue;
+        }
+        loaded.push(r.loaded);
       }
     }
-    if (!loaded && !out && input.hook_event_name === "PreToolUse" && (EDIT_TOOLS.has(input.tool_name ?? "") || input.tool_name === "Bash")) {
+    if (!loaded.length && !out && !notes.length && pre && (EDIT_TOOLS.has(input.tool_name ?? "") || input.tool_name === "Bash")) {
       // A linked worktree without its own config borrows nothing (findRoot), but if the checkout it
       // belongs to enforces, `git worktree add` must not switch enforcement off: refuse until it joins.
-      const starts = byPath && target ? [file ? dirname(target) : target] : configStarts(input, byPath);
+      const file = EDIT_TOOLS.has(input.tool_name ?? "") ? editPath(input.tool_input ?? {}) : undefined;
+      const target = input.tool_name === "Bash" ? bashTargetDir(command, cwd) : file ? resolve(cwd, file) : undefined;
+      const starts = rootArg !== undefined ? route.starts : byPath && target ? [file ? dirname(target) : target] : configStarts(input, byPath);
       for (const start of starts.length ? starts : [cwd]) {
         const u = unjoinedWorktree(start);
         const owner = u ? readConfigFile(u.owner) : undefined;
         if (!u || !owner || owner.mode === "advise") continue;
-        if ((byPath || pinned) && !pinMatches(u.owner, pin)) continue;
+        if ((worker || pinned) && !pinMatches(u.owner, pin)) continue;
         if (input.tool_name === "Bash" && unjoinedAllows(command, cwd, u.worktree, u.owner, owner)) continue;
         appendAdapterLog(u.owner, `hook refused ${input.tool_name} in unjoined worktree ${u.worktree}`);
-        out = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: unjoinedDenial(u.worktree, u.owner, owner) } };
+        out = denyPre(unjoinedDenial(u.worktree, u.owner, owner));
         break;
       }
+      if (!out && rootArg !== undefined && route.starts.length) notes.push(rootUnjoined(route.starts[0]!));
     }
     // Copilot CLI also runs `.claude/settings*.json` hooks. In a checkout where the Copilot
     // adapter is installed it owns the session; answering here too would double every event.
-    if (loaded && process.env.COPILOT_CLI === "1" && existsSync(join(loaded.root, ".weft/copilot.json"))) loaded = undefined;
-    if (loaded && input) out = await adapterFor(loaded, calls, lspJobs).handle(input);
+    const mine = process.env.COPILOT_CLI === "1" ? loaded.filter((l) => !existsSync(join(l.root, ".weft/copilot.json"))) : loaded;
+    loaded.splice(0, loaded.length, ...mine);
+    if (!out && loaded.length) {
+      const outs: HookOutput[] = [];
+      for (const l of loaded) {
+        const jobs: LspJob[] = [];
+        lspJobs.set(l.root, jobs);
+        outs.push(await adapterFor(l, calls, jobs, worker).handle(input));
+      }
+      out = mergeOutputs(input.hook_event_name, outs);
+    }
+    if (pre && notes.length) out = withNotes(out, notes);
   } catch {
     out = undefined; // fail open: malformed input or a bug must not block the harness
   }
   if (out) process.stdout.write(JSON.stringify(out));
   const lspStart = performance.now();
-  if (loaded && lspJobs.length) flushJobs(loaded, lspJobs, SELF);
-  const lspMs = lspJobs.length ? Math.round(performance.now() - lspStart) : undefined;
-  if (loaded && input) {
+  for (const l of loaded) {
+    const jobs = lspJobs.get(l.root) ?? [];
+    if (jobs.length) flushJobs(l, jobs, SELF);
+  }
+  const allJobs = [...lspJobs.values()].flat();
+  const lspMs = allJobs.length ? Math.round(performance.now() - lspStart) : undefined;
+  if (loaded.length && input) {
     // Per-hook timing: total = since this node process started (incl. boot), handle = hook
     // logic incl. coordinator calls; injected = chars of text that reached the model.
     try {
@@ -255,15 +402,18 @@ async function hook(byPath: boolean, args: string[] = []): Promise<void> {
         handle_ms: Math.round(performance.now() - handleStart),
         calls,
         // Time spent handing jobs to the language-server daemon (queue write, daemon spawn).
-        ...(lspMs !== undefined ? { lsp_ms: lspMs, lsp_jobs: lspJobs.map((j) => j.type) } : {}),
+        ...(lspMs !== undefined ? { lsp_ms: lspMs, lsp_jobs: allJobs.map((j) => j.type) } : {}),
         decision: o?.hookSpecificOutput?.permissionDecision ?? o?.decision,
         injected_chars: injected.length,
         weft_chars: /\[weft/.test(injected) ? injected.length : 0,
         // WEFT_HOOK_TRACE=1: keep the verbatim injected text (demo evidence; may quote code)
         ...(process.env.WEFT_HOOK_TRACE === "1" && injected ? { injected } : {}),
+        ...(loaded.length > 1 ? { checkouts: loaded.length } : {}),
       };
-      mkdirSync(join(loaded.root, ".weft", "log"), { recursive: true });
-      appendFileSync(join(loaded.root, ".weft", "log", "hooks.jsonl"), JSON.stringify(rec) + "\n");
+      for (const l of loaded) {
+        mkdirSync(join(l.root, ".weft", "log"), { recursive: true });
+        appendFileSync(join(l.root, ".weft", "log", "hooks.jsonl"), JSON.stringify(rec) + "\n");
+      }
     } catch {
       /* timing is best-effort */
     }
@@ -390,11 +540,7 @@ async function install(args: string[]): Promise<void> {
   }
 
   // .weft/ (token, state, logs) and local hook settings never enter git
-  const exclude = resolve(root, git(root, ["rev-parse", "--git-path", "info/exclude"]));
-  mkdirSync(dirname(exclude), { recursive: true });
-  const ex = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
-  const want = [".weft/", ".claude/settings.local.json"].filter((l) => !ex.split("\n").includes(l));
-  if (want.length) writeFileSync(exclude, `${ex}${ex && !ex.endsWith("\n") ? "\n" : ""}${want.join("\n")}\n`);
+  excludeFromGit(root, [".weft/", ".claude/settings.local.json"]);
 
   // Claude Code hooks. Default: .claude/settings.local.json (machine-specific absolute paths,
   // never committed); --shared writes the committed .claude/settings.json instead.
@@ -437,35 +583,29 @@ async function install(args: string[]): Promise<void> {
   );
 }
 
-/** The subagent definition `install-agent` writes: its own hooks, running `command` (the pinned `hook --by-path`). */
-export function workerAgent(command: string, name = "weft-worker"): string {
-  const q = JSON.stringify(command);
+type AgentHook = { matcher?: string; command: string };
+
+/** The hooks a worker definition registers. `root`: the per-worktree worker, which also gates its stop (frontmatter `Stop` runs as SubagentStop). */
+function workerHooks(command: string, root?: string): Record<string, AgentHook[]> {
   // Bash too: a shell edit (sed, heredoc, redirect) is reconciled against the worktree after it runs.
   const edits = "Edit|Write|MultiEdit|Bash";
-  return `---
-name: ${name}
-description: Implements one task inside its own Weft-joined git worktree. Give it the absolute worktree path and the task; its edits are checked by the Weft coordinator as that worktree's agent.
-hooks:
-  PreToolUse:
-    - matcher: "${edits}"
-      hooks:
-        - type: command
-          command: ${q}
-          timeout: 30
-  PostToolUse:
-    - matcher: "${edits}"
-      hooks:
-        - type: command
-          command: ${q}
-          timeout: 30
-  PostToolUseFailure:
-    - matcher: "Bash"
-      hooks:
-        - type: command
-          command: ${q}
-          timeout: 30
----
+  return {
+    PreToolUse: [{ matcher: edits, command }],
+    PostToolUse: [{ matcher: edits, command }],
+    PostToolUseFailure: [{ matcher: root ? edits : "Bash", command }],
+    ...(root ? { Stop: [{ command }] } : {}),
+  };
+}
 
+function workerDescription(root?: string): string {
+  return root
+    ? `Implements one task inside the Weft-joined git worktree ${root}. Give it the task; its edits, commits and stop are checked by the Weft coordinator as that worktree's agent.`
+    : "Implements one task inside its own Weft-joined git worktree. Give it the absolute worktree path and the task; its edits are checked by the Weft coordinator as that worktree's agent.";
+}
+
+function workerPrompt(root?: string): string {
+  if (!root)
+    return `
 You work on one task inside one git worktree that is joined to Weft (it has \`.weft/claude.json\`).
 The task message gives you its absolute path.
 
@@ -479,33 +619,104 @@ The task message gives you its absolute path.
   to do next.
 - \`<worktree>/.weft/bin/weft inbox\` shows what is waiting for you.
 `;
+  const q = shellQuote(root);
+  return `
+You work on one task inside the git worktree ${root}, which is joined to Weft.
+
+- Edit only files under ${root}, always by that absolute path and never through a symlink or a
+  \`..\`. Weft checks each edit as this worktree's agent; an edit in another checkout is refused.
+- Start every Bash command with \`cd ${q} && …\` (or use \`git -C ${q} …\`); a command that starts
+  anywhere else is refused. \`git commit\` is refused while Weft has open errors.
+- If an edit is denied with \`[weft error]\`, do not retry it unchanged: the diagnostic says what
+  to do next.
+- You cannot finish while Weft errors are open: fix the cited code (or retreat from it), then stop.
+- \`${root}/.weft/bin/weft inbox\` shows what is waiting for you.
+`;
 }
 
-/** `install-agent [--dir D] [--name N] [--url U --repo R]`: write the pinned weft-worker subagent. */
+/** The subagent definition `install-agent` writes: its own hooks, running `command` (the pinned `hook --by-path`, or `hook --root <worktree>`). */
+export function workerAgent(command: string, name = "weft-worker", root?: string): string {
+  const q = JSON.stringify(command);
+  const hooks = Object.entries(workerHooks(command, root))
+    .map(([event, entries]) => `  ${event}:\n${entries.map((e) => `    - ${e.matcher !== undefined ? `matcher: "${e.matcher}"\n      ` : ""}hooks:\n        - type: command\n          command: ${q}\n          timeout: 30`).join("\n")}`)
+    .join("\n");
+  // JSON strings are YAML double-quoted scalars: a worktree path with `:` or `#` stays one value.
+  const description = root ? JSON.stringify(workerDescription(root)) : workerDescription();
+  return `---\nname: ${name}\ndescription: ${description}\nhooks:\n${hooks}\n---\n${workerPrompt(root)}`;
+}
+
+/** The same definition as `claude --agents` JSON (a session started with `-p` skips project agents' frontmatter hooks until the folder is trusted). */
+export function workerAgentJson(command: string, name = "weft-worker", root?: string): Record<string, unknown> {
+  const hooks = Object.fromEntries(Object.entries(workerHooks(command, root)).map(([event, entries]) => [event, entries.map((e) => ({ ...(e.matcher !== undefined ? { matcher: e.matcher } : {}), hooks: [{ type: "command", command: e.command, timeout: 30 }] }))]));
+  return { [name]: { description: workerDescription(root), prompt: workerPrompt(root).trimStart(), hooks } };
+}
+
+/** Refuse to write through a symlinked `.claude`, `.claude/agents` or agent file: the hook-bearing file must land in this checkout. */
+export function refuseSymlinks(root: string, rels: string[]): void {
+  for (const rel of rels) {
+    let link = false;
+    try {
+      link = lstatSync(join(root, rel)).isSymbolicLink();
+    } catch {
+      /* not there yet */
+    }
+    if (link) throw new Error(`install-agent: ${join(root, rel)} is a symlink; refusing to write the hook-bearing agent file through it`);
+  }
+}
+
+/**
+ * `install-agent [--dir D] [--worktree W] [--name N] [--url U --repo R [--mode M]] [--print-json]`:
+ * write the pinned weft-worker subagent into D's `.claude/agents/` (where a session started in D
+ * finds it). With --worktree, a per-worktree worker (`weft-worker-<dir name>`) whose hooks run
+ * `hook --root W`; without it, the by-path worker that infers its worktree from each path.
+ * --print-json prints the definition for `claude --agents` instead of writing it.
+ */
 function installAgent(args: string[]): void {
   const dir = resolve(arg(args, "dir") ?? process.cwd());
   const root = git(dir, ["rev-parse", "--show-toplevel"]);
-  const name = arg(args, "name") ?? "weft-worker";
+  const wtArg = arg(args, "worktree");
+  let worktree: string | undefined;
+  if (wtArg !== undefined) {
+    if (!isAbsolute(wtArg) || hasDotDot(wtArg)) throw new Error("install-agent: --worktree must be an absolute path with no `..`");
+    worktree = resolve(wtArg);
+    const top = git(worktree, ["rev-parse", "--show-toplevel"]);
+    // The hook compares paths lexically: keep the path as given, but it must be the checkout's top and not a link.
+    if (realpathSync(top) !== realpathSync(worktree) || throughSymlink(worktree)) throw new Error(`install-agent: --worktree ${worktree} is not the top of a git checkout (or it is a symlink); its top is ${top}`);
+  }
+  const name = arg(args, "name") ?? (worktree ? `weft-worker-${basename(worktree).replace(/[^A-Za-z0-9_-]+/g, "-").slice(0, 48)}` : "weft-worker");
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name)) throw new Error(`install-agent: --name must be letters, digits, - or _ (got ${JSON.stringify(name)})`);
   // The coordinator the subagent may act for: the parent session's own config when it has one,
-  // else --url and --repo. Every by-path hook must match it (config.ts pinMatches).
+  // else --url and --repo. Every worker hook must match it (config.ts pinMatches).
   const parentRoot = findRoot(dir);
   const parent = parentRoot ? readConfigFile(parentRoot) : undefined;
   const pin: Pin | undefined = parent?.url && parent.repo
     ? { url: parent.url, repo: parent.repo, mode: parent.mode === "advise" ? "advise" : "enforce" }
     : arg(args, "url") && arg(args, "repo") ? { url: arg(args, "url")!, repo: arg(args, "repo")!, mode: arg(args, "mode") === "advise" ? "advise" : "enforce" } : undefined;
   if (!pin) throw new Error("install-agent: no coordinator to pin: the parent session has no .weft/claude.json; pass --url and --repo");
-  const path = join(root, ".claude", "agents", `${name}.md`);
-  mkdirSync(dirname(path), { recursive: true });
   const pinned = `--url ${shellQuote(pin.url)} --repo ${shellQuote(pin.repo)} --mode ${pin.mode}`;
-  writeFileSync(path, workerAgent(`${shellQuote(process.execPath)} ${shellQuote(SELF)} hook --by-path ${pinned}`, name));
-  // absolute machine paths: keep it out of git, like settings.local.json
-  const exclude = resolve(root, git(root, ["rev-parse", "--git-path", "info/exclude"]));
+  const command = `${shellQuote(process.execPath)} ${shellQuote(SELF)} hook ${worktree ? `--root ${shellQuote(worktree)}` : "--by-path"} ${pinned}`;
+  if (worktree) {
+    const wc = readConfigFile(worktree);
+    if (!wc) process.stderr.write(`weft: ${worktree} has not joined Weft yet: run \`install --dir ${shellQuote(worktree)} ...\` before starting ${name}\n`);
+    else if (!pinMatches(worktree, pin)) process.stderr.write(`weft: ${worktree}/${CONFIG_REL} names another coordinator (url/repo/mode) than this session; ${name}'s hooks will refuse it until it is joined to ${pin.url} repo ${pin.repo}\n`);
+  }
+  if (args.includes("--print-json")) {
+    process.stdout.write(`${JSON.stringify(workerAgentJson(command, name, worktree))}\n`);
+    return;
+  }
   const rel = `.claude/agents/${name}.md`;
-  mkdirSync(dirname(exclude), { recursive: true });
-  const ex = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
-  if (!ex.split("\n").includes(rel)) writeFileSync(exclude, `${ex}${ex && !ex.endsWith("\n") ? "\n" : ""}${rel}\n`);
-  process.stdout.write(`weft: wrote subagent ${path}\n  run \`weft-adapter-claude install\` in each worktree, then start a ${name} subagent per worktree\n`);
+  refuseSymlinks(root, [".claude", ".claude/agents", rel]);
+  const path = join(root, rel);
+  mkdirSync(dirname(path), { recursive: true });
+  refuseSymlinks(root, [".claude", ".claude/agents", rel]); // nothing swapped in while the directories were made
+  writeFileSync(path, workerAgent(command, name, worktree));
+  // absolute machine paths: keep it out of git, like settings.local.json
+  excludeFromGit(root, [rel]);
+  process.stdout.write(
+    worktree
+      ? `weft: wrote subagent ${path}\n  start the ${name} subagent from a session in ${root} for work in ${worktree} (its edits, Bash commands, commits and stop act as that worktree's agent)\n`
+      : `weft: wrote subagent ${path}\n  run \`weft-adapter-claude install\` in each worktree, then start a ${name} subagent per worktree\n`,
+  );
 }
 
 function commitMsg(file: string): void {
@@ -626,7 +837,7 @@ async function main(): Promise<void> {
   const [cmd, ...args] = process.argv.slice(2);
   switch (cmd) {
     case "hook":
-      return hook(args.includes("--by-path"), args);
+      return hook(args);
     case "install-agent":
       return installAgent(args);
     case "install":
@@ -652,7 +863,7 @@ async function main(): Promise<void> {
       process.exitCode = await claimCmd(args);
       return;
     default:
-      process.stderr.write("usage: weft-adapter-claude install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--token-from FILE] [--shared]\n       weft-adapter-claude hook [--by-path --url U --repo R [--mode M]]|install-agent [--dir D] [--name N] [--url U --repo R [--mode M]]|commit-msg FILE|pre-commit|status\n       weft-adapter-claude negotiate …|inbox (see negotiate --help)\n       weft-adapter-claude claim --keys path#symbol[,…] [--firm] [--ttl MS]\n");
+      process.stderr.write("usage: weft-adapter-claude install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--token-from FILE] [--shared]\n       weft-adapter-claude hook [--root W|--by-path --url U --repo R [--mode M]]|install-agent [--dir D] [--worktree W] [--name N] [--url U --repo R [--mode M]] [--print-json]|commit-msg FILE|pre-commit|status\n       weft-adapter-claude negotiate …|inbox (see negotiate --help)\n       weft-adapter-claude claim --keys path#symbol[,…] [--firm] [--ttl MS]\n");
       process.exitCode = cmd ? 2 : 0;
   }
 }

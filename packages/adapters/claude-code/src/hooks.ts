@@ -16,7 +16,12 @@
 //                      also when the command failed partway: its edits are on disk all the same
 //   PostToolUse (other) drain inbox (throttled); Bash HEAD move -> checkpoint
 //   Stop               gate stop -> decision "block" while errors are open   (L3)
+//   SubagentStop       the same gate for a worker subagent (`hook --root`, its frontmatter
+//                      `Stop`); once it may stop, its session ends like SessionEnd
 //   SessionEnd         bye (unless errors are open: then the session stays for the git gate)
+//
+// A pre-call snapshot whose PostToolUse never fires is dropped after PENDING_TTL_MS; a Bash
+// reconcile leaves a file that a parallel Edit/Write is changing to that edit's PostToolUse.
 //
 // base_seq (spec §5.2) advances only when coordinator text actually reaches the model
 // (a deny reason, additionalContext, a stop reason) — never on a silent response. So an
@@ -26,11 +31,12 @@
 // Fail open: any coordinator/transport failure lets the tool run (logged, and noted to the
 // model) — an unreachable coordinator must never wedge the agent.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { maxClaimTtl, notWaiting, type AgentRef, type Capabilities, type ClaimCommand, type Diagnostic, type EventDraft, type EventRecord, type InboxItem, type NegotiateCommand, type NegotiationDue, type Verdict, type Welcome } from "@weft/protocol";
 import { WcpError, PROTOCOL, type Transport } from "./client";
-import { appendAdapterLog, readState, stateDir, withLock, writeState, type Loaded, type SessionState } from "./config";
+import { appendAdapterLog, readState, stateDir, withLock, writeState, type Loaded, type PendingEdit, type SessionState } from "./config";
 import type { BeatResult } from "./heartbeat";
 import { EDIT_TOOLS, editPath, isGitCommit, proposedText } from "./edits";
 import { renderDues, renderForModel, type EditedFile, type RenderCtx } from "./render";
@@ -66,6 +72,17 @@ const MAX_FILE_BYTES = 1 << 20;
 /** A Bash call in a checkout with more dirty files than this is not reconciled (logged). */
 const MAX_BASH_SNAPSHOT_FILES = 500;
 const MAX_BASH_SNAPSHOT_BYTES = 4 << 20;
+/**
+ * A tool call whose PostToolUse never fires (denied by another hook or the user, the harness was
+ * killed) leaves its pre-call snapshot behind. Snapshots older than this are dropped (Claude Code's
+ * Bash tool times out after at most 10 minutes), and at most MAX_BASH_PENDING Bash snapshots
+ * (MAX_PENDING_BYTES of text in all) are kept, oldest dropped first.
+ */
+export const PENDING_TTL_MS = 15 * 60_000;
+const MAX_BASH_PENDING = 8;
+const MAX_PENDING_BYTES = 8 << 20;
+
+const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 
 export type HookInput = {
   hook_event_name: string;
@@ -82,6 +99,9 @@ export type HookInput = {
   reason?: string;
   /** PostToolUseFailure: the tool's error text. */
   error?: unknown;
+  /** Set when the hook fires inside a subagent (Claude Code): that subagent's id and its `name`. */
+  agent_id?: string;
+  agent_type?: string;
 };
 export type HookOutput = Record<string, unknown> | undefined;
 
@@ -109,6 +129,12 @@ export type AdapterDeps = {
    * never awaited by a hook. Absent = no enrichment (tests, harnesses without a daemon).
    */
   lsp?: (job: LspJob) => void;
+  /**
+   * A worker subagent's own hooks (`hook --root`/`--by-path`): its `SubagentStop` is the worker's
+   * session end, so once the stop gate lets it stop the WCP session says bye. Never set for a
+   * session's settings hooks, where SubagentStop would be some subagent's, not this session's.
+   */
+  worker?: boolean;
 };
 
 export type CliResult = { text: string; code: number };
@@ -389,6 +415,7 @@ export class ClaudeAdapter {
     return withLock(this.root, input.session_id, async () => {
       const st = readState(this.root, input.session_id);
       try {
+        this.prunePending(st);
         const out = await this.dispatch(input, st);
         return out;
       } catch (err) {
@@ -398,6 +425,29 @@ export class ClaudeAdapter {
         writeState(this.root, st);
       }
     });
+  }
+
+  /** Drop pre-call snapshots whose PostToolUse never came (see PENDING_TTL_MS). */
+  private prunePending(st: SessionState): void {
+    const now = this.now();
+    for (const [id, p] of Object.entries(st.pending ?? {})) {
+      if (now - p.at <= PENDING_TTL_MS) continue;
+      delete st.pending[id];
+      this.log(`dropped the ${p.tool} snapshot of call ${id}: no PostToolUse within ${PENDING_TTL_MS / 60_000} min`);
+    }
+  }
+
+  /** Make room for one more Bash snapshot of `bytes` characters (oldest Bash snapshots go first). */
+  private boundBashPending(st: SessionState, bytes: number): void {
+    const size = (p: PendingEdit) => Object.values(p.before).reduce((n, t) => n + (t?.length ?? 0), 0);
+    const bash = Object.entries(st.pending).filter(([, p]) => p.tool === "Bash").sort((a, b) => a[1].at - b[1].at);
+    let total = bash.reduce((n, [, p]) => n + size(p), 0) + bytes;
+    while (bash.length && (bash.length >= MAX_BASH_PENDING || total > MAX_PENDING_BYTES)) {
+      const [id, p] = bash.shift()!;
+      total -= size(p);
+      delete st.pending[id];
+      this.log(`dropped the Bash snapshot of call ${id}: too many Bash calls without a PostToolUse`);
+    }
   }
 
   private failOpen(input: HookInput, err: unknown): HookOutput {
@@ -485,8 +535,8 @@ export class ClaudeAdapter {
       st.pending[callId] = { tool, before: {}, shown: [], unreadable: [t.rel], at: this.now() };
       return undefined;
     }
-    st.pending[callId] = { tool, before: { [t.rel]: before }, shown: [], at: this.now() };
     const after = proposedText(tool, args, before);
+    st.pending[callId] = { tool, before: { [t.rel]: before }, shown: [], ...(after !== undefined ? { expect: sha(after) } : {}), at: this.now() };
     if (after === undefined || after === before) return undefined;
     const sets = await this.deps.analyze([{ rel: t.rel, before, after }], this.root, this.prefix);
     if (!sets.writes.length) return undefined; // comment/import-only change: nothing to conflict with
@@ -522,7 +572,10 @@ export class ClaudeAdapter {
     const callId = input.tool_use_id;
     if (callId) {
       const snap = this.snapshotDirty();
-      if (snap) st.pending[callId] = { tool: "Bash", before: snap.before, shown: [], unreadable: snap.unreadable, at: this.now() };
+      if (snap) {
+        this.boundBashPending(st, Object.values(snap.before).reduce((n, t) => n + (t?.length ?? 0), 0));
+        st.pending[callId] = { tool: "Bash", before: snap.before, shown: [], unreadable: snap.unreadable, at: this.now() };
+      }
     }
     if (!isGitCommit(command) || !st.wcpSession || !this.enforce) return undefined;
     const result = await this.call(st, (s) => this.deps.transport.gate(s, "commit"));
@@ -554,6 +607,9 @@ export class ClaudeAdapter {
       before = typeof original === "string" ? original : this.headText(t.rel);
     }
     const after = this.readText(t.abs);
+    // A Bash call running in parallel snapshotted this file before the edit: from now on its
+    // reconcile compares against the edited text, so this edit is not submitted a second time.
+    if (after !== undefined) for (const p of Object.values(st.pending)) if (p.tool === "Bash") p.before[t.rel] = after;
     if (pend?.unreadable?.includes(t.rel) || after === undefined || before === undefined) {
       this.log(`unreadable ${t.rel} ${after === undefined ? "after" : "before"} the edit; not submitted`);
       return this.postOther(input, st);
@@ -598,6 +654,8 @@ export class ClaudeAdapter {
     const now = pend?.tool === "Bash" ? this.dirtyFiles() : undefined;
     if (pend && now) {
       const rels = [...new Set([...Object.keys(pend.before), ...now])].sort();
+      // Edit tool calls still in flight (their PostToolUse has not run): file + the text they leave.
+      const inFlight = new Set(Object.values(st.pending).flatMap((p) => (p.tool !== "Bash" && p.expect ? Object.keys(p.before).map((r) => `${r}\0${p.expect}`) : [])));
       const changes: FileChange[] = [];
       for (const r of rels) {
         const t = this.target(r, this.root);
@@ -605,6 +663,11 @@ export class ClaudeAdapter {
         const after = this.readText(t.abs);
         if (pend.unreadable?.includes(t.rel) || after === undefined) {
           this.log(`unreadable ${t.rel} around the Bash call; not submitted`);
+          continue;
+        }
+        if (after !== null && inFlight.has(`${t.rel}\0${sha(after)}`)) {
+          // Exactly what a parallel edit tool call will leave: its own PostToolUse submits it.
+          this.log(`${t.rel} left to the parallel edit's PostToolUse; not submitted by the Bash reconcile`);
           continue;
         }
         const before = t.rel in pend.before ? pend.before[t.rel]! : this.headText(t.rel);
@@ -672,11 +735,14 @@ export class ClaudeAdapter {
   }
 
   private async stop(input: HookInput, st: SessionState): Promise<HookOutput> {
-    if (!st.wcpSession || !this.enforce) return undefined;
+    // A worker subagent stopping is its session end: once the gate lets it stop, say bye.
+    const end = this.deps.worker && input.hook_event_name === "SubagentStop" ? () => this.sessionEnd(input, st) : async () => undefined;
+    if (!st.wcpSession) return undefined;
+    if (!this.enforce) return end();
     const result = await this.call(st, (s) => this.deps.transport.gate(s, "stop"));
     if (result.allow) {
       st.stopRefusals = undefined;
-      return undefined;
+      return end();
     }
     const dues: NegotiationDue[] = result.negotiations ?? [];
     const fingerprint = [...new Set([...result.open_errors.map((d: Diagnostic) => `${d.code}:${d.symbol}`), ...dues.map((d) => `${d.due}:#${d.seq}`)])].sort().join(",");
@@ -685,7 +751,7 @@ export class ClaudeAdapter {
     const max = this.loaded.config.maxStopRefusals ?? 5;
     if (count > max) {
       this.log(`stop gate: letting the agent stop after ${max} refusals; open errors stay visible in the feed (${fingerprint})`);
-      return undefined;
+      return end();
     }
     const errors = result.open_errors.length ? await renderForModel(result.open_errors, [], this.ctx()) : "";
     const owed = dues.length ? renderDues(dues, this.ctx()) : "";

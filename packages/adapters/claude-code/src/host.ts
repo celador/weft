@@ -12,7 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import type { Capabilities } from "@weft/protocol";
 import { NEGOTIATE_USAGE, parseNegotiate } from "@weft/protocol";
 import { HttpTransport, type Transport } from "./client";
-import { currentSession, loadConfig, loadPinned, pinFromArgs, readState, stateDir, withLock, writeState, type AdapterConfig, type Loaded } from "./config";
+import { byPathHookArgs, callTargets, currentSession, excludeFromGit, loadConfig, loadPinned, pinFromArgs, readState, routeTargets, stateDir, withLock, writeState, type AdapterConfig, type Loaded } from "./config";
 import { ClaudeAdapter, type HookInput, type HookOutput } from "./hooks";
 import { flushJobs, type LspJob } from "./lsp-queue";
 import { stableNodePath } from "./node-path";
@@ -52,8 +52,12 @@ export type HostSpec = {
   capabilities: Capabilities;
   /** Absolute path of the running bundle (the hook/git-hook command target). */
   self: string;
-  /** Write the harness's own hook config; returns human-readable lines for the install report. */
-  installHarness: (root: string, hookCommand: string, args: string[]) => string[];
+  /**
+   * Write the harness's own hook config; returns human-readable lines for the install report.
+   * `hookCommand` already ends in `hookArgs` (empty, or `--by-path --url U --repo R --mode M`
+   * after `install --by-path`); a harness that builds its own command (OpenCode's plugin) uses `hookArgs`.
+   */
+  installHarness: (root: string, hookCommand: string, args: string[], hookArgs: string[]) => string[];
   /** Extra `.git/info/exclude` lines (machine-specific harness config). */
   excludes?: string[];
   /**
@@ -106,8 +110,21 @@ function timed(t: Transport, calls: Call[]): Transport {
 export class Host {
   constructor(readonly spec: HostSpec) {}
 
-  load(start: string = process.cwd()): Loaded | undefined {
-    return loadConfig(start, process.env, this.spec.configRel);
+  /**
+   * The checkout a call acts in: the session's (walking up from `start`). With `route` from a hook
+   * started as `hook --by-path --url U --repo R [--mode M]` (opt-in: `install --by-path`), an edit
+   * whose file lies in ANOTHER joined checkout (or a Bash command whose leading `cd <dir> &&` /
+   * `git -C <dir>` names one) acts as that checkout's agent, trusted only through the pin
+   * (config.ts `routeTargets`). Delegated work (subagents, child sessions) runs in the session's
+   * directory, so without this an edit in its own worktree is reported as the session's agent, or
+   * not at all. Undefined = not coordinated (a routed checkout whose config is broken or unpinned
+   * is logged in that checkout).
+   */
+  load(start: string = process.cwd(), route?: { args: string[]; input?: HookInput }): Loaded | undefined {
+    const plain = () => loadConfig(start, process.env, this.spec.configRel);
+    if (!route?.args.includes("--by-path") || !route.input) return plain();
+    const r = routeTargets(callTargets(route.input, start), start, pinFromArgs(route.args), this.spec.configRel);
+    return r.kind === "routed" ? r.loaded : r.kind === "plain" ? plain() : undefined;
   }
 
   /** `hook --pinned --url U --repo R [--mode M]` (the plugin): the checkout's config only if it equals the pin; fails closed. */
@@ -259,14 +276,12 @@ export class Host {
       writeFileSync(tokenPath, process.env.WEFT_TOKEN.trim() + "\n", { mode: 0o600 });
       chmodSync(tokenPath, 0o600);
     }
-    const exclude = resolve(root, git(root, ["rev-parse", "--git-path", "info/exclude"]));
-    mkdirSync(dirname(exclude), { recursive: true });
-    const ex = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
-    const want = [".weft/", ...(spec.excludes ?? [])].filter((l) => !ex.split("\n").includes(l));
-    if (want.length) writeFileSync(exclude, `${ex}${ex && !ex.endsWith("\n") ? "\n" : ""}${want.join("\n")}\n`);
+    excludeFromGit(root, [".weft/", ...(spec.excludes ?? [])]);
 
-    const hookCommand = `${shellQuote(stableNodePath())} ${shellQuote(spec.self)} hook`;
-    const harnessLines = spec.installHarness(root, hookCommand, args);
+    // `--by-path` (opt-in): edits inside another joined checkout act as that checkout's agent, pinned to this coordinator.
+    const hookArgs = args.includes("--by-path") ? byPathHookArgs(config) : [];
+    const hookCommand = [stableNodePath(), spec.self, "hook", ...hookArgs].map(shellQuote).join(" ");
+    const harnessLines = spec.installHarness(root, hookCommand, args, hookArgs);
 
     const mark = `weft-${spec.name}`;
     const hooksDir = gitHooksDir(root);
@@ -295,6 +310,7 @@ export class Host {
         `  coordinator ${config.url} repo ${config.repo} agent ${config.agent} task ${config.task.id} change ${config.change}\n` +
         `  capabilities ${JSON.stringify(spec.capabilities)}\n` +
         harnessLines.map((l) => `  ${l}\n`).join("") +
+        (hookArgs.length ? `  routing: by path (an edit inside another checkout joined to ${config.url} repo ${config.repo} acts as that checkout's agent)\n` : "") +
         `  git hooks: ${hooksDir}/commit-msg, pre-commit\n  agent cli: ${cliPath}\n` +
         (hasToken ? "" : `  NOTE: no token yet — write it to ${config.tokenFile} (mode 600) or export WEFT_TOKEN\n`),
     );
@@ -418,8 +434,8 @@ export class Host {
           return;
         }
         process.stderr.write(
-          `usage: ${this.spec.bin} install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise]\n` +
-            `       ${this.spec.bin} hook|commit-msg FILE|pre-commit|status|negotiate …|inbox${Object.keys(extra).length ? `|${Object.keys(extra).join("|")}` : ""}\n`,
+          `usage: ${this.spec.bin} install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--by-path]\n` +
+            `       ${this.spec.bin} hook [--by-path --url U --repo R [--mode M]]|commit-msg FILE|pre-commit|status|negotiate …|inbox${Object.keys(extra).length ? `|${Object.keys(extra).join("|")}` : ""}\n`,
         );
         process.exitCode = cmd ? 2 : 0;
     }
