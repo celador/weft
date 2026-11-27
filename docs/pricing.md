@@ -173,13 +173,20 @@ Weft Pro, the Commercial License and Weft accounts are live on weft.mx and the p
    from `notifications@weft.mx`), sign-in with an emailed code (no passwords). The gateway reads `CLERK_ISSUER` from
    wrangler.toml and holds no Clerk secret; the site Worker `weft-site` holds `CLERK_SECRET_KEY` only to delete the
    caller's own Clerk user.
-4. Deployed: `weft-hosted` version `b2831eab-6ca8-48c7-a507-2d02437f364c` (main `a3c7357`); `weft-site` (weft.mx).
-   CLI: {NPM_LINE}
+4. Deployed: `weft-hosted` version `b2831eab-6ca8-48c7-a507-2d02437f364c` (main `a3c7357`) on 2026-11-20, redeployed
+   from main `69e11a9` as `6a4fe01b-620f-4a20-b35d-f2e8fa88890d` on 2026-11-27; `weft-site` (weft.mx) version
+   `b1db35ce-9b18-4c59-aadb-946e60cdb9eb` (identical to `site/` on main as of 2026-11-27).
+   CLI: `@celador/weft@0.5.0` published 2026-11-27 by the release workflow (run 46044503883, trusted publishing with
+   npm provenance, `latest` = 0.5.0); the Claude Code/Copilot plugin 0.3.0 pins it. A laptop `npm publish` is refused
+   on purpose (`publishConfig.provenance`): release through `.github/workflows/release.yml`.
 5. Checked live: `GET /v1/admin/billing` = `enabled: true`; a new account signed up on weft.mx/sign-up/ reached
    /account/; Checkout for 2 Pro users showed "Subscribe to Weft Pro, $24.00 per month, Qty 2 (adjustable), $12.00
    each" and for 3 lifetime licenses "Weft Commercial License, Qty 3, $58.00 each, $174.00" (neither paid; both
-   sessions expired); `weft login` from a clean HOME created a space on the account; an unsigned webhook POST is
-   rejected (400); an anonymous `POST /v1/spaces` answers 403 `login_required`. The test account was deleted.
+   sessions expired); an unsigned webhook POST is rejected (400); an anonymous `POST /v1/spaces` answers 403
+   `login_required`. Re-checked 2026-11-27 on the redeployed gateway: both Checkouts again (live mode, quantity
+   adjustable, business name "Atelier"; not paid, sessions expired by hand); `npx -y @celador/weft@0.5.0 login` from a
+   clean HOME attached the account's space; the test account was then deleted on /account/ (Clerk user 404, 0 users
+   left, the space `erased` with 0 tokens, and the CLI's key stops working).
 6. License: the product is AGPL-3.0-only from November 20, 2026; the last MIT commit is `b825786` (tag `mit-final`);
    the judged competition code is tagged `cf-competition-2026`. Announcement:
    https://github.com/celador/weft/discussions/24.
