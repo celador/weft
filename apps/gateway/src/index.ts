@@ -3,7 +3,7 @@
 // traffic to its RepoCoordinator Durable Object (THE ordered log). Repos and tokens live
 // in the Registry Durable Object, managed through /v1/admin with WEFT_ADMIN_TOKEN.
 
-import { decodeCursor, mergeFeed, validate, WCP_VERSION, WcpProtocolError, type ErrorCode, type EventPage, type EventRecord, type RepoSummary } from "@weft/protocol";
+import { decodeCursor, mergeFeed, validate, WCP_VERSION, WcpProtocolError, type ErrorCode, type EventPage, type EventRecord, type HistoryQuery, type RepoSummary } from "@weft/protocol";
 import {
   canAccessRepo,
   hasScope,
@@ -245,6 +245,14 @@ function eventQuery(u: URL): EventQuery {
   };
 }
 
+/** `GET /history` query (spec §9.7): `keys` (comma-separated and/or repeated), `since` (ISO), `limit`. Validated by the coordinator. */
+function historyQueryOf(u: URL): HistoryQuery {
+  const keys = u.searchParams.getAll("keys").flatMap((v) => list(v) ?? []);
+  const since = u.searchParams.get("since");
+  const limit = int(u.searchParams.get("limit"), "limit");
+  return { keys, ...(since ? { since } : {}), ...(limit !== undefined ? { limit } : {}) };
+}
+
 /** Helpers handed to feature modules (./artifacts) so they share auth and error mapping. */
 function kit(env: Env): Kit {
   return {
@@ -394,6 +402,15 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
       }
     }
     throw new HttpError("not_found", `no route ${m} ${path}`);
+  }
+
+  // ----- history (spec §9.7): reverts, refused edits and finished negotiations of symbol keys.
+  // An agent token reads its own repo's history (no observe scope needed); observers read it too.
+  // A repo outside the token's list is 404, as everywhere.
+  if (rest === "/history" && m === "GET") {
+    if (!canAccessRepo(g, repo)) throw new HttpError("repo_not_found", `repo ${repo} not found`);
+    if (!((hasScope(g, "agent") && g.agent) || hasScope(g, "observe"))) throw new HttpError("forbidden", "history needs an agent token of this repo or the observe scope");
+    return json(unwrap(await stub.history(historyQueryOf(u))));
   }
 
   // ----- observer (spec §9.3)

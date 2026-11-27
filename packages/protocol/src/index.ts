@@ -25,6 +25,29 @@ export { contractError, NOT_IN_WORKSPACE } from "./contract";
 export { encodeCursor, decodeCursor, mergeFeed, compareFeed, type FeedCursor } from "./feed";
 export { ReferenceCoordinator, listView, mergeWriteKind, UNSEEN_NOTE, type CoordinatorOptions } from "./reference";
 export {
+  DAY_MS,
+  HISTORY_DEFAULT_DAYS,
+  HISTORY_DEFAULT_LIMIT,
+  HISTORY_MAX_KEYS,
+  HISTORY_MAX_LIMIT,
+  NOTE_WINDOW_DAYS,
+  firstFrame,
+  historyEntry,
+  historyKeyError,
+  historyPageOf,
+  historyQuery,
+  historyRows,
+  inScope,
+  keyScope,
+  prefixRange,
+  reasonLine,
+  renderHistoryEntry,
+  revertNote,
+  revertedBy,
+  type HistoryRow,
+  type HistorySource,
+} from "./history";
+export {
   runScenario,
   partialMatch,
   scenarioClock,

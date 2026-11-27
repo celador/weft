@@ -40,6 +40,7 @@ function sqlTarget(j: JournaledCoordinator): ConformanceTarget {
     events: (after, limit, o) => j.coord.events({ ...(after !== undefined ? { after } : {}), ...(limit !== undefined ? { limit } : {}), ...o }),
     event: (seq) => j.coord.event(seq),
     setPolicy: (p) => j.call("policy", p),
+    history: (q) => j.coord.history(q),
   };
 }
 
@@ -294,7 +295,7 @@ describe("schema migration", () => {
     const cols = sql.exec<{ name: string }>(`PRAGMA table_info(changes)`).toArray().map((r) => r.name);
     expect(cols).toContain("merged_into");
     expect(sql.exec<{ id: string; merged_into: string | null }>(`SELECT id, merged_into FROM changes`).toArray()).toEqual([{ id: "I-old", merged_into: null }]);
-    expect(sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'schema_version'`).toArray()[0]!.v).toBe("5");
+    expect(sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'schema_version'`).toArray()[0]!.v).toBe("6");
     // A config written before B11 has no escalation field: it reads as auto.
     sql.exec(`UPDATE meta SET v = ? WHERE k = 'config'`, JSON.stringify({ repo: "demo", policy: "wound-wait", claim_ttl_ms: 1, session_ttl_ms: 1, heartbeat_interval_ms: 1, limits: { max_diff_bytes: 1, max_keys: 1, max_page: 1 } })).toArray();
     expect(new SqlCoordinator(sql).escalation).toBe("auto");
@@ -361,7 +362,7 @@ describe("claims policy (spec §7.5) and per-change open errors (§6.5): storage
     new SqlCoordinator(sql);
     expect(sql.exec(`SELECT change_id, key, origin, seq FROM change_errors`).toArray()).toEqual([{ change_id: "A", key: "src/x.ts#f", origin: "commit", seq: 7 }]);
     expect(sql.exec(`SELECT COUNT(*) AS n FROM open_errors`).toArray()).toEqual([{ n: 0 }]);
-    expect(sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'schema_version'`).toArray()[0]!.v).toBe("5");
+    expect(sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'schema_version'`).toArray()[0]!.v).toBe("6");
   });
 });
 

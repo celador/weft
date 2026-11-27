@@ -4,7 +4,7 @@
 //   hook      Cursor hook entry: Cursor JSON on stdin -> Cursor JSON on stdout (always exit 0)
 //             (`hook --by-path --url U --repo R`, from `install --by-path`: an edit inside another
 //             joined checkout, e.g. a subagent's worktree, acts as that checkout's agent)
-//   (+ the shared commit-msg, pre-commit, heartbeat-loop, status, negotiate, inbox)
+//   (+ the shared commit-msg, pre-commit, heartbeat-loop, status, negotiate, inbox, claim)
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";

@@ -1,7 +1,7 @@
 // `weft claim` from the agent's shell (spec §7.5): grammar checks before anything is sent,
 // ttl bounded by the repo policy from the welcome, firm claims refusing others' edits.
 import { afterAll, describe, expect, it } from "vitest";
-import { ReferenceCoordinator, type Hello } from "@weft/protocol";
+import { ReferenceCoordinator, validate, type Hello } from "@weft/protocol";
 import { execFile, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -49,11 +49,37 @@ describe("weft claim (adapter)", () => {
     expect(v).toMatchObject({ verdict: "reject", diagnostics: [{ code: "claim_wait", severity: "error" }] });
   });
 
-  it("a soft claim is a lease", async () => {
+  it("a soft claim is a lease and only warns another agent's overlapping edit", async () => {
     const c = new ReferenceCoordinator({ repo: "demo" });
     const r = await adapter(checkout("claim-soft"), c).claim("s", { keys: [X], firm: false });
     expect(r).toMatchObject({ code: 0 });
     expect(r.text).toContain("a 120s lease, renewed while you keep working");
+    expect(c.log.at(-1)).toMatchObject({ kind: "claim", status: "accepted", payload: { firm: false, source: "explicit" } });
+    expect(c.log.at(-1)!.payload).not.toHaveProperty("ttl_ms");
+    const b = other(c);
+    const v = c.submit(b.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: b.delivered_through, writes: [{ key: X, kind: "body" }] } });
+    expect(v).toMatchObject({ verdict: "accept", diagnostics: [{ code: "claim_wait", severity: "warning" }] });
+  });
+
+  it("the claim submissions it builds (firm and soft) validate against the WCP schema", async () => {
+    const c = new ReferenceCoordinator({ repo: "demo" });
+    const sent: unknown[] = [];
+    const base = refTransport(c);
+    const loaded: Loaded = { root: checkout("claim-schema"), token: "t", config: { url: "http://unused", repo: "demo", agent: "claude-a", task: { id: "T-1" }, change: "I-claude-a" } };
+    let t = 1_790_000_000_000;
+    const a = new ClaudeAdapter(loaded, {
+      transport: { ...base, submit: (s, m) => (sent.push(m), base.submit(s, m)) },
+      analyze: (ch, r, p) => analyzeChanges(ch, r, p),
+      diff: (rel, b, af) => unifiedDiff(rel, b, af),
+      now: () => (t += 1000),
+    });
+    expect((await a.claim("s", { keys: [X], firm: true, ttl_ms: 60_000 })).code).toBe(0);
+    expect((await a.claim("s", { keys: ["src/pricing.ts#*"], firm: false })).code).toBe(0);
+    expect(sent).toMatchObject([
+      { type: "submit", mode: "commit", event: { kind: "claim", payload: { firm: true, source: "explicit", ttl_ms: 60_000 } } },
+      { type: "submit", mode: "commit", event: { kind: "claim", payload: { firm: false, source: "explicit" } } },
+    ]);
+    for (const m of sent) expect(validate("Submit", m)).toEqual({ ok: true, value: m });
   });
 
   it("refuses a ttl above the repo's firm limit without sending anything", async () => {

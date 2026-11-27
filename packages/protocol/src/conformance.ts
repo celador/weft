@@ -14,6 +14,8 @@ import type {
   GateResult,
   HeartbeatAck,
   Hello,
+  HistoryPage,
+  HistoryQuery,
   HumanAction,
   InboxBatch,
   RepoPolicy,
@@ -39,6 +41,8 @@ export interface ConformanceTarget {
   event(seq: number): MaybePromise<EventRecord>;
   /** Operator: apply repo policy (spec §7.5 claims policy; Weft journal op `policy`). */
   setPolicy?(p: { claims: ClaimsPolicy }): MaybePromise<RepoPolicy>;
+  /** Filtered history read (spec §9.7). */
+  history?(q: HistoryQuery): MaybePromise<HistoryPage>;
 }
 
 export type ScenarioStep =
@@ -54,7 +58,8 @@ export type ScenarioStep =
   | { op: "tick"; expect?: unknown }
   | { op: "events"; after?: number; limit?: number; include_diff?: boolean; tail?: boolean; before?: number; expect?: unknown }
   | { op: "event"; seq: number; expect?: unknown }
-  | { op: "policy"; policy: { claims: ClaimsPolicy }; expect?: unknown };
+  | { op: "policy"; policy: { claims: ClaimsPolicy }; expect?: unknown }
+  | { op: "history"; keys: string[]; since?: string; limit?: number; expect?: unknown };
 
 export type Scenario = {
   name: string;
@@ -63,6 +68,8 @@ export type Scenario = {
   covers: string[];
   repo: string;
   policy?: "wound-wait" | "wait-die";
+  /** Repo enforcement mode (spec §7.2). Absent: `advise`. */
+  enforcement?: "advise" | "block";
   escalation?: "auto" | "human";
   claim_ttl_ms?: number;
   session_ttl_ms?: number;
@@ -80,6 +87,7 @@ export type Scenario = {
 export function scenarioInit(sc: Scenario): {
   repo: string;
   policy?: "wound-wait" | "wait-die";
+  enforcement?: "advise" | "block";
   escalation?: "auto" | "human";
   claim_ttl_ms?: number;
   session_ttl_ms?: number;
@@ -88,6 +96,7 @@ export function scenarioInit(sc: Scenario): {
   return {
     repo: sc.repo,
     ...(sc.policy ? { policy: sc.policy } : {}),
+    ...(sc.enforcement ? { enforcement: sc.enforcement } : {}),
     ...(sc.escalation ? { escalation: sc.escalation } : {}),
     ...(sc.claim_ttl_ms ? { claim_ttl_ms: sc.claim_ttl_ms } : {}),
     ...(sc.session_ttl_ms ? { session_ttl_ms: sc.session_ttl_ms } : {}),
@@ -213,6 +222,10 @@ export async function runScenario(sc: Scenario, target: ConformanceTarget, clock
         case "policy":
           if (!target.setPolicy) throw new Error(`scenario ${sc.name}: target cannot apply policy`);
           actual = await target.setPolicy(step.policy);
+          break;
+        case "history":
+          if (!target.history) throw new Error(`scenario ${sc.name}: target cannot read history`);
+          actual = await target.history({ keys: step.keys, ...(step.since !== undefined ? { since: step.since } : {}), ...(step.limit !== undefined ? { limit: step.limit } : {}) });
           break;
       }
     } catch (e) {

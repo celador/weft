@@ -1202,6 +1202,21 @@ def file_key(rel: str) -> str:
     return f"{rel.replace(' ', '_')}#*"
 
 
+def revert_notes(verdict: dict) -> str:
+    """The ``previously_reverted`` notes (WCP §6.6, info) of a verdict as the model reads them:
+    the coordinator's own rendered lines (``context``), else rendered here the same way."""
+    diags = [d for d in verdict.get("diagnostics") or []
+             if isinstance(d, dict) and d.get("code") == "previously_reverted"]
+    if not diags:
+        return ""
+    lines = [ln for ln in str(verdict.get("context") or "").split("\n")
+             if ln.startswith("[weft info] previously_reverted ")]
+    if not lines:
+        lines = [f"[weft info] previously_reverted {d.get('symbol') or d.get('file', '')}: {d.get('message', '')} "
+                 f"(caused by {d.get('caused_by_agent', '?')} · event #{d.get('caused_by_seq', '?')})." for d in diags]
+    return "\n".join(lines)
+
+
 def unified_diff(rel: str, before: Optional[str], after: Optional[str]) -> str:
     a = (before or "").splitlines(keepends=True)
     b = (after or "").splitlines(keepends=True)
@@ -1991,7 +2006,15 @@ class WeftAdapter:
                             name, pend.call_id, "pre_tool_call")
         verdict = self._submit("check", event, pend.call_id)
         if verdict.get("verdict") != "reject":
-            return None  # warnings reach the model with the commit verdict (§8.3 step 2)
+            # Warnings reach the model with the commit verdict (§8.3 step 2). A previously_reverted
+            # note (§6.6) is given once per key per session, on this check, so it cannot wait for
+            # the commit: queue it for the next tool result.
+            notes = revert_notes(verdict)
+            if notes:
+                with self.lock:
+                    self.outbox.append((notes, 0, 0))
+                self.log(f"previously reverted: {t.rel} ({notes.count(chr(10)) + 1} note(s))")
+            return None
         self.rec.verdict("check", [t.rel], writes, verdict, name)
         if self.cfg.mode != "enforce":
             self._queue(verdict, "[weft] (advisory) this edit would be rejected:")

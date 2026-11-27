@@ -278,3 +278,30 @@ describe("capability declaration", () => {
     expect(seen.advise).toEqual(ADVISORY_CAPABILITIES);
   });
 });
+
+describe("previously_reverted note (spec §6.6)", () => {
+  it("an apply_patch to a symbol reverted 2 days ago gets one info note at PreToolUse and is not denied", async () => {
+    const DAY = 86_400_000;
+    let now = 1_790_000_000_000;
+    const coord = new ReferenceCoordinator({ repo: "demo", now: () => now });
+    const a = coord.hello({ type: "hello", protocol: "wcp/0.1", agent: { id: "claude-a", harness: "claude-code" }, capabilities: CAPABILITIES, task: { id: "T-1" }, change: "I-a" });
+    coord.submit(a.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: a.delivered_through, writes: [{ key: "src/pricing.ts#calcTotal", kind: "body" }] } });
+    const land = coord.system({ kind: "land", base_seq: coord.head, change: "I-a", payload: { sha: "1a2b3c4d", op_id: "op_1" } });
+    const rev = coord.system({ kind: "revert", base_seq: coord.head, change: "I-a", payload: { op_id: "op_2", reverts_op_id: "op_1", reason: "rounding broke invoices", requested_by: { type: "system", id: "tail-worker" } } });
+    coord.bye(a.session);
+    now += 2 * DAY;
+
+    const root = checkout("reverted");
+    const B = adapter(root, "codex-b", "T-2", refTransport(coord));
+    await B.handle(hook("sb", root, { hook_event_name: "SessionStart", source: "startup" }));
+    const patch = (from: string, to: string) => ["*** Begin Patch", "*** Update File: src/pricing.ts", "@@", `-  ${from}`, `+  ${to}`, "*** End Patch"].join("\n");
+    const line = "return items.reduce((sum, i) => sum + i.price * i.qty, 0);";
+    const b1 = await applyPatch(B, "sb", root, "b1", patch(line, `return Math.round(${line.slice(7, -1)});`));
+    expect(b1.applied).toBe(true);
+    expect(b1.pre.hookSpecificOutput.permissionDecision).toBeUndefined();
+    expect(b1.pre.hookSpecificOutput.additionalContext).toMatch(new RegExp(`\\[weft info\\] previously_reverted src/pricing\\.ts:3:\\d+: previously reverted 2d ago: rounding broke invoices \\(by tail-worker, #${rev.seq}\\)`));
+    expect(JSON.stringify(b1.post ?? {})).not.toContain("previously_reverted");
+    const b2 = await applyPatch(B, "sb", root, "b2", patch(`return Math.round(${line.slice(7, -1)});`, `return Math.floor(${line.slice(7, -1)});`));
+    expect(JSON.stringify(b2.pre ?? {})).not.toContain("previously_reverted");
+  });
+});

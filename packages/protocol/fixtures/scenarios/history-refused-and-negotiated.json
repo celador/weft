@@ -1,0 +1,385 @@
+{
+  "name": "history-refused-and-negotiated",
+  "description": "§9.7: the history of a key also lists refused edits with their diagnostic cause and finished negotiations (accepted, rejected, escalated) with their terms, newest first; limit pages it.",
+  "covers": [
+    "9.7",
+    "7.4",
+    "7.6"
+  ],
+  "repo": "demo",
+  "start": "2026-10-05T14:00:00.000Z",
+  "steps": [
+    {
+      "op": "hello",
+      "as": "A",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "claude-a",
+          "harness": "claude-code"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-1"
+        },
+        "change": "I-a"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s1",
+        "head_seq": 1,
+        "delivered_through": 1
+      }
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "codex-b",
+          "harness": "codex"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s2",
+        "head_seq": 2,
+        "delivered_through": 2
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "claim",
+          "base_seq": 1,
+          "payload": {
+            "firm": true,
+            "source": "explicit"
+          },
+          "writes": [
+            {
+              "key": "src/x.ts#f",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "seq": 3
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 2,
+          "writes": [
+            {
+              "key": "src/x.ts#f",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "reject",
+        "seq": 4,
+        "diagnostics": [
+          {
+            "code": "claim_wait",
+            "severity": "error"
+          }
+        ]
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "negotiate.propose",
+          "base_seq": 4,
+          "payload": {
+            "to": {
+              "agent": "claude-a"
+            },
+            "keys": [
+              "src/x.ts#f"
+            ],
+            "terms": {
+              "kind": "share",
+              "text": "let me fix f too"
+            }
+          }
+        }
+      },
+      "expect": {
+        "seq": 5
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "negotiate.reject",
+          "base_seq": 3,
+          "payload": {
+            "reply_to": 5,
+            "reason": "mid-refactor"
+          }
+        }
+      },
+      "expect": {
+        "seq": 6
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "negotiate.propose",
+          "base_seq": 5,
+          "payload": {
+            "to": {
+              "agent": "claude-a"
+            },
+            "keys": [
+              "src/x.ts#f"
+            ],
+            "terms": {
+              "kind": "overload",
+              "text": "keep f(a) working"
+            }
+          }
+        }
+      },
+      "expect": {
+        "seq": 7
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "negotiate.counter",
+          "base_seq": 6,
+          "payload": {
+            "reply_to": 7,
+            "terms": {
+              "kind": "sequence",
+              "text": "after I land"
+            }
+          }
+        }
+      },
+      "expect": {
+        "seq": 8
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "negotiate.accept",
+          "base_seq": 7,
+          "payload": {
+            "reply_to": 8
+          }
+        }
+      },
+      "expect": {
+        "seq": 9
+      }
+    },
+    {
+      "op": "history",
+      "keys": [
+        "src/x.ts#f"
+      ],
+      "expect": {
+        "has_more": false,
+        "entries": [
+          {
+            "seq": 9,
+            "kind": "negotiation",
+            "keys": [
+              "src/x.ts#f"
+            ],
+            "agent": "codex-b",
+            "outcome": "accepted",
+            "terms": {
+              "kind": "sequence",
+              "text": "after I land"
+            },
+            "reply_to": 8,
+            "with": "claude-a"
+          },
+          {
+            "seq": 6,
+            "kind": "negotiation",
+            "keys": [
+              "src/x.ts#f"
+            ],
+            "agent": "claude-a",
+            "outcome": "rejected",
+            "terms": {
+              "kind": "share",
+              "text": "let me fix f too"
+            },
+            "reply_to": 5,
+            "reason": "mid-refactor",
+            "with": "codex-b"
+          },
+          {
+            "seq": 4,
+            "kind": "rejected",
+            "keys": [
+              "src/x.ts#f"
+            ],
+            "agent": "codex-b",
+            "event_kind": "edit",
+            "mode": "commit",
+            "causes": [
+              {
+                "severity": "error",
+                "code": "claim_wait",
+                "symbol": "src/x.ts#f",
+                "caused_by_seq": 3,
+                "caused_by_agent": "claude-a"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "op": "history",
+      "keys": [
+        "src/x.ts#f"
+      ],
+      "limit": 1,
+      "expect": {
+        "has_more": true,
+        "entries": [
+          {
+            "seq": 9
+          }
+        ]
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "negotiate.escalate",
+          "base_seq": 9,
+          "payload": {
+            "with": {
+              "agent": "claude-a"
+            },
+            "keys": [
+              "src/x.ts#f"
+            ],
+            "reason": "stuck on f"
+          }
+        }
+      },
+      "expect": {
+        "seq": 10
+      }
+    },
+    {
+      "op": "history",
+      "keys": [
+        "src/x.ts#f"
+      ],
+      "limit": 2,
+      "expect": {
+        "has_more": true,
+        "entries": [
+          {
+            "seq": 10,
+            "kind": "negotiation",
+            "outcome": "escalated",
+            "reason": "stuck on f",
+            "with": "claude-a",
+            "agent": "codex-b"
+          },
+          {
+            "seq": 9
+          }
+        ]
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "check",
+        "event": {
+          "kind": "edit",
+          "base_seq": 11,
+          "writes": [
+            {
+              "key": "src/x.ts#f",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "diagnostics": {
+          "$len": 0
+        }
+      }
+    }
+  ]
+}

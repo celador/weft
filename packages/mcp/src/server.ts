@@ -4,8 +4,8 @@
 //
 //   - an embedded file watcher (packages/adapters/watcher) reports each changed file as a
 //     WCP `commit` edit — L0 is guaranteed even if the model never calls a tool;
-//   - weft_check / weft_claim / weft_status / weft_inbox / weft_feed / weft_negotiate /
-//     weft_gate run on the same WCP session as the watcher (one agent, one change);
+//   - weft_check / weft_claim / weft_status / weft_inbox / weft_feed / weft_history /
+//     weft_negotiate / weft_gate run on the same WCP session as the watcher (one agent, one change);
 //   - every tool result ends with the session's pending inbox (delayed L1): squiggles the
 //     watcher or the coordinator produced since the model last called a tool.
 //
@@ -14,7 +14,23 @@
 // through one queue, so the watcher, the ticker and tool calls never interleave.
 import { watch, type FSWatcher } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { claimKeyError, OPEN_ERROR_ADVICE, type Capabilities, type Diagnostic, type EventPage, type EventRecord, type NegotiateCommand, type NegotiationTerms } from "@weft/protocol";
+import {
+  claimKeyError,
+  OPEN_ERROR_ADVICE,
+  DAY_MS,
+  HISTORY_DEFAULT_DAYS,
+  HISTORY_MAX_KEYS,
+  HISTORY_MAX_LIMIT,
+  historyKeyError,
+  renderHistoryEntry,
+  type Capabilities,
+  type Diagnostic,
+  type EventPage,
+  type EventRecord,
+  type HistoryPage,
+  type NegotiateCommand,
+  type NegotiationTerms,
+} from "@weft/protocol";
 import { HttpTransport, WcpError } from "../../adapters/claude-code/src/client";
 import { readState, withLock, writeState, type Loaded } from "../../adapters/claude-code/src/config";
 import type { Host } from "../../adapters/claude-code/src/host";
@@ -47,6 +63,7 @@ export const INSTRUCTIONS = [
   "Before you edit shared code, call weft_check with the path and the new content (or a unified diff patch): it returns the other agents' conflicts as compiler-style diagnostics (\"[weft error] <code> <file>:<line>: …\").",
   "If it reports an error, do not make the edit as is: do what the error's suggestion says (when it says another agent owns the conflict, stop and report it instead of adapting to their change). Every edit you make is reported to Weft anyway.",
   "Before you say the work is done, call weft_gate (gate \"stop\"): resolve each open error and answer each negotiation it lists.",
+  "Before you change code that may have been reverted, weft_history (keys path#symbol) says why earlier changes to it were reverted or refused.",
   "Every weft_* result ends with what is waiting for you; read it. Use weft_claim to reserve symbols before a large change, weft_status to see who is editing what, weft_negotiate to answer or make proposals (hints like `weft_negotiate propose overload \"…\" --wait 240` mean: call weft_negotiate with action, kind, terms, wait).",
 ].join(" ");
 
@@ -101,6 +118,21 @@ export const TOOLS: ToolDef[] = [
         repo: { type: "string", description: "Repo name (default: this checkout's repo)." },
         limit: { type: "integer", minimum: 1, maximum: 100, description: "How many records (default 20)." },
       },
+    },
+  },
+  {
+    name: "weft_history",
+    description:
+      "Why earlier changes to this code were reverted or refused: for the given symbols, newest first, the reverts (reason, who asked, evidence), refused edits with their cause, and finished negotiations (outcome + terms), one line each with its log #seq. Read it before you redo work on code that was reverted.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keys: { type: "array", items: { type: "string" }, minItems: 1, maxItems: HISTORY_MAX_KEYS, description: "Symbol keys path#symbol, or path#* / a bare path for a whole file." },
+        repo: { type: "string", description: "Repo name (default: this checkout's repo; the token must be allowed to read it)." },
+        since: { type: ["integer", "string"], description: `How far back: a number of days (default ${HISTORY_DEFAULT_DAYS}) or an ISO date.` },
+        limit: { type: "integer", minimum: 1, maximum: HISTORY_MAX_LIMIT, description: "How many entries (default 20)." },
+      },
+      required: ["keys"],
     },
   },
   {
@@ -352,6 +384,8 @@ export class WeftMcp {
       }
       case "weft_feed":
         return this.feed(a);
+      case "weft_history":
+        return this.history(a);
       case "weft_negotiate":
         return this.negotiate(a);
       case "weft_gate":
@@ -446,6 +480,46 @@ export class WeftMcp {
     const events = await this.events(repo, limit);
     if (!events.length) return { text: `[weft] feed ${repo}: no records yet.` };
     return { text: `[weft] feed ${repo} (newest ${events.length}, oldest first):\n${events.map(feedRow).join("\n")}` };
+  }
+
+  private async history(a: Record<string, unknown>): Promise<ToolResult> {
+    const keys = Array.isArray(a.keys) ? [...new Set(a.keys.filter((k): k is string => typeof k === "string").map((k) => k.trim()).filter(Boolean))] : [];
+    if (!keys.length) return { text: "weft_history: keys is required (path#symbol, path#*, or a bare path)", isError: true };
+    if (keys.length > HISTORY_MAX_KEYS) return { text: `weft_history: at most ${HISTORY_MAX_KEYS} keys`, isError: true };
+    for (const k of keys) {
+      const err = historyKeyError(k);
+      if (err) return { text: `weft_history: invalid key ${JSON.stringify(k)}: ${err}`, isError: true };
+    }
+    let since: string | undefined;
+    if (typeof a.since === "number") {
+      if (!Number.isFinite(a.since) || a.since < 0) return { text: "weft_history: since is a number of days (>= 0) or an ISO date", isError: true };
+      since = new Date(Date.now() - a.since * DAY_MS).toISOString();
+    } else if (typeof a.since === "string" && a.since.trim()) {
+      const t = /^\d+$/.test(a.since.trim()) ? Date.now() - Number(a.since) * DAY_MS : Date.parse(a.since);
+      if (!Number.isFinite(t)) return { text: "weft_history: since is a number of days (>= 0) or an ISO date", isError: true };
+      since = new Date(t).toISOString();
+    }
+    const limit = typeof a.limit === "number" ? Math.max(1, Math.min(HISTORY_MAX_LIMIT, Math.floor(a.limit))) : undefined;
+    const repo = str(a.repo) ?? this.loaded.config.repo;
+    const { config, token } = this.loaded;
+    const base = config.url.replace(/\/+$/, "").replace(/\/v1$/, "");
+    const q = new URLSearchParams({ keys: keys.join(",") });
+    if (since) q.set("since", since);
+    if (limit) q.set("limit", String(limit));
+    const f = this.opts.fetchImpl ?? fetch;
+    const res = await f(`${base}/v1/repos/${encodeURIComponent(repo)}/history?${q}`, {
+      headers: { authorization: `Bearer ${token}`, "wcp-version": "0.1" },
+      signal: AbortSignal.timeout(config.timeoutMs ?? 8000),
+    });
+    const json = (await res.json().catch(() => undefined)) as (HistoryPage & { error?: { code?: string; message?: string } }) | undefined;
+    if (!res.ok || !json || json.type !== "history") throw new WcpError(json?.error?.code ?? "http", json?.error?.message ?? `HTTP ${res.status}`, res.status);
+    const what = keys.join(", ");
+    const from = json.since.slice(0, 10);
+    if (!json.entries.length) return { text: `[weft] history of ${what} in ${repo} since ${from}: nothing — no reverts, refused edits or finished negotiations.` };
+    const now = Date.now();
+    const lines = json.entries.map((e) => renderHistoryEntry(e, now));
+    const more = json.has_more ? `\n… more entries: pass a larger limit (max ${HISTORY_MAX_LIMIT}) or a later since.` : "";
+    return { text: `[weft] history of ${what} in ${repo} since ${from} (${json.entries.length}, newest first):\n${lines.join("\n")}${more}` };
   }
 
   private async negotiate(a: Record<string, unknown>): Promise<ToolResult> {

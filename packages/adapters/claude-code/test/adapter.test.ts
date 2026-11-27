@@ -622,3 +622,35 @@ describe("harness text agrees with the coordinator's suggestion in both conflict
     });
   }
 });
+
+describe("previously_reverted note (spec §6.6)", () => {
+  it("a pre-edit check of a symbol reverted 5 days ago injects one info note and never blocks", async () => {
+    const DAY = 86_400_000;
+    let now = 1_790_000_000_000;
+    const coord = new ReferenceCoordinator({ repo: "demo", now: () => now });
+    // Agent A's change to calcTotal lands and is reverted with a reason.
+    const a = coord.hello({ type: "hello", protocol: "wcp/0.1", agent: { id: "claude-a", harness: "claude-code" }, capabilities: CAPABILITIES, task: { id: "T-1" }, change: "I-a" });
+    coord.submit(a.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: a.delivered_through, writes: [{ key: "src/pricing.ts#calcTotal", kind: "body" }] } });
+    const land = coord.system({ kind: "land", base_seq: coord.head, change: "I-a", payload: { sha: "1a2b3c4d", op_id: "op_1" } });
+    const rev = coord.system({ kind: "revert", base_seq: coord.head, change: "I-a", payload: { op_id: "op_2", reverts_seq: land.seq, reason: "totals wrong for EU carts", requested_by: { type: "human", id: "john" } } });
+    coord.bye(a.session);
+    now += 5 * DAY;
+
+    // Agent B, a new session days later, edits calcTotal through Claude Code's hooks.
+    const root = checkout("reverted");
+    const B = adapter(root, "claude-b", "T-2", refTransport(coord));
+    await B.handle(hook("sb", root, { hook_event_name: "SessionStart", source: "startup" }));
+    const oldLine = "return items.reduce((sum, i) => sum + i.price * i.qty, 0);";
+    const r1 = await edit(B, "sb", root, "e1", "src/pricing.ts", oldLine, "return Math.round(items.reduce((sum, i) => sum + i.price * i.qty, 0));");
+    expect(r1.applied).toBe(true);
+    const pre = (r1.pre as { hookSpecificOutput: { permissionDecision?: string; additionalContext: string } }).hookSpecificOutput;
+    expect(pre.permissionDecision).toBeUndefined();
+    expect(pre.additionalContext).toMatch(new RegExp(`^\\[weft diagnostics\\]\\n\\[weft info\\] previously_reverted src/pricing\\.ts:3:\\d+: previously reverted 5d ago: totals wrong for EU carts \\(by john, #${rev.seq}\\) \\(caused by john · event #${rev.seq}\\)\\.$`));
+    // Once per key per session: the commit (PostToolUse) and the next edit say nothing more about it.
+    expect(JSON.stringify(r1.post ?? {})).not.toContain("previously_reverted");
+    const r2 = await edit(B, "sb", root, "e2", "src/pricing.ts", "Math.round(", "Math.floor(");
+    expect(JSON.stringify(r2.pre ?? {}) + JSON.stringify(r2.post ?? {})).not.toContain("previously_reverted");
+    // The stored edit records carry no note.
+    expect(coord.log.filter((r) => r.agent === "claude-b" && r.kind === "edit").flatMap((r) => r.diagnostics)).toEqual([]);
+  });
+});

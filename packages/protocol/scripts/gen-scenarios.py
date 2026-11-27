@@ -701,6 +701,147 @@ scenarios.append({
     ],
 })
 
+# ------------------------------------------------------------------ firm vs soft explicit claims
+def firm_vs_soft(block):
+    """claude-a (senior) claims X soft and Z firm; codex-b (junior) then edits and claims both.
+
+    The firm flag alone decides the outcome under advise; under block a soft hold also
+    denies edits, but a claim is never refused by the mode, only by a firm holder.
+    """
+    soft_edit = {"verdict": "reject", "seq": 5, "diagnostics": [diag("error", "claim_wait", X, 3, "claude-a")]} if block else {
+        "verdict": "accept", "seq": 5, "diagnostics": [diag("warning", "claim_wait", X, 3, "claude-a", arbitration={
+            "policy": "wound-wait", "outcome": "wait", "winner": {"agent": "claude-a", "change": "I-a"}, "loser": {"agent": "codex-b", "change": "I-b"}})]}
+    # An accepted junior event tells the holder (info); a rejected one tells it nothing.
+    holder_items = [] if block else [{"seq": 5, "kind": "diagnostic", "diagnostic": diag("info", "claim_contended", X, 5, "codex-b")}]
+    return [
+        step_hello("A", A(), "s1", 1),
+        step_hello("B", B(), "s2", 2),
+        {"op": "submit", "as": "A", "submit": submit("claim", 1, {"firm": False, "source": "explicit"}, writes=[(X, "body")]),
+         "expect": {"verdict": "accept", "seq": 3, "diagnostics": [], "summary": "claude-a claimed refreshToken"}},
+        {"op": "submit", "as": "A", "submit": submit("claim", 3, {"firm": True, "source": "explicit"}, writes=[(Z, "body")]),
+         "expect": {"verdict": "accept", "seq": 4, "diagnostics": [], "summary": "claude-a firmly claimed SessionStore.get"}},
+        # Soft hold: a warning under advise (the edit lands), an error under block.
+        {"op": "submit", "as": "B", "submit": edit(2, [(X, "body")]), "expect": soft_edit},
+        # Firm hold: an error in either mode; the edit is rejected.
+        {"op": "submit", "as": "B", "submit": edit(2, [(Z, "body")]),
+         "expect": {"verdict": "reject", "seq": 6, "diagnostics": [diag("error", "claim_wait", Z, 4, "claude-a", arbitration={"outcome": "wait"})]}},
+        {"op": "drain", "as": "A", "ack": "last", "expect": {"items": holder_items, "open_errors": []}},
+        # A claim is only ever refused by a firm holder, never by the enforcement mode.
+        {"op": "submit", "as": "B", "submit": submit("claim", 2, {"firm": False, "source": "explicit"}, writes=[(X, "body")]),
+         "expect": {"verdict": "accept", "seq": 7, "diagnostics": [diag("warning", "claim_wait", X, 3, "claude-a")]}},
+        {"op": "submit", "as": "B", "submit": submit("claim", 2, {"firm": True, "source": "explicit"}, writes=[(Z, "body")]),
+         "expect": {"verdict": "reject", "seq": 8, "diagnostics": [diag("error", "claim_wait", Z, 4, "claude-a")]}},
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": False}},
+    ]
+
+
+scenarios.append({
+    "name": "claim-firm-vs-soft",
+    "description": "§7.2/§7.5 under advise (the default): an overlapping edit by a junior agent is only warned on a soft explicit claim (firm:false) and lands, but is rejected with an error on a firm claim (firm:true).",
+    "covers": ["6.2 R3", "7.2", "7.5"],
+    "steps": firm_vs_soft(block=False),
+})
+
+scenarios.append({
+    "name": "claim-firm-vs-soft-block",
+    "description": "§7.2/§7.5 under enforcement block: edits into a soft hold are rejected too; claims are refused only by a firm holder, never by the mode.",
+    "covers": ["6.2 R3", "7.2", "7.5"],
+    "enforcement": "block",
+    "steps": firm_vs_soft(block=True),
+})
+
+# ------------------------------------------------------------------ revert history (§6.6, §9.7)
+F = "src/x.ts#f"
+G = "src/x.ts#g"
+H = "src/other.ts#h"
+DAY = 86400000
+REVERT_REASON = "error spike after landing: TypeError: Cannot read properties of undefined (reading 'id')\n    at f (src/x.ts:3:7)\n    at main (src/main.ts:10:3)"
+REVERT_LINE = "error spike after landing: TypeError: Cannot read properties of undefined (reading 'id')"
+
+
+def note(days):
+    return {"severity": "info", "code": "previously_reverted", "file": "src/x.ts", "symbol": F,
+            "message": f"previously reverted {days}d ago: {REVERT_LINE} (by john, #4)", "caused_by_seq": 4, "caused_by_agent": "john"}
+
+
+REVERT_ENTRY = {"seq": 4, "kind": "revert", "keys": [F], "actor": {"type": "system", "id": "revert-workflow"},
+                "agent": "claude-a", "change": "I-a", "task": "T-1", "reason": REVERT_LINE,
+                "requested_by": {"type": "human", "id": "john"}, "reverts_seq": 3, "reverts_op_id": "op_1", "op_id": "op_2",
+                "evidence": "at f (src/x.ts:3:7)"}
+
+scenarios.append({
+    "name": "revert-history",
+    "description": "§6.6/§9.7: A's change to f lands and is reverted with a reason. Days later B (a new session) edits f: its check carries one info note `previously reverted <n>d ago: <reason> (by <actor>, #<seq>)`, never again in that session, again in a new session, and not after 30 days. The record stores no note. The history read derives f from the revert (revert -> land op -> change -> accepted edits) and filters by key, file and window.",
+    "covers": ["6.6", "9.7"],
+    "steps": [
+        step_hello("A", A(), "s1", 1),
+        {"op": "submit", "as": "A", "submit": edit(1, [(F, "body")]), "expect": {"verdict": "accept", "seq": 2, "diagnostics": []}},
+        {"op": "system", "draft": {"kind": "land", "base_seq": 2, "change": "I-a", "payload": {"sha": "1a2b3c4d", "op_id": "op_1"}},
+         "expect": {"seq": 3, "kind": "land", "status": "accepted", "writes": [{"key": F, "kind": "body"}]}},
+        # The revert names the op it undoes, not keys.
+        {"op": "system", "actor": {"type": "system", "id": "revert-workflow"},
+         "draft": {"kind": "revert", "base_seq": 3, "change": "I-a",
+                   "payload": {"op_id": "op_2", "reverts_seq": 3, "reverts_op_id": "op_1", "sha": "5e6f7a8b", "reason": REVERT_REASON, "requested_by": {"type": "human", "id": "john"}}},
+         "expect": {"seq": 4, "kind": "revert", "status": "accepted", "writes": []}},
+        {"op": "bye", "as": "A"},
+        {"op": "advance", "ms": 3 * DAY},
+        step_hello("B", B(), "s2", 6),
+        # B's pre-edit check: accepted, with the note (info: it never blocks).
+        {"op": "submit", "as": "B", "submit": edit(6, [(F, "body")], mode="check"),
+         "expect": {"verdict": "accept", "mode": "check", "seq": None, "diagnostics": [note(3)]}},
+        # Once per key per session: the commit of the same edit carries nothing.
+        {"op": "submit", "as": "B", "submit": edit(6, [(F, "body")]), "expect": {"verdict": "accept", "seq": 7, "diagnostics": []}},
+        {"op": "event", "seq": 7, "expect": {"seq": 7, "status": "accepted", "diagnostics": []}},
+        # Another symbol of the same file was never reverted.
+        {"op": "submit", "as": "B", "submit": edit(7, [(G, "body")], mode="check"), "expect": {"verdict": "accept", "diagnostics": []}},
+        {"op": "history", "keys": [F],
+         "expect": {"type": "history", "repo": "demo", "keys": [F], "since": "2026-07-10T14:00:00.012Z", "head_seq": 7, "has_more": False, "entries": [REVERT_ENTRY]}},
+        {"op": "history", "keys": [H], "expect": {"type": "history", "keys": [H], "entries": [], "has_more": False}},
+        {"op": "history", "keys": ["src/x.ts#*"], "expect": {"entries": [{"seq": 4, "kind": "revert", "keys": [F]}]}},
+        {"op": "history", "keys": ["src/x.ts"], "expect": {"entries": [{"seq": 4, "kind": "revert", "keys": [F]}]}},
+        {"op": "history", "keys": [F], "since": "2026-10-06T00:00:00.000Z", "expect": {"since": "2026-10-06T00:00:00.000Z", "entries": []}},
+        {"op": "history", "keys": ["src/x.ts f"], "expect": err("invalid_message")},
+        # A new session of B is told again.
+        {"op": "bye", "as": "B"},
+        {"op": "hello", "as": "B", "hello": B(), "expect": {"type": "welcome", "session": "s3"}},
+        {"op": "submit", "as": "B", "submit": edit(10, [(F, "body")], mode="check"), "expect": {"verdict": "accept", "diagnostics": [note(3)]}},
+        # After 30 days no note; the history read (90 days by default) still has it.
+        {"op": "bye", "as": "B"},
+        {"op": "advance", "ms": 28 * DAY},
+        {"op": "hello", "as": "B", "hello": B(), "expect": {"type": "welcome", "session": "s4"}},
+        {"op": "submit", "as": "B", "submit": edit(12, [(F, "body")], mode="check"), "expect": {"verdict": "accept", "diagnostics": []}},
+        {"op": "history", "keys": [F], "expect": {"entries": [{"seq": 4, "kind": "revert"}]}},
+    ],
+})
+
+scenarios.append({
+    "name": "history-refused-and-negotiated",
+    "description": "§9.7: the history of a key also lists refused edits with their diagnostic cause and finished negotiations (accepted, rejected, escalated) with their terms, newest first; limit pages it.",
+    "covers": ["9.7", "7.4", "7.6"],
+    "steps": [
+        step_hello("A", A(), "s1", 1),
+        step_hello("B", B(), "s2", 2),
+        {"op": "submit", "as": "A", "submit": submit("claim", 1, {"firm": True, "source": "explicit"}, writes=[(F, "body")]), "expect": {"seq": 3}},
+        {"op": "submit", "as": "B", "submit": edit(2, [(F, "body")]), "expect": {"verdict": "reject", "seq": 4, "diagnostics": [{"code": "claim_wait", "severity": "error"}]}},
+        {"op": "submit", "as": "B", "submit": submit("negotiate.propose", 4, {"to": {"agent": "claude-a"}, "keys": [F], "terms": {"kind": "share", "text": "let me fix f too"}}), "expect": {"seq": 5}},
+        {"op": "submit", "as": "A", "submit": submit("negotiate.reject", 3, {"reply_to": 5, "reason": "mid-refactor"}), "expect": {"seq": 6}},
+        {"op": "submit", "as": "B", "submit": submit("negotiate.propose", 5, {"to": {"agent": "claude-a"}, "keys": [F], "terms": {"kind": "overload", "text": "keep f(a) working"}}), "expect": {"seq": 7}},
+        {"op": "submit", "as": "A", "submit": submit("negotiate.counter", 6, {"reply_to": 7, "terms": {"kind": "sequence", "text": "after I land"}}), "expect": {"seq": 8}},
+        {"op": "submit", "as": "B", "submit": submit("negotiate.accept", 7, {"reply_to": 8}), "expect": {"seq": 9}},
+        {"op": "history", "keys": [F], "expect": {"has_more": False, "entries": [
+            {"seq": 9, "kind": "negotiation", "keys": [F], "agent": "codex-b", "outcome": "accepted", "terms": {"kind": "sequence", "text": "after I land"}, "reply_to": 8, "with": "claude-a"},
+            {"seq": 6, "kind": "negotiation", "keys": [F], "agent": "claude-a", "outcome": "rejected", "terms": {"kind": "share", "text": "let me fix f too"}, "reply_to": 5, "reason": "mid-refactor", "with": "codex-b"},
+            {"seq": 4, "kind": "rejected", "keys": [F], "agent": "codex-b", "event_kind": "edit", "mode": "commit",
+             "causes": [{"severity": "error", "code": "claim_wait", "symbol": F, "caused_by_seq": 3, "caused_by_agent": "claude-a"}]}]}},
+        {"op": "history", "keys": [F], "limit": 1, "expect": {"has_more": True, "entries": [{"seq": 9}]}},
+        {"op": "submit", "as": "B", "submit": submit("negotiate.escalate", 9, {"with": {"agent": "claude-a"}, "keys": [F], "reason": "stuck on f"}), "expect": {"seq": 10}},
+        {"op": "history", "keys": [F], "limit": 2, "expect": {"has_more": True, "entries": [
+            {"seq": 10, "kind": "negotiation", "outcome": "escalated", "reason": "stuck on f", "with": "claude-a", "agent": "codex-b"}, {"seq": 9}]}},
+        # Nothing here was reverted: no note on B's next edit of f.
+        {"op": "submit", "as": "B", "submit": edit(11, [(F, "body")], mode="check"), "expect": {"diagnostics": {"$len": 0}}},
+    ],
+})
+
 os.makedirs(OUT, exist_ok=True)
 # Only (re)write the generated scenarios; hand-written ones (alternatives-best-of-n.json)
 # live in the same directory and must survive a regeneration.

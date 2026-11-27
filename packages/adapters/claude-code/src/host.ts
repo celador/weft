@@ -3,14 +3,14 @@
 // hook payloads onto Claude-shaped `HookInput`s (Edit/Write/MultiEdit/Bash, file_path,
 // old_string/new_string, content, command) and maps the core's output back. Everything that
 // is not harness-specific lives here: install (config + token + git hooks + agent CLI),
-// commit-msg trailers, the pre-commit gate, heartbeats, `negotiate`/`inbox`, status, and
+// commit-msg trailers, the pre-commit gate, heartbeats, `negotiate`/`inbox`/`claim`, status, and
 // per-hook timing in `.weft/log/hooks.jsonl`.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import type { Capabilities } from "@weft/protocol";
-import { NEGOTIATE_USAGE, parseNegotiate } from "@weft/protocol";
+import { CLAIM_USAGE, NEGOTIATE_USAGE, parseClaim, parseNegotiate } from "@weft/protocol";
 import { HttpTransport, type Transport } from "./client";
 import { byPathHookArgs, callTargets, currentSession, excludeFromGit, loadConfig, loadPinned, pinFromArgs, readState, routeTargets, stateDir, withLock, writeState, type AdapterConfig, type Loaded } from "./config";
 import { ClaudeAdapter, type HookInput, type HookOutput } from "./hooks";
@@ -302,7 +302,7 @@ export class Host {
     }
     const cliPath = join(root, CLI_REL);
     mkdirSync(dirname(cliPath), { recursive: true });
-    writeFileSync(cliPath, `#!/bin/sh\n# ${mark}: Weft CLI for the agent in this checkout (negotiate, inbox)\nexec ${shellQuote(node)} ${shellQuote(spec.self)} "$@"\n`, { mode: 0o755 });
+    writeFileSync(cliPath, `#!/bin/sh\n# ${mark}: Weft CLI for the agent in this checkout (negotiate, inbox, claim)\nexec ${shellQuote(node)} ${shellQuote(spec.self)} "$@"\n`, { mode: 0o755 });
     chmodSync(cliPath, 0o755);
     const hasToken = existsSync(resolve(root, config.tokenFile!)) || !!process.env.WEFT_TOKEN;
     process.stdout.write(
@@ -373,6 +373,29 @@ export class Host {
     return r.code;
   }
 
+  /** `claim --keys path#sym[,…] [--firm] [--ttl MS]`: an explicit claim (spec §7.5), as in the Claude Code CLI. */
+  async claim(args: string[]): Promise<number> {
+    if (!args.length || args.includes("--help") || args.includes("-h")) {
+      process.stdout.write(`${CLAIM_USAGE}\n`);
+      return args.length ? 0 : 2;
+    }
+    let cmd;
+    try {
+      cmd = parseClaim(args);
+    } catch (err) {
+      process.stderr.write(`weft: ${err instanceof Error ? err.message : String(err)}\n`);
+      return 2;
+    }
+    const loaded = this.load();
+    if (!loaded) {
+      process.stderr.write(`weft: not configured here (no ${this.spec.configRel} or no token)\n`);
+      return 2;
+    }
+    const r = await this.adapter(loaded).claim(currentSession(loaded.root) ?? "cli", cmd);
+    (r.code === 2 ? process.stderr : process.stdout).write(`${r.text}\n`);
+    return r.code;
+  }
+
   async inbox(args: string[]): Promise<number> {
     const loaded = this.load();
     if (!loaded) {
@@ -427,6 +450,9 @@ export class Host {
       case "inbox":
         process.exitCode = await this.inbox(args);
         return;
+      case "claim":
+        process.exitCode = await this.claim(args);
+        return;
       default:
         if (cmd && extra[cmd]) {
           const code = await extra[cmd](args);
@@ -435,7 +461,7 @@ export class Host {
         }
         process.stderr.write(
           `usage: ${this.spec.bin} install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--by-path]\n` +
-            `       ${this.spec.bin} hook [--by-path --url U --repo R [--mode M]]|commit-msg FILE|pre-commit|status|negotiate …|inbox${Object.keys(extra).length ? `|${Object.keys(extra).join("|")}` : ""}\n`,
+            `       ${this.spec.bin} hook [--by-path --url U --repo R [--mode M]]|commit-msg FILE|pre-commit|status|negotiate …|inbox|claim …${Object.keys(extra).length ? `|${Object.keys(extra).join("|")}` : ""}\n`,
         );
         process.exitCode = cmd ? 2 : 0;
     }

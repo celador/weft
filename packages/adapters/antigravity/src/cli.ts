@@ -3,7 +3,7 @@
 //   install          .weft/antigravity.json (+ token), .agents/hooks.json (workspace hooks),
 //                    git hooks, agent CLI (.weft/bin/weft)
 //   hook [<Event>]   Antigravity hook entry: JSON on stdin -> JSON on stdout (always exit 0)
-//   (+ the shared commit-msg, pre-commit, heartbeat-loop, status, negotiate, inbox)
+//   (+ the shared commit-msg, pre-commit, heartbeat-loop, status, negotiate, inbox, claim)
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

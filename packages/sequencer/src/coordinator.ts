@@ -63,6 +63,17 @@ import {
   type Write,
   type WriteKind,
   type EnforcementMode,
+  DAY_MS,
+  historyPageOf,
+  historyQuery,
+  historyRows,
+  keyScope,
+  NOTE_WINDOW_DAYS,
+  prefixRange,
+  revertNote,
+  type HistoryPage,
+  type HistoryQuery,
+  type HistoryRow,
 } from "@weft/protocol";
 import { all, migrate, one, run, type Sql } from "./sql";
 
@@ -248,6 +259,59 @@ export class SqlCoordinator {
     const c = one<{ v: string }>(sql, `SELECT v FROM meta WHERE k = 'config'`);
     if (!c) throw new WcpProtocolError("repo_not_found", "repository is not initialized");
     this.cfg = JSON.parse(c.v) as CoordinatorConfig;
+    if (one(sql, `SELECT 1 AS x FROM meta WHERE k = 'history_backfill'`)) this.backfillHistory();
+  }
+
+  /**
+   * v6 migration: index the history records already in the log (spec §9.7), once, in seq order.
+   * Afterwards every appended record indexes itself.
+   */
+  private backfillHistory(): void {
+    for (let after = 0; ; ) {
+      const page = all<{ seq: number; record: string }>(this.sql, `SELECT seq, record FROM events WHERE seq > ? ORDER BY seq LIMIT 500`, after);
+      if (!page.length) break;
+      for (const r of page) this.indexHistory(JSON.parse(r.record) as EventRecord);
+      after = page[page.length - 1]!.seq;
+    }
+    run(this.sql, `DELETE FROM meta WHERE k = 'history_backfill'`);
+  }
+
+  /** Index one appended record's history rows (spec §9.7). */
+  private indexHistory(rec: EventRecord): void {
+    const rows = historyRows(rec, {
+      record: (n) => this.record(n),
+      land: (seq, opId) => {
+        const at = seq !== undefined ? seq : one<{ seq: number }>(this.sql, `SELECT seq FROM ops WHERE op_id = ? AND kind = 'land'`, opId ?? null)?.seq;
+        const r = at === undefined ? undefined : this.record(at);
+        return r?.kind === "land" && r.status === "accepted" ? r : undefined;
+      },
+      editKeys: (change, upTo) =>
+        all<{ key: string }>(
+          this.sql,
+          `SELECT DISTINCT w.key AS key FROM event_writes w JOIN events e ON e.seq = w.seq WHERE w.change_id = ? AND w.seq <= ? AND e.kind = 'edit'`,
+          change,
+          upTo,
+        ).map((r) => r.key),
+    });
+    for (const h of rows) run(this.sql, `INSERT OR IGNORE INTO key_history (key, seq, kind, at) VALUES (?, ?, ?, ?)`, h.key, h.seq, h.kind, h.at);
+  }
+
+  /** SQL condition (and its bindings) for "key is in one of these scopes" (exact keys + prefix ranges). */
+  private static scopeSql(scopes: Array<{ exact: string[]; prefixes: string[] }>): { sql: string; args: string[] } {
+    const exact = uniq(scopes.flatMap((s) => s.exact));
+    const prefixes = uniq(scopes.flatMap((s) => s.prefixes));
+    const parts: string[] = [];
+    const args: string[] = [];
+    if (exact.length) {
+      parts.push(`key IN (${exact.map(() => "?").join(", ")})`);
+      args.push(...exact);
+    }
+    for (const p of prefixes) {
+      const [lo, hi] = prefixRange(p);
+      parts.push(`(key >= ? AND key < ?)`);
+      args.push(lo, hi);
+    }
+    return { sql: parts.length ? `(${parts.join(" OR ")})` : "0", args };
   }
 
   get config(): CoordinatorConfig {
@@ -473,6 +537,7 @@ export class SqlCoordinator {
 
   private dropSession(sid: string): void {
     run(this.sql, `DELETE FROM sessions WHERE id = ?`, sid);
+    run(this.sql, `DELETE FROM session_noted WHERE session = ?`, sid);
     run(this.sql, `DELETE FROM inbox WHERE session = ?`, sid);
     run(this.sql, `DELETE FROM idempotency WHERE session = ?`, sid);
   }
@@ -642,10 +707,12 @@ export class SqlCoordinator {
     const diagnostics = this.evaluate(s, e);
     const reject = diagnostics.some((d) => d.severity === "error");
     const actor: Actor = { type: "agent", id: s.agent, harness: s.harness };
+    // §6.6: info notes on keys reverted lately, on the verdict only (the record keeps the validation diagnostics).
+    const notes = e.kind === "edit" && !diagnostics.some((d) => d.code === "agent_paused") ? this.revertNotes(s, e.writes ?? []) : [];
 
     let out: Verdict;
     if (msg.mode === "check" && !reject) {
-      out = this.verdict(s, "accept", "check", null, diagnostics);
+      out = this.verdict(s, "accept", "check", null, [...diagnostics, ...notes]);
     } else {
       const rec = this.append({ kind: e.kind, actor, session: s, draft: e, diagnostics, status: reject ? "rejected" : "accepted", mode: msg.mode });
       for (const d of diagnostics) if (TELLS.has(d.code) && d.symbol) this.tell(s.change, d.symbol, d.caused_by_seq);
@@ -655,10 +722,30 @@ export class SqlCoordinator {
       } else {
         this.applyAccepted(rec, s);
       }
-      out = this.verdict(s, reject ? "reject" : "accept", msg.mode, rec.seq, diagnostics, rec.summary);
+      out = this.verdict(s, reject ? "reject" : "accept", msg.mode, rec.seq, [...diagnostics, ...notes], rec.summary);
     }
     if (opts.idempotencyKey !== undefined)
       run(this.sql, `INSERT OR REPLACE INTO idempotency (session, key, at, verdict) VALUES (?, ?, ?, ?)`, sid, opts.idempotencyKey, this.now(), JSON.stringify(out));
+    return out;
+  }
+
+  /**
+   * `previously_reverted` notes (spec §6.6): per edited key, the newest revert of the last 30 days
+   * whose keys cover it, at most once per key per session. Index lookups inside this submit.
+   */
+  private revertNotes(s: Session, writes: Write[]): Diagnostic[] {
+    const now = this.now();
+    const floor = now - NOTE_WINDOW_DAYS * DAY_MS;
+    if (!writes.length || !one(this.sql, `SELECT 1 AS x FROM key_history WHERE kind = 'revert' AND at >= ? LIMIT 1`, floor)) return [];
+    const out: Diagnostic[] = [];
+    for (const key of uniq(writes.map((w) => w.key))) {
+      if (one(this.sql, `SELECT 1 AS x FROM session_noted WHERE session = ? AND key = ?`, s.id, key)) continue;
+      const scope = SqlCoordinator.scopeSql([keyScope(key)]);
+      const hit = one<{ seq: number }>(this.sql, `SELECT seq FROM key_history WHERE kind = 'revert' AND at >= ? AND ${scope.sql} ORDER BY seq DESC LIMIT 1`, floor, ...scope.args);
+      if (!hit) continue;
+      run(this.sql, `INSERT OR IGNORE INTO session_noted (session, key) VALUES (?, ?)`, s.id, key);
+      out.push(revertNote(key, this.record(hit.seq)!, now));
+    }
     return out;
   }
 
@@ -1155,6 +1242,7 @@ export class SqlCoordinator {
       for (const w of rec.writes)
         run(this.sql, `INSERT OR IGNORE INTO event_writes (seq, key, wkind, change_id, committed) VALUES (?, ?, ?, ?, ?)`, rec.seq, w.key, w.kind, rec.change, committed);
     }
+    this.indexHistory(rec);
     return rec;
   }
 
@@ -1909,6 +1997,21 @@ export class SqlCoordinator {
     return r;
   }
 
+  /**
+   * Filtered history of symbol keys (spec §9.7): reverts, refused edits/claims and finished
+   * negotiations that concern `keys`, newest first. Two index queries; never a log scan.
+   */
+  history(q: HistoryQuery): HistoryPage {
+    const { keys, since, limit } = historyQuery(q, this.now());
+    const scope = SqlCoordinator.scopeSql(keys.map(keyScope));
+    const seqs = all<{ seq: number }>(this.sql, `SELECT DISTINCT seq FROM key_history WHERE at >= ? AND ${scope.sql} ORDER BY seq DESC LIMIT ?`, since, ...scope.args, limit + 1).map((r) => r.seq);
+    const rows = seqs.length
+      ? all<HistoryRow>(this.sql, `SELECT key, seq, kind, at FROM key_history WHERE seq IN (${seqs.map(() => "?").join(", ")}) AND ${scope.sql}`, ...seqs, ...scope.args)
+      : [];
+    const page = historyPageOf(rows, limit, (n) => this.record(n));
+    return { type: "history", repo: this.repo, keys, since: new Date(since).toISOString(), entries: page.entries, head_seq: this.head, has_more: page.has_more };
+  }
+
   summary(): RepoSummary {
     const sessions = this.allSessions();
     const last = one<{ ts: string }>(this.sql, `SELECT ts FROM events ORDER BY seq DESC LIMIT 1`);
@@ -1934,7 +2037,7 @@ export class SqlCoordinator {
 
   /** Complete dump of coordinator state (for replay-determinism checks). */
   dump(): Record<string, unknown[]> {
-    const tables = ["events", "event_writes", "sessions", "changes", "change_reads", "change_writes", "claims", "inbox", "change_errors", "change_told", "ops", "submit_queue"];
+    const tables = ["events", "event_writes", "sessions", "changes", "change_reads", "change_writes", "claims", "inbox", "change_errors", "change_told", "ops", "submit_queue", "key_history", "session_noted"];
     const out: Record<string, unknown[]> = {};
     for (const t of tables) out[t] = all(this.sql, `SELECT * FROM ${t} ORDER BY rowid`);
     out.meta = all(this.sql, `SELECT * FROM meta WHERE k != 'schema_version' ORDER BY k`);

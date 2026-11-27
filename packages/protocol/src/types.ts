@@ -30,6 +30,7 @@ export const DIAGNOSTIC_CODES = [
   "trunk_advanced",
   "agent_paused",
   "counterpart_away",
+  "previously_reverted",
 ] as const;
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number];
 
@@ -337,6 +338,59 @@ export type FeedPage = {
   has_more: boolean;
 };
 
+/**
+ * Filtered history read (spec §9.7): `GET /v1/repos/{repo}/history?keys=…&since=…&limit=…`.
+ * `keys`: symbol keys `path#symbol` (also matches its members `path#symbol.*` and whole-file
+ * `path#*` records), or `path#*` / a bare `path` for every key of the file. `since`: ISO
+ * timestamp (default: 90 days before the coordinator's clock). `limit`: 1..100 (default 20).
+ */
+export type HistoryQuery = { keys: string[]; since?: string; limit?: number };
+
+export type HistoryKind = "revert" | "rejected" | "negotiation";
+
+/** One history entry, newest first in a HistoryPage. Built only from what the log holds. */
+export type HistoryEntry = {
+  /** The record cited (#seq): the revert, the rejected edit/claim, or the reply/escalation that ended a negotiation. */
+  seq: Seq;
+  ts: string;
+  kind: HistoryKind;
+  /** The queried keys this entry concerns (sorted). */
+  keys: SymbolKey[];
+  actor: Actor;
+  agent?: string;
+  change?: string;
+  task?: string;
+  /** revert: why it was reverted; negotiation: the reject or escalate reason. */
+  reason?: string;
+  /** revert: who asked for it. */
+  requested_by?: Actor;
+  /** revert: the op it reverts and its land record, and the revert's own op id. */
+  reverts_seq?: Seq;
+  reverts_op_id?: string;
+  op_id?: string;
+  /** revert: the first stack frame found in the reason text, if any. */
+  evidence?: string;
+  /** rejected: what was refused and why (its error diagnostics). */
+  event_kind?: EventKind;
+  mode?: SubmitMode;
+  causes?: Diagnostic[];
+  /** negotiation: how it ended, the terms answered, the record answered, and the other party. */
+  outcome?: "accepted" | "rejected" | "escalated";
+  terms?: NegotiationTerms;
+  reply_to?: Seq;
+  with?: string;
+};
+
+export type HistoryPage = {
+  type: "history";
+  repo: string;
+  keys: string[];
+  since: string;
+  entries: HistoryEntry[];
+  head_seq: Seq;
+  has_more: boolean;
+};
+
 export type StreamFrame =
   | { type: "event"; event: EventRecord }
   | { type: "replay.done"; head_seq: Seq }
@@ -396,6 +450,7 @@ export const MESSAGE_TYPES = [
   "RepoList",
   "EventPage",
   "FeedPage",
+  "HistoryPage",
   "StreamFrame",
   "HumanAction",
   "ActionResult",
