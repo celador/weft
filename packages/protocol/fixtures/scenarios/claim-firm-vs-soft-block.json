@@ -275,7 +275,8 @@
       "as": "B",
       "gate": "stop",
       "expect": {
-        "allow": false
+        "allow": true,
+        "open_errors": []
       }
     }
   ]

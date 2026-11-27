@@ -415,7 +415,7 @@ rejected records, and MUST NOT include secrets from the diff.
 ### 6.5 Open errors
 
 Each **change** keeps a set of **open errors** keyed by symbol key: errors from the
-rejected records of its sessions (except `agent_paused`), `claim_wounded` pushes to
+rejected records of its sessions (except `agent_paused` and `claim_wait`), `claim_wounded` pushes to
 it, and `stale_assumption` errors opened by a contract change to a symbol it uses
 (§6.3 step 6). Every entry remembers its **origin**: `check` (a rejected `mode:"check"`
 record — the edit was denied before it reached the workspace), `commit` (a rejected
@@ -426,6 +426,13 @@ entry, except that an origin whose code is in the workspace (`commit`, `contract
 when the new one's is not (`check`, `push`): a denied retry does not take the earlier code
 out of the workspace. The origin is informational (feed, debugging); no clearing rule
 depends on it.
+
+A `claim_wait` error (the holder's claim is firm, or the repo's `enforcement` is `block`, §7.2)
+rejects its record but opens nothing: it is a wait for the claim's holder, not a conflict in
+the requester's code. The requester's stop and commit gates stay open; it works elsewhere,
+negotiates or escalates (§7.6), and its next edit of the key is checked against the claims
+then live. (Before 2026-11-26 it was opened like any other error and held the requester's
+stop, with no timeout, until the holder released or landed, issue #18.)
 
 Open errors belong to the change, not to a session. A `bye`, a session expiry, a new
 `hello` (with or without `resume_session`) and any `release` never make them disappear, so
@@ -483,8 +490,11 @@ claims on k, R the requester.
 at repo creation and recorded in the journaled config like `policy`; re-creating an existing repo
 with a different mode fails (the gateway does not change a stored mode). Under `advise`, `claim_wait`
 is a warning (error only if the holder's claim is firm). Under `block`, a `claim_wait` on an edit is an error and the edit is rejected; a claim submission is
-never refused by the mode (a firm holder still errors). Nothing else changes: the same arbitration,
-claims and TTLs apply. The mode is part of the repo config record that `replay()` takes as its init:
+never refused by the mode: an overlapping claim is accepted with a `claim_wait` warning naming the
+holder (a firm holder still errors). Under `block` a claim held by the submitting agent itself (the
+change of its other task) is skipped, so an agent is never denied by its own claim; under `advise`
+that overlap still gets its warning, unchanged. A `claim_wait` never opens an error (§6.5), in
+either mode. Nothing else changes: the same arbitration, claims and TTLs apply. The mode is part of the repo config record that `replay()` takes as its init:
 a replay must be given the same config the journal was written under, or its verdicts differ. No
 environment variable selects the mode.
 
@@ -498,6 +508,11 @@ wounded holder gets `claim_wounded` (error).
 (until the winner lands or releases; not offered on `die`), `negotiate` (§7.4),
 `escalate` (`negotiate.escalate`: the coordinator, or a human per repo policy, merges the
 two tasks — §7.6).
+
+The `claim_wait` suggestion follows the repo's `conflicts` mode (§8.4): under `hold` it offers to
+wait for the holder to land or release the key, work elsewhere or negotiate; under `continue` it
+says to leave the key to the holder and keep working on other tasks (negotiating if the task needs
+the key), and never to wait.
 
 ### 7.3 Effects
 
@@ -564,8 +579,9 @@ two tasks — §7.6).
   | soft | `block` | `claim_wait` **error**, rejected | warning, accepted |
   | firm (`firm:true`) | either | `claim_wait` **error**, rejected | error, rejected |
 
-  A rejected edit is an open error of the junior's session, so its stop gate refuses until
-  the error clears (§6.5). The holder learns nothing of a rejected attempt; an accepted one
+  A rejected edit or claim is not an open error (§6.5): the requester's stop and commit gates
+  stay open, and it works elsewhere, negotiates or escalates. The holder learns nothing of a
+  rejected attempt (under `conflicts: hold`; under `continue` it gets the owner's notice, §8.4); an accepted one
   sends it an info `claim_contended`. `firm` does not change arbitration: under `wound-wait` a
   requester **senior** to the holder still wounds it (the holder gets `claim_wounded`), and
   under `wait-die` a junior gets `claim_die` (error) whatever the flag. Seniority is §7.1
@@ -605,7 +621,9 @@ The fourth loser option (`escalate`, §7.2) is a protocol action, not only a fee
   `422 invalid_reference` when the target is unknown, already in the submitter's group, either
   side has landed, or the two **do not conflict**: no open error of the submitting session is
   caused by a record of the target's group, and no key read or written by the submitter's
-  group is written or claimed (non-predicted, unexpired) by the target's group.
+  group, and no key the escalation names (`keys`), is written or claimed (non-predicted,
+  unexpired) by the target's group. Naming the held key is how a requester escalates after a
+  `claim_wait`, which opens no error (§6.5).
 - The record is delivered to the target change's sessions (`kind:"negotiation"`).
 - Repo policy `escalation` (`welcome.policy.escalation`, default `auto`):
   - `auto`: the coordinator merges the two tasks at once by appending a `control merge`
@@ -736,7 +754,8 @@ Adapters SHOULD inject it verbatim so squiggles look the same in every harness.
 
 **Repo policy `conflicts`** (default `hold`, the behaviour below). It is a field of the repo's
 config, set when the repo is created (`CoordinatorInit.conflicts`, validated by the gateway
-registry as `hold` or `continue`). An absent field means `hold`, so existing configs are unchanged.
+registry as `hold` or `continue`; every entry point parses it with one parser and takes the
+default from one place, `@weft/protocol` `modes.ts`). An absent field means `hold`, so existing configs are unchanged.
 It is not read from the environment. It is recorded in the repo's config, so a journal replayed
 with the same init reproduces every verdict exactly. With `continue`, the owner of the change that caused a conflict (`caused_by_agent` differs from
 the session's agent) receives a `warning` diagnostic (never an error, so the owner is not blocked).
@@ -744,9 +763,12 @@ A rejected landing notifies the owner of the change that blocked it the same way
 inbox item like the other coordinator notices (arbitration, `contract_changed`), not change state
 (unlike open errors and due negotiations, which a new session receives on `hello`): it
 goes to the live sessions of the causing change whose agent is the cause's agent, and is not queued
-for an owner with no live session (the rejected event stays in the log). A notice identical to one
-still in that session's inbox is not added again; once acknowledged, a later identical conflict is
-notified again. The gates do
+for an owner with no live session (the rejected event stays in the log). Each conflict is told
+once: per owner change, editor, symbol and causing record, the notice is sent the first time it
+reaches a live session of the owner and never again, even after it was acknowledged, however often
+the editor resubmits; an owner with no live session at the time is told on the next such conflict.
+A `mode:"check"` submission never notifies the owner (it only asks; the edit has not been made).
+The gates do
 not change: `gate:"stop"` and `gate:"commit"` refuse on every open error in both modes (see
 `ownership.ts`). Whether an adapter lets a stop through after repeated refusals is adapter policy,
 not part of this protocol. Under `continue`, the diagnostics say to keep editing other tasks instead of rebasing or adapting to the other agent's change; the errors (`stale_overwrite`, `stale_assumption`, including the one §6.3 step 6 opens on a change that already used the symbol) also state that the commit gate stays closed while the error is open, and the `contract_changed` warning, which closes no gate, does not; under `hold` the suggestions are unchanged from today.
@@ -1120,3 +1142,12 @@ Proposed for `docs/design.md` (rule 7 of agent-rules):
   (only the severity of a `claim_wait`, by enforcement mode, for edits and for claims) and
   what it does not (seniority, wound, die). Scenarios may set `enforcement`; new scenarios
   `claim-firm-vs-soft` and `claim-firm-vs-soft-block` pin the table in both coordinators.
+- 0.1 change (2026-11-26, issue #18; behaviour change, listed per §10; no schema change): a
+  `claim_wait` is never an open error (§6.5: its record is still rejected under a firm holder
+  or `enforcement: block`, but the requester's gates stay open); under `block` a claim held by
+  the submitting agent itself is skipped (§7.2); `negotiate.escalate` may name the held key
+  (`keys`) to show the conflict (§7.6); under `conflicts: continue` the owner's notice is sent
+  once per (owner change, editor, symbol, cause) and never for a `mode:"check"` submission, and
+  the `claim_wait` suggestion no longer says to wait (§7.2, §8.4). New scenarios
+  `enforcement-block-waits` and `continue-owner-notices` (scenarios may set `conflicts`);
+  updated `arbitration-wound-wait`, `claim-firm-vs-soft`, `claim-firm-vs-soft-block`.

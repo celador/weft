@@ -14,9 +14,9 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, realpat
 import { createHash, randomBytes } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NEGOTIATE_USAGE, parseNegotiate } from "@weft/protocol";
+import { NEGOTIATE_USAGE, parseNegotiate, takeSessionFlag } from "@weft/protocol";
 import { HttpTransport, type Transport } from "./client";
-import { CONFIG_REL, currentSession, loadConfig, readState, stateDir, type AdapterConfig, type Loaded } from "./config";
+import { CONFIG_REL, cliSession, currentSession, loadConfig, readState, stateDir, type AdapterConfig, type Loaded } from "./config";
 import { CodexAdapter, type HookInput } from "./hooks";
 import { stableNodePath } from "../../claude-code/src/node-path";
 import { loopArgs, runHeartbeatLoop, spawnHeartbeat } from "../../claude-code/src/heartbeat";
@@ -314,7 +314,33 @@ async function heartbeatLoop(args: string[]): Promise<void> {
   await runHeartbeatLoop({ root: loaded.root, session, parent, beat: (idle) => adapter.beat(session, idle) });
 }
 
-async function negotiateCmd(args: string[]): Promise<number> {
+/**
+ * The session the agent's own command acts in: never another agent's in a shared checkout (#18).
+ * `--session <id>|new` names it. A number is the exit code (the reason is on stderr).
+ */
+function cliSessionFor(loaded: Loaded, explicit: string | undefined): string | number {
+  const pick = cliSession(loaded.root, loaded.config.agent, loaded.config.change, explicit);
+  if ("refused" in pick) {
+    process.stderr.write(`${pick.refused}\n`);
+    return 2;
+  }
+  return pick.session;
+}
+
+/** Strip `--session <id>` before a subcommand parser sees the arguments. */
+function sessionFlag(args: string[]): { explicit?: string; rest: string[] } | number {
+  const t = takeSessionFlag(args);
+  if (t.error) {
+    process.stderr.write(`weft: ${t.error}\n`);
+    return 2;
+  }
+  return t;
+}
+
+async function negotiateCmd(argv: string[]): Promise<number> {
+  const flagged = sessionFlag(argv);
+  if (typeof flagged === "number") return flagged;
+  const args = flagged.rest;
   if (!args.length || args.includes("--help") || args.includes("-h")) {
     process.stdout.write(`${NEGOTIATE_USAGE}\n\nWith no --to/--keys, propose and escalate target the agent behind your newest open Weft error.\n`);
     return args.length ? 0 : 2;
@@ -331,19 +357,26 @@ async function negotiateCmd(args: string[]): Promise<number> {
     process.stderr.write(`weft: ${err instanceof Error ? err.message : String(err)}\n`);
     return 2;
   }
-  const r = await adapterFor(loaded).negotiate(currentSession(loaded.root) ?? "cli", cmd);
+  const session = cliSessionFor(loaded, flagged.explicit);
+  if (typeof session === "number") return session;
+  const r = await adapterFor(loaded).negotiate(session, cmd);
   process.stdout.write(`${r.text}\n`);
   return r.code;
 }
 
-async function inboxCmd(args: string[]): Promise<number> {
+async function inboxCmd(argv: string[]): Promise<number> {
+  const flagged = sessionFlag(argv);
+  if (typeof flagged === "number") return flagged;
+  const args = flagged.rest;
   const loaded = loadConfig(process.cwd());
   if (!loaded) {
     process.stderr.write("weft: not configured here (no .weft/codex.json or no token)\n");
     return 2;
   }
   const wait = Number(arg(args, "wait") ?? 0) || 0;
-  const r = await adapterFor(loaded).inbox(currentSession(loaded.root) ?? "cli", wait);
+  const session = cliSessionFor(loaded, flagged.explicit);
+  if (typeof session === "number") return session;
+  const r = await adapterFor(loaded).inbox(session, wait);
   process.stdout.write(`${r.text}\n`);
   return r.code;
 }

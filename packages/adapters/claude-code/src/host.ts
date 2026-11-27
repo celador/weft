@@ -10,9 +10,9 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFi
 import { createHash, randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import type { Capabilities } from "@weft/protocol";
-import { CLAIM_USAGE, NEGOTIATE_USAGE, parseClaim, parseNegotiate } from "@weft/protocol";
+import { CLAIM_USAGE, NEGOTIATE_USAGE, parseClaim, parseNegotiate, takeSessionFlag } from "@weft/protocol";
 import { HttpTransport, type Transport } from "./client";
-import { currentSession, loadConfig, loadPinned, pinFromArgs, readState, stateDir, withLock, writeState, type AdapterConfig, type Loaded } from "./config";
+import { cliSession, currentSession, loadConfig, loadPinned, pinFromArgs, readState, stateDir, withLock, writeState, type AdapterConfig, type Loaded } from "./config";
 import { ClaudeAdapter, type HookInput, type HookOutput } from "./hooks";
 import { flushJobs, type LspJob } from "./lsp-queue";
 import { stableNodePath } from "./node-path";
@@ -335,7 +335,33 @@ export class Host {
     await runHeartbeatLoop({ root: loaded.root, session, parent, beat: (idle) => adapter.beat(session, idle) });
   }
 
-  async negotiate(args: string[]): Promise<number> {
+  /**
+   * The session the agent's own command acts in: never another agent's in a shared checkout (#18).
+   * `--session <id>|new` names it. A number is the exit code (the reason is on stderr).
+   */
+  private cliSessionFor(loaded: Loaded, explicit: string | undefined): string | number {
+    const pick = cliSession(loaded.root, loaded.config.agent, loaded.config.change, explicit);
+    if ("refused" in pick) {
+      process.stderr.write(`${pick.refused}\n`);
+      return 2;
+    }
+    return pick.session;
+  }
+
+  /** Strip `--session <id>` before a subcommand parser sees the arguments. */
+  private sessionFlag(args: string[]): { explicit?: string; rest: string[] } | number {
+    const t = takeSessionFlag(args);
+    if (t.error) {
+      process.stderr.write(`weft: ${t.error}\n`);
+      return 2;
+    }
+    return t;
+  }
+
+  async negotiate(argv: string[]): Promise<number> {
+    const flagged = this.sessionFlag(argv);
+    if (typeof flagged === "number") return flagged;
+    const args = flagged.rest;
     if (!args.length || args.includes("--help") || args.includes("-h")) {
       process.stdout.write(`${NEGOTIATE_USAGE}\n\nWith no --to/--keys, propose and escalate target the agent behind your newest open Weft error.\n`);
       return args.length ? 0 : 2;
@@ -352,13 +378,18 @@ export class Host {
       process.stderr.write(`weft: ${err instanceof Error ? err.message : String(err)}\n`);
       return 2;
     }
-    const r = await this.adapter(loaded).negotiate(currentSession(loaded.root) ?? "cli", cmd);
+    const session = this.cliSessionFor(loaded, flagged.explicit);
+    if (typeof session === "number") return session;
+    const r = await this.adapter(loaded).negotiate(session, cmd);
     process.stdout.write(`${r.text}\n`);
     return r.code;
   }
 
   /** `claim --keys path#sym[,…] [--firm] [--ttl MS]`: an explicit claim (spec §7.5), as in the Claude Code CLI. */
-  async claim(args: string[]): Promise<number> {
+  async claim(argv: string[]): Promise<number> {
+    const flagged = this.sessionFlag(argv);
+    if (typeof flagged === "number") return flagged;
+    const args = flagged.rest;
     if (!args.length || args.includes("--help") || args.includes("-h")) {
       process.stdout.write(`${CLAIM_USAGE}\n`);
       return args.length ? 0 : 2;
@@ -375,18 +406,25 @@ export class Host {
       process.stderr.write(`weft: not configured here (no ${this.spec.configRel} or no token)\n`);
       return 2;
     }
-    const r = await this.adapter(loaded).claim(currentSession(loaded.root) ?? "cli", cmd);
+    const session = this.cliSessionFor(loaded, flagged.explicit);
+    if (typeof session === "number") return session;
+    const r = await this.adapter(loaded).claim(session, cmd);
     (r.code === 2 ? process.stderr : process.stdout).write(`${r.text}\n`);
     return r.code;
   }
 
-  async inbox(args: string[]): Promise<number> {
+  async inbox(argv: string[]): Promise<number> {
+    const flagged = this.sessionFlag(argv);
+    if (typeof flagged === "number") return flagged;
+    const args = flagged.rest;
     const loaded = this.load();
     if (!loaded) {
       process.stderr.write(`weft: not configured here (no ${this.spec.configRel} or no token)\n`);
       return 2;
     }
-    const r = await this.adapter(loaded).inbox(currentSession(loaded.root) ?? "cli", Number(arg(args, "wait") ?? 0) || 0);
+    const session = this.cliSessionFor(loaded, flagged.explicit);
+    if (typeof session === "number") return session;
+    const r = await this.adapter(loaded).inbox(session, Number(arg(args, "wait") ?? 0) || 0);
     process.stdout.write(`${r.text}\n`);
     return r.code;
   }

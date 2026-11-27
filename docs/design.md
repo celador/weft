@@ -615,3 +615,31 @@ WCP v0.1 is specified in `docs/protocol/wcp-v0.md` (normative; implemented by `p
   warnings/infos on accepted records, never an error.
 - Scenario `conflict-bypass` (both coordinators and the gateway DO) checks the commit gate
   after each of the three submissions.
+
+## Update 2026-11-26 (issue #18, block mode, claims and conflicts follow-ups)
+- A `claim_wait` is a wait, not a conflict: it never opens an error (wcp-v0 §6.5), so a
+  requester denied by a firm claim or by `enforcement: block` keeps its stop and commit gates
+  open; it works elsewhere, negotiates, or escalates naming the held key (`negotiate.escalate`
+  `keys` now count as the conflict, §7.6). Block mode is never weaker than advise this way:
+  under advise the same edit is accepted with a warning.
+- Under `block` an agent's own claim (its other task's change) never denies its edit; advise
+  output is unchanged. Block never refuses a claim: an overlapping claim is accepted with a
+  `claim_wait` warning naming the holder (only a firm holder refuses a claim).
+- Claim renewal: kept as the claims policy (2026-10-09) defines it, rather than capping every
+  claim at its requested `--ttl`: firm claims already have a hard deadline
+  (`min(ttl, firm_max_ms)`, never renewed), and soft claims have no requested deadline by
+  design (leases of `lease_ms`, renewed only while the agent is active, released at once when
+  the change's last session ends, so `bye` releases them). Capping soft leases would drop the
+  holds of an agent in the middle of its work. Repos created before the policy keep the old
+  renewable TTL until the operator applies it, so old journals replay unchanged.
+- `conflicts: continue` owner notices: once per (owner change, editor, symbol, causing record)
+  and never for a check (SqlCoordinator table `owner_notices`); the `claim_wait` suggestion no
+  longer says to wait under continue. Defaults and parsing of `conflicts`/`enforcement` live in
+  one module (`@weft/protocol` `modes.ts`), used by both coordinators, the gateway registry and
+  the local demo coordinator. Both modes are stored with the repo config at init, so a journal
+  replayed against the stored config reproduces them.
+- `.weft/bin/weft negotiate | claim | inbox` act as the agent the checkout's config names (its
+  token is that agent's): state files now record the agent and change of their WCP session, the
+  command uses this agent's newest session, and refuses (pointing at `--session <id>|new`) when
+  the checkout's sessions are another agent's (adapters installed for different agents in one
+  checkout). `npx @celador/weft init` installs every harness with one agent id, so it is unchanged.

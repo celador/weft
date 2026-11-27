@@ -288,10 +288,14 @@ cd <checkout>
 - Soft also means another agent's overlapping edit only gets a `claim_wait` warning and goes
   through. `--firm` sends `firm: true`, which turns that warning into an error: the
   coordinator rejects the edit and the other agent's adapter denies it (in its default `enforce`
-  mode; an `--mode advise` install only shows "this edit would be blocked"), and its stop gate
-  stays shut until the error clears. A firm claim also refuses others' claims on the keys; a
-  soft one never does. On a repo created with `enforcement: "block"` a soft claim already
-  rejects overlapping edits (not claims).
+  mode; an `--mode advise` install only shows "this edit would be blocked"). That denial is a
+  wait, not an open conflict: the other agent's stop and commits are not held by it, and it can
+  work elsewhere, negotiate, or escalate naming the key (`weft negotiate escalate "<reason>" --keys
+  <key>`). A firm claim also refuses others' claims on the keys; a soft one never does.
+- On a repo created with `enforcement: "block"` a soft claim already rejects other agents'
+  overlapping edits. Claims are never refused by the mode: an overlapping claim goes through
+  with a `claim_wait` warning that names the holder. And an agent's own claim never blocks its
+  other task's edit there (under the default `advise` that overlap still shows the warning).
 - Firm protects against agents that are *junior* to the claimer (under the default `wound-wait`
   policy): the same or lower task priority, started after it. A higher-priority (or older) agent
   still overrides it, and the claimer gets `claim_wounded` (protocol §7.1, §7.5).
@@ -300,6 +304,11 @@ cd <checkout>
   run `weft claim` again to extend it, which shows up in the log.
 - The same command works as `npx @celador/weft claim …` from anywhere in the checkout, and
   agents on the MCP server use `weft_claim` with `{"keys": […], "firm": true}`.
+- `weft claim`, `weft negotiate` and `weft inbox` act in the newest session of the agent this
+  checkout is set up for. When adapters for different agents share one checkout and the newest
+  session is the other agent's, they refuse instead of acting in it (the claim would land on that
+  agent's change): pass `--session <id>` (a file name under `.weft/state/`, without `.json`) or
+  `--session new` to open a new session of your own change.
 
 Repos created before claim leases existed keep the old 30-minute claim TTL until the operator
 switches them over (this is recorded in the repo's journal, so its history replays unchanged):

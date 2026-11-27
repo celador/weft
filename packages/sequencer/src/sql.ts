@@ -89,6 +89,12 @@ export const DDL: string[] = [
      change_id TEXT NOT NULL, key TEXT NOT NULL, ord INTEGER NOT NULL, origin TEXT NOT NULL,
      seq INTEGER NOT NULL, diagnostic TEXT NOT NULL,
      PRIMARY KEY (change_id, key))`,
+  // Owner notices already delivered under `conflicts: continue` (spec §8.4): one row per
+  // (owner change, noticeKey = editor + symbol + causing seq). No version bump: a database
+  // from before starts empty, so at most one notice per conflict is repeated once.
+  `CREATE TABLE IF NOT EXISTS owner_notices (
+     change_id TEXT NOT NULL, notice TEXT NOT NULL,
+     PRIMARY KEY (change_id, notice))`,
   `CREATE TABLE IF NOT EXISTS idempotency (
      session TEXT NOT NULL, key TEXT NOT NULL, at INTEGER NOT NULL, verdict TEXT NOT NULL,
      PRIMARY KEY (session, key))`,

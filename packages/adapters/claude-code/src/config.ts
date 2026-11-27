@@ -4,6 +4,7 @@
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
+import { pickCliSession, type CliSessionPick, type CliSessionState } from "@weft/protocol";
 import { editPath } from "./edits";
 import type { HookInput } from "./hooks";
 
@@ -304,6 +305,9 @@ export type PendingEdit = {
 export type SessionState = {
   claudeSession: string;
   wcpSession?: string;
+  /** Agent and change `wcpSession` was opened for (set at hello), so another agent's CLI never acts in it (#18). */
+  agent?: string;
+  change?: string;
   /** base_seq: last delivered_through whose content reached the model (spec §5.2). */
   base: number;
   /** Highest inbox id injected into the model (acked on the next request, spec §5.4). */
@@ -350,6 +354,38 @@ export function writeState(root: string, state: SessionState): void {
   writeFileSync(tmp, JSON.stringify(state, null, 2));
   renameSync(tmp, path);
   writeFileSync(join(stateDir(root), "current"), state.claudeSession);
+}
+
+/**
+ * The session `.weft/bin/weft negotiate | claim | inbox` acts in for `agent` (protocol
+ * cli-session.ts): never another agent's session in a shared checkout (#18). Reads every
+ * adapter's state files here (their session id is under `claudeSession` or `codexSession`).
+ */
+export function cliSession(root: string, agent: string, change: string, explicit?: string): CliSessionPick {
+  const dir = stateDir(root);
+  let marker: string | undefined;
+  try {
+    marker = readFileSync(join(dir, "current"), "utf8").trim() || undefined;
+  } catch {
+    /* no marker */
+  }
+  const states: CliSessionState[] = [];
+  let files: string[] = [];
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+  } catch {
+    /* no state yet */
+  }
+  for (const f of files) {
+    try {
+      const raw = JSON.parse(readFileSync(join(dir, f), "utf8")) as Record<string, unknown>;
+      const id = typeof raw.claudeSession === "string" ? raw.claudeSession : typeof raw.codexSession === "string" ? raw.codexSession : f.replace(/\.json$/, "");
+      states.push({ session: id, ...(typeof raw.agent === "string" ? { agent: raw.agent } : {}), mtimeMs: statSync(join(dir, f)).mtimeMs });
+    } catch {
+      /* a file being written or not a state file */
+    }
+  }
+  return pickCliSession({ agent, change, ...(marker ? { marker } : {}), states, ...(explicit !== undefined ? { explicit } : {}) });
 }
 
 /** Most recently active Claude session in this checkout (used by git hooks). */

@@ -264,6 +264,8 @@ export class ClaudeAdapter {
     // Claude conversation actually saw) is kept so stale knowledge stays visible to R1/R2.
     st.base = st.wcpSession === undefined && st.base === 0 ? welcome.delivered_through : Math.min(st.base || welcome.delivered_through, welcome.delivered_through);
     st.wcpSession = welcome.session;
+    st.agent = config.agent;
+    st.change = config.change;
     this.noteLimits(st, welcome);
     st.acked = 0;
     st.lastContact = this.now();

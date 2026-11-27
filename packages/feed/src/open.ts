@@ -13,6 +13,9 @@
 //      coordinator (§6.5, #17);
 //   4. a `revert` of the change's land does not reopen anything (a new change redoes it).
 //
+// A `claim_wait` is a wait for the claim's holder, not a conflict in the change's code, so the
+// coordinator never opens it (§6.5, #18): here it is advice even on a rejected record.
+//
 // Warnings and infos on accepted records follow the same rules: they say "this area moved
 // under you" until the change touches the area again or lands. `agent_paused` is not a
 // conflict (the human paused the agent) and is never shown as a squiggle.
@@ -58,7 +61,8 @@ export function openSquiggles(source: FeedLog | FeedEvent[], o: OpenOptions = {}
         if (NOT_A_CONFLICT.has(d.code)) return;
         const q = squiggleOf(e, d, i);
         if (o.maxAgeMs !== undefined && now - q.date > o.maxAgeMs) return;
-        const origin = e.status === "rejected" ? (e.mode === "check" ? "check" : "commit") : d.code === "claim_wounded" ? "push" : "advice";
+        // A claim_wait is a wait for the holder, never an open error, even on a rejected edit (§6.5, #18).
+        const origin = d.code === "claim_wait" ? "advice" : e.status === "rejected" ? (e.mode === "check" ? "check" : "commit") : d.code === "claim_wounded" ? "push" : "advice";
         for (const later of list.slice(idx + 1)) {
           if (later.status !== "accepted") continue;
           if (later.kind === "land") return;
