@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { EDIT_BUDGET_MS, fastestCpuMs } from "./budget.js";
 import { analyzeSource, languageFor, treeSitterLanguageFor } from "./index.js";
 
 // A small C project: the contract lives in include/pricing.h, the code in src/.
@@ -103,16 +104,6 @@ const exists = (rel: string) => rel in files;
 const read = (rel: string) => files[rel];
 const run = (path: string, before: string | null, after: string | null, opts = { exists, read }) =>
   analyzeSource({ path, before, after }, opts);
-/** Fastest of three runs, in ms: the cost of the analysis, not of a busy machine's scheduler. */
-const bestOf3 = async (f: () => Promise<unknown>): Promise<number> => {
-  let best = Infinity;
-  for (let i = 0; i < 3; i++) {
-    const t = performance.now();
-    await f();
-    best = Math.min(best, performance.now() - t);
-  }
-  return best;
-};
 const writes = async (path: string, before: string, after: string) =>
   (await run(path, before, after)).writes.map((w) => `${w.kind} ${w.key}`);
 
@@ -214,12 +205,12 @@ describe("c (tree-sitter backend)", () => {
     });
   });
 
-  it("stays inside the edit-time budget (< 300 ms for a 2,000-line file, warm)", async () => {
+  it("stays inside the edit-time budget (< 300 ms CPU for a 2,000-line file, warm)", async () => {
     const unit = PRICING_C.replace('#include <stdio.h>\n#include "pricing.h"\n', "");
     const big = `#include "pricing.h"\n` + Array.from({ length: 155 }, (_, i) => unit.replaceAll("calc_total", `calc_${i}`).replaceAll("line", `line_${i}`).replaceAll("rounding", `rounding_${i}`).replaceAll("format_price", `fmt_${i}`)).join("\n");
     expect(big.split("\n").length).toBeGreaterThanOrEqual(2000);
     await run("src/pricing.c", big, big);
-    expect(await bestOf3(() => run("src/pricing.c", big, big.replace("int calc_7(const Item *items, int n)", "int calc_7(const Item *items, int n, int x)")))).toBeLessThan(300);
+    expect(await fastestCpuMs(() => run("src/pricing.c", big, big.replace("int calc_7(const Item *items, int n)", "int calc_7(const Item *items, int n, int x)")))).toBeLessThan(EDIT_BUDGET_MS);
   });
 });
 
@@ -290,11 +281,11 @@ describe("cpp (tree-sitter backend)", () => {
     ]);
   });
 
-  it("stays inside the edit-time budget (< 300 ms for a 2,000-line file, warm)", async () => {
+  it("stays inside the edit-time budget (< 300 ms CPU for a 2,000-line file, warm)", async () => {
     const unit = CART_HPP.replace("#pragma once\n#include <vector>\n#include \"pricing.h\"\n", "");
     const big = Array.from({ length: 72 }, (_, i) => unit.replaceAll("shop", `shop${i}`)).join("\n");
     expect(big.split("\n").length).toBeGreaterThanOrEqual(2000);
     await run("include/big.hpp", big, big);
-    expect(await bestOf3(() => run("include/big.hpp", big, big.replace("namespace shop7 {\n\nusing Money = long;", "namespace shop7 {\n\nusing Money = double;")))).toBeLessThan(300);
+    expect(await fastestCpuMs(() => run("include/big.hpp", big, big.replace("namespace shop7 {\n\nusing Money = long;", "namespace shop7 {\n\nusing Money = double;")))).toBeLessThan(EDIT_BUDGET_MS);
   });
 });
