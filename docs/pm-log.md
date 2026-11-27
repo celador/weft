@@ -412,3 +412,8 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-11-27 12:50 — Go-live resumed on John's yes
 - John said yes to the live prices (approved 2026-11-17: Pro $12/$98, License $29/$58) and to shipping now, npm publish included. Recreated wt/launch-go-live at 9e29a14 (ref was lost in cleanup; commits d791219, 134a027, 9e29a14 intact) and its worktree; unblocked + dispatched t_52c6e0ad with a resume note: merge main, gate, land, publish @celador/weft 0.5.0, recheck site, live verification without payment, record.
 - Security impact: none (board ops).
+
+## 2026-11-27 13:40 — Go-live landed; npm publish waits on John's npm sign-in
+- t_52c6e0ad run 4: main merged into wt/launch-go-live, gate green, landed 69e11a9 (CI Gate green), weft-hosted redeployed (6a4fe01b), live checks OK (billing enabled, unsigned webhook 400, anonymous space create 403, weft.mx shows $12/$98 + $29/$58). Blocked on npm publish: npm session expired (`npm whoami` E401 here; mini unreachable; no token in ~/.npmrc usable). block_loop moved the card to triage; left there until John signs in to npmjs.com (account celador), then PM unblocks. Reported to John once.
+- t_be804fb4 stays unmerged by design.
+- Security impact: none (board ops).
