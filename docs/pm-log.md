@@ -392,3 +392,9 @@ Append-only. One dated entry per heartbeat that changed something.
 - #18 closes manually once both t_66780d00 and t_bc837869 have landed (commits say Refs #18).
 
 - 2026-11-26: carded revert history for agents (t_f8bc12a1, after #3 t_dba80921): weft_history MCP tool + info-level "previously reverted" note at edit time, derived from the log; answers an inbound question (ValorBrain DevRel) without an outside memory service.
+
+## 2026-11-26 21:40 — Landed 9 cards (Omer's issues #3 #8 #10 #11 #15 #17 + revert history + 3 coordinator text fixes)
+- Merged into main via integration branch (ff to 2193a7c): wt/issue-17-conflict-bypass (t_1f6e94b5), wt/issue-11-adapter-routing (t_7016c4d3, contains wt/issue-8-10-subagent-gates t_bc837869), wt/issue-15-no-adapt-text (t_38695084), wt/revert-history (t_f8bc12a1, contains wt/issue-3-firm-claim t_dba80921), wt/t_793c29e1, wt/t_707e96e8 (contains t_2225752e).
+- Conflicts resolved by PM (all unions): design.md / wcp-v0.md update sections kept from both sides; protocol index.ts exports changeOwnedError + NOT_IN_WORKSPACE (#17 removed RELEASABLE) + #15's advice constants; Hermes gate-refusal text = #15's OPEN_ERROR_ADVICE + #17's "errors stay open" retreat wording; usage/header lines carry both `--by-path` and `claim`; mcp server imports history helpers + OPEN_ERROR_ADVICE.
+- Gate on the merged tree: typecheck clean, `pnpm -r --no-bail test` GATE_EXIT 0 (all packages; gateway 184+48+17, sequencer 182, protocol 193, claude-code 195, codex 36 incl. new claim-cli), Hermes Python 220 OK. Weft lands #3535-#3543. GitHub auto-closed #3 #8 #10 #11 #15 #17; #18 closes after t_66780d00. Worktrees + branches removed; wt/issue-17-conflict-bypass kept (parent of running t_66780d00/t_fc67c5fc).
+- Security impact: tighter (release/bye/hello can no longer clear or bypass open errors; hello for another agent's change is 403; history read limited to the repo's agent tokens).
