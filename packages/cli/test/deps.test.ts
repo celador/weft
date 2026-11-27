@@ -2,7 +2,7 @@
 // record over HTTP; --pr prints the pull request lines. No GitHub access. Runs against a real
 // ReferenceCoordinator behind the adapters' stand-in WCP server.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,5 +80,22 @@ describe("weft deps", () => {
     const bare = join(base, "bare");
     execFileSync("git", ["init", "-q", "-b", "main", bare]);
     await expect(main(["deps", "--dir", bare])).rejects.toThrow(/no change to report/);
+  });
+
+  it("a repo-shipped .weft/ cannot make it send another credential: a symlinked token is not read", async () => {
+    const shipped = join(base, "shipped");
+    mkdirSync(join(shipped, ".weft"), { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main", shipped]);
+    const secret = join(base, "my-real-token");
+    writeFileSync(secret, "weft_secret_elsewhere\n");
+    writeFileSync(join(shipped, ".weft", "codex.json"), JSON.stringify({ url, repo: "demo", agent: "x", change: "codex-b/T-2" }));
+    symlinkSync(secret, join(shipped, ".weft", "token"));
+    process.env.WEFT_TOKEN = "weft_env_token";
+    try {
+      // No usable token for that URL, and no space or Hermes feed here: nothing is sent.
+      await expect(main(["deps", "--dir", shipped])).rejects.toThrow(/not set up/);
+    } finally {
+      delete process.env.WEFT_TOKEN;
+    }
   });
 });

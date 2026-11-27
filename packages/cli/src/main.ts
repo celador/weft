@@ -25,7 +25,7 @@
 //   weft members [revoke <id|handle>|--all]   (owner) who joined; remove one or all (their keys stop working)
 import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { dependencyText } from "@weft/protocol/deps";
 import type { Dependencies } from "@weft/protocol";
@@ -754,16 +754,20 @@ async function feed(o: Opts): Promise<void> {
 
 /**
  * This checkout's agent, from its adapter config (`.weft/<harness>.json`, any harness): the gateway,
- * repo and change it reports, and its token (WEFT_TOKEN, else `.weft/token`; a config's own
- * `tokenFile` is not followed, so a repo-shipped config cannot point the CLI at another file).
+ * repo and change it reports, and its token from `.weft/token`. The token is sent only to the URL of
+ * the config next to it, so it must be a regular file under a real `.weft/` directory: a repo that
+ * ships a `.weft/` (config URL of its choosing plus a symlinked token, or a `tokenFile` pointing
+ * elsewhere) cannot make `weft deps` send another credential there. WEFT_TOKEN is not used here for
+ * the same reason.
  */
 function checkoutAgent(root: string): { url?: string; repo: string; change: string; token?: string } | undefined {
   const dir = join(root, ".weft");
-  if (!existsSync(dir)) return undefined;
+  if (!existsSync(dir) || !lstatSync(dir).isDirectory()) return undefined;
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".json")).sort()) {
     const j = readJson<{ url?: unknown; repo?: unknown; change?: unknown } | null>(join(dir, f), null);
     if (!j || typeof j.repo !== "string" || typeof j.change !== "string" || !j.repo || !j.change) continue;
-    const token = process.env.WEFT_TOKEN?.trim() || readSecret(join(dir, "token"));
+    const tokPath = join(dir, "token");
+    const token = existsSync(tokPath) && lstatSync(tokPath).isFile() ? readSecret(tokPath) : undefined;
     return { ...(typeof j.url === "string" && j.url ? { url: j.url.replace(/\/+$/, "").replace(/\/v1$/, "") } : {}), repo: j.repo, change: j.change, ...(token ? { token } : {}) };
   }
   return undefined;
