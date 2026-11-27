@@ -19,9 +19,9 @@ export {
   type Agreement,
   type NegotiateCommand,
 } from "./negotiation";
-export { WcpProtocolError, ERROR_STATUS, closeCode } from "./errors";
+export { WcpProtocolError, ERROR_STATUS, closeCode, changeOwnedError } from "./errors";
 export { ownedElsewhere, ownerNotice, sameNotice, type ConflictMode } from "./ownership";
-export { contractError, RELEASABLE } from "./contract";
+export { contractError, NOT_IN_WORKSPACE } from "./contract";
 export { encodeCursor, decodeCursor, mergeFeed, compareFeed, type FeedCursor } from "./feed";
 export { ReferenceCoordinator, listView, mergeWriteKind, UNSEEN_NOTE, type CoordinatorOptions } from "./reference";
 export {

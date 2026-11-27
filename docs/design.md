@@ -263,7 +263,7 @@ WCP v0.1 is specified in `docs/protocol/wcp-v0.md` (normative; implemented by `p
 - Pre-edit validation uses `submit mode:"check"` (spec §5.3), not an `intent` event: `intent` is never validated (§4.2).
 - **The squiggle must carry the other side's code.** In-flight edits live in the other agent's fork, so "read the new signature" is impossible from the receiver's checkout. The adapter fetches the causing event (`GET /events/{seq}`; agent tokens get `observe` scope) and quotes its hunks. Proposal: the coordinator could attach the relevant hunk to `stale_assumption`/`contract_changed` diagnostics itself (spec v0.2).
 - **base_seq advances only when coordinator text reaches the model**, to that response's `delivered_through`. Advancing on silent responses would let an agent that read a file before a signature change submit with a base past it, and R2 would miss the stale call (the demo collision). Remaining hole (protocol, not adapter): keys an agent starts using *after* a context injection that advanced its base past an unrelated-at-the-time signature change are not flagged; a per-key/per-file knowledge base would close it (proposal for v0.2).
-- Open errors are per WCP session: an adapter must not `bye` a session with open errors at harness exit, or they are silently forgiven. The Claude adapter keeps such sessions alive (detached heartbeat) so the pre-commit gate and resumed conversations still see them.
+- Open errors are per WCP session: an adapter must not `bye` a session with open errors at harness exit, or they are silently forgiven. The Claude adapter keeps such sessions alive (detached heartbeat) so the pre-commit gate and resumed conversations still see them. (Superseded: since 2026-10-09 open errors live on the change and `bye` forgives nothing, wcp-v0 §6.5; the session is still kept alive because the git pre-commit gate asks through it.)
 - Change id = the `Change-Id` trailer (`I` + 40 hex), generated per checkout+task at install.
 
 ## Update 2026-10-04 (B6, Artifacts integration)
@@ -593,3 +593,25 @@ WCP v0.1 is specified in `docs/protocol/wcp-v0.md` (normative; implemented by `p
 - Residual: a program that writes into a repo the conversation never touched, without naming
   that repo's folder anywhere in the command, is not captured. Cost: 4-12 worktrees snapshot in
   about 35 ms before and 35 ms after an opaque call (parallel `git status`).
+
+## Update 2026-11-26 (issue #17, conflicts cannot be cleared or bypassed)
+- `release` never clears an open error (wcp-v0 §6.5). Before, an agent's release cleared
+  `check`- and `push`-origin entries on the released keys. A `check` origin only says the
+  coordinator denied the edit, not that the code stayed out of the workspace (an agent can
+  rewrite the file from the shell after a denied edit tool call), and a wounded change's
+  accepted code is in its workspace. Only an accepted edit touching the key, a landing, a
+  transfer/share or a merge clears an entry. A release still gives up the named claims.
+- `bye` stays allowed and clears nothing (already true since 2026-10-09); the next `hello`
+  of the change gets its open errors redelivered.
+- A change is bound to the agent whose `hello` created it: a `hello` naming another agent's
+  change is `403 forbidden` (`details.change`) and appends nothing (§3, §8.2). Change ids
+  default to `<agent>/<task>` and are guessable, and a joined session would receive the
+  change's open errors, owed negotiations and owner notices.
+- Adapter escape hatches stay local and visible: the Hermes adapter's retreat after repeated
+  gate refusals still records a `release` (reason `abandoned`) and lets the action through,
+  and the Claude Code / Codex stop gates still give up after their refusal limit, but the
+  errors stay open on the change, in the feed and in the coordinator's gates. The feed's
+  squiggles (`packages/feed` `openSquiggles`) follow the same rule: a release clears only
+  warnings/infos on accepted records, never an error.
+- Scenario `conflict-bypass` (both coordinators and the gateway DO) checks the commit gate
+  after each of the three submissions.

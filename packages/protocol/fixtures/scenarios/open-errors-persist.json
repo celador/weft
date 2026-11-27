@@ -1,6 +1,6 @@
 {
   "name": "open-errors-persist",
-  "description": "§6.5 (audit of 'can an agent clear its open errors by release, bye or reconnect'): open errors belong to the change; release (all or by key), an intent or claim naming the key, bye + hello and session expiry + hello leave them open (and a new session gets them redelivered). Only an accepted edit, or a release of an error whose edit never reached the workspace (check) or of a wound (push), clears one. A signature change to a symbol the change already uses (origin contract) is not cleared by release, and a later check-mode rejection on the same key does not turn it into a releasable one.",
+  "description": "§6.5 (audit of 'can an agent clear its open errors by release, bye or reconnect', #17): open errors belong to the change; release (all or by key), an intent or claim naming the key, bye + hello and session expiry + hello leave them open (and a new session gets them redelivered). Only an accepted edit that touches the key clears one: a release clears nothing, whatever the origin — a wound (push), a denied check-mode edit (check), a commit-mode rejection (commit) or a signature change to a symbol the change already uses (contract).",
   "covers": [
     "6.5",
     "8.2",
@@ -552,7 +552,13 @@
       "as": "A",
       "gate": "stop",
       "expect": {
-        "allow": true
+        "allow": false,
+        "open_errors": [
+          {
+            "code": "claim_wounded",
+            "symbol": "src/auth/session.ts#refreshToken"
+          }
+        ]
       }
     },
     {
@@ -575,6 +581,15 @@
       "expect": {
         "verdict": "accept",
         "seq": 19
+      }
+    },
+    {
+      "op": "gate",
+      "as": "A",
+      "gate": "commit",
+      "expect": {
+        "allow": true,
+        "open_errors": []
       }
     },
     {
@@ -784,9 +799,58 @@
     {
       "op": "gate",
       "as": "B",
-      "gate": "stop",
+      "gate": "commit",
       "expect": {
-        "allow": true
+        "allow": false,
+        "open_errors": [
+          {
+            "code": "stale_assumption",
+            "symbol": "src/auth/session.ts#logout"
+          }
+        ]
+      }
+    },
+    {
+      "op": "drain",
+      "as": "B",
+      "ack": "last",
+      "expect": {
+        "delivered_through": 25
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 25,
+          "writes": [
+            {
+              "key": "src/api/client.ts#fetchWithAuth",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "src/auth/session.ts#logout"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 26,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "commit",
+      "expect": {
+        "allow": true,
+        "open_errors": []
       }
     }
   ]

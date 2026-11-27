@@ -49,3 +49,12 @@ export class WcpProtocolError extends Error {
     };
   }
 }
+
+/**
+ * A `hello` naming an existing change that another agent created (spec §8.2, #17): a change is
+ * bound to its creator, so a guessed id cannot join it, take over its open errors and dues, or
+ * receive its owner notices. Same `403 forbidden` as a token binding mismatch (§3).
+ */
+export function changeOwnedError(change: string): WcpProtocolError {
+  return new WcpProtocolError("forbidden", `change ${change} belongs to another agent; a hello may only join a change its own agent created`, { change });
+}
