@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ReferenceCoordinator, parseNegotiate } from "@weft/protocol";
+import { BLOCKED_EDIT_ADVICE, ERROR_RULE, OPEN_ERROR_ADVICE, ReferenceCoordinator, parseNegotiate } from "@weft/protocol";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { analyzeChanges, unifiedDiff } from "../src/analysis";
@@ -183,6 +183,9 @@ describe("Codex negotiation from the shell (spec §7.4, §8.4)", () => {
     expect(b1.applied).toBe(false);
     expect(b1.pre.hookSpecificOutput.permissionDecisionReason).toContain("/w/b/.weft/bin/weft negotiate propose overload");
     expect(b1.pre.hookSpecificOutput.permissionDecisionReason).toContain("--to codex-a --keys src/pricing.ts#calcTotal --wait 240");
+    // a stale_assumption's options defer to its suggestion (#15): no retreat/escalate around the owner
+    expect(b1.pre.hookSpecificOutput.permissionDecisionReason).toContain("Your options: do what the suggestion says");
+    expect(b1.pre.hookSpecificOutput.permissionDecisionReason).not.toContain("negotiate escalate");
 
     const sent = await B.negotiate("sb", parseNegotiate(["propose", "overload", "keep calcTotal(items)"]));
     expect(sent.code).toBe(0);
@@ -220,6 +223,40 @@ describe("Codex negotiation from the shell (spec §7.4, §8.4)", () => {
     expect(sent.text).toContain("[weft] not waiting 240s for a reply");
     expect(sent.text).not.toContain("no reply after");
   });
+});
+
+describe("Codex text agrees with the coordinator's suggestion in both conflicts modes (#15)", () => {
+  for (const conflicts of ["hold", "continue"] as const) {
+    it(`${conflicts}: deny, stop, commit and preamble text defer to the suggestion`, async () => {
+      const coord = new ReferenceCoordinator({ repo: "demo", conflicts });
+      const t = refTransport(coord);
+      const rootA = checkout(`m15a-${conflicts}`);
+      const rootB = checkout(`m15b-${conflicts}`);
+      const A = adapter(rootA, "codex-a", "T-1", t, "/w/a/.weft/bin/weft");
+      const B = adapter(rootB, "codex-b", "T-2", t, "/w/b/.weft/bin/weft");
+      const start = (await B.handle(hook("sb", rootB, { hook_event_name: "SessionStart", source: "startup" }))) as any;
+      expect(JSON.stringify(start)).toContain(JSON.stringify(ERROR_RULE).slice(1, -1));
+      await A.handle(hook("sa", rootA, { hook_event_name: "SessionStart", source: "startup" }));
+      const sig = ["*** Begin Patch", "*** Update File: src/pricing.ts", "@@", " export type Item = { price: number; qty: number };", "+export type PriceOptions = { taxRate: number };", " ",
+        "-export function calcTotal(items: Item[]): number {", "-  return items.reduce((sum, i) => sum + i.price * i.qty, 0);",
+        "+export function calcTotal(items: Item[], opts: PriceOptions): number {", "+  const net = items.reduce((sum, i) => sum + i.price * i.qty, 0);", "+  return net * (1 + opts.taxRate);", " }", "*** End Patch"].join("\n");
+      expect((await applyPatch(A, "sa", rootA, "a1", sig)).applied).toBe(true);
+      const stale = ["*** Begin Patch", "*** Update File: src/cart.ts", "@@", "-  return `${items.length} items`;", "+  return `${items.length} items, total ${calcTotal(items)}`;", "*** End Patch"].join("\n");
+      const b1 = await applyPatch(B, "sb", rootB, "b1", stale);
+      expect(b1.applied).toBe(false);
+      const deny: string = b1.pre.hookSpecificOutput.permissionDecisionReason;
+      expect(deny).toContain(conflicts === "continue" ? "codex-a owns the conflict" : "update this call site, or negotiate with codex-a");
+      expect(deny).toContain(BLOCKED_EDIT_ADVICE);
+      for (const adopt of ["Adapt your code", "retreat (rework without that code)", "negotiate escalate"]) expect(deny).not.toContain(adopt);
+      const stop = (await B.handle(hook("sb", rootB, { hook_event_name: "Stop" }))) as any;
+      expect(stop.decision).toBe("block");
+      expect(stop.reason).toContain(OPEN_ERROR_ADVICE);
+      const commit = (await B.handle(hook("sb", rootB, { tool_name: "Bash", tool_input: { command: "git commit -m x" }, tool_use_id: "exec-c1" }))) as any;
+      expect(commit.hookSpecificOutput.permissionDecisionReason).toContain(OPEN_ERROR_ADVICE);
+      expect(await B.commitGate("sb")).toContain(OPEN_ERROR_ADVICE);
+      for (const text of [stop.reason, commit.hookSpecificOutput.permissionDecisionReason]) expect(text).not.toContain("re-editing the cited code against the change it names");
+    });
+  }
 });
 
 describe("capability declaration", () => {

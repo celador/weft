@@ -34,7 +34,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { maxClaimTtl, notWaiting, type AgentRef, type Capabilities, type ClaimCommand, type Diagnostic, type EventDraft, type EventRecord, type InboxItem, type NegotiateCommand, type NegotiationDue, type Verdict, type Welcome } from "@weft/protocol";
+import { BLOCKED_EDIT_ADVICE, ERROR_RULE, maxClaimTtl, notWaiting, OPEN_ERROR_ADVICE, type AgentRef, type Capabilities, type ClaimCommand, type Diagnostic, type EventDraft, type EventRecord, type InboxItem, type NegotiateCommand, type NegotiationDue, type Verdict, type Welcome } from "@weft/protocol";
 import { WcpError, PROTOCOL, type Transport } from "./client";
 import { appendAdapterLog, readState, stateDir, withLock, writeState, type Loaded, type PendingEdit, type SessionState } from "./config";
 import type { BeatResult } from "./heartbeat";
@@ -503,7 +503,7 @@ export class ClaudeAdapter {
     const lines = [
       `[weft] This checkout is coordinated by Weft (repo ${config.repo}; you are agent ${config.agent}, task ${config.task.id}${config.task.title ? ` "${config.task.title}"` : ""}, change ${config.change}). ` +
         `Other agents edit the same codebase concurrently in their own checkouts. Every edit you make is checked against their work: ` +
-        `lines like "[weft error] <code> <file>:<line>: …" are multi-agent compiler diagnostics. An edit with errors is blocked, and you cannot finish while errors are open — fix the cited code (or retreat from it) instead of retrying the same edit.` +
+        `lines like "[weft error] <code> <file>:<line>: …" are multi-agent compiler diagnostics. ${ERROR_RULE}` +
         (this.deps.cli
           ? ` When another agent's change is in your way you may also negotiate with it (\`${this.deps.cli} negotiate propose|accept|reject|counter|escalate …\`, see \`${this.deps.cli} negotiate --help\`); proposals addressed to you arrive as "[weft negotiation]" lines and must be answered before you finish. \`${this.deps.cli} inbox\` shows what is waiting for you.`
           : ""),
@@ -556,7 +556,7 @@ export class ClaudeAdapter {
       this.delivered(st, text, verdict.delivered_through, verdict.inbox);
       const reason =
         `[weft] Edit to ${this.prefix + t.rel} blocked: it conflicts with another agent's change (Weft edit-time coordination, log #${verdict.seq}).\n${text}\n` +
-        `Do not retry the same edit. Adapt your code to the change described above (or work around it), then edit again — your next attempt is checked against the current log.`;
+        BLOCKED_EDIT_ADVICE;
       return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } };
     }
     if (!text) return undefined;
@@ -587,7 +587,7 @@ export class ClaudeAdapter {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "deny",
-        permissionDecisionReason: `[weft] git commit refused by the Weft commit gate: ${result.open_errors.length} open error(s).\n${errors}\nResolve them (an accepted edit that touches the cited symbol clears it), then commit.`,
+        permissionDecisionReason: `[weft] git commit refused by the Weft commit gate: ${result.open_errors.length} open error(s).\n${errors}\n${OPEN_ERROR_ADVICE} Commit once they are clear.`,
       },
     };
   }
@@ -767,7 +767,7 @@ export class ClaudeAdapter {
         ]
           .filter(Boolean)
           .join(", ")}.\n${text}\n` +
-        (result.open_errors.length ? `Resolve each error by re-editing the cited code against the change it names (an accepted edit touching the symbol clears it), or retreat from that code.` : "") +
+        (result.open_errors.length ? OPEN_ERROR_ADVICE : "") +
         (dues.length ? `${result.open_errors.length ? " " : ""}Answer each proposal and make every edit you agreed to.` : ""),
     };
   }
@@ -1015,7 +1015,7 @@ export class ClaudeAdapter {
       try {
         const result = await this.call(st, (s) => this.deps.transport.gate(s, "commit"));
         if (result.allow) return undefined;
-        return `weft: commit refused — ${result.open_errors.length} open error(s):\n${await renderForModel(result.open_errors, [], this.ctx())}`;
+        return `weft: commit refused — ${result.open_errors.length} open error(s):\n${await renderForModel(result.open_errors, [], this.ctx())}\n${OPEN_ERROR_ADVICE}`;
       } catch (err) {
         this.log(`pre-commit gate failed open: ${String(err)}`);
         return undefined;

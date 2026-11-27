@@ -115,15 +115,34 @@ export function quoteDiff(record: EventRecord, symbol: string): string | undefin
 
 /** How to exercise the loser's options from the shell (spec §7.2 options, §7.4, §7.6). */
 export function optionsHint(cli: string, other: string, keys: string[] = []): string {
+  return (
+    `  ↳ Your options: retreat (rework without that code) | wait (until ${other} lands or releases it) | ` +
+    `negotiate: \`${cli} negotiate propose overload "<what ${other} should keep working for you>"${target(other, keys)} --wait 240\` (terms: overload | transfer | share | sequence | merge_tasks | other; it is delivered to ${other} and you get the reply) | ` +
+    `escalate: \`${cli} negotiate escalate "<why>"${target(other, keys)}\` (the coordinator merges your two tasks).`
+  );
+}
+
+/**
+ * The options for a `stale_assumption` (issue #15): they must agree with the error's suggestion,
+ * which depends on the repo's `conflicts` mode (spec §8.4) the adapter does not know. Under `hold`
+ * it says to update the call site or negotiate; under `continue` it says the other agent owns the
+ * conflict, so retreating (working around it) or escalating (absorbing their task) is not offered.
+ * A proposal is the owner-facing report: the owner decides, and only `overload` terms bind it to
+ * make the edit (stop gate `due:"fulfil"`, §8.4).
+ */
+export function staleOptionsHint(cli: string, other: string, keys: string[] = []): string {
+  return (
+    `  ↳ Your options: do what the suggestion says (update this call site if it tells you to; if it says ${other} owns the conflict, stop working on that code and report it — do not adapt to their change) | ` +
+    `negotiate: \`${cli} negotiate propose overload "<what ${other} should keep working for you>"${target(other, keys)} --wait 240\` (it asks ${other} to keep your call working; ${other} decides and you get the reply; other terms: transfer | share | sequence | merge_tasks | other).`
+  );
+}
+
+/** ` --to <agent> --keys <k,…>` for a hint command, leaving out anything that is not shell-safe. */
+function target(other: string, keys: string[]): string {
   // Name the counterpart and the symbols: after a pre-edit denial there is no open error for the
   // CLI to take them from, and a bare `negotiate propose` then fails ("no open conflict").
   const safe = [...new Set(keys)].filter((k) => SHELL_SAFE.test(k));
-  const target = SHELL_SAFE.test(other) ? ` --to ${other}${safe.length ? ` --keys ${safe.join(",")}` : ""}` : "";
-  return (
-    `  ↳ Your options: retreat (rework without that code) | wait (until ${other} lands or releases it) | ` +
-    `negotiate: \`${cli} negotiate propose overload "<what ${other} should keep working for you>"${target} --wait 240\` (terms: overload | transfer | share | sequence | merge_tasks | other; it is delivered to ${other} and you get the reply) | ` +
-    `escalate: \`${cli} negotiate escalate "<why>"${target}\` (the coordinator merges your two tasks).`
-  );
+  return SHELL_SAFE.test(other) ? ` --to ${other}${safe.length ? ` --keys ${safe.join(",")}` : ""}` : "";
 }
 
 /** Agent ids and symbol keys that can go into a shell command unquoted. */
@@ -197,11 +216,18 @@ export async function renderForModel(diagnostics: Diagnostic[], inbox: InboxItem
       }
     }
   }
-  // One options hint per conflicting agent (the loser decides what to do next).
+  // One options hint per conflicting agent and kind (the loser decides what to do next): claim
+  // conflicts get the §7.2 options, a stale_assumption gets options that defer to its suggestion.
   if (ctx.cli) {
     const losers = [...diagnostics, ...inbox.flatMap((i) => (i.diagnostic ? [i.diagnostic] : []))].filter((d) => d.severity === "error" && LOSER_CODES.has(d.code));
-    for (const other of new Set(losers.map((d) => d.caused_by_agent)))
-      push(optionsHint(ctx.cli, other, losers.filter((d) => d.caused_by_agent === other && d.symbol).map((d) => d.symbol)));
+    for (const other of new Set(losers.map((d) => d.caused_by_agent))) {
+      const mine = losers.filter((d) => d.caused_by_agent === other);
+      const keysOf = (ds: Diagnostic[]) => ds.filter((d) => d.symbol).map((d) => d.symbol);
+      const stale = mine.filter((d) => d.code === "stale_assumption");
+      const claims = mine.filter((d) => d.code !== "stale_assumption");
+      if (claims.length) push(optionsHint(ctx.cli, other, keysOf(claims)));
+      if (stale.length) push(staleOptionsHint(ctx.cli, other, keysOf(stale)));
+    }
   }
   return lines.join("\n");
 }

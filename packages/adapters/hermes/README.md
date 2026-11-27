@@ -42,6 +42,14 @@ paths). It also says whether this checkout already has the change. An unchanged 
 just blocked for `stale_assumption`/`stale_overwrite` is blocked once more, locally, with the same
 quote; a second unchanged retry goes to the coordinator (the agent's deliberate call, §5.2).
 
+Advice text (issue #15): the block, gate-refusal and `pre_verify` messages end with
+`BLOCKED_EDIT_ADVICE` / `OPEN_ERROR_ADVICE`, byte-identical to `@weft/protocol`'s (pinned by
+`src/advice-text.test.ts`). They defer to each error's suggestion, which carries the repo's
+`conflicts` mode: update the code under `hold`, stop and report to the owner when the suggestion
+says the other agent owns the conflict (`continue`). The plugin never tells an agent by itself to
+re-read and adapt to another agent's change; re-editing is what the suggestion asks for, or what
+the agent's own earlier edit needs.
+
 Identity: agent `hermes-<profile>` (one repo-scoped token per profile and repo), change
 `hermes-<profile>/<kanban task id>` (`adhoc-<session>` outside kanban), task title/priority read
 from the kanban DB (`HERMES_KANBAN_DB`) and used as `intent` / `summary_hint`.

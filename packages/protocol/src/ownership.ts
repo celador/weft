@@ -33,6 +33,33 @@ export function ownerNotice(d: Diagnostic, editor: string, kind: string): Diagno
   };
 }
 
+// ---- harness text about open errors (issue #15) ----
+//
+// What an adapter says around the coordinator's diagnostics (blocked edit, stop/commit gate
+// refusal, session preamble). The diagnostics' suggestions carry the repo's `conflicts` mode
+// (§8.4): under `hold` they say to update the code against the other agent's change, under
+// `continue` they say that agent owns the conflict and the hit agent stops and reports it. The
+// adapter does not know the mode, so its own text defers to the suggestion and never tells the
+// agent, by itself, to adapt to, rebase onto or work around another agent's change. Every harness
+// uses these strings (the Hermes plugin keeps byte-identical copies, pinned by its tests).
+
+/** After the rendered errors of a stop or commit gate refusal. */
+export const OPEN_ERROR_ADVICE =
+  "Do what each error's suggestion says. If it says another agent owns the conflict, stop working on that code and report it " +
+  "(negotiate with that agent, or say so in your task report): do not adapt your code to their change, rebase onto it or work around it to clear the error. " +
+  "Otherwise re-edit the cited code as the suggestion says (an accepted edit that touches the symbol clears the error), or retreat from that code.";
+
+/** After the rendered errors of a blocked (pre-edit denied) edit. */
+export const BLOCKED_EDIT_ADVICE =
+  "Do not retry the same edit. Do what each error's suggestion says. If it says another agent owns the conflict, leave this edit and report it " +
+  "(negotiate with that agent, or say so in your task report): do not adapt your code to their change or work around it. " +
+  "Otherwise change your code as the suggestion says, then edit again: your next attempt is checked against the current log.";
+
+/** The session preamble's one-line rule for `[weft error]` lines. */
+export const ERROR_RULE =
+  "An edit with errors is blocked, and you cannot finish or commit while errors are open. Do not retry the same edit: do what the error's suggestion says. " +
+  "When it says another agent owns the conflict, stop working on that code and report it instead of adapting to their change.";
+
 /** Two owner notices are the same when they name the same conflict (no repeat on each resubmission). */
 export function sameNotice(a: Diagnostic, b: Diagnostic): boolean {
   return a.code === b.code && a.symbol === b.symbol && a.caused_by_seq === b.caused_by_seq && a.message === b.message;

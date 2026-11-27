@@ -14,7 +14,7 @@
 // through one queue, so the watcher, the ticker and tool calls never interleave.
 import { watch, type FSWatcher } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { claimKeyError, type Capabilities, type Diagnostic, type EventPage, type EventRecord, type NegotiateCommand, type NegotiationTerms } from "@weft/protocol";
+import { claimKeyError, OPEN_ERROR_ADVICE, type Capabilities, type Diagnostic, type EventPage, type EventRecord, type NegotiateCommand, type NegotiationTerms } from "@weft/protocol";
 import { HttpTransport, WcpError } from "../../adapters/claude-code/src/client";
 import { readState, withLock, writeState, type Loaded } from "../../adapters/claude-code/src/config";
 import type { Host } from "../../adapters/claude-code/src/host";
@@ -45,7 +45,7 @@ export const CAPABILITIES: Capabilities = {
 export const INSTRUCTIONS = [
   "Weft coordinates this checkout with other coding agents editing the same codebase in their own checkouts.",
   "Before you edit shared code, call weft_check with the path and the new content (or a unified diff patch): it returns the other agents' conflicts as compiler-style diagnostics (\"[weft error] <code> <file>:<line>: …\").",
-  "If it reports an error, adapt your edit instead of making it as is. Every edit you make is reported to Weft anyway.",
+  "If it reports an error, do not make the edit as is: do what the error's suggestion says (when it says another agent owns the conflict, stop and report it instead of adapting to their change). Every edit you make is reported to Weft anyway.",
   "Before you say the work is done, call weft_gate (gate \"stop\"): resolve each open error and answer each negotiation it lists.",
   "Every weft_* result ends with what is waiting for you; read it. Use weft_claim to reserve symbols before a large change, weft_status to see who is editing what, weft_negotiate to answer or make proposals (hints like `weft_negotiate propose overload \"…\" --wait 240` mean: call weft_negotiate with action, kind, terms, wait).",
 ].join(" ");
@@ -504,7 +504,7 @@ export class WeftMcp {
     return {
       text:
         `[weft] gate ${gate}: NOT allowed — ${what || g.reason || "refused"}. You are not done yet.\n${[errors, owed].filter(Boolean).join("\n")}\n` +
-        (g.open_errors.length ? "Resolve each error by re-editing the cited code against the change it names (an accepted edit touching the symbol clears it), or retreat from that code. " : "") +
+        (g.open_errors.length ? `${OPEN_ERROR_ADVICE} ` : "") +
         (g.negotiations?.length ? "Answer each proposal (weft_negotiate) and make every edit you agreed to." : ""),
     };
   }
