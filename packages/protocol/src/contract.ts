@@ -4,8 +4,12 @@
 import type { Diagnostic, EventRecord, SymbolKey, WriteKind } from "./types";
 import { fileOf } from "./summary";
 
-/** Open-error origins a change's own `release` may clear (spec §6.5 rule 4). */
-export const RELEASABLE: readonly string[] = ["check", "push"];
+/**
+ * Open-error origins whose code never reached the workspace: a denied check, or a wound (spec §6.5).
+ * Informational only — no origin is releasable (#17) — but a later one of these never replaces a
+ * `commit`/`contract` origin on the same key, so the entry keeps saying the code is in the workspace.
+ */
+export const NOT_IN_WORKSPACE: readonly string[] = ["check", "push"];
 
 /** The `stale_assumption` pushed to (and opened on) a change whose code uses `w.key`. */
 export function contractError(rec: EventRecord, w: { key: SymbolKey; kind: WriteKind }, continueMode: boolean): Diagnostic {
@@ -23,4 +27,28 @@ export function contractError(rec: EventRecord, w: { key: SymbolKey; kind: Write
     caused_by_agent: who,
     ...(rec.task ? { caused_by_task: rec.task } : {}),
   };
+}
+
+/**
+ * Suggestion of the `contract_changed` warning on a reads amendment (spec §6.2 R2a): `who` changed
+ * the signature of (or removed) `key` in #`seq` after the amending change's base. Under
+ * `conflicts: continue` it says to keep editing other tasks instead of adapting (spec §8.4); the
+ * `hold` text is unchanged.
+ */
+export function amendmentSuggestion(key: SymbolKey, seq: number, who: string, continueMode: boolean): string {
+  return continueMode
+    ? `Keep editing your other tasks instead of adapting your call sites to ${who}'s new ${key} (event #${seq}); do not adopt their partial work. ${who} owns the change; negotiate with ${who} if you need the old contract.`
+    : `Re-read ${key} (event #${seq}) and adapt your call sites, or negotiate with ${who}.`;
+}
+
+/**
+ * Suggestion of the `contract_changed` warning pushed to a live change that uses `key` after `who`
+ * changed its signature or removed it (spec §6.3). Under `conflicts: continue` it says to keep
+ * editing other tasks instead of adapting (spec §8.4). It does not claim the owner is told: only
+ * open errors notify the owner, and this is a warning. The `hold` text is unchanged.
+ */
+export function signatureChangeSuggestion(key: SymbolKey, who: string, continueMode: boolean): string {
+  return continueMode
+    ? `Keep editing your other tasks instead of adapting your call sites to ${who}'s change; do not adopt their partial work. ${who} owns the change; negotiate with ${who} if you need the old contract.`
+    : `Re-read ${key} and adapt your call sites before your next edit, or negotiate (e.g. keep the old signature as an overload).`;
 }

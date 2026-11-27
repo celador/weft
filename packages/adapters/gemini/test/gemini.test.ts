@@ -1,10 +1,12 @@
 // FIXTURE TESTS ONLY: payloads follow https://geminicli.com/docs/hooks/reference; no live
 // Gemini CLI run backs this adapter (no usable Gemini auth on the build machine).
 import { afterAll, describe, expect, it } from "vitest";
+import { execFile } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CART_LINE, NEW_CALL, OLD_CALL, coordinator, installed, runBundle } from "../../claude-code/test/translator-kit";
+import { promisify } from "node:util";
+import { CART_LINE, NEW_CALL, OLD_CALL, adapterLog, byPathArgs, checkout, coordinator, installed, joinedAgents, runBundle } from "../../claude-code/test/translator-kit";
 import { callIdOf, fromCore, toCore } from "../src/translate";
 import { mergeSettings } from "../src/cli";
 
@@ -63,5 +65,73 @@ describe("Gemini adapter end to end with fixture payloads (real bundle, local co
     expect(coord.log.filter((r) => r.agent === "gemini-e" && r.kind === "edit" && r.mode === "commit").pop()!.status).toBe("accepted");
     expect(await run({ hook_event_name: "AfterAgent", prompt: "do it", prompt_response: "done", stop_hook_active: true })).toEqual({});
     expect(coord.log.find((r) => r.kind === "join")?.payload).toMatchObject({ harness: "gemini-cli" });
+  }, 60_000);
+
+  it("`.weft/bin/weft claim --firm` (shared host CLI) sends a firm claim that refuses another agent's edit", async () => {
+    const { coord, url, server } = await coordinator();
+    servers.push(server);
+    const { root } = installed(BUNDLE, "gemini-claim", url, "gemini-c");
+    const weft = join(root, ".weft/bin/weft");
+    const sh = promisify(execFile);
+    const run = async (args: string[]) => {
+      try {
+        const r = await sh(weft, args, { cwd: root, env: { ...process.env, WEFT_TOKEN: "" } });
+        return { code: 0, stdout: r.stdout, stderr: r.stderr };
+      } catch (err) {
+        const e = err as { code: number; stdout?: string; stderr?: string };
+        return { code: e.code, stdout: String(e.stdout), stderr: String(e.stderr) };
+      }
+    };
+    expect(await run(["claim"])).toMatchObject({ code: 2, stdout: expect.stringContaining("--firm") });
+    expect(await run(["claim", "--keys", "../x.ts#f"])).toMatchObject({ code: 2, stderr: expect.stringContaining("'..' is not allowed") });
+    const key = "src/pricing.ts#calcTotal";
+    const ok = await run(["claim", "--keys", key, "--firm", "--ttl", "60000"]);
+    expect(ok).toMatchObject({ code: 0, stdout: expect.stringContaining("gemini-c firmly claimed calcTotal") });
+    expect(coord.log.filter((r) => r.kind === "claim")).toMatchObject([{ agent: "gemini-c", status: "accepted", payload: { firm: true, source: "explicit", ttl_ms: 60_000 } }]);
+    const b = coord.hello({
+      type: "hello",
+      protocol: "wcp/0.1",
+      agent: { id: "codex-b", harness: "codex" },
+      capabilities: { level: 3, observe: "sync", inject: "immediate", deny_edit: true, refuse_stop: true, commit_gate: "tool_interception" },
+      task: { id: "T-9" },
+    });
+    const v = coord.submit(b.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: b.delivered_through, writes: [{ key, kind: "body" }] } });
+    expect(v).toMatchObject({ verdict: "reject", diagnostics: [{ code: "claim_wait", severity: "error", caused_by_agent: "gemini-c" }] });
+  }, 60_000);
+});
+
+describe("Gemini --by-path routing (issue #11: an edit in another joined worktree, fixtures)", () => {
+  const servers: Array<{ close: () => void }> = [];
+  afterAll(() => servers.forEach((s) => s.close()));
+
+  it("from a non-joined parent dir, an edit inside a joined worktree is checked as that worktree's agent; plain routing stays a no-op", async () => {
+    const { coord, url, server, changeSignature } = await coordinator();
+    servers.push(server);
+    const routed = installed(BUNDLE, "gemini-bp", url, "gemini-q", ["--by-path"]);
+    const groups = JSON.parse(readFileSync(join(routed.root, ".gemini/settings.json"), "utf8")).hooks.BeforeTool;
+    expect(groups.at(-1).hooks[0].command).toContain(`weft-gemini.mjs hook --by-path --url ${url} --repo demo --mode enforce # weft-gemini`);
+
+    const parent = checkout("gemini-parent");
+    const wt = installed(BUNDLE, "gemini-wt", url, "worker-w").root;
+    changeSignature();
+    const cart = join(wt, "src/cart.ts");
+    const before = (newString: string) => ({ hook_event_name: "BeforeTool", session_id: "gs-p", cwd: parent, tool_name: "replace", tool_input: { file_path: cart, old_string: CART_LINE, new_string: newString } });
+    const run = async (p: object, args?: string[]) => JSON.parse((await runBundle(BUNDLE, parent, p, args)) || "{}");
+
+    expect(await run(before(OLD_CALL))).toEqual({});
+    expect(joinedAgents(coord)).not.toContain("worker-w");
+
+    const pre = await run(before(OLD_CALL), byPathArgs(url));
+    expect(pre.decision).toBe("deny");
+    expect(pre.reason).toContain("[weft error] stale_assumption src/cart.ts:4:19");
+    expect(joinedAgents(coord)).toContain("worker-w");
+
+    expect(await run(before(NEW_CALL), byPathArgs(url))).toEqual({});
+    writeFileSync(cart, readFileSync(cart, "utf8").replace(CART_LINE, NEW_CALL));
+    await run({ ...before(NEW_CALL), hook_event_name: "AfterTool", tool_response: { llmContent: "ok" } }, byPathArgs(url));
+    expect(coord.log.filter((r) => r.kind === "edit" && r.mode === "commit").pop()).toMatchObject({ agent: "worker-w", status: "accepted", files: ["src/cart.ts"] });
+
+    expect(await run(before(OLD_CALL), byPathArgs(url, "other-repo"))).toEqual({});
+    expect(adapterLog(wt)).toContain("do not match the pinned coordinator");
   }, 60_000);
 });

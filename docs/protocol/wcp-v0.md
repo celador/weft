@@ -123,10 +123,15 @@ message per frame.
 - Agent tokens are **repo-scoped**: one token per (repo, agent). A `hello` whose
   `agent.id` (or `change`) differs from the token binding MUST be refused with
   `403 forbidden`.
+- A change is bound to the agent whose `hello` created it. A `hello` naming an existing
+  change (explicitly, or through the default `<agent>/<task>` id) of a different agent MUST
+  be refused with `403 forbidden` (`details.change`) and appends nothing (§8.2).
 - Observer tokens are read-only and MAY list several repos; they are distinct from
   agent tokens and MUST NOT be accepted on agent or human endpoints.
 - `human` tokens imply `observe`. Human actions are attributed to the token's principal
   (`actor: {type:"human", id}`), never to a client-supplied name.
+- `agent` tokens may also read the history of their own repo (§9.7); no other observer
+  endpoint accepts them.
 - A request for a repo outside the token's list is `404 repo_not_found` (do not leak
   existence). A missing/invalid token is `401 unauthorized`; a valid token lacking the
   scope is `403 forbidden`.
@@ -177,7 +182,7 @@ present (possibly empty).
 | `intent` | agent | — (with `reads` and no `writes`: a reads amendment, §6.2 R2a) | R2a when it carries `reads` |
 | `edit` | agent | — (`writes` required, non-empty) | R0–R3 |
 | `checkpoint` | agent, system | `{sha, ref?}` (a push of the change's fork; the system appends it when the Artifacts `pushed` event arrives, attributed to the change) | R0 (agent only) |
-| `claim` | agent | `{firm, source: explicit\|predicted, ttl_ms?}`; keys in `writes` | R0, R3 |
+| `claim` | agent | `{firm, source: explicit\|predicted, ttl_ms?}`; keys in `writes`; `firm:true` makes a junior's overlapping edit an error (§7.5) | R0, R3 |
 | `release` | agent, system | `{keys?, reason?}`; no keys = all of the change's claims; system reasons `expired`, `session_ended`, `session_expired` (§7.5) | no |
 | `negotiate.propose` | agent | `{to: {agent?\|change?}, keys[], terms: {kind, text}}` | refs (§7.4) |
 | `negotiate.counter` | agent | `{reply_to, terms}` | refs |
@@ -217,6 +222,7 @@ event) that produced the diagnostic — every squiggle is traceable.
 | `trunk_advanced` | info (pushed) | a landing/revert touched symbols your change reads, writes or claims; `requires_rebase` | §6.3 |
 | `agent_paused` | error | a human paused this agent; edits/claims/checkpoints are refused | R0 |
 | `counterpart_away` | warning | your `negotiate.propose`/`negotiate.counter` was recorded, but its addressee has no live session, so nobody can answer until it starts again; `caused_by_seq` is its latest `leave` (or latest record) | §7.4 |
+| `previously_reverted` | info (verdict only, never blocks) | your edit writes a symbol that an accepted `revert` undid in the last 30 days; `caused_by_seq` is the revert, `caused_by_agent` who asked for it; at most once per key per session | §6.6 |
 
 Receivers MUST treat an unknown code by its `severity` (§10).
 
@@ -369,8 +375,8 @@ Applied atomically with the append, in this order:
    whose lease ends at `now + lease` (a firm claim the change already holds on the key
    keeps its hard deadline); `claim` events create explicit or predicted claims (`firm`
    from payload; deadline per §7.5); `release` removes the listed (or all) claims of `c`
-   and clears only the open errors §6.5 allows a release to clear; `land` removes all
-   claims of the change and clears its open errors.
+   and clears no open error (§6.5); `land` removes all claims of the change and clears its
+   open errors.
 5. Routing: `negotiate.*` and `message` go to the addressee's sessions (§7.4, §7.6);
    `control` to the target agent's sessions (`merge`: every session of the merged group).
 6. Broadcast, for `edit`, `land`, `revert`, to every other unlanded change whose
@@ -412,36 +418,47 @@ rejected records, and MUST NOT include secrets from the diff.
 ### 6.5 Open errors
 
 Each **change** keeps a set of **open errors** keyed by symbol key: errors from the
-rejected records of its sessions (except `agent_paused`), `claim_wounded` pushes to
+rejected records of its sessions (except `agent_paused` and `claim_wait`), `claim_wounded` pushes to
 it, and `stale_assumption` errors opened by a contract change to a symbol it uses
 (§6.3 step 6). Every entry remembers its **origin**: `check` (a rejected `mode:"check"`
 record — the edit was denied before it reached the workspace), `commit` (a rejected
 `mode:"commit"` record — the edit is in the workspace but not in the log), `push`
 (`claim_wounded`) or `contract` (§6.3 step 6 — the call site is in the workspace and in
 the log, but its callee changed under it). A later error on the same key replaces the
-entry, except that an origin a release cannot clear (`commit`, `contract`) is kept when
-the new one could be (`check`, `push`): a denied retry does not take the earlier code out
-of the workspace.
+entry, except that an origin whose code is in the workspace (`commit`, `contract`) is kept
+when the new one's is not (`check`, `push`): a denied retry does not take the earlier code
+out of the workspace. The origin is informational (feed, debugging); no clearing rule
+depends on it.
+
+A `claim_wait` error (the holder's claim is firm, or the repo's `enforcement` is `block`, §7.2)
+rejects its record but opens nothing: it is a wait for the claim's holder, not a conflict in
+the requester's code. The requester's stop and commit gates stay open; it works elsewhere,
+negotiates or escalates (§7.6), and its next edit of the key is checked against the claims
+then live. (Before 2026-11-26 it was opened like any other error and held the requester's
+stop, with no timeout, until the holder released or landed, issue #18.)
 
 Open errors belong to the change, not to a session. A `bye`, a session expiry, a new
-`hello` (with or without `resume_session`) and a session's own `release` never make them
-disappear, so an agent cannot reset its gate by reconnecting. A `claim_wounded` push is
-recorded on the change even when it has no live session. An entry is cleared only when:
+`hello` (with or without `resume_session`) and any `release` never make them disappear, so
+an agent cannot reset its gate by reconnecting or by giving up its claims. `bye` is always
+allowed (a crashing agent must be able to leave); the next session of the change gets the
+errors redelivered. A `claim_wounded` push is recorded on the change even when it has no
+live session. An entry is cleared only when:
 
 1. the change has an accepted `edit` that reads or writes the key (§6.3 step 2) — the
    agent redid the work against the current log. Other accepted kinds that carry keys
    (`intent`, `claim`) do not clear anything: they say nothing about the workspace;
 2. the change lands;
 3. a negotiated `transfer`/`share` on the key is accepted (§7.4), or a merge forgives it
-   (§7.6);
-4. the change's agent `release`s the key (or releases everything) **and** the entry's
-   origin is `check` or `push`: the agent retreats from an area it never wrote (a denied
-   edit) or lost (wounded). A release never clears a `commit`-origin entry, because that
-   edit exists in the workspace and is unknown to the log, nor a `contract`-origin one,
-   because the call site is in the workspace; the agent must redo it so that it is
-   accepted (rule 1) or have it resolved by rules 2–3.
+   (§7.6).
 
-System `release` records (expiry, session end; §7.5) never clear open errors.
+A `release` — the agent's own (by key or of everything, any `reason`) or a system one
+(expiry, session end; §7.5) — gives up claims and never clears an open error, whatever its
+origin. The coordinator cannot tell a retreat from the same code written around a denied
+edit (a shell write after a denied edit tool call never reaches the log), and a wounded
+change's accepted code is still in its workspace; so the agent redoes the work (rule 1),
+lands, or has it resolved by rule 3. A human may override a gate refusal (§8.4); the open
+errors then stay visible in the feed. (Before 2026-11-26 an agent `release` cleared
+`check`- and `push`-origin entries on the released keys, issue #17.)
 
 A **new** session (not `resume_session`) of a change with open errors receives one
 `kind:"diagnostic"` inbox item per entry (`seq` = the record that opened it), after any
@@ -451,6 +468,97 @@ Open errors drive the L3 gates (§8.4). Why per change: the change is what lands
 the workspace's edits belong to; a session is only a connection. (Before 2026-10-09
 open errors were per session, and `release`, `bye` + `hello`, or letting the session
 expire cleared them — see the changelog.)
+
+### 6.6 Previously reverted
+
+A `revert` record names the operation it undoes (`reverts_seq` / `reverts_op_id`), not
+keys. Its keys are derived when it is appended: the accepted `land` record of that op
+(`reverts_seq`, else the land whose `payload.op_id` is `reverts_op_id`), then that land's
+change, then the keys written by the change's accepted `edit` records up to the landing,
+plus the land's and the revert's own `writes`. A coordinator keeps these keys in an index
+(key → record), together with the other history records of §9.7, so neither a history
+read nor a check ever scans the log.
+
+When a session submits an `edit` (`check` or `commit`) that writes a key covered by an
+accepted revert whose `ts` is at most 30 days before the coordinator's clock, the verdict
+carries one diagnostic per such key:
+
+```json
+{"severity": "info", "code": "previously_reverted", "file": "src/x.ts", "symbol": "src/x.ts#f",
+ "message": "previously reverted 3d ago: error spike after landing (by john, #4)",
+ "caused_by_seq": 4, "caused_by_agent": "john"}
+```
+
+- The message is `previously reverted <n>d ago: <reason> (by <actor>, #<seq>)`: `n` = whole
+  days since the revert, `reason` = the first non-empty line of `payload.reason` (clipped to
+  200 characters), `actor` = `payload.requested_by.id`, else the revert record's `actor.id`.
+- A written key `path#name` is covered by a revert key equal to it, by a revert key of its
+  members (`path#name.*`), and by the whole-file key `path#*`; a written `path#*` is covered
+  by every key of the file. The newest covering revert is cited.
+- At most once per key per session: the coordinator remembers the keys it noted for the
+  session (dropped with the session), so the commit after a check, or a second edit, says
+  nothing more. A new session is told again.
+- It is `info`: it never rejects, never opens an error, never closes a gate. It is computed
+  inside the submit (no extra call) and is part of the **verdict only**: the appended record's
+  `diagnostics` are the validation diagnostics, so the log stores nothing new.
+- An agent-paused submit (R0) gets no note.
+### 6.7 Dependencies on unlanded changes
+
+An accepted edit can rely on code that exists only in a neighbor's unlanded change: it calls a
+function the neighbor added, or the neighbor's new signature. The coordinator records that
+reliance on the record, lets the change's owner name it in the pull request, and holds the
+change's landing until the dependency is in trunk. The record is an **annotation**: it never
+accepts or rejects anything, and it is computed after the verdict.
+
+**Recording.** When an `edit` with `mode:"commit"` is accepted for change `c`, the
+coordinator stamps `depends_on` on its record: one `DependencyRef {change, agent, task?, seq,
+keys}` per neighbor change `d` the edit relies on, in the order the first key appears (the
+edit's reads, then its writes). `d` is any other unlanded, not abandoned change, not in `c`'s
+merged group (§7.6) and not an alternative of `c` (one task's candidates, §7.7), whose accepted
+edits wrote the key; the edit relies on `d` for key k (`reliesOn`) when:
+
+- the edit **writes** k: only if `d`'s net write of k is `new` and the edit's is not (the
+  declaration exists only in `d`). Both changes writing the same symbol is a conflict, which
+  claims arbitrate (§7), not reliance;
+- the edit only **reads** k: if `d`'s net write of k is `new` or `signature`. Code that calls a
+  body-only change works without it, and nothing relies on a deletion.
+
+`seq` is the latest accepted edit of `d` that wrote one of the keys (for an entry merged from
+several records, the highest). The field is omitted when empty, and never set on a check, a
+rejected record or another kind. Coordinators MUST NOT copy it from the client's draft: a
+client can neither forge a dependency nor drop one.
+
+**Status and holds.** A change's dependencies are the merge of the `depends_on` of its records
+(`mergeDependencies`: one entry per neighbor, keys in first-recorded order). Each is `pending`,
+`landed` (`status_seq` = its `land`), or `abandoned` (`status_seq` = the record that abandoned
+it). A change is **abandoned** by a system `release` with `payload.reason:"abandoned"` and no
+`keys` (the platform appends one when the change is closed, e.g. the gateway's
+`DELETE /v1/repos/{repo}/changes/{id}`), or by the landing of one of its alternatives (it lost
+the selection, §7.7). An agent's own `release` is a retreat, not an abandonment.
+
+A pending dependency **holds** the dependent's landing, unless it is **mutual**: it relies on
+the dependent too, directly or through other pending dependencies, or the two are in one merged
+group. Holding a cycle would keep every member queued forever; its members land in queue order
+and presubmit decides whether the result builds. A landed change holds nothing.
+
+**Landing.** The landing queue (design §6.5) reports each `queued` entry's `held_by` (the
+dependencies that hold it). A held entry is not its queue's turn: the first entry the
+coordinator does not hold is, so a held change does not block the changes behind it, and a batch
+never takes a held entry. When the last holding dependency lands or is abandoned, the entry is
+free and lands in queue order. A landing workflow whose queue wait runs out while held fails,
+naming the dependencies it waited for.
+
+**Abandonment notice.** When a record abandons a change `d`, the coordinator appends, after
+that record's own effects and once per abandonment, one system `message`
+(`actor:{type:"system", id:"coordinator"}`, `intent:"info"`) addressed to each unlanded, not
+abandoned change that relies on `d` (outside `d`'s group). It reaches the owner's sessions
+through the inbox (§7.6) and stays in the log for an owner who is offline. Text
+(`abandonedNotice`): `<d> (<agent>, task <task>) will not land: abandoned in #<seq>. Your change
+<c> relies on it for <keys>. Its landing no longer waits for <d>; those symbols will not reach
+main through it.` For a lost selection the reason reads `<winner> landed instead (#<seq>)`.
+
+The rules live in `packages/protocol/src/deps.ts`, shared by both coordinators; the conformance
+scenario is `dependencies-hold-landing`.
 
 ## 7. Arbitration (normative)
 
@@ -476,8 +584,11 @@ claims on k, R the requester.
 at repo creation and recorded in the journaled config like `policy`; re-creating an existing repo
 with a different mode fails (the gateway does not change a stored mode). Under `advise`, `claim_wait`
 is a warning (error only if the holder's claim is firm). Under `block`, a `claim_wait` on an edit is an error and the edit is rejected; a claim submission is
-never refused by the mode (a firm holder still errors). Nothing else changes: the same arbitration,
-claims and TTLs apply. The mode is part of the repo config record that `replay()` takes as its init:
+never refused by the mode: an overlapping claim is accepted with a `claim_wait` warning naming the
+holder (a firm holder still errors). Under `block` a claim held by the submitting agent itself (the
+change of its other task) is skipped, so an agent is never denied by its own claim; under `advise`
+that overlap still gets its warning, unchanged. A `claim_wait` never opens an error (§6.5), in
+either mode. Nothing else changes: the same arbitration, claims and TTLs apply. The mode is part of the repo config record that `replay()` takes as its init:
 a replay must be given the same config the journal was written under, or its verdicts differ. No
 environment variable selects the mode.
 
@@ -491,6 +602,11 @@ wounded holder gets `claim_wounded` (error).
 (until the winner lands or releases; not offered on `die`), `negotiate` (§7.4),
 `escalate` (`negotiate.escalate`: the coordinator, or a human per repo policy, merges the
 two tasks — §7.6).
+
+The `claim_wait` suggestion follows the repo's `conflicts` mode (§8.4): under `hold` it offers to
+wait for the holder to land or release the key, work elsewhere or negotiate; under `continue` it
+says to leave the key to the holder and keep working on other tasks (negotiating if the task needs
+the key), and never to wait.
 
 ### 7.3 Effects
 
@@ -547,6 +663,26 @@ two tasks — §7.6).
   it; only a new explicit `claim` event (visible in the log) sets a new deadline
   (`max(old, new)`). A firm hold therefore never outlives `firm_max_ms` without the
   holder saying so again in the log.
+- **What `firm` changes.** The flag only decides the severity of a `claim_wait` (§7.2): what a
+  requester that must *wait* gets when it writes into the held key. That is a requester junior
+  to the holder under `wound-wait` (the default), a senior one under `wait-die`:
+
+  | holder's claim | repo `enforcement` | waiting requester's `edit` | its `claim` |
+  |---|---|---|---|
+  | soft (`edit`, or `firm:false`) | `advise` (default) | `claim_wait` **warning**, accepted | warning, accepted |
+  | soft | `block` | `claim_wait` **error**, rejected | warning, accepted |
+  | firm (`firm:true`) | either | `claim_wait` **error**, rejected | error, rejected |
+
+  A rejected edit or claim is not an open error (§6.5): the requester's stop and commit gates
+  stay open, and it works elsewhere, negotiates or escalates. The holder learns nothing of a
+  rejected attempt (under `conflicts: hold`; under `continue` it gets the owner's notice, §8.4); an accepted one
+  sends it an info `claim_contended`. `firm` does not change arbitration: under `wound-wait` a
+  requester **senior** to the holder still wounds it (the holder gets `claim_wounded`), and
+  under `wait-die` a junior gets `claim_die` (error) whatever the flag. Seniority is §7.1
+  (task priority, then the earlier first accepted event), so under `wound-wait` a firm claim
+  protects against agents that started after the holder at the same or lower priority. Executable: scenarios `claim-firm-vs-soft` and `claim-firm-vs-soft-block`.
+  (Weft: `.weft/bin/weft claim --keys … --firm [--ttl MS]` in an agent's checkout, or the
+  MCP tool `weft_claim {keys, firm: true, ttl_ms?}`; see docs/try-it.md.)
 - **Predicted claims**: `expires_at = now + (ttl_ms ?? claim_ttl_ms)`, never renewed
   (unchanged).
 - **Expiry**: the coordinator MUST release expired claims by appending a `release` record
@@ -579,7 +715,9 @@ The fourth loser option (`escalate`, §7.2) is a protocol action, not only a fee
   `422 invalid_reference` when the target is unknown, already in the submitter's group, either
   side has landed, or the two **do not conflict**: no open error of the submitting session is
   caused by a record of the target's group, and no key read or written by the submitter's
-  group is written or claimed (non-predicted, unexpired) by the target's group.
+  group, and no key the escalation names (`keys`), is written or claimed (non-predicted,
+  unexpired) by the target's group. Naming the held key is how a requester escalates after a
+  `claim_wait`, which opens no error (§6.5).
 - The record is delivered to the target change's sessions (`kind:"negotiation"`).
 - Repo policy `escalation` (`welcome.policy.escalation`, default `auto`):
   - `auto`: the coordinator merges the two tasks at once by appending a `control merge`
@@ -655,6 +793,11 @@ required output field is rejected.
   unsupported_version` with `details.supported`.
 - The change id defaults to `<agent>/<task id|adhoc>`; adapters SHOULD pass the
   commit's `Change-Id` trailer value.
+- The first `hello` naming a change creates it and binds it to that `agent.id`. A later
+  `hello` for the same change from the same agent joins it (a restart, a second
+  harness); from a different agent it is `403 forbidden` with `details.change`, and
+  nothing is appended. Change ids are guessable, and a session of a change receives its
+  open errors, owed negotiations and owner notices (§3, issue #17).
 - Sessions expire after `session_ttl_ms` (default 5 min) without any request; the
   coordinator appends `leave` (system actor) and later calls get `410 session_expired`.
   Adapters SHOULD heartbeat every `heartbeat_interval_ms` (default 30 s) while the
@@ -705,7 +848,8 @@ Adapters SHOULD inject it verbatim so squiggles look the same in every harness.
 
 **Repo policy `conflicts`** (default `hold`, the behaviour below). It is a field of the repo's
 config, set when the repo is created (`CoordinatorInit.conflicts`, validated by the gateway
-registry as `hold` or `continue`). An absent field means `hold`, so existing configs are unchanged.
+registry as `hold` or `continue`; every entry point parses it with one parser and takes the
+default from one place, `@weft/protocol` `modes.ts`). An absent field means `hold`, so existing configs are unchanged.
 It is not read from the environment. It is recorded in the repo's config, so a journal replayed
 with the same init reproduces every verdict exactly. With `continue`, the owner of the change that caused a conflict (`caused_by_agent` differs from
 the session's agent) receives a `warning` diagnostic (never an error, so the owner is not blocked).
@@ -713,12 +857,15 @@ A rejected landing notifies the owner of the change that blocked it the same way
 inbox item like the other coordinator notices (arbitration, `contract_changed`), not change state
 (unlike open errors and due negotiations, which a new session receives on `hello`): it
 goes to the live sessions of the causing change whose agent is the cause's agent, and is not queued
-for an owner with no live session (the rejected event stays in the log). A notice identical to one
-still in that session's inbox is not added again; once acknowledged, a later identical conflict is
-notified again. The gates do
+for an owner with no live session (the rejected event stays in the log). Each conflict is told
+once: per owner change, editor, symbol and causing record, the notice is sent the first time it
+reaches a live session of the owner and never again, even after it was acknowledged, however often
+the editor resubmits; an owner with no live session at the time is told on the next such conflict.
+A `mode:"check"` submission never notifies the owner (it only asks; the edit has not been made).
+The gates do
 not change: `gate:"stop"` and `gate:"commit"` refuse on every open error in both modes (see
 `ownership.ts`). Whether an adapter lets a stop through after repeated refusals is adapter policy,
-not part of this protocol. Under `continue`, the diagnostics say to keep editing other tasks instead of rebasing or adapting to the other agent's change; the errors (`stale_overwrite`, `stale_assumption`, including the one §6.3 step 6 opens on a change that already used the symbol) also state that the commit gate stays closed while the error is open, and the `contract_changed` warning, which closes no gate, does not; under `hold` the suggestions are unchanged from today.
+not part of this protocol. Under `continue`, the diagnostics say to keep editing other tasks instead of rebasing or adapting to the other agent's change; the errors (`stale_overwrite`, `stale_assumption`, including the one §6.3 step 6 opens on a change that already used the symbol) also state that the commit gate stays closed while the error is open, and the `contract_changed` warning, which closes no gate, does not; under `hold` the suggestions are unchanged from today. Adapters are not told the mode, so the text an adapter adds around diagnostics (blocked edit, stop and commit refusals, session preamble) defers to each error's suggestion and never itself tells the agent to adapt to, rebase onto or work around another agent's change (`BLOCKED_EDIT_ADVICE`, `OPEN_ERROR_ADVICE`, `ERROR_RULE` in `ownership.ts`, shared by every reference adapter); a `stale_assumption`'s options likewise offer only "do what the suggestion says" or a `negotiate.propose` to the owner, who decides.
 
 `gate.result.allow` is false iff the session's change has open errors (§6.5), or — for
 `gate:"stop"` only — negotiations are **due**. `reason` renders both, and
@@ -781,9 +928,11 @@ HTTP only; the socket serves long-lived adapters and delayed-L1 injection.
 | `GET /v1/repos/{repo}/events/{seq}` | observe | `EventRecord` (full detail) |
 | `GET /v1/repos/{repo}/stream?after={seq}` (WS) | observe | `StreamFrame`s |
 | `GET /v1/feed` | observe | `FeedPage` |
+| `GET /v1/repos/{repo}/history?keys=&since=&limit=` | agent (own repo) or observe | `HistoryPage` (§9.7) |
 | `GET /v1/feed/stream?after={cursor}` (WS, SHOULD) | observe | `StreamFrame`s across repos |
 | `POST /v1/repos/{repo}/actions` | human | `HumanAction` → `ActionResult` |
 | `POST /v1/repos/{repo}/system/events` | system | `EventDraft` → `EventRecord` |
+| `GET /v1/repos/{repo}/dependencies?change={id}` | agent (own repo) or observe | `Dependencies` (§9.8) |
 
 ### 9.2 `GET /v1/repos`
 
@@ -811,7 +960,8 @@ live session), `active_changes`, `open_conflicts` (total open errors across chan
 
 `GET /v1/repos/{repo}/events/{seq}` returns the complete record: `diff`, `reads`,
 `writes`, `diagnostics`, `intent`, `payload` (negotiation thread links via
-`reply_to`), `tool`, `transcript` pointer. Unknown seq: `404 not_found`.
+`reply_to`), `tool`, `transcript` pointer, and `depends_on` on an accepted edit that relies on
+unlanded changes (§6.7; in list views too). Unknown seq: `404 not_found`.
 
 ### 9.4 Stream with resume
 
@@ -855,6 +1005,70 @@ received. Repos absent from the cursor start at 0.
 Unknown targets are `422 invalid_reference`. Every action is a log record with
 `actor:{type:"human", id}` and a summary, so the feed shows who touched what.
 
+### 9.7 History of symbol keys
+
+`GET /v1/repos/{repo}/history?keys=src/x.ts%23f,src/y.ts&since=2026-09-01T00:00:00Z&limit=20`
+
+Why earlier changes to some code were reverted or refused, so an agent about to edit it can
+read what happened to the agent before it. Read by an `agent` token of the repo (no
+`observe` scope needed) or by an observer; a token for another repo gets `404
+repo_not_found`, a token with neither scope `403 forbidden`.
+
+- `keys` (required, 1–50; comma-separated and/or repeated; `#` percent-encoded): a symbol
+  key `path#name` (it also matches the members `path#name.*` and whole-file `path#*`
+  records), or `path#*` / a bare `path` for every key of the file.
+- `since`: ISO 8601 timestamp; default 90 days before the coordinator's clock.
+- `limit`: 1–100, default 20 (larger values are capped).
+- Malformed: `400 invalid_message`.
+
+The answer lists, newest first, the history records that concern those keys (§6.6 index):
+
+| `kind` | record | fields |
+|---|---|---|
+| `revert` | an accepted `revert` (keys derived as in §6.6) | `reason` (first line), `requested_by`, `reverts_seq`, `reverts_op_id`, `op_id`, `evidence` (the first stack frame found in the reason text, if any) |
+| `rejected` | a rejected `edit` or `claim`, `check` or `commit` mode (keys: its writes and the symbols of its errors) | `event_kind`, `mode`, `causes` (its error diagnostics) |
+| `negotiation` | the accepted `negotiate.accept` / `negotiate.reject` that answered a thread (keys: the root proposal's), or a `negotiate.escalate` with keys | `outcome` (`accepted` \| `rejected` \| `escalated`), `terms` (of the answered proposal/counter), `reply_to`, `reason`, `with` (the other party) |
+
+```json
+{"type": "history", "repo": "demo", "keys": ["src/x.ts#f"], "since": "2026-07-10T14:00:00.012Z",
+ "head_seq": 7, "has_more": false,
+ "entries": [{"seq": 4, "ts": "2026-10-05T14:00:00.004Z", "kind": "revert", "keys": ["src/x.ts#f"],
+              "actor": {"type": "system", "id": "revert-workflow"}, "agent": "claude-a", "change": "I-a", "task": "T-1",
+              "reason": "error spike after landing: TypeError: Cannot read properties of undefined (reading 'id')",
+              "requested_by": {"type": "human", "id": "john"}, "reverts_seq": 3, "reverts_op_id": "op_1", "op_id": "op_2",
+              "evidence": "at f (src/x.ts:3:7)"}]}
+```
+
+Every entry cites its record's `seq` and every field is read from records already in the
+log; a history read stores nothing. Free text (`reason`, `evidence`, `terms.text`, cause
+messages) is secret-redacted like observer views (§13). An entry's `keys` are the queried
+keys it matched, sorted. Clients render one line per entry (`renderHistoryEntry`, as the
+MCP tool `weft_history` does):
+
+```text
+#4 3d ago REVERT of land #3 (change I-a by claude-a) by john: error spike after landing: TypeError: … — evidence: at f (src/x.ts:3:7) [src/x.ts#f]
+```
+### 9.8 Dependencies of a change
+
+`GET /v1/repos/{repo}/dependencies?change={id}` (a query parameter, because change ids contain
+`/`) returns `Dependencies` (§6.7), read-only. Like history (§9.7) it is open to an agent token of
+the repo, so an agent can write its own pull request text, and to observers:
+
+```json
+{"type":"dependencies","repo":"weft-demo","change":"I9c01","agent":"codex-b","task":"T-2",
+ "landed":false,"held":true,"held_by":["I4f2a"],
+ "depends_on":[{"change":"I4f2a","agent":"claude-a","task":"T-1","seq":4,
+   "keys":["src/auth/session.ts#createSession"],"status":"pending","holds":true}]}
+```
+
+Each entry is the merged `DependencyRef` plus `status`, `status_seq`, `holds` and `mutual`.
+Missing `change`: `400 invalid_message`; unknown change: `404 not_found`. Clients render it from
+the record only, with no forge access: `weft deps` lists it, and `weft deps --pr` and the MCP tool
+`weft_deps` (`pr:true`) print the lines for a pull request description (`dependencyText`):
+`Relies on <change> (<agent>, task <task>), not yet in main: <keys>` per pending dependency, and
+`Relied on <change> (…), which was abandoned and will not land: <keys>` per abandoned one. Landed
+dependencies are in main already and left out.
+
 ## 10. Versioning and extensibility
 
 - Protocol version `wcp/MAJOR.MINOR`, currently `wcp/0.1`. The HTTP binding prefix
@@ -878,7 +1092,7 @@ Body: `{"type":"error","error":{"code","message","retryable","details?"}}`.
 | `invalid_message` | 400 | 4400 | no | schema failure, task/change mismatch |
 | `unsupported_version` | 400 | 4400 | no | `hello.protocol` major not served |
 | `unauthorized` | 401 | 4401 | no | missing/invalid token |
-| `forbidden` | 403 | 4403 | no | scope missing; kind not allowed for the role; token binding mismatch |
+| `forbidden` | 403 | 4403 | no | scope missing; kind not allowed for the role; token binding mismatch; `hello` for a change another agent created |
 | `repo_not_found` | 404 | 4404 | no | repo unknown or not visible to the token |
 | `not_found` | 404 | 4404 | no | seq / resource unknown |
 | `base_ahead` | 409 | 4409 | no (fix base) | `base_seq > delivered_through` |
@@ -900,10 +1114,13 @@ An implementation conforms to WCP v0.1 if:
    fixture in `fixtures/messages/valid` is accepted / every one in `invalid` is rejected
    (at the listed JSON Pointer);
 2. driven through `runScenario()` (`ConformanceTarget`: `hello`, `submit`, `drain`,
-   `gate`, `heartbeat`, `bye`, `action`, `system`, `tick`, `events`, `event`), it
+   `gate`, `heartbeat`, `bye`, `action`, `system`, `tick`, `events`, `event`, and
+   `history` for the history scenarios), it
    passes all `fixtures/scenarios/*.json`. Scenarios use a deterministic clock: each
    step advances 1 ms from `start`, `advance` steps add more; `tick` runs expiry (claims,
-   sessions) and returns appended records.
+   sessions) and returns appended records. A scenario's repo config (`policy`,
+   `enforcement`, `escalation`, `claims`, TTLs) is what the coordinator is created with
+   (`scenarioInit()`).
 
 Hook-level conformance (an adapter's hook command at its native wire, levels L0–L3) is
 tested by the core's suite, not here: `packages/conformance` (hooks-core-v0 §11), which uses
@@ -918,12 +1135,16 @@ redelivery (`negotiation-overload-dues`), escalation and merged groups (`escalat
 `escalation-human`, `merge-by-agreement`), inbox redelivery/ack + base
 rule + check logging (`inbox-and-base`), human actions (`human-actions`), claim TTL and
 session expiry (`claim-ttl-and-session-expiry`), trunk notification + predicted claims
-(`trunk-advanced-and-predicted`), claim leases and the hard firm limit
+(`trunk-advanced-and-predicted`), soft vs firm explicit claims under `advise` and `block`
+(`claim-firm-vs-soft`, `claim-firm-vs-soft-block`), claim leases and the hard firm limit
 (`lease-soft-claim`, `lease-firm-hard-limit`), release on exit (`release-on-exit`), open
-errors that survive release/bye/hello/expiry (`open-errors-persist`), a session that joins
+errors that survive release/bye/hello/expiry (`open-errors-persist`), release, bye + hello
+and a hello for another agent's change against the commit gate (`conflict-bypass`), a session that joins
 after a peer's unlanded signature change (`join-after-unmerged-change`), and repos created
-before the claims policy plus the policy migration (`claims-legacy-and-migration`). The
-reference coordinator passes all of them and its log replays deterministically.
+before the claims policy plus the policy migration (`claims-legacy-and-migration`), the
+`previously_reverted` note and the history read of a reverted symbol (`revert-history`), and
+refused edits and finished negotiations in the history (`history-refused-and-negotiated`).
+The reference coordinator passes all of them and its log replays deterministically.
 
 ## 13. Security considerations
 
@@ -934,11 +1155,18 @@ reference coordinator passes all of them and its log replays deterministically.
   repos, and make them revocable.
 - Human actions are powerful (undo lands a revert on trunk). Gateways SHOULD require a
   recent interactive login (Cloudflare Access) for `human` tokens.
+- The history read (§9.7) opens one repo's reverts, refused edits and finished negotiations
+  on the requested keys to that repo's `agent` tokens, as summaries of records they could
+  already be told about through diagnostics and inbox items; never diffs or intents. It
+  stores nothing beyond the log: the key index is derived from it, and the
+  `previously_reverted` note rides on the verdict only. Its free text is redacted like
+  observer views.
 - Rate-limit `check` submissions per session; they are cheap to send and expensive to
   evaluate on large W sets.
 - One agent's state must not be resettable by that agent alone. Open errors live on the
-  change (§6.5) so that reconnecting, `bye`, expiry or a blanket `release` cannot open a
-  gate; claims are leases (§7.5) so a crashed agent cannot block others for long, and a
+  change (§6.5) so that reconnecting, `bye`, expiry or any `release` cannot open a gate,
+  and a change is bound to the agent that created it (§8.2) so that another agent cannot
+  join it under a guessed id; claims are leases (§7.5) so a crashed agent cannot block others for long, and a
   firm hold is bounded by `firm_max_ms` unless it is re-asserted in the log, where humans
   see it. The claims policy is repo configuration (journaled), never environment.
 
@@ -1074,3 +1302,29 @@ Proposed for `docs/design.md` (rule 7 of agent-rules):
   analyzer used to read the whole edited file, so an accepted edit anywhere in a file cleared
   open errors on keys only another function of that file used (§6.5 rule 1); see
   docs/languages.md, "Reads are scoped to the edit".
+- 0.1 change (2026-11-26, issue #17; behaviour change, listed per §10; no schema change): a
+  `release` never clears an open error (§6.5; before, an agent's release cleared `check`-
+  and `push`-origin entries on the released keys), and a `hello` for an existing change of
+  a different agent is `403 forbidden` instead of joining it (§3, §8.2). `bye` stays
+  allowed and still clears nothing. Scenarios `conflict-bypass` (new),
+  `open-errors-persist`, `arbitration-wound-wait`.
+- 0.1 editorial (2026-11-26; no wire or coordinator change): §7.5 states what `firm` changes
+  (only the severity of a `claim_wait`, by enforcement mode, for edits and for claims) and
+  what it does not (seniority, wound, die). Scenarios may set `enforcement`; new scenarios
+  `claim-firm-vs-soft` and `claim-firm-vs-soft-block` pin the table in both coordinators.
+- 0.1 additions (2026-11-26, t_f8bc12a1; additive, no version bump): the history read
+  `GET /v1/repos/{repo}/history` (§9.7, `HistoryPage`, `HistoryEntry`; open to the repo's
+  agent tokens) and the `previously_reverted` info diagnostic on edit verdicts (§6.6), both
+  served from a key → record index the coordinator derives from the log. Verdicts may now
+  carry diagnostics that the appended record does not (only `previously_reverted`). Scenarios
+  `revert-history`, `history-refused-and-negotiated`; `ConformanceTarget.history` and the
+  `history` scenario step.
+- 0.1 change (2026-11-26, issue #18; behaviour change, listed per §10; no schema change): a
+  `claim_wait` is never an open error (§6.5: its record is still rejected under a firm holder
+  or `enforcement: block`, but the requester's gates stay open); under `block` a claim held by
+  the submitting agent itself is skipped (§7.2); `negotiate.escalate` may name the held key
+  (`keys`) to show the conflict (§7.6); under `conflicts: continue` the owner's notice is sent
+  once per (owner change, editor, symbol, cause) and never for a `mode:"check"` submission, and
+  the `claim_wait` suggestion no longer says to wait (§7.2, §8.4). New scenarios
+  `enforcement-block-waits` and `continue-owner-notices` (scenarios may set `conflicts`);
+  updated `arbitration-wound-wait`, `claim-firm-vs-soft`, `claim-firm-vs-soft-block`.

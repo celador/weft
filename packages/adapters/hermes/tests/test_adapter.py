@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "installer"))
 sys.path.insert(0, str(PKG / "plugin"))
 
 from weft.adapter import (  # noqa: E402
-    Analyzer, Config, Root, Scope, WeftAdapter, file_key, normalize_tool,
+    BLOCKED_EDIT_ADVICE, OPEN_ERROR_ADVICE, Analyzer, Config, Root, Scope, WeftAdapter, file_key, normalize_tool, revert_notes,
 )
 from weft.wcp import WcpError  # noqa: E402
 
@@ -289,6 +289,9 @@ class EditTests(AdapterTestCase):
         block, _ = self.run_edit("write_file", {"path": str(path), "content": "changed\n"})
         self.assertEqual(block["action"], "block")
         self.assertIn("stale_assumption", block["message"])
+        # #15: the plugin's own text defers to the suggestion; it never says to adapt by itself
+        self.assertIn(BLOCKED_EDIT_ADVICE, block["message"])
+        self.assertNotIn("adapt your edit, then retry", block["message"])
         self.assertEqual(path.read_text(), "hello\n")
         self.assertEqual(self.client.submits("commit"), [], "blocked edits are never committed")
         self.assertEqual((self.adapter.base_seq, self.adapter.acked), (12, 3))
@@ -297,12 +300,37 @@ class EditTests(AdapterTestCase):
         again, _ = self.run_edit("write_file", {"path": str(path), "content": "changed\n"}, call_id="c2")
         self.assertEqual(again["action"], "block")
         self.assertIn("Edit blocked again", again["message"])
+        self.assertIn("If it says the other agent owns the conflict, leave this edit and report it", again["message"])
+        self.assertNotIn("Change your edit to match the new declaration (or", again["message"])
         self.assertEqual(len(self.client.submits("check")), 1, "the guard does not ask the gateway")
         # ... and a second unchanged retry is deliberate: it goes to the gateway with the new base
         self.run_edit("write_file", {"path": str(path), "content": "changed\n"}, call_id="c3",
                       apply=lambda: path.write_text("changed\n"))
         retry = self.client.submits("check")[1]
         self.assertEqual((retry[3]["base_seq"], retry[4]), (12, 3), "retry carries new base + ack")
+
+    def test_previously_reverted_note_on_an_accepted_check_reaches_the_model(self):
+        """WCP §6.6: the note rides on the pre-edit check (once per key per session), which Hermes
+        otherwise ignores when it accepts; it must reach the model with the tool result, unblocked."""
+        note = {"severity": "info", "code": "previously_reverted", "file": "docs/notes.md", "symbol": "docs/notes.md#*",
+                "message": "previously reverted 3d ago: broke the docs build (by john, #4)",
+                "caused_by_seq": 4, "caused_by_agent": "john"}
+        line = ("[weft info] previously_reverted docs/notes.md#*: previously reverted 3d ago: broke the docs build "
+                "(by john, #4) (caused by john · event #4).")
+        self.client.script["check"] = [{"verdict": "accept", "seq": None, "diagnostics": [note], "inbox": [], "context": line}]
+        path = self.repo / "docs" / "notes.md"
+        block, out = self.run_edit("write_file", {"path": str(path), "content": "hello again\n"},
+                                   apply=lambda: path.write_text("hello again\n"))
+        self.assertIsNone(block, "an info note never blocks")
+        self.assertEqual(len(self.client.submits("commit")), 1)
+        self.assertIn(line, json.loads(out)["weft_diagnostics"])
+        # The next edit (no note from the coordinator) leaves the tool result untouched.
+        block, out = self.run_edit("write_file", {"path": str(path), "content": "hello 3\n"}, call_id="c2",
+                                   apply=lambda: path.write_text("hello 3\n"))
+        self.assertIsNone(out)
+        # Without a rendered context the adapter renders the same line itself.
+        self.assertEqual(revert_notes({"diagnostics": [note]}), line)
+        self.assertEqual(revert_notes({"diagnostics": [{"code": "stale_read", "severity": "warning"}], "context": "x"}), "")
 
     def test_advise_mode_never_blocks(self):
         self.cfg.mode = "advise"
@@ -504,8 +532,10 @@ class TerminalAndGateTests(AdapterTestCase):
         self.client.gate_results = [dict(refused), dict(refused), dict(refused)]
         args = {"command": "git commit -m x", "workdir": str(self.repo)}
         for _ in range(2):
-            self.assertEqual(self.adapter.pre_tool_call(tool_name="terminal", args=args, tool_call_id="g")["action"],
-                             "block")
+            out = self.adapter.pre_tool_call(tool_name="terminal", args=args, tool_call_id="g")
+            self.assertEqual(out["action"], "block")
+            self.assertIn(OPEN_ERROR_ADVICE, out["message"])
+            self.assertNotIn("re-editing the cited symbols against the current code", out["message"])
         self.assertIsNone(self.adapter.pre_tool_call(tool_name="terminal", args=args, tool_call_id="g"))
         release = self.client.submits("commit")[-1][3]
         self.assertEqual(release["payload"], {"keys": ["pnpm-lock.yaml#*"], "reason": "abandoned"})
@@ -525,6 +555,8 @@ class TerminalAndGateTests(AdapterTestCase):
             out = self.adapter.pre_verify()
             self.assertEqual(out["action"], "continue")
             self.assertIn("Not done yet", out["message"])
+            self.assertIn(OPEN_ERROR_ADVICE, out["message"])
+            self.assertNotIn("re-edit the cited symbols against the current code", out["message"])
         self.assertIsNone(self.adapter.pre_verify())
         release = self.client.submits("commit")[-1][3]
         self.assertEqual(release["kind"], "release")

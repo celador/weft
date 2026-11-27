@@ -32,6 +32,7 @@
     "@weft/adapter-watcher": "workspace:*",
     "@weft/gateway": "workspace:*",
     "@weft/mcp": "workspace:*",
+    "@weft/protocol": "workspace:*",
     "esbuild": "^0.25.4"
   },
   "publishConfig": { "access": "public", "provenance": true, "registry": "https://registry.npmjs.org/" }

@@ -1,0 +1,333 @@
+{
+  "name": "continue-owner-notices",
+  "description": "§8.4 under conflicts: continue (#18): the owner of the change that caused a conflict is told once per (editor, symbol, cause), not on every resubmission and not for a check; a claim_wait's suggestion does not tell the requester to wait, and the wait never holds its stop.",
+  "covers": [
+    "6.5",
+    "7.2",
+    "8.4"
+  ],
+  "repo": "demo",
+  "start": "2026-10-05T14:00:00.000Z",
+  "conflicts": "continue",
+  "steps": [
+    {
+      "op": "hello",
+      "as": "A",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "claude-a",
+          "harness": "claude-code"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-1"
+        },
+        "change": "I-a"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s1",
+        "head_seq": 1,
+        "delivered_through": 1
+      }
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "codex-b",
+          "harness": "codex"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s2",
+        "head_seq": 2,
+        "delivered_through": 2
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 1,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#refreshToken",
+              "kind": "signature"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 3,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "check",
+        "event": {
+          "kind": "edit",
+          "base_seq": 2,
+          "writes": [
+            {
+              "key": "src/api/client.ts#fetchWithAuth",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "src/auth/session.ts#refreshToken"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "reject",
+        "mode": "check",
+        "seq": 4,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "stale_assumption",
+            "symbol": "src/auth/session.ts#refreshToken",
+            "caused_by_seq": 3,
+            "caused_by_agent": "claude-a"
+          }
+        ]
+      }
+    },
+    {
+      "op": "drain",
+      "as": "A",
+      "expect": {
+        "items": [],
+        "open_errors": []
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 2,
+          "writes": [
+            {
+              "key": "src/api/client.ts#fetchWithAuth",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "src/auth/session.ts#refreshToken"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "reject",
+        "seq": 5,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "stale_assumption",
+            "symbol": "src/auth/session.ts#refreshToken",
+            "caused_by_seq": 3,
+            "caused_by_agent": "claude-a"
+          }
+        ]
+      }
+    },
+    {
+      "op": "drain",
+      "as": "A",
+      "ack": "last",
+      "expect": {
+        "items": [
+          {
+            "seq": 3,
+            "kind": "diagnostic",
+            "diagnostic": {
+              "severity": "warning",
+              "code": "stale_assumption",
+              "symbol": "src/auth/session.ts#refreshToken",
+              "caused_by_seq": 3,
+              "caused_by_agent": "codex-b",
+              "message": "codex-b's edit to src/auth/session.ts#refreshToken conflicts with your change #3."
+            }
+          }
+        ],
+        "open_errors": []
+      }
+    },
+    {
+      "op": "drain",
+      "as": "A",
+      "ack": "last",
+      "expect": {
+        "items": [],
+        "open_errors": []
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 2,
+          "writes": [
+            {
+              "key": "src/api/client.ts#fetchWithAuth",
+              "kind": "body"
+            }
+          ],
+          "reads": [
+            "src/auth/session.ts#refreshToken"
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "reject",
+        "seq": 6
+      }
+    },
+    {
+      "op": "drain",
+      "as": "A",
+      "expect": {
+        "items": [],
+        "open_errors": []
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "claim",
+          "base_seq": 6,
+          "payload": {
+            "firm": true,
+            "source": "explicit"
+          },
+          "writes": [
+            {
+              "key": "src/auth/session.ts#SessionStore.get",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 7,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 2,
+          "writes": [
+            {
+              "key": "src/auth/session.ts#SessionStore.get",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "reject",
+        "seq": 8,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "claim_wait",
+            "symbol": "src/auth/session.ts#SessionStore.get",
+            "caused_by_seq": 7,
+            "caused_by_agent": "claude-a",
+            "suggestion": "Leave src/auth/session.ts#SessionStore.get to claude-a and keep working on your other tasks; negotiate (negotiate.propose to claude-a) if your task needs src/auth/session.ts#SessionStore.get."
+          }
+        ]
+      }
+    },
+    {
+      "op": "gate",
+      "as": "B",
+      "gate": "stop",
+      "expect": {
+        "allow": false,
+        "open_errors": [
+          {
+            "code": "stale_assumption",
+            "symbol": "src/auth/session.ts#refreshToken"
+          }
+        ]
+      }
+    },
+    {
+      "op": "drain",
+      "as": "A",
+      "ack": "last",
+      "expect": {
+        "items": [
+          {
+            "seq": 7,
+            "kind": "diagnostic",
+            "diagnostic": {
+              "severity": "warning",
+              "code": "claim_wait",
+              "symbol": "src/auth/session.ts#SessionStore.get",
+              "caused_by_seq": 7,
+              "caused_by_agent": "codex-b",
+              "message": "codex-b's edit to src/auth/session.ts#SessionStore.get conflicts with your change #7."
+            }
+          }
+        ],
+        "open_errors": []
+      }
+    }
+  ]
+}

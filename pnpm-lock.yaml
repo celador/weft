@@ -289,6 +289,9 @@ importers:
       '@weft/mcp':
         specifier: workspace:*
         version: link:../mcp
+      '@weft/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       esbuild:
         specifier: ^0.25.4
         version: 0.25.4

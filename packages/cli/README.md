@@ -45,6 +45,7 @@ Website: <https://weft.mx> · Source: <https://github.com/celador/weft>
 | `npx @celador/weft feed` | the live feed in your terminal |
 | `npx @celador/weft open` | open the live feed in your browser (prints a pairing code) |
 | `npx @celador/weft watch` | report edits from tools without hooks (file watcher) |
+| `npx @celador/weft claim --keys path#sym[,…] [--firm] [--ttl MS]` | claim symbols for this checkout's agent before it changes them (WCP §7.5): others' overlapping edits are warned, or refused with `--firm`; runs the checkout's `.weft/bin/weft claim` |
 | `npx @celador/weft mcp` | MCP server for this checkout, for agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode): `{"command":"npx","args":["-y","@celador/weft","mcp","--dir","/path/to/checkout"]}` |
 | `npx @celador/weft uninstall [--space]` | remove Weft from this repo; `--space` also erases the space on the gateway: every stored event, diff and key, for good (asks first; `--yes` skips) |
 | `npx @celador/weft --hosted` | opt in to a hosted space on Weft's Cloudflare gateway instead (5,000 agent events a month free; Weft Pro, per user, has no event cap) |

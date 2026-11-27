@@ -19,6 +19,7 @@ per checkout. It does two things:
 | `weft_status` | Open errors, negotiations owed, and what the other agents are editing (last 30 min). |
 | `weft_inbox` | Drain and acknowledge the inbox; open errors and what is owed. |
 | `weft_feed {repo?, limit?}` | The newest log records, one line each. |
+| `weft_history {keys[], repo?, since?, limit?}` | Why earlier changes to these symbols were reverted or refused (WCP §9.7): reverts with reason, who asked and evidence, refused edits with their cause, finished negotiations with their terms; newest first, one line each with its `#seq`. Keys are `path#symbol`, `path#*` or a bare path; `since` is days (default 90) or an ISO date. Works with an agent token (no `observe` scope needed). |
 | `weft_negotiate {action, …}` | `propose` / `accept` / `reject` / `counter` / `escalate` (WCP §7.4, §7.6). |
 | `weft_gate {gate: "stop" \| "commit"}` | May I finish / commit? Lists what still holds you. |
 

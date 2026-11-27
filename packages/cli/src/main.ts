@@ -11,6 +11,7 @@
 //   weft open               open the live feed in the browser (prints a pairing code)
 //   weft watch              report edits from this checkout (for tools without hooks)
 //   weft mcp                stdio MCP server for this checkout (harnesses with MCP but no hooks)
+//   weft claim --keys path#sym[,…] [--firm] [--ttl MS]   claim symbols for this checkout's agent
 //   weft uninstall [--space] remove Weft from this repo's checkouts (--space also erases the space)
 //   weft deploy [--name N] [--domain HOST]   your own gateway on your Cloudflare account
 //   weft local stop          stop the local gateway
@@ -24,8 +25,10 @@
 //   weft members [revoke <id|handle>|--all]   (owner) who joined; remove one or all (their keys stop working)
 import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { dependencyText } from "@weft/protocol/deps";
+import type { Dependencies } from "@weft/protocol";
 import { Api, statusOf, type FeedEvent, type Member, type Viewer } from "./api";
 import { MCP, WATCHER, adapterBin, detectHarnesses, ensureRuntime, harnessName, HARNESSES, installAdapter, installedIn, removeAdapters, startOrder, type HarnessId } from "./adapters";
 import {
@@ -80,13 +83,17 @@ type Opts = {
   join?: { space: string; code: string };
   /** `--as NAME`: how a joining teammate is shown to the owner (default: git's user.name). */
   as?: string;
+  /** `weft deps`: the change to report (default: this checkout's), PR text, raw JSON. */
+  change?: string;
+  pr: boolean;
+  json: boolean;
   positional: string[];
 };
 
 export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
-  const o: Opts = { local: false, hosted: false, yes: false, open: true, space: false, all: false, year: false, positional: [] };
+  const o: Opts = { local: false, hosted: false, yes: false, open: true, space: false, all: false, year: false, pr: false, json: false, positional: [] };
   let cmd = "init";
-  const known = new Set(["init", "demo", "add", "status", "pair", "viewers", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "usage", "upgrade", "billing", "invite", "members", "login", "logout", "whoami", "license", "help", "version"]);
+  const known = new Set(["init", "demo", "add", "status", "pair", "viewers", "feed", "open", "watch", "uninstall", "deploy", "local", "use", "usage", "upgrade", "billing", "invite", "members", "login", "logout", "whoami", "license", "deps", "help", "version"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     const val = () => {
@@ -116,6 +123,9 @@ export function parseArgs(argv: string[]): { cmd: string; o: Opts } {
       if (!j) throw new WeftError("--join takes <space>:<code>, e.g. sp0abc1def2g:K7M2P-9XQ4T", "Copy the whole command the space's owner sent you (they run: npx @celador/weft invite).");
       o.join = j;
     } else if (a === "--as") o.as = val();
+    else if (a === "--change") o.change = val();
+    else if (a === "--pr") o.pr = true;
+    else if (a === "--json") o.json = true;
     else if (a === "-h" || a === "--help") cmd = "help";
     else if (a === "-v" || a === "--version") cmd = "version";
     else if (a.startsWith("-")) throw new WeftError(`unknown option ${a}`, "Run `npx @celador/weft help`.");
@@ -155,10 +165,16 @@ ${c.bold("npx @celador/weft")}            in a git repo: a gateway on this machi
   viewers                     paired devices: label, created, last seen
   viewers revoke <id>|--all   unpair one device, or all of them
   feed                        live feed in this terminal
+  deps [--pr] [--change ID]   the unlanded changes this checkout's change relies on, as the coordinator
+                              recorded them, and whether they hold its landing; --pr prints the lines for
+                              the pull request ("Relies on <change>, not yet in main: <symbols>"); --json raw
   open                        open the live feed in your browser (prints a pairing code)
   watch                       report edits made here by tools without hooks (file watcher)
   mcp                         MCP server for this checkout, for agents with MCP but no hooks
                               (Zed, Warp, JetBrains, Xcode, ...): {"command":"npx","args":["-y","@celador/weft","mcp","--dir","<checkout>"]}
+  claim --keys path#sym[,…] [--firm] [--ttl MS] [--dir D]
+                              claim symbols for this checkout's agent before it changes them: others'
+                              overlapping edits are warned, or refused with --firm (runs .weft/bin/weft claim)
   uninstall [--space]         remove Weft from this repo (--space also erases your space: every stored
                               event, diff and key on the gateway; asks first, --yes skips; irreversible)
   deploy [--name N] [--domain HOST]
@@ -281,7 +297,7 @@ export function nextNotes(order: Array<{ id: string; name: string; run: string; 
     `When one agent changes code another agent depends on, the second one gets a red ${c.squiggle("squiggle")}`,
     `(a diagnostic with the other agent's diff) before it writes a conflicting edit.`,
     c.dim(`Agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode, ...): add the MCP server ${MCP.run} --dir ${roots.length > 1 ? "<checkout>" : tilde(roots[0] ?? ".")}`),
-    c.dim(`Agents already running must be restarted to load the hooks. More: npx @celador/weft status · feed · add · uninstall`),
+    c.dim(`Restart agents that were already running, each in its own checkout: a session runs the hooks of the checkout it started in. More: npx @celador/weft status · feed · add · uninstall`),
     "",
   );
   return lines.join("\n");
@@ -736,6 +752,53 @@ async function feed(o: Opts): Promise<void> {
   }
 }
 
+/**
+ * This checkout's agent, from its adapter config (`.weft/<harness>.json`, any harness): the gateway,
+ * repo and change it reports, and its token from `.weft/token`. The token is sent only to the URL of
+ * the config next to it, so it must be a regular file under a real `.weft/` directory: a repo that
+ * ships a `.weft/` (config URL of its choosing plus a symlinked token, or a `tokenFile` pointing
+ * elsewhere) cannot make `weft deps` send another credential there. WEFT_TOKEN is not used here for
+ * the same reason.
+ */
+function checkoutAgent(root: string): { url?: string; repo: string; change: string; token?: string } | undefined {
+  const dir = join(root, ".weft");
+  if (!existsSync(dir) || !lstatSync(dir).isDirectory()) return undefined;
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".json")).sort()) {
+    const j = readJson<{ url?: unknown; repo?: unknown; change?: unknown } | null>(join(dir, f), null);
+    if (!j || typeof j.repo !== "string" || typeof j.change !== "string" || !j.repo || !j.change) continue;
+    const tokPath = join(dir, "token");
+    const token = existsSync(tokPath) && lstatSync(tokPath).isFile() ? readSecret(tokPath) : undefined;
+    return { ...(typeof j.url === "string" && j.url ? { url: j.url.replace(/\/+$/, "").replace(/\/v1$/, "") } : {}), repo: j.repo, change: j.change, ...(token ? { token } : {}) };
+  }
+  return undefined;
+}
+
+/**
+ * `weft deps [--pr] [--change ID] [--json]` (spec §6.7, issue #6): what a change relies on, read from
+ * the coordinator's record (GET /v1/repos/{repo}/dependencies?change=). No GitHub access: --pr prints
+ * the text to paste into the pull request. The change defaults to this checkout's agent's change, then
+ * to HEAD's Change-Id trailer. Read with the checkout's agent token, else the space's viewer key, else
+ * the Hermes adapter's shared human token.
+ */
+async function deps(o: Opts): Promise<void> {
+  const { root, main, ptr, hp } = here(o);
+  const agent = checkoutAgent(root) ?? (root === main ? undefined : checkoutAgent(main));
+  const trailer = tryGit(root, ["log", "-1", "--format=%(trailers:key=Change-Id,valueonly)"])?.trim();
+  const change = o.change ?? agent?.change ?? (trailer || undefined);
+  if (!change) throw new WeftError("no change to report", "Pass --change <change id>, or run it in a checkout whose agent reports to Weft.");
+  let d: Dependencies;
+  if (agent?.url && agent.token) d = await new Api(agent.url).dependencies(agent.token, agent.repo, change);
+  else if (ptr) {
+    const { api, member } = spaceHere(o);
+    d = await withViewer(api, ptr.url, (v) => api.dependencies(v, ptr.repo, change), member ? ptr.space : undefined);
+  } else if (hp) {
+    const tok = process.env.WEFT_TOKEN?.trim() || sharedHumanToken(hp.url);
+    if (!tok) throw new WeftError(`no human token for ${hp.url}`, humanTokenHint(hp.url));
+    d = await new Api(hp.url).dependencies(tok, hp.repo, change);
+  } else throw new WeftError("Weft is not set up in this repo", "Run npx @celador/weft first.");
+  console.log(o.json ? JSON.stringify(d, null, 2) : dependencyText(d, { pr: o.pr }));
+}
+
 /** The live feed of the repo the Hermes adapter reports to, read with the shared human token. */
 async function hermesFeed(hp: HermesPointer): Promise<void> {
   const tok = process.env.WEFT_TOKEN?.trim() || sharedHumanToken(hp.url);
@@ -986,6 +1049,29 @@ export function mcpArgs(args: string[], cwd: string): string[] {
   return out;
 }
 
+/**
+ * `weft claim --keys path#sym[,…] [--firm] [--ttl MS] [--dir D]` (WCP §7.5): an explicit claim by the
+ * agent set up in this checkout (or in D). It runs that checkout's agent CLI, `.weft/bin/weft claim`,
+ * which the adapter install wrote: the claim goes out in the agent's own session with its own key,
+ * and the key checks and the --ttl bound are the adapter's. `--firm` sends `firm: true`.
+ */
+export function claimCli(args: string[], cwd: string): { cli: string; root: string; argv: string[] } {
+  const at = args.indexOf("--dir");
+  const dir = resolve(at >= 0 && args[at + 1] ? args[at + 1]! : (process.env.WEFT_ROOT ?? cwd));
+  const rest = at >= 0 ? [...args.slice(0, at), ...args.slice(at + 2)] : args;
+  const root = tryGit(dir, ["rev-parse", "--show-toplevel"]);
+  const cli = root ? join(root, ".weft", "bin", "weft") : undefined;
+  if (!root || !cli || !existsSync(cli))
+    throw new WeftError(`Weft is not set up in ${tilde(root ?? dir)}`, "Run npx @celador/weft in the repo first (it sets up every checkout), then claim from the agent's checkout.");
+  return { cli, root, argv: ["claim", ...rest] };
+}
+
+function claim(args: string[]): number {
+  const { cli, root, argv } = claimCli(args, process.cwd());
+  const r = spawnSync(cli, argv, { cwd: root, stdio: "inherit" });
+  return r.status ?? 1;
+}
+
 function mcp(args: string[]): void {
   const argv = mcpArgs(args, process.cwd());
   const rt = ensureRuntime();
@@ -1029,6 +1115,8 @@ export async function main(argv: string[]): Promise<number> {
     mcp(argv.slice(1));
     return 0;
   }
+  // `claim` passes its flags to the checkout's agent CLI untouched (see claimCli)
+  if (argv[0] === "claim") return claim(argv.slice(1));
   const { cmd, o } = parseArgs(argv);
   switch (cmd) {
     case "help":
@@ -1051,6 +1139,9 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     case "feed":
       await feed(o);
+      return 0;
+    case "deps":
+      await deps(o);
       return 0;
     case "pair":
       await pair(o);

@@ -9,15 +9,29 @@
 // every conformance scenario and require identical outputs, step by step.
 
 import {
+  abandonedNotice,
+  collectDependsOn,
+  dependenciesOf,
+  isAbandonment,
+  mergeDependencies,
+  type Dependencies,
+  type DependencyRef,
+  type DependencyState,
   addresseeOf,
   agreementOf,
+  amendmentSuggestion,
   answererOf,
   counterpartAway,
   contractError,
-  RELEASABLE,
+  NOT_IN_WORKSPACE,
   ownedElsewhere,
   ownerNotice,
-  sameNotice,
+  signatureChangeSuggestion,
+  claimWaitSuggestion,
+  conflictModeOf,
+  enforcementModeOf,
+  noticeKey,
+  NOT_OPENED,
   type ConflictMode,
   negotiationDues,
   renderDue,
@@ -30,6 +44,7 @@ import {
   UNSEEN_NOTE,
   WCP_VERSION,
   WcpProtocolError,
+  changeOwnedError,
   type ActionResult,
   type Actor,
   type Arbitration,
@@ -62,6 +77,17 @@ import {
   type Write,
   type WriteKind,
   type EnforcementMode,
+  DAY_MS,
+  historyPageOf,
+  historyQuery,
+  historyRows,
+  keyScope,
+  NOTE_WINDOW_DAYS,
+  prefixRange,
+  revertNote,
+  type HistoryPage,
+  type HistoryQuery,
+  type HistoryRow,
 } from "@weft/protocol";
 import { all, migrate, one, run, type Sql } from "./sql";
 
@@ -208,6 +234,11 @@ export type QueueEntry = {
   batch: number | null;
   created_at: string;
   updated_at: string;
+  /**
+   * `queued` entries only, present when non-empty: the recorded dependencies that hold the change
+   * (spec §6.7). The landing workflow skips a held entry, and a batch never claims one.
+   */
+  held_by?: string[];
 };
 
 const AGENT_KINDS = new Set<EventKind>([
@@ -247,6 +278,59 @@ export class SqlCoordinator {
     const c = one<{ v: string }>(sql, `SELECT v FROM meta WHERE k = 'config'`);
     if (!c) throw new WcpProtocolError("repo_not_found", "repository is not initialized");
     this.cfg = JSON.parse(c.v) as CoordinatorConfig;
+    if (one(sql, `SELECT 1 AS x FROM meta WHERE k = 'history_backfill'`)) this.backfillHistory();
+  }
+
+  /**
+   * v6 migration: index the history records already in the log (spec §9.7), once, in seq order.
+   * Afterwards every appended record indexes itself.
+   */
+  private backfillHistory(): void {
+    for (let after = 0; ; ) {
+      const page = all<{ seq: number; record: string }>(this.sql, `SELECT seq, record FROM events WHERE seq > ? ORDER BY seq LIMIT 500`, after);
+      if (!page.length) break;
+      for (const r of page) this.indexHistory(JSON.parse(r.record) as EventRecord);
+      after = page[page.length - 1]!.seq;
+    }
+    run(this.sql, `DELETE FROM meta WHERE k = 'history_backfill'`);
+  }
+
+  /** Index one appended record's history rows (spec §9.7). */
+  private indexHistory(rec: EventRecord): void {
+    const rows = historyRows(rec, {
+      record: (n) => this.record(n),
+      land: (seq, opId) => {
+        const at = seq !== undefined ? seq : one<{ seq: number }>(this.sql, `SELECT seq FROM ops WHERE op_id = ? AND kind = 'land'`, opId ?? null)?.seq;
+        const r = at === undefined ? undefined : this.record(at);
+        return r?.kind === "land" && r.status === "accepted" ? r : undefined;
+      },
+      editKeys: (change, upTo) =>
+        all<{ key: string }>(
+          this.sql,
+          `SELECT DISTINCT w.key AS key FROM event_writes w JOIN events e ON e.seq = w.seq WHERE w.change_id = ? AND w.seq <= ? AND e.kind = 'edit'`,
+          change,
+          upTo,
+        ).map((r) => r.key),
+    });
+    for (const h of rows) run(this.sql, `INSERT OR IGNORE INTO key_history (key, seq, kind, at) VALUES (?, ?, ?, ?)`, h.key, h.seq, h.kind, h.at);
+  }
+
+  /** SQL condition (and its bindings) for "key is in one of these scopes" (exact keys + prefix ranges). */
+  private static scopeSql(scopes: Array<{ exact: string[]; prefixes: string[] }>): { sql: string; args: string[] } {
+    const exact = uniq(scopes.flatMap((s) => s.exact));
+    const prefixes = uniq(scopes.flatMap((s) => s.prefixes));
+    const parts: string[] = [];
+    const args: string[] = [];
+    if (exact.length) {
+      parts.push(`key IN (${exact.map(() => "?").join(", ")})`);
+      args.push(...exact);
+    }
+    for (const p of prefixes) {
+      const [lo, hi] = prefixRange(p);
+      parts.push(`(key >= ? AND key < ?)`);
+      args.push(lo, hi);
+    }
+    return { sql: parts.length ? `(${parts.join(" OR ")})` : "0", args };
   }
 
   get config(): CoordinatorConfig {
@@ -276,14 +360,14 @@ export class SqlCoordinator {
   }
   /** Per-repo, recorded in the config at init (so replay is exact): `hold` unless the repo opted in. */
   get conflicts(): ConflictMode {
-    return this.config.conflicts ?? "hold";
+    return conflictModeOf(this.config.conflicts);
   }
   get escalation(): EscalationPolicy {
     return this.config.escalation ?? "auto";
   }
   /** Repo enforcement from the journaled config; absent means advise. */
   get enforcement(): EnforcementMode {
-    return this.config.enforcement ?? "advise";
+    return enforcementModeOf(this.config.enforcement);
   }
   private get claimTtl(): number {
     return this.config.claim_ttl_ms;
@@ -445,11 +529,12 @@ export class SqlCoordinator {
 
   /**
    * Map.set semantics: an existing key keeps its position, its value is replaced — except that an
-   * origin a release cannot clear (commit, contract) is never turned into one it can (§6.5).
+   * origin whose code is in the workspace (commit, contract) is never turned into one whose code is
+   * not (check, push) (§6.5). Origins are informational: no release clears any of them (#17).
    */
   private openSet(changeId: string, d: Diagnostic, origin: OpenOrigin, seq: Seq): void {
     const prev = one<{ origin: OpenOrigin }>(this.sql, `SELECT origin FROM change_errors WHERE change_id = ? AND key = ?`, changeId, d.symbol)?.origin;
-    if (prev && !RELEASABLE.includes(prev) && RELEASABLE.includes(origin)) origin = prev;
+    if (prev && !NOT_IN_WORKSPACE.includes(prev) && NOT_IN_WORKSPACE.includes(origin)) origin = prev;
     run(
       this.sql,
       `INSERT INTO change_errors (change_id, key, ord, origin, seq, diagnostic) VALUES (?, ?, ?, ?, ?, ?)
@@ -471,6 +556,7 @@ export class SqlCoordinator {
 
   private dropSession(sid: string): void {
     run(this.sql, `DELETE FROM sessions WHERE id = ?`, sid);
+    run(this.sql, `DELETE FROM session_noted WHERE session = ?`, sid);
     run(this.sql, `DELETE FROM inbox WHERE session = ?`, sid);
     run(this.sql, `DELETE FROM idempotency WHERE session = ?`, sid);
   }
@@ -496,6 +582,8 @@ export class SqlCoordinator {
 
     const changeId = h.change ?? `${h.agent.id}/${h.task?.id ?? "adhoc"}`;
     let change = this.getChange(changeId);
+    // A change belongs to the agent whose hello created it (spec §8.2, #17).
+    if (change && change.agent !== h.agent.id) throw changeOwnedError(changeId);
     if (!change) {
       run(
         this.sql,
@@ -638,23 +726,49 @@ export class SqlCoordinator {
     const diagnostics = this.evaluate(s, e);
     const reject = diagnostics.some((d) => d.severity === "error");
     const actor: Actor = { type: "agent", id: s.agent, harness: s.harness };
+    // §6.6: info notes on keys reverted lately, on the verdict only (the record keeps the validation diagnostics).
+    const notes = e.kind === "edit" && !diagnostics.some((d) => d.code === "agent_paused") ? this.revertNotes(s, e.writes ?? []) : [];
 
     let out: Verdict;
     if (msg.mode === "check" && !reject) {
-      out = this.verdict(s, "accept", "check", null, diagnostics);
+      out = this.verdict(s, "accept", "check", null, [...diagnostics, ...notes]);
     } else {
-      const rec = this.append({ kind: e.kind, actor, session: s, draft: e, diagnostics, status: reject ? "rejected" : "accepted", mode: msg.mode });
+      // An accepted edit records the unlanded neighbor changes it relies on (§6.7): an annotation, it decides nothing.
+      const depends_on = !reject && e.kind === "edit" ? this.dependsOn(s, e) : [];
+      const rec = this.append({ kind: e.kind, actor, session: s, draft: e, diagnostics, status: reject ? "rejected" : "accepted", mode: msg.mode, depends_on });
       for (const d of diagnostics) if (TELLS.has(d.code) && d.symbol) this.tell(s.change, d.symbol, d.caused_by_seq);
       if (reject) {
-        for (const d of diagnostics) if (d.severity === "error" && d.code !== "agent_paused") this.openSet(s.change, d, msg.mode, rec.seq);
-        if (this.conflicts === "continue") for (const d of diagnostics) if (ownedElsewhere(d, s.agent)) this.notifyOwner(d, s.agent, e.kind);
+        // A claim_wait is a wait for the holder, not an open error (§6.5, #18).
+        for (const d of diagnostics) if (d.severity === "error" && !NOT_OPENED.has(d.code)) this.openSet(s.change, d, msg.mode, rec.seq);
+        // A check only asks; the owner hears of a conflict when an edit is actually submitted (§8.4, #18).
+        if (this.conflicts === "continue" && msg.mode !== "check") for (const d of diagnostics) if (ownedElsewhere(d, s.agent)) this.notifyOwner(d, s.agent, e.kind);
       } else {
         this.applyAccepted(rec, s);
       }
-      out = this.verdict(s, reject ? "reject" : "accept", msg.mode, rec.seq, diagnostics, rec.summary);
+      out = this.verdict(s, reject ? "reject" : "accept", msg.mode, rec.seq, [...diagnostics, ...notes], rec.summary);
     }
     if (opts.idempotencyKey !== undefined)
       run(this.sql, `INSERT OR REPLACE INTO idempotency (session, key, at, verdict) VALUES (?, ?, ?, ?)`, sid, opts.idempotencyKey, this.now(), JSON.stringify(out));
+    return out;
+  }
+
+  /**
+   * `previously_reverted` notes (spec §6.6): per edited key, the newest revert of the last 30 days
+   * whose keys cover it, at most once per key per session. Index lookups inside this submit.
+   */
+  private revertNotes(s: Session, writes: Write[]): Diagnostic[] {
+    const now = this.now();
+    const floor = now - NOTE_WINDOW_DAYS * DAY_MS;
+    if (!writes.length || !one(this.sql, `SELECT 1 AS x FROM key_history WHERE kind = 'revert' AND at >= ? LIMIT 1`, floor)) return [];
+    const out: Diagnostic[] = [];
+    for (const key of uniq(writes.map((w) => w.key))) {
+      if (one(this.sql, `SELECT 1 AS x FROM session_noted WHERE session = ? AND key = ?`, s.id, key)) continue;
+      const scope = SqlCoordinator.scopeSql([keyScope(key)]);
+      const hit = one<{ seq: number }>(this.sql, `SELECT seq FROM key_history WHERE kind = 'revert' AND at >= ? AND ${scope.sql} ORDER BY seq DESC LIMIT 1`, floor, ...scope.args);
+      if (!hit) continue;
+      run(this.sql, `INSERT OR IGNORE INTO session_noted (session, key) VALUES (?, ?)`, s.id, key);
+      out.push(revertNote(key, this.record(hit.seq)!, now));
+    }
     return out;
   }
 
@@ -729,7 +843,8 @@ export class SqlCoordinator {
   }
 
   /** Two groups conflict: an open error of `s` cites the target group, or keys overlap. */
-  private groupsConflict(s: Session, target: string): boolean {
+  /** Mirrors ReferenceCoordinator.groupsConflict (escalation keys count too, #18). */
+  private groupsConflict(s: Session, target: string, keys: SymbolKey[] = []): boolean {
     const lead = this.group(target);
     for (const d of this.openOf(s.change)) {
       const c = this.record(d.caused_by_seq)?.change;
@@ -741,6 +856,7 @@ export class SqlCoordinator {
       for (const r of all<{ key: string }>(this.sql, `SELECT key FROM change_writes WHERE change_id = ?`, m.id)) theirs.add(r.key);
       for (const r of all<{ key: string }>(this.sql, `SELECT key FROM claims WHERE change_id = ? AND source != 'predicted' AND expires_at > ?`, m.id, now)) theirs.add(r.key);
     }
+    if (keys.some((k) => theirs.has(k))) return true;
     for (const m of this.members(this.group(s.change))) {
       for (const r of all<{ key: string }>(this.sql, `SELECT key FROM change_reads WHERE change_id = ?`, m.id)) if (theirs.has(r.key)) return true;
       for (const r of all<{ key: string }>(this.sql, `SELECT key FROM change_writes WHERE change_id = ?`, m.id)) if (theirs.has(r.key)) return true;
@@ -748,14 +864,14 @@ export class SqlCoordinator {
     return false;
   }
 
-  private checkEscalation(s: Session, w: { agent?: string; change?: string }): string {
+  private checkEscalation(s: Session, w: { agent?: string; change?: string }, keys: SymbolKey[] = []): string {
     const own = this.getChange(s.change)!;
     const target = this.escalationTarget(s.change, w);
     if (!target) throw new WcpProtocolError("invalid_reference", "unknown escalation target (no unlanded change of that agent)", { with: w });
     const t = this.getChange(target)!;
     if (this.sameGroup(target, s.change)) throw new WcpProtocolError("invalid_reference", `${target} is already merged with ${s.change}`);
     if (t.landed || own.landed) throw new WcpProtocolError("invalid_reference", "a landed change cannot be merged");
-    if (!this.groupsConflict(s, target))
+    if (!this.groupsConflict(s, target, keys))
       throw new WcpProtocolError("invalid_reference", `nothing to escalate: ${s.change} and ${target} do not conflict`, { change: target });
     return target;
   }
@@ -772,7 +888,8 @@ export class SqlCoordinator {
       const to = p.to as { agent?: string; change?: string };
       if (!this.knownTarget(to)) throw new WcpProtocolError("invalid_reference", "unknown negotiation/message target", { to });
     }
-    if (e.kind === "negotiate.escalate") this.checkEscalation(s, (p.with as { agent?: string; change?: string }) ?? {});
+    if (e.kind === "negotiate.escalate")
+      this.checkEscalation(s, (p.with as { agent?: string; change?: string }) ?? {}, Array.isArray(p.keys) ? p.keys.filter((k): k is string => typeof k === "string") : []);
     if (NEGOTIATION_REPLIES.has(e.kind)) {
       const parent = this.record(Number(p.reply_to));
       if (!parent || parent.status !== "accepted" || (parent.kind !== "negotiate.propose" && parent.kind !== "negotiate.counter"))
@@ -938,7 +1055,7 @@ export class SqlCoordinator {
           message: strong
             ? `${who} ${strong.w.kind === "deleted" ? "removed" : "changed the signature of"} ${key} (#${strong.r.seq}) after your base #${e.base_seq}, and your change uses it.`
             : `${key} body changed in #${hit.r.seq} by ${who} after your base #${e.base_seq}; its contract is unchanged.`,
-          ...(strong ? { suggestion: `Re-read ${key} (event #${strong.r.seq}) and adapt your call sites, or negotiate with ${who}.` } : {}),
+          ...(strong ? { suggestion: amendmentSuggestion(key, strong.r.seq, who, this.conflicts === "continue") } : {}),
           ...cause(hit.r),
         });
       }
@@ -1055,7 +1172,7 @@ export class SqlCoordinator {
           severity: h.firm || (this.enforcement === "block" && e.kind === "edit") ? "error" : "warning",
           code: "claim_wait",
           message: `${w.key} is ${h.firm ? "firmly claimed" : "being edited"} by ${h.agent} (${h.change}), which has precedence.`,
-          suggestion: `Wait for ${h.agent} to land or release ${w.key}, work elsewhere, or negotiate (negotiate.propose to ${h.agent}).`,
+          suggestion: claimWaitSuggestion(w.key, h.agent, this.conflicts),
         });
       } else {
         out.push({
@@ -1068,6 +1185,112 @@ export class SqlCoordinator {
       }
     }
     return out;
+  }
+
+  // ---------------------------------------------------------------- dependencies (§6.7)
+
+  /** Mirrors ReferenceCoordinator.dependsOn: the unlanded neighbor changes an accepted edit relies on. */
+  private dependsOn(s: Session, e: EventDraft): DependencyRef[] {
+    return collectDependsOn(uniq(e.reads ?? []), e.writes ?? [], (key) => {
+      const out: Array<{ change: string; agent: string; task?: string; kind: WriteKind; seq: Seq }> = [];
+      const rows = all<ChangeRow & { wkind: WriteKind }>(
+        this.sql,
+        `SELECT c.id, c.agent, c.task, c.priority, c.birth, c.landed, c.approved, c.merged_into, w.wkind AS wkind
+           FROM change_writes w JOIN changes c ON c.id = w.change_id WHERE w.key = ? ORDER BY c.ord`,
+        key,
+      );
+      for (const d of rows) {
+        if (d.id === s.change || d.landed || this.sameGroup(d.id, s.change) || this.alternatives(d.id, s.change)) continue;
+        const seq = one<{ s: number | null }>(this.sql, `SELECT MAX(seq) AS s FROM event_writes WHERE change_id = ? AND key = ? AND committed = 0`, d.id, key)?.s ?? null;
+        if (seq === null || this.abandonedAt(d.id) !== undefined) continue;
+        out.push({ change: d.id, agent: d.agent, ...(d.task ? { task: d.task } : {}), kind: d.wkind, seq });
+      }
+      return out;
+    });
+  }
+
+  /**
+   * The record that abandoned change `id` (spec §6.7): a system `release` with reason `abandoned`
+   * and no keys, or the landing of one of its alternatives (§7.7). Mirrors the reference.
+   */
+  private abandonedAt(id: string): Seq | undefined {
+    const c = this.getChange(id);
+    if (!c || c.landed) return undefined;
+    const r = one<{ s: number | null }>(
+      this.sql,
+      `SELECT MIN(seq) AS s FROM events WHERE status = 'accepted' AND (
+         (kind = 'release' AND change_id = ? AND actor_type = 'system'
+           AND json_extract(record, '$.payload.reason') = 'abandoned' AND json_type(record, '$.payload.keys') IS NULL)
+         OR (kind = 'land' AND ? IS NOT NULL AND change_id IS NOT ? AND change_id IN (SELECT id FROM changes WHERE task = ?)))`,
+      id,
+      c.task,
+      id,
+      c.task,
+    )?.s;
+    return r === null || r === undefined ? undefined : r;
+  }
+
+  private depState(id: string): { status: DependencyState; status_seq?: Seq } {
+    if (this.getChange(id)?.landed) {
+      const land = one<{ seq: number }>(this.sql, `SELECT seq FROM events WHERE change_id = ? AND kind = 'land' AND status = 'accepted' ORDER BY seq LIMIT 1`, id);
+      return { status: "landed", ...(land ? { status_seq: land.seq } : {}) };
+    }
+    const ab = this.abandonedAt(id);
+    return ab !== undefined ? { status: "abandoned", status_seq: ab } : { status: "pending" };
+  }
+
+  /** The accepted edits of `id` that recorded dependencies, ascending. */
+  private depRecords(id: string): EventRecord[] {
+    return all<{ record: string }>(
+      this.sql,
+      `SELECT record FROM events WHERE change_id = ? AND kind = 'edit' AND status = 'accepted' AND json_type(record, '$.depends_on') IS NOT NULL ORDER BY seq`,
+      id,
+    ).map((r) => JSON.parse(r.record) as EventRecord);
+  }
+
+  /** What `change` relies on and whether that holds its landing (spec §6.7, §9.8). Read-only. */
+  dependencies(change: string): Dependencies {
+    const c = this.getChange(change);
+    if (!c) throw new WcpProtocolError("not_found", `unknown change ${change}`);
+    return dependenciesOf({
+      repo: this.repo,
+      change: { id: c.id, agent: c.agent, ...(c.task ? { task: c.task } : {}), landed: Boolean(c.landed) },
+      records: (x) => this.depRecords(x),
+      state: (x) => this.depState(x),
+      sameGroup: (a, b) => this.sameGroup(a, b),
+    });
+  }
+
+  /**
+   * A change abandoned by `rec` stops holding the changes that rely on it (spec §6.7); the owner of
+   * each is told by a system `message`, appended after `rec`'s own effects. Mirrors the reference.
+   */
+  private dependencyNotices(rec: EventRecord): void {
+    const changes = () => all<ChangeRow>(this.sql, `SELECT * FROM changes ORDER BY ord`);
+    const gone =
+      rec.kind === "release"
+        ? rec.change !== undefined && isAbandonment(rec)
+          ? [rec.change]
+          : []
+        : changes()
+            .filter((x) => this.alternatives(x.id, rec.change))
+            .map((x) => x.id);
+    for (const x of gone) {
+      if (!this.getChange(x) || this.abandonedAt(x) !== rec.seq) continue;
+      for (const c of changes()) {
+        if (c.id === x || c.landed || this.sameGroup(c.id, x) || this.abandonedAt(c.id) !== undefined) continue;
+        const entry = mergeDependencies(this.depRecords(c.id)).find((d) => d.change === x);
+        if (!entry) continue;
+        const msg = this.append({
+          kind: "message",
+          actor: { type: "system", id: "coordinator" },
+          draft: { kind: "message", base_seq: this.head, payload: { to: { change: c.id }, text: abandonedNotice(entry, c.id, entry.keys, rec), intent: "info" } },
+          diagnostics: [],
+          status: "accepted",
+        });
+        this.applyAccepted(msg);
+      }
+    }
   }
 
   // ---------------------------------------------------------------- append + effects
@@ -1083,6 +1306,8 @@ export class SqlCoordinator {
     agent?: string;
     change?: string;
     task?: string;
+    /** Accepted edits only: the unlanded changes it relies on (§6.7). Empty = the field is left out. */
+    depends_on?: DependencyRef[];
   }): EventRecord {
     const d = a.draft;
     const writes = d.writes ?? [];
@@ -1129,6 +1354,8 @@ export class SqlCoordinator {
       ...(d.payload ? { payload: d.payload } : {}),
       ...(d.tool ? { tool: d.tool } : {}),
       ...(d.transcript ? { transcript: d.transcript } : {}),
+      // Stamped by the coordinator, never copied from the draft (a client cannot forge a dependency).
+      ...(a.depends_on?.length ? { depends_on: a.depends_on } : {}),
     };
     run(
       this.sql,
@@ -1151,6 +1378,7 @@ export class SqlCoordinator {
       for (const w of rec.writes)
         run(this.sql, `INSERT OR IGNORE INTO event_writes (seq, key, wkind, change_id, committed) VALUES (?, ?, ?, ?, ?)`, rec.seq, w.key, w.kind, rec.change, committed);
     }
+    this.indexHistory(rec);
     return rec;
   }
 
@@ -1158,13 +1386,15 @@ export class SqlCoordinator {
   private notifyOwner(d: Diagnostic, editor: string, kind: string): void {
     const cause = this.record(d.caused_by_seq);
     if (!cause?.change) return;
+    // Once per (owner, editor, symbol, cause): resubmitting the same stale edit adds no rows (#18).
+    const key = noticeKey(editor, d.symbol, d.caused_by_seq);
+    if (one(this.sql, `SELECT 1 AS x FROM owner_notices WHERE change_id = ? AND notice = ?`, cause.change, key)) return;
     const notice = ownerNotice(d, editor, kind);
     // Matched on the cause's agent too: a session can name any change in hello, so the change ID alone is not proof of ownership.
-    for (const os of this.sessionsOf({ change: cause.change }).filter((s) => s.agent === cause.agent)) {
-      const seen = all<{ item: string }>(this.sql, `SELECT item FROM inbox WHERE session = ? AND seq = ?`, os.id, d.caused_by_seq);
-      if (seen.some((r) => (JSON.parse(r.item) as InboxItem).diagnostic !== undefined && sameNotice((JSON.parse(r.item) as InboxItem).diagnostic!, notice))) continue;
-      this.push(os, { seq: d.caused_by_seq, kind: "diagnostic", diagnostic: notice });
-    }
+    const live = this.sessionsOf({ change: cause.change }).filter((s) => s.agent === cause.agent);
+    for (const os of live) this.push(os, { seq: d.caused_by_seq, kind: "diagnostic", diagnostic: notice });
+    // Only a delivered notice counts: an owner with no live session is told on a later conflict.
+    if (live.length) run(this.sql, `INSERT OR IGNORE INTO owner_notices (change_id, notice) VALUES (?, ?)`, cause.change, key);
   }
 
   /** `counterpart_away` when nobody live can answer a negotiation addressed to `to` (§7.4). */
@@ -1344,11 +1574,9 @@ export class SqlCoordinator {
         const keys = p.keys as SymbolKey[] | undefined;
         if (keys) for (const k of keys) run(this.sql, `DELETE FROM claims WHERE change_id IS ? AND key = ?`, rec.change ?? null, k);
         else run(this.sql, `DELETE FROM claims WHERE change_id IS ?`, rec.change ?? null);
-        // An agent's release is a retreat: it clears only errors whose edit never reached the
-        // workspace (check) or wounds (push) on the released keys — never commit-mode or contract
-        // ones, whose code is in the workspace (§6.5).
-        if (s && change)
-          for (const r of this.openRows(change.id)) if ((!keys || keys.includes(r.key)) && RELEASABLE.includes(r.origin)) this.openDelete(change.id, r.key);
+        // A release gives up claims and nothing else: it never clears an open error, whatever its
+        // origin (§6.5, #17). The coordinator cannot tell a retreat from code written around a
+        // denied edit, so only an accepted edit, a landing, a transfer/share or a merge clears one.
         break;
       }
       case "land": {
@@ -1465,9 +1693,7 @@ export class SqlCoordinator {
                 file: fileOf(w.key),
                 symbol: w.key,
                 message: `${rec.agent ?? rec.actor.id} ${w.kind === "deleted" ? "removed" : "changed the signature of"} ${w.key} (#${rec.seq}), which your change uses.`,
-                suggestion: this.conflicts === "continue"
-                  ? `Keep editing your other tasks instead of adapting your call sites to ${rec.agent ?? rec.actor.id}'s change; do not adopt their partial work. ${rec.agent ?? rec.actor.id} owns the change and is told about it if it has a live session.`
-                  : `Re-read ${w.key} and adapt your call sites before your next edit, or negotiate (e.g. keep the old signature as an overload).`,
+                suggestion: signatureChangeSuggestion(w.key, rec.agent ?? rec.actor.id, this.conflicts === "continue"),
                 caused_by_seq: rec.seq,
                 caused_by_agent: rec.agent ?? rec.actor.id,
                 ...(rec.task ? { caused_by_task: rec.task } : {}),
@@ -1476,6 +1702,8 @@ export class SqlCoordinator {
         }
       }
     }
+    // A change this record abandoned no longer holds the changes relying on it; their owners are told (§6.7).
+    if (rec.kind === "release" || rec.kind === "land") this.dependencyNotices(rec);
   }
 
   private recordOp(rec: EventRecord): void {
@@ -1830,7 +2058,8 @@ export class SqlCoordinator {
     const out = [this.queueEntry(leader)!];
     for (const id of [...new Set(ids)].filter((x) => x !== leader).sort((a, b) => a - b)) {
       const e = this.queueEntry(id);
-      if (!e || e.status !== "queued" || e.batch !== null || id < leader) continue;
+      // A held entry (spec §6.7) waits for its dependencies: no batch takes it.
+      if (!e || e.status !== "queued" || e.batch !== null || id < leader || e.held_by?.length) continue;
       run(this.sql, `UPDATE submit_queue SET status = 'landing', batch = ?, note = COALESCE(?, note), updated_at = ? WHERE id = ?`, leader, note ?? null, ts, id);
       out.push(this.queueEntry(id)!);
     }
@@ -1845,7 +2074,9 @@ export class SqlCoordinator {
     );
     if (!r) return undefined;
     const { change_id, ...rest } = r;
-    return { ...rest, batch: rest.batch ?? null, change: change_id };
+    // A queued change whose recorded dependencies have not landed is held (spec §6.7).
+    const held = r.status === "queued" && this.getChange(change_id) ? this.dependencies(change_id).held_by : [];
+    return { ...rest, batch: rest.batch ?? null, change: change_id, ...(held.length ? { held_by: held } : {}) };
   }
 
   queue(statuses: string[] = ["queued", "landing"]): QueueEntry[] {
@@ -1907,6 +2138,21 @@ export class SqlCoordinator {
     return r;
   }
 
+  /**
+   * Filtered history of symbol keys (spec §9.7): reverts, refused edits/claims and finished
+   * negotiations that concern `keys`, newest first. Two index queries; never a log scan.
+   */
+  history(q: HistoryQuery): HistoryPage {
+    const { keys, since, limit } = historyQuery(q, this.now());
+    const scope = SqlCoordinator.scopeSql(keys.map(keyScope));
+    const seqs = all<{ seq: number }>(this.sql, `SELECT DISTINCT seq FROM key_history WHERE at >= ? AND ${scope.sql} ORDER BY seq DESC LIMIT ?`, since, ...scope.args, limit + 1).map((r) => r.seq);
+    const rows = seqs.length
+      ? all<HistoryRow>(this.sql, `SELECT key, seq, kind, at FROM key_history WHERE seq IN (${seqs.map(() => "?").join(", ")}) AND ${scope.sql}`, ...seqs, ...scope.args)
+      : [];
+    const page = historyPageOf(rows, limit, (n) => this.record(n));
+    return { type: "history", repo: this.repo, keys, since: new Date(since).toISOString(), entries: page.entries, head_seq: this.head, has_more: page.has_more };
+  }
+
   summary(): RepoSummary {
     const sessions = this.allSessions();
     const last = one<{ ts: string }>(this.sql, `SELECT ts FROM events ORDER BY seq DESC LIMIT 1`);
@@ -1932,7 +2178,7 @@ export class SqlCoordinator {
 
   /** Complete dump of coordinator state (for replay-determinism checks). */
   dump(): Record<string, unknown[]> {
-    const tables = ["events", "event_writes", "sessions", "changes", "change_reads", "change_writes", "claims", "inbox", "change_errors", "change_told", "ops", "submit_queue"];
+    const tables = ["events", "event_writes", "sessions", "changes", "change_reads", "change_writes", "claims", "inbox", "change_errors", "change_told", "owner_notices", "ops", "submit_queue", "key_history", "session_noted"];
     const out: Record<string, unknown[]> = {};
     for (const t of tables) out[t] = all(this.sql, `SELECT * FROM ${t} ORDER BY rowid`);
     out.meta = all(this.sql, `SELECT * FROM meta WHERE k != 'schema_version' ORDER BY k`);

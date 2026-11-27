@@ -14,6 +14,7 @@
   },
   "exports": {
     ".": "./src/index.ts",
+    "./deps": "./src/deps.ts",
     "./schema.json": "./schema/wcp-v0.schema.json"
   },
   "files": [

@@ -52,6 +52,8 @@ import subprocess
 import sys
 import threading
 import time
+import weakref
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -90,6 +92,20 @@ SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
 QUOTE_CODES = {"stale_assumption", "stale_overwrite", "contract_changed"}
 # A byte-identical retry of an edit blocked for these is blocked once more (see _pre_edit).
 RETRY_GUARD_CODES = {"stale_assumption", "stale_overwrite"}
+# What the plugin says around the coordinator's diagnostics (issue #15). Byte-identical copies of
+# OPEN_ERROR_ADVICE / BLOCKED_EDIT_ADVICE in packages/protocol/src/ownership.ts (pinned by
+# src/advice-text.test.ts). The suggestions carry the repo's `conflicts` mode (spec §8.4): `hold`
+# says to update the code against the other agent's change, `continue` says that agent owns the
+# conflict and this agent stops and reports it. The plugin does not know the mode, so it defers to
+# the suggestion and never tells the agent, by itself, to adapt to another agent's change.
+OPEN_ERROR_ADVICE = (
+    "Do what each error's suggestion says. If it says another agent owns the conflict, stop working on that code and report it "
+    "(negotiate with that agent, or say so in your task report): do not adapt your code to their change, rebase onto it or work around it to clear the error. "
+    "Otherwise re-edit the cited code as the suggestion says (an accepted edit that touches the symbol clears the error), or retreat from that code.")
+BLOCKED_EDIT_ADVICE = (
+    "Do not retry the same edit. Do what each error's suggestion says. If it says another agent owns the conflict, leave this edit and report it "
+    "(negotiate with that agent, or say so in your task report): do not adapt your code to their change or work around it. "
+    "Otherwise change your code as the suggestion says, then edit again: your next attempt is checked against the current log.")
 MAX_QUOTE_LINES = 30
 MAX_QUOTE_LINE_CHARS = 200
 MAX_QUOTED_CAUSES = 3
@@ -97,7 +113,6 @@ MAX_DECL_LINES = 8
 MAX_BLOCKED_EDITS = 16
 MAX_EVENT_CACHE = 64
 MAX_FILE_BYTES = 512 * 1024
-MAX_SNAPSHOT_FILES = 300
 DRAIN_EVERY_S = 20.0
 RELOAD_EVERY_S = 60.0  # long-lived processes re-read the config for unknown projects at most this often
 SESSION_IDLE_S = 2 * 3600.0  # a chat's adapters (one WCP session per repo) close after this long idle
@@ -241,15 +256,24 @@ _GIT_OPT = r"""(?:[ \t]+(?:-c[ \t]+[^\s;&|<>()`$]+|--[a-z][a-z-]*(?:=[^\s;&|<>()
 _CD_TARGET = re.compile(r"\A\s*cd[ \t]+" + _BASH_DIR + r"[ \t]*&&")
 _GIT_C_TARGET = re.compile(r"\A\s*git" + _GIT_OPT + r"*[ \t]+-C[ \t]+" + _BASH_DIR + _GIT_OPT + r"*[ \t]+[a-z]")
 # Anything else that moves where a command works: another cd/pushd, a second -C, --git-dir /
-# --work-tree, `sh -c` (the leading form is counted once; see terminal_dirs).
+# --work-tree, `sh -c` (the leading form is counted once; see scan_command).
 _DIR_CHANGE = re.compile(
     r"""(?:^|[\s;&|()`'"{])(?:cd|pushd|popd|chdir|env[ \t]+-C)(?=$|[\s;&|()`'"}])"""
     r"""|(?:^|\s)(?:-C|--git-dir|--work-tree|--chdir|--directory)(?=[=\s]|$)"""
     r"""|(?:^|[\s;&|(])(?:ba|z|da|k)?sh[ \t]+-\w*c""", re.M)
-# Absolute or ~ paths anywhere in a command (quoted or not): the fail-closed candidates.
-_ABS_PATH = re.compile(r"""(?:(?<=^)|(?<=[\s=:'"(<>|;&]))(~?/[^\s'";&|<>()`$*?\[\]{}]*)""", re.M)
+# Absolute or ~ paths anywhere in a text (quoted or not): used when the text is not shell.
+_ABS_PATH = re.compile(r"""(?:(?<=^)|(?<=[\s=:'"(<>|;&,\[]))(~?/[^\s'";&|<>()`$*?\[\]{},]*)""", re.M)
+_HOME_VAR = re.compile(r"\A(?:\$HOME|\$\{HOME\})(?=/|\Z)")
+_GLOB = re.compile(r"[*?\[{]")
+# A program that runs code given on its command line (or on stdin): the code can reach any path.
+_INLINE_RUNNER = re.compile(r"\A(?:python[\d.]*|node|nodejs|perl|ruby|php|bun|deno|lua|osascript|Rscript)\Z")
+_INLINE_FLAGS = {"-c", "-e", "-E", "--eval", "-p", "--print", "-r", "-"}
+_CODE_RUNNERS = {"eval", "source", ".", "xargs", "parallel", "exec"}
+_COMMAND_START = {"&&", "||", ";", "|", "&", "(", "|&", ";;", "!", "then", "do", "else", "time", "sudo",
+                  "nohup", "command", "builtin"}
 MAX_COMMAND_PATHS = 256  # distinct existing directories (each costs a realpath + scope lookup)
 MAX_COMMAND_WORDS = 4096
+OPAQUE_TOOLS = {"execute_code"}  # code, not a command line: its reach is never parsed
 
 
 def _target_of(m: "re.Match[str]") -> Optional[str]:
@@ -282,84 +306,155 @@ def bash_target_dir(command: Any) -> Optional[str]:
     return _target_of(m) if m else None
 
 
-_HOME_VAR = re.compile(r"\A(?:\$HOME|\$\{HOME\})(?=/|\Z)")
+@dataclass
+class CommandScan:
+    """What a terminal command (or ``execute_code`` code) names. ``dirs``: existing directories
+    named by a literal path (absolute, ``~``, ``$HOME``, or relative to the command's cwd).
+    ``opaque``: why the command can reach paths it does not name literally ("" = it cannot: every
+    word is literal, it changes directory at most in the leading ``cd``/``git -C``, and no bound
+    was hit). ``names``: every path component of every word (an opaque command's capture also
+    covers each project whose folder name it mentions)."""
+    dirs: List[str] = field(default_factory=list)
+    opaque: str = ""
+    names: set = field(default_factory=set)
 
 
-def _shell_words(command: str) -> Optional[List[str]]:
-    for text in (command, command + '"', command + "'"):  # an unbalanced quote: close it at the end
+def _shell_words(command: str) -> Tuple[Optional[List[str]], bool]:
+    """(every shell word, True when the command parsed as is). An unbalanced quote is closed at
+    the end of the command (words, False); (None, False) when even that does not parse."""
+    for n, text in enumerate((command, command + '"', command + "'")):
         try:
             lex = shlex.shlex(text, posix=True, punctuation_chars=True)
             lex.whitespace_split = True
             lex.commenters = ""
-            return list(lex)[:MAX_COMMAND_WORDS]
+            return list(lex), n == 0
         except ValueError:
             continue
-    return None
+    return None, False
 
 
-def _path_words(command: str, depth: int = 0) -> List[str]:
-    """Words of ``command`` that are absolute / ``~`` / ``$HOME`` paths, split the way a shell
-    would: quotes and ``'\\''`` escapes keep a path with spaces or apostrophes whole, ``;&|()<>``
-    separate words, ``--opt=/path`` yields ``/path``. A quoted word that is itself a command
-    (``sh -c '...'``) is scanned again. An unbalanced quote is closed at the end of the command;
-    only when even that does not parse, a plain pattern scan is used."""
-    words = _shell_words(command)
-    if words is None:
-        return [m.group(1) for m in _ABS_PATH.finditer(command)]
-    out: List[str] = []
-    for w in words:
+def _existing_dir(raw: str) -> Optional[str]:
+    """The directory a path names: itself, or its deepest existing ancestor. None for ``/``."""
+    d = os.path.normpath(raw)
+    while d and d != os.path.dirname(d) and not os.path.isdir(d):
+        d = os.path.dirname(d)
+    return d if d and d != os.path.dirname(d) else None
+
+
+def _scan_words(words: List[str], cwd: str, scan: CommandScan, depth: int = 0) -> None:
+    home = os.path.expanduser("~")
+    for i, w in enumerate(words):
+        if (i == 0 or words[i - 1] in _COMMAND_START) and os.path.basename(w) in _CODE_RUNNERS:
+            scan.opaque = scan.opaque or f"runs code from its arguments or input ({w})"
+        if _INLINE_RUNNER.match(os.path.basename(w)) and any(x in _INLINE_FLAGS for x in words[i + 1:i + 3]):
+            scan.opaque = scan.opaque or f"runs inline code ({os.path.basename(w)})"
         cands = [w]
         if "=" in w and not w.startswith(("/", "~")):
             cands.append(w.split("=", 1)[1])
         for c in cands:
-            c = _HOME_VAR.sub(lambda _: os.path.expanduser("~"), c)
-            if c.startswith("/") or c == "~" or c.startswith("~/"):
-                out.append(c)
+            c = _HOME_VAR.sub(lambda _: home, c)
+            for part in c.split("/"):
+                if part:
+                    scan.names.add(part)
+            if "$" in c or "`" in c:
+                scan.opaque = scan.opaque or "expands a variable or command"
+                continue
+            if c.startswith("~") and not (c == "~" or c.startswith("~/")):
+                scan.opaque = scan.opaque or "names another user's home (~user)"
+                continue
+            absolute = c.startswith("/") or c == "~" or c.startswith("~/")
+            if not absolute and "/" not in c:
+                continue  # a plain word: at most a name in the cwd, which is captured anyway
+            if ".." in c.split("/"):
+                scan.opaque = scan.opaque or "walks up with .."
+            if absolute and _GLOB.search(c):
+                scan.opaque = scan.opaque or "globs an absolute path"
+            path = os.path.expanduser(c) if c.startswith("~") else c
+            d = _existing_dir(path if absolute else os.path.join(cwd, path))
+            if d and d not in scan.dirs:
+                if len(scan.dirs) >= MAX_COMMAND_PATHS:
+                    scan.opaque = scan.opaque or f"names more than {MAX_COMMAND_PATHS} directories"
+                else:
+                    scan.dirs.append(d)
         if depth < 2 and not w.startswith(("/", "~")) and any(ch in w for ch in " \t\n;&|"):
-            out.extend(_path_words(w, depth + 1))
-    return out
+            inner, _ = _shell_words(w)  # a quoted command (`sh -c '...'`, `ssh h '...'`)
+            if inner:
+                _scan_words(inner, cwd, scan, depth + 1)
+
+
+def scan_command(command: Any, cwd: str = "", target: Optional[str] = None) -> CommandScan:
+    """Scan a shell command for what it can reach (``CommandScan``), split the way a shell would:
+    quotes and ``'\\''`` escapes keep a path with spaces or apostrophes whole, ``;&|()<>``
+    separate words, ``--opt=/path`` yields ``/path``, a quoted word that is itself a command is
+    scanned again. Nothing is truncated: past a bound the command is opaque instead.
+
+    The parse only ADDS worktrees to a call's capture; it never has to be complete. A command it
+    cannot fully resolve is opaque, and the caller then captures every worktree of every repo the
+    conversation works in (``WeftRouter._terminal_repos``), whatever the spelling."""
+    scan = CommandScan()
+    if not isinstance(command, str) or not command.strip():
+        return scan
+    cwd = target or cwd or os.getcwd()
+    words, clean = _shell_words(command)
+    if words is None:
+        scan.opaque = "does not parse as a shell command"
+        words = [m.group(1) for m in _ABS_PATH.finditer(command)] + re.split(r"[\s'\"]+", command)
+    elif not clean:
+        scan.opaque = "has an unbalanced quote"
+    if len(words) > MAX_COMMAND_WORDS:
+        scan.opaque = scan.opaque or f"has more than {MAX_COMMAND_WORDS} words"
+    if len(_DIR_CHANGE.findall(command)) > (1 if target else 0):
+        scan.opaque = scan.opaque or "changes directory"
+    _scan_words(words, cwd, scan)
+    return scan
+
+
+def scan_code(code: Any) -> CommandScan:
+    """``execute_code``: Python code, always opaque; its literal absolute / ``~`` paths and its
+    identifiers still name worktrees and project folders."""
+    scan = CommandScan(opaque="runs code")
+    if not isinstance(code, str):
+        return scan
+    for m in _ABS_PATH.finditer(code):
+        raw = m.group(1)
+        scan.names.update(p for p in raw.split("/") if p)
+        d = _existing_dir(os.path.expanduser(raw) if raw.startswith("~") else raw)
+        if d and d not in scan.dirs and len(scan.dirs) < MAX_COMMAND_PATHS:
+            scan.dirs.append(d)
+    scan.names.update(re.findall(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", code))
+    return scan
 
 
 def command_paths(command: Any) -> List[str]:
-    """Existing directories named by absolute / ``~`` paths in ``command`` (a file names its
-    directory; a path that does not exist yet names its deepest existing ancestor). Bounded."""
-    if not isinstance(command, str):
-        return []
+    """Existing directories named by literal paths in ``command`` (a file names its directory; a
+    path that does not exist yet names its deepest existing ancestor)."""
+    return scan_command(command).dirs
+
+
+def terminal_scan(name: str, args: dict, base: str) -> Tuple[List[str], CommandScan]:
+    """Candidate directories of a terminal (or ``execute_code``) call, best first: the command's
+    own leading ``cd``/``git -C`` target, its ``workdir`` (else the session's directory), then
+    every directory a literal path in it names; and the scan (``opaque`` says whether the call can
+    reach more than that)."""
+    if name in OPAQUE_TOOLS:
+        lead: List[Optional[str]] = [args.get("workdir") or base]
+        scan = scan_code(args.get("code"))
+    else:
+        command = args.get("command")
+        target = bash_target_dir(command)
+        lead = [target, args.get("workdir") or base]
+        cwd = target or args.get("workdir") or base
+        scan = scan_command(command, cwd if isinstance(cwd, str) else "", target)
     out: List[str] = []
-    for raw in _path_words(command):
-        raw = raw.rstrip(",")
-        if raw.startswith("~"):
-            raw = os.path.expanduser(raw)
-        d = os.path.normpath(raw)
-        while d and d != os.path.dirname(d) and not os.path.isdir(d):
-            d = os.path.dirname(d)
-        if d and d != os.path.dirname(d) and d not in out:
+    for d in [*lead, *scan.dirs]:
+        if isinstance(d, str) and d and d not in out:
             out.append(d)
-        if len(out) >= MAX_COMMAND_PATHS:
-            break
-    return out
+    return out, scan
 
 
 def terminal_dirs(args: dict, base: str) -> List[str]:
-    """Candidate directories of a terminal call: the command's own leading ``cd``/``git -C``
-    target, its ``workdir`` (else the session's directory) and, FAIL CLOSED, when the command
-    changes directory in any other spelling (or the leading one did not parse), every absolute
-    / ``~`` path it names. Every in-scope candidate is snapshotted around the call
-    (``WeftAdapter._pre_terminal``), so a spelling the parser misses still cannot edit an
-    in-scope worktree unseen or skip its commit gate."""
-    command = args.get("command")
-    target = bash_target_dir(command)
-    out: List[str] = []
-    for d in (target, args.get("workdir") or base):
-        if isinstance(d, str) and d and d not in out:
-            out.append(d)
-    if isinstance(command, str):
-        changes = len(_DIR_CHANGE.findall(command))
-        if changes > (1 if target else 0):
-            for d in command_paths(command):
-                if d not in out:
-                    out.append(d)
-    return out
+    """``terminal_scan``'s directories for a ``terminal`` call."""
+    return terminal_scan("terminal", args, base)[0]
 
 
 # ------------------------------------------------------------------------------------------
@@ -623,7 +718,7 @@ class Scope:
     def __init__(self, roots: List[Root], projects: Optional[Dict[str, str]] = None,
                  project_dirs: Optional[List[str]] = None, excludes: Optional[List[str]] = None,
                  default_repo: str = "", known_repos: Optional[List[str]] = None):
-        self.roots = sorted(roots, key=lambda r: len(r.path), reverse=True)
+        self.roots = self.sort_roots(roots)
         self.projects = dict(projects or {})
         # repos the adapter config names: the only ones a checkout's space.json may pick
         self.known_repos = set(known_repos or ()) | set(self.projects.values())
@@ -632,8 +727,26 @@ class Scope:
         self.default_repo = default_repo
         self._ext: Dict[str, Optional[Root]] = {}  # external worktree dir -> root (cache)
 
+    @staticmethod
+    def sort_roots(roots: List[Root]) -> List[Root]:
+        """Explicit roots, longest path first (the deepest root containing a path wins)."""
+        return sorted(roots, key=lambda r: len(r.path), reverse=True)
+
     def repo_of(self, root: Root) -> str:
         return root.repo or self.default_repo
+
+    def _mapped_root(self, path: str) -> Optional[Root]:
+        """A project the config maps (``projects.repos``) anywhere on disk, not only as a direct
+        child of ``project_dirs``: a project registered outside the project dirs resolves even
+        without an explicit root. Deepest mapped project first."""
+        best = ""
+        for proj in self.projects:
+            if len(proj) > len(best) and _under(path, proj):
+                best = proj
+        return Root(best, "", self.projects[best]) if best else None
+
+    def _configured_root(self, path: str) -> Optional[Root]:
+        return self._explicit_root(path) or self._project_root(path) or self._mapped_root(path)
 
     def _project_root(self, path: str) -> Optional[Root]:
         for d in self.project_dirs:
@@ -703,7 +816,7 @@ class Scope:
         if os.path.basename(common) != ".git":
             return None
         main = os.path.dirname(common)
-        owner = self._explicit_root(main) or self._project_root(main)
+        owner = self._configured_root(main)
         if not owner or main != owner.path:
             return None
         return Root(worktree, owner.prefix, self.repo_of(owner))
@@ -717,7 +830,7 @@ class Scope:
     def root_for(self, path: str) -> Optional[Root]:
         if any(_under(path, x) for x in self.excludes):
             return None
-        root = self._explicit_root(path) or self._project_root(path)
+        root = self._configured_root(path)
         if root:
             return root
         if self.project_dirs or self.projects:
@@ -1089,6 +1202,21 @@ def file_key(rel: str) -> str:
     return f"{rel.replace(' ', '_')}#*"
 
 
+def revert_notes(verdict: dict) -> str:
+    """The ``previously_reverted`` notes (WCP §6.6, info) of a verdict as the model reads them:
+    the coordinator's own rendered lines (``context``), else rendered here the same way."""
+    diags = [d for d in verdict.get("diagnostics") or []
+             if isinstance(d, dict) and d.get("code") == "previously_reverted"]
+    if not diags:
+        return ""
+    lines = [ln for ln in str(verdict.get("context") or "").split("\n")
+             if ln.startswith("[weft info] previously_reverted ")]
+    if not lines:
+        lines = [f"[weft info] previously_reverted {d.get('symbol') or d.get('file', '')}: {d.get('message', '')} "
+                 f"(caused by {d.get('caused_by_agent', '?')} · event #{d.get('caused_by_seq', '?')})." for d in diags]
+    return "\n".join(lines)
+
+
 def unified_diff(rel: str, before: Optional[str], after: Optional[str]) -> str:
     a = (before or "").splitlines(keepends=True)
     b = (after or "").splitlines(keepends=True)
@@ -1220,6 +1348,92 @@ def git(worktree: str, *args: str, timeout: float = 3.0) -> Optional[str]:
         return None
 
 
+# ------------------------------------------------------------------------------------------
+# worktree snapshots (terminal capture)
+# ------------------------------------------------------------------------------------------
+
+MAX_SNAPSHOT_TEXTS = 300       # dirty files whose text is kept before a call (the rest: stat only)
+SNAPSHOT_WORKERS = 8           # worktrees snapshotted in parallel around one call
+WORKTREE_LIST_TTL_S = 2.0
+BUSY_STALE_S = 6 * 3600.0      # a capture window that never closed stops counting after this
+MAX_WINDOWS = 16               # capture windows kept per worktree (terminal) and for edits
+_SNAP_POOL: Optional[ThreadPoolExecutor] = None
+_SNAP_POOL_LOCK = threading.Lock()
+_WORKTREE_LISTS: Dict[str, Tuple[float, List[str]]] = {}
+_LIVE_ADAPTERS: "weakref.WeakSet[WeftAdapter]" = weakref.WeakSet()
+
+
+def _pool_map(fn: Callable[[Any], Any], items: List[Any]) -> List[Any]:
+    """``map`` over a small shared thread pool (git status of several worktrees at once)."""
+    global _SNAP_POOL
+    if len(items) <= 1:
+        return [fn(x) for x in items]
+    with _SNAP_POOL_LOCK:
+        if _SNAP_POOL is None:
+            _SNAP_POOL = ThreadPoolExecutor(max_workers=SNAPSHOT_WORKERS, thread_name_prefix="weft-snap")
+    return list(_SNAP_POOL.map(fn, items))
+
+
+def worktree_list(checkout: str) -> List[str]:
+    """Every existing worktree of the repository ``checkout`` belongs to (``git worktree list``),
+    main checkout first. Cached for a couple of seconds (one call asks for it per adapter)."""
+    now = time.monotonic()
+    hit = _WORKTREE_LISTS.get(checkout)
+    if hit and now - hit[0] < WORKTREE_LIST_TTL_S:
+        return list(hit[1])
+    out = git(checkout, "worktree", "list", "--porcelain") or ""
+    paths = [line[len("worktree "):] for line in out.splitlines() if line.startswith("worktree ")]
+    paths = [p for p in paths if os.path.isdir(p)]
+    if len(_WORKTREE_LISTS) > 256:
+        _WORKTREE_LISTS.clear()
+    _WORKTREE_LISTS[checkout] = (now, paths)
+    return list(paths)
+
+
+def _stat_sig(path: str) -> Optional[Tuple[int, int, int, int]]:
+    """Change signature of a path: ctime (no userland call can set it), mtime, size, inode."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return None
+    return (st.st_ctime_ns, st.st_mtime_ns, st.st_size, st.st_ino)
+
+
+@dataclass
+class Snap:
+    """A worktree's dirty files: ``sigs`` = rel -> (git status code, stat signature) for EVERY
+    dirty or untracked file (unbounded: that is what detects a change); ``texts`` = rel -> text
+    for the first ``MAX_SNAPSHOT_TEXTS`` of them (a diff's before side). ``ok`` False: git failed."""
+    sigs: Dict[str, Tuple[str, Optional[Tuple[int, int, int, int]]]] = field(default_factory=dict)
+    texts: Dict[str, Optional[str]] = field(default_factory=dict)
+    ok: bool = True
+
+
+def dirty_snapshot(worktree: str, texts: bool = True) -> Snap:
+    out = git(worktree, "status", "--porcelain", "-z", "--untracked-files=all", timeout=10.0)
+    snap = Snap()
+    if out is None:
+        snap.ok = False
+        return snap
+    entries = out.split("\0")
+    i = 0
+    while i < len(entries):
+        entry = entries[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        code, rel = entry[:2], entry[3:]
+        if "R" in code or "C" in code:
+            i += 1  # skip the rename source
+        if any(part in SKIP_PARTS for part in rel.split("/")):
+            continue
+        full = os.path.join(worktree, rel)
+        snap.sigs[rel] = (code, _stat_sig(full))
+        if texts and len(snap.texts) < MAX_SNAPSHOT_TEXTS:
+            snap.texts[rel] = read_text(full) if os.path.isfile(full) else None
+    return snap
+
+
 def hermes_session_cwd(task_id: Any) -> Optional[str]:
     """The cwd Hermes's file/terminal tools use for this call's session, when it is known.
 
@@ -1281,9 +1495,12 @@ class Pending:
     before: Dict[str, Optional[str]] = field(default_factory=dict)   # abs -> text
     worktree: Optional[str] = None
     head: Optional[str] = None
-    snapshot: Dict[str, Optional[str]] = field(default_factory=dict)  # rel(no prefix) -> text
+    snapshot: Snap = field(default_factory=Snap)  # terminal: the worktree's dirty files before
     integration: bool = False  # git merge/rebase/...: record HEAD moves only, not file changes
     more: List["Pending"] = field(default_factory=list)  # terminal: the call's other worktrees
+    # terminal: why the worktree is captured: "named" (the call names it), "own" (this session
+    # worked there before) or "wide" (an opaque call: every worktree of the repo)
+    reach: str = "named"
 
 
 class WeftAdapter:
@@ -1348,6 +1565,14 @@ class WeftAdapter:
         self._land_spawned_at = -1e9
         self._procs: List[Any] = []
         self.spawner: Callable[[List[str]], Any] = self._popen
+        # Capture windows: worktree -> {"runs": [[start, end|None, call]], "edits": [[path,
+        # start, end|None, call]]}. A run window lies inside this session's snapshot pair of the
+        # worktree (opened after the pre-call snapshot, closed before the post-call one), an edit
+        # window inside its before/after reads of the file, so a change made inside one is
+        # certainly reported by this session. Published in the status file: another session
+        # that sees the same change leaves it to this one (``_claimed_elsewhere``).
+        self.activity: Dict[str, Dict[str, List[list]]] = {}
+        _LIVE_ADAPTERS.add(self)
 
     # -- infra -----------------------------------------------------------------------------
 
@@ -1696,7 +1921,7 @@ class WeftAdapter:
             if name in EDIT_TOOLS:
                 return self._pre_edit(name, args, tool_call_id, task_id)
             if name in WATCH_TOOLS:
-                block = self._pre_terminal(name, args, tool_call_id, task_id) if name in TERMINAL_TOOLS else None
+                block = self._pre_terminal(name, args, tool_call_id, task_id)
                 if not block:
                     self.watch_begin(tool_call_id, str(args.get("command") or args.get("code") or ""))
                 return block
@@ -1738,6 +1963,7 @@ class WeftAdapter:
         for t in targets:
             pend.before[t.abs] = read_text(t.abs) if os.path.exists(t.abs) else None
             self.worktrees.setdefault(t.worktree, None)
+        self._open_window(pend.call_id, edits=[(t.worktree, t.abs) for t in targets])
         with self.lock:
             self.pending[pend.call_id] = pend
         if len(targets) != 1 or self.deferred:
@@ -1759,14 +1985,18 @@ class WeftAdapter:
                 codes, shown = held
                 with self.lock:
                     self.pending.pop(pend.call_id, None)
+                self._close_window(pend.call_id, drop=True)
                 self.log(f"identical retry of blocked edit to {t.rel} blocked once more ({', '.join(codes)})")
                 return {"action": "block", "message": (
                     f"[weft] Edit blocked again: this is the exact edit to {t.rel} that Weft just blocked "
                     f"({', '.join(codes)}), unchanged. While the other agent's change is not in your checkout, "
                     "re-reading the file here shows the OLD code. The diagnostics again:\n"
                     f"{shown}\n"
-                    "Change your edit to match the new declaration (or negotiate with that agent). If you "
-                    "have checked it and this exact edit is still right (for example, the new parameter is "
+                    "Do what each error's suggestion says. If it says the other agent owns the conflict, leave "
+                    "this edit and report it (negotiate with that agent, or say so in your task report): do not "
+                    "adapt your edit to their change. If it says to update your code, change your edit to match "
+                    "the new declaration (or negotiate with that agent). If you have checked it and this exact "
+                    "edit is still right without adapting to their change (for example, the new parameter is "
                     "optional), retry it unchanged once more and Weft will validate it against the current log.")}
         reads, writes = self.analyzer.analyze([(t.rel, pend.before[t.abs], after)], t.worktree,
                                               self.scope.prefix_for(t.worktree))
@@ -1776,7 +2006,15 @@ class WeftAdapter:
                             name, pend.call_id, "pre_tool_call")
         verdict = self._submit("check", event, pend.call_id)
         if verdict.get("verdict") != "reject":
-            return None  # warnings reach the model with the commit verdict (§8.3 step 2)
+            # Warnings reach the model with the commit verdict (§8.3 step 2). A previously_reverted
+            # note (§6.6) is given once per key per session, on this check, so it cannot wait for
+            # the commit: queue it for the next tool result.
+            notes = revert_notes(verdict)
+            if notes:
+                with self.lock:
+                    self.outbox.append((notes, 0, 0))
+                self.log(f"previously reverted: {t.rel} ({notes.count(chr(10)) + 1} note(s))")
+            return None
         self.rec.verdict("check", [t.rel], writes, verdict, name)
         if self.cfg.mode != "enforce":
             self._queue(verdict, "[weft] (advisory) this edit would be rejected:")
@@ -1786,6 +2024,7 @@ class WeftAdapter:
             self.pending.pop(pend.call_id, None)
             self._queue(verdict, notes=notes)
             context = self._take_outbox()
+        self._close_window(pend.call_id, drop=True)  # blocked: the edit never happens
         codes = sorted({str(d.get("code")) for d in verdict.get("diagnostics") or []
                         if isinstance(d, dict) and d.get("severity") == "error" and d.get("code") in RETRY_GUARD_CODES})
         if codes:
@@ -1795,68 +2034,208 @@ class WeftAdapter:
                     self.blocked_edits.popitem(last=False)
         self.log(f"check rejected {t.rel} seq {verdict.get('seq')}")
         if notes:
-            advice = ("The new declaration and diff quoted above come from the Weft log, not from your "
-                      "checkout: while the other agent's change is not in your checkout, re-reading the file "
-                      "here shows the OLD code. Work from the quote, follow the suggestion, then retry.")
+            where = ("The new declaration and diff quoted above come from the Weft log, not from your "
+                     "checkout: while the other agent's change is not in your checkout, re-reading the file "
+                     "here shows the OLD code.")
         else:
-            advice = ("Follow the suggestion above and adapt your edit, then retry. If another agent changed "
-                      "code you use, their change may not be in your checkout yet: re-reading the file here "
-                      "can show the old code.")
+            where = ("If another agent changed code you use, their change may not be in your checkout yet: "
+                     "re-reading the file here can show the old code.")
         return {"action": "block", "message": (
             "[weft] Edit blocked by Weft edit-time coordination (another agent's change conflicts "
             f"with this edit to {t.rel}). Diagnostics:\n{context}\n"
-            f"{advice} The log base has advanced, so a corrected edit will be validated against the "
-            "new state.")}
+            f"{BLOCKED_EDIT_ADVICE} {where}")}
 
     def _pre_terminal(self, name: str, args: dict, call_id: str, task_id: Any = "") -> Optional[dict]:
-        # Every in-scope worktree the call may touch (terminal_dirs: the parsed leading target,
-        # the workdir, and fail-closed every absolute path of a command that changes directory in
-        # a spelling the parser does not accept), this repo's only.
-        worktrees = [wt for wt, repo in self.scope.locate_terminal_all(args, self._base_dir(task_id))
-                     if repo == self.cfg.route_key]
-        if not worktrees:
+        """Snapshot every worktree of this repo the call may change, before it runs:
+
+        - ``named``: the call's leading ``cd``/``git -C`` target, its workdir (else the session's
+          directory) and every directory a literal path in it names (``terminal_scan``);
+        - ``own``: every worktree this session worked in before, whatever the command says (a
+          script or a build can write there without naming it);
+        - ``wide``: when the call is opaque (a variable, ``$(...)``, an unparsed directory change,
+          inline code, a bound hit, ``execute_code``...), every worktree of the repo.
+
+        The parse only adds worktrees; an opaque call does not depend on it. ``post_tool_call``
+        diffs each snapshot, and a ``git commit`` (any spelling, for an opaque call) first asks
+        the commit gate."""
+        base = self._base_dir(task_id)
+        dirs, scan = terminal_scan(name, args, base)
+        plan: Dict[str, str] = {}
+        for d in dirs:
+            hit = self.scope.locate_dir(d)
+            if hit and hit[1] == self.cfg.route_key:
+                plan.setdefault(hit[0], "named")
+        for wt in list(self.worktrees):
+            if os.path.isdir(wt):
+                plan.setdefault(wt, "own")
+        if scan.opaque:
+            for wt in self.repo_worktrees():
+                plan.setdefault(wt, "wide")
+        if not plan:
             return None  # SCOPE GUARD
-        command = str(args.get("command") or "")
-        if self.session and re.search(r"\bgit\b[^|;&]*\bcommit\b", command):
+        command = str(args.get("command") or args.get("code") or "")
+        named = any(r == "named" for r in plan.values())
+        if self.session and ((named and re.search(r"\bgit\b[^|;&]*\bcommit\b", command))
+                             or (scan.opaque and re.search(r"\bcommit\b", command))):
             block = self._gate("commit", "git commit")
             if block:
                 return block
         call_id = call_id or f"anon-{time.monotonic_ns()}"
         integration = bool(GIT_INTEGRATION.search(command))
-        parts = []
-        for worktree in worktrees:
-            part = Pending("terminal", name, call_id, worktree=worktree, integration=integration)
-            self.worktrees.setdefault(worktree, None)
-            part.head = (git(worktree, "rev-parse", "HEAD") or "").strip() or None
+        if scan.opaque:
+            wide = sum(1 for r in plan.values() if r == "wide")
+            self.log(f"[{self.cfg.repo}] {name} call {call_id[:40]} {scan.opaque}: capturing "
+                     f"{len(plan)} worktree(s) ({wide} by the opaque-call rule)")
+        worktrees = list(plan)
+
+        def take(wt: str) -> Pending:
+            part = Pending("terminal", name, call_id, worktree=wt, integration=integration, reach=plan[wt])
+            part.head = (git(wt, "rev-parse", "HEAD") or "").strip() or None
             if not integration:
-                part.snapshot = self._dirty_snapshot(worktree)
-            parts.append(part)
+                part.snapshot = dirty_snapshot(wt)
+            return part
+
+        parts = _pool_map(take, worktrees)
+        for wt, reach in plan.items():
+            if reach == "named":
+                self.worktrees.setdefault(wt, None)
+        self._open_window(call_id, runs=[wt for wt, r in plan.items() if r != "wide"])
         pend = parts[0]
         pend.more = parts[1:]
         with self.lock:
             self.pending[pend.call_id] = pend
         return None
 
-    def _dirty_snapshot(self, worktree: str) -> Dict[str, Optional[str]]:
-        out = git(worktree, "status", "--porcelain", "-z", "--untracked-files=all")
-        snap: Dict[str, Optional[str]] = {}
-        if out is None:
-            return snap
-        entries = out.split("\0")
-        i = 0
-        while i < len(entries) and len(snap) < MAX_SNAPSHOT_FILES:
-            entry = entries[i]
-            i += 1
-            if len(entry) < 4:
+    def abandon(self, call_id: str) -> None:
+        """The call another adapter blocked never runs: forget its snapshot and activity."""
+        with self.lock:
+            pend = self.pending.pop(call_id, None) if call_id else None
+        self._watch.pop(call_id or "anon", None)
+        if pend:
+            self._close_window(pend.call_id, drop=True)
+
+    def repo_worktrees(self) -> List[str]:
+        """Every in-scope worktree of this repo (``git worktree list`` of its checkout)."""
+        git_dir = self._git_dir()
+        out: List[str] = []
+        for wt in worktree_list(git_dir) if git_dir else []:
+            hit = self.scope.locate_dir(wt)
+            if hit and hit[1] == self.cfg.route_key and hit[0] not in out:
+                out.append(hit[0])
+        return out
+
+    # -- capture windows (who captures which worktree when) ---------------------------------
+
+    def _open_window(self, call_id: str, runs: Optional[List[str]] = None,
+                     edits: Optional[List[Tuple[str, str]]] = None) -> None:
+        now = time.time()
+        with self.lock:
+            for wt in runs or []:
+                ws = self.activity.setdefault(wt, {"runs": [], "edits": []})["runs"]
+                ws.append([now, None, call_id])
+                del ws[:-MAX_WINDOWS]
+            for wt, path in edits or []:
+                ws = self.activity.setdefault(wt, {"runs": [], "edits": []})["edits"]
+                ws.append([path, now, None, call_id])
+                del ws[:-MAX_WINDOWS]
+            while len(self.activity) > 64:
+                self.activity.pop(next(iter(self.activity)))
+        self._publish_windows()
+
+    def _close_window(self, call_id: str, drop: bool = False) -> None:
+        """End (``drop``: forget, the call never ran) the windows of ``call_id``."""
+        now = time.time()
+        with self.lock:
+            for a in self.activity.values():
+                for key in ("runs", "edits"):
+                    if drop:
+                        a[key] = [w for w in a[key] if w[-1] != call_id]
+                    else:
+                        for w in a[key]:
+                            if w[-1] == call_id and w[-2] is None:
+                                w[-2] = now
+        self._publish_windows()
+
+    def _publish_windows(self) -> None:
+        with self.lock:
+            view = {wt: {"runs": [w[:2] for w in a["runs"]], "edits": [w[:3] for w in a["edits"]]}
+                    for wt, a in self.activity.items() if a["runs"] or a["edits"]}
+        self.rec.set_worktrees(view)
+
+    @staticmethod
+    def _covers(windows: Any, path: str, when: float, now: float) -> bool:
+        """``windows`` (a published ``{"runs", "edits"}``) has a window containing ``when``:
+        any run window, or an edit window of ``path``. An open window counts until now (unless
+        it is stale: its call never ended)."""
+        if not isinstance(windows, dict):
+            return False
+
+        def inside(start: Any, end: Any) -> bool:
+            try:
+                s = float(start)
+                e = now if end is None else float(end)
+            except (TypeError, ValueError):
+                return False
+            if end is None and now - s > BUSY_STALE_S:
+                return False
+            return s <= when <= e
+
+        for w in windows.get("runs") or []:
+            if isinstance(w, list) and len(w) >= 2 and inside(w[0], w[1]):
+                return True
+        for w in windows.get("edits") or []:
+            if isinstance(w, list) and len(w) >= 3 and w[0] == path and inside(w[1], w[2]):
+                return True
+        return False
+
+    @staticmethod
+    def _changed_at(path: str) -> float:
+        """When ``path`` last changed (ctime; a deleted file: its nearest existing directory's)."""
+        p = path
+        while True:
+            try:
+                return os.lstat(p).st_ctime
+            except OSError:
+                parent = os.path.dirname(p)
+                if parent == p:
+                    return time.time()
+                p = parent
+
+    def _claimed_elsewhere(self, worktree: str, path: str) -> Optional[str]:
+        """Another live session (another change, in this process or another Hermes process)
+        whose capture window of ``worktree`` (or edit window of ``path``) contains the moment
+        ``path`` changed: that session reports the change itself."""
+        when = self._changed_at(path)
+        now = time.time()
+        for other in list(_LIVE_ADAPTERS):
+            if other is self or other._closed or other.change == self.change:
                 continue
-            status, rel = entry[:2], entry[3:]
-            if "R" in status or "C" in status:
-                i += 1  # skip the rename source
-            if any(part in SKIP_PARTS for part in rel.split("/")):
+            with other.lock:
+                a = other.activity.get(worktree)
+                windows = {"runs": [w[:2] for w in a["runs"]], "edits": [w[:3] for w in a["edits"]]} if a else None
+            if self._covers(windows, path, when, now):
+                return other.change
+        directory = self.rec.directory
+        if directory is None:
+            return None
+        try:
+            files = list(directory.glob("*.json"))
+        except OSError:
+            return None
+        for f in files:
+            if f == self.rec.path:
                 continue
-            full = os.path.join(worktree, rel)
-            snap[rel] = read_text(full) if os.path.isfile(full) else None
-        return snap
+            try:
+                snap = json.loads(f.read_text())
+                if not isinstance(snap, dict) or snap.get("pid") == os.getpid() or snap.get("ended"):
+                    continue
+                if snap.get("change") == self.change or not status.pid_alive(snap.get("pid")):
+                    continue
+                if self._covers((snap.get("worktrees") or {}).get(worktree), path, when, now):
+                    return str(snap.get("change") or "another session")
+            except Exception:
+                continue
+        return None
 
     # -- gates -----------------------------------------------------------------------------
 
@@ -1876,17 +2255,18 @@ class WeftAdapter:
         self.log(f"gate {gate} refused ({len(open_errors)} open errors) for {what}")
         return {"action": "block", "message": (
             f"[weft] {what} refused by the Weft {gate} gate: {result.get('reason') or 'open errors'}\n"
-            "Resolve each error by re-editing the cited symbols against the current code (an "
-            "accepted edit that touches the symbol clears it). If you deliberately retreated from "
-            f"these symbols, retry {what} {RELEASE_AFTER_REFUSALS} more time(s) and Weft will "
-            "release them (recorded in the Weft feed).")}
+            f"{OPEN_ERROR_ADVICE} If you deliberately retreated from "
+            f"these symbols, retry {what} {RELEASE_AFTER_REFUSALS} more time(s) and Weft will let it "
+            "through as a retreat: it releases them in the Weft feed, but the errors stay open on "
+            "your change for humans and the coordinator's gates.")}
 
     def _retreat(self, gate: str, what: str, result: dict) -> bool:
         """Count a refusal; once the agent has insisted past ``RELEASE_AFTER_REFUSALS`` refusals
-        over the same open errors, treat it as a deliberate retreat and release those keys
-        (spec §6.3: release clears matching open errors). The release record is visible in the
-        feed, so humans see what was walked away from. Returns True when the caller should let
-        the action through."""
+        over the same open errors, treat it as a deliberate retreat: release those keys and let
+        the action through locally. The release gives up the claims only — it never clears an
+        open error (spec §6.5, #17) — so the errors stay on the change, the release record shows
+        humans what was walked away from, and the coordinator's own gates keep refusing. Returns
+        True when the caller should let the action through."""
         open_errors = result.get("open_errors") or []
         keys = sorted({d.get("symbol") for d in open_errors
                        if isinstance(d.get("symbol"), str) and SYMBOL_KEY.match(d["symbol"])})
@@ -1942,9 +2322,10 @@ class WeftAdapter:
         self.log(f"pre_verify refused ({len(result.get('open_errors') or [])} open errors)")
         return {"action": "continue", "message": (
             f"[weft] Not done yet: {result.get('reason') or 'open Weft errors'}\n"
-            "Fix these conflicts (re-edit the cited symbols against the current code) before finishing. "
+            f"{OPEN_ERROR_ADVICE} "
             "If you deliberately retreated from these symbols, try to finish "
-            f"{RELEASE_AFTER_REFUSALS} more time(s) and Weft will release them (recorded in the Weft feed).")}
+            f"{RELEASE_AFTER_REFUSALS} more time(s) and Weft will let you finish as a retreat (recorded "
+            "in the Weft feed; the errors stay open on your change).")}
 
     # -- hook: post_tool_call --------------------------------------------------------------
 
@@ -1961,11 +2342,11 @@ class WeftAdapter:
                         break
         try:
             if pend and pend.kind == "edit":
+                self._close_window(pend.call_id)
                 changes = [(t, pend.before.get(t.abs), self._current(t.abs)) for t in pend.targets]
                 self._defer(lambda: self._commit_changes(changes, name, pend.call_id))
             elif pend and pend.kind == "terminal":
-                for part in [pend, *pend.more]:
-                    self._post_terminal(part)
+                self._post_terminal_all([pend, *pend.more])
             elif self.session and time.monotonic() - self.last_drain > DRAIN_EVERY_S:
                 self.last_drain = time.monotonic()
                 self._defer(self._drain)
@@ -1996,30 +2377,70 @@ class WeftAdapter:
         self._queue(verdict)
         self.last_drain = time.monotonic()
 
-    def _post_terminal(self, pend: Pending) -> None:
+    def _post_terminal_all(self, parts: List[Pending]) -> None:
+        self._close_window(parts[0].call_id)  # before the post-call snapshots: see self.activity
+        afters = _pool_map(lambda p: None if p.integration else dirty_snapshot(p.worktree or "", texts=False),
+                           parts)
+        for part, after in zip(parts, afters):
+            try:
+                self._post_terminal(part, after)
+            except Exception as err:
+                self.log(f"[{self.cfg.repo}] terminal capture of {part.worktree} failed: {err!r}")
+
+    def _post_terminal(self, pend: Pending, after: Optional[Snap] = None) -> None:
         worktree = pend.worktree or ""
         prefix = self.scope.prefix_for(worktree)
         head = (git(worktree, "rev-parse", "HEAD") or "").strip() or None
         integrating = pend.integration or bool(git(worktree, "rev-parse", "-q", "--verify", "MERGE_HEAD"))
-        after = {} if integrating else self._dirty_snapshot(worktree)
+        if after is None and not integrating:
+            after = dirty_snapshot(worktree, texts=False)
+        before = pend.snapshot
         changes: List[Tuple[Target, Optional[str], Optional[str]]] = []
-        for rel in ([] if integrating else sorted(set(pend.snapshot) | set(after))):
-            was_dirty, is_dirty = rel in pend.snapshot, rel in after
-            if was_dirty and is_dirty:
-                before_text, after_text = pend.snapshot[rel], after[rel]
-            elif is_dirty:  # newly dirty: before = HEAD version (if HEAD did not move)
-                if head != pend.head:
+        if not integrating and after is not None and before.ok and after.ok:
+            for rel in sorted(set(before.sigs) | set(after.sigs)):
+                was, now = before.sigs.get(rel), after.sigs.get(rel)
+                if was == now:
+                    continue  # same git status and same stat signature (ctime included): unchanged
+                full = os.path.join(worktree, rel)
+                if was is not None and now is not None:  # dirty before and after
+                    if rel in before.texts:
+                        before_text = before.texts[rel]
+                    else:
+                        # past MAX_SNAPSHOT_TEXTS dirty files: still reported, against the
+                        # pre-call HEAD version (a superset of this call's diff)
+                        before_text = git(worktree, "show", f"{pend.head}:{rel}") if pend.head else None
+                        self.log(f"[{self.cfg.repo}] {rel}: changed during {pend.tool}; before text not kept "
+                                 f"(more than {MAX_SNAPSHOT_TEXTS} dirty files), diffing against HEAD")
+                elif head != pend.head:
+                    continue  # HEAD moved: a commit / checkout, not an edit (checkpoints cover it)
+                elif now is not None:  # newly dirty: before = the HEAD version
+                    before_text = git(worktree, "show", f"HEAD:{rel}")
+                elif rel in before.texts:  # was dirty, now clean: reverted
+                    before_text = before.texts[rel]
+                else:
+                    self.log(f"[{self.cfg.repo}] {rel}: reverted during {pend.tool}; before text not kept")
                     continue
-                shown = git(worktree, "show", f"HEAD:{rel}")
-                before_text, after_text = shown, after[rel]
-            else:  # was dirty, now clean: reverted (HEAD same) or committed (HEAD moved)
-                if head != pend.head:
+                after_text = self._current(full)
+                if before_text == after_text:
                     continue
-                before_text, after_text = pend.snapshot[rel], self._current(os.path.join(worktree, rel))
-            if before_text == after_text:
-                continue
-            changes.append((Target(os.path.join(worktree, rel), worktree, prefix + rel), before_text, after_text))
+                changes.append((Target(full, worktree, prefix + rel), before_text, after_text))
+        elif not integrating and not (before.ok and (after is None or after.ok)):
+            self.log(f"[{self.cfg.repo}] git status failed in {worktree}: {pend.tool} changes there not captured")
         moved = bool(head and pend.head and head != pend.head)
+        if changes:
+            kept = []
+            for change in changes:
+                other = self._claimed_elsewhere(worktree, change[0].abs)
+                if other:
+                    # made inside another live session's capture window: that session reports
+                    # it (never claimed twice)
+                    self.log(f"[{self.cfg.repo}] {change[0].rel} changed during {pend.tool}; left to "
+                             f"{other}, whose capture covers that moment")
+                else:
+                    kept.append(change)
+            changes = kept
+            if changes:
+                self.worktrees.setdefault(worktree, None)
         if not changes:
             if not moved and self.session and time.monotonic() - self.last_drain > DRAIN_EVERY_S:
                 self.last_drain = time.monotonic()
@@ -2251,8 +2672,8 @@ class WeftRouter:
 
     def _reload(self) -> bool:
         """Re-read the config (rate-limited to once per ``RELOAD_EVERY_S``); True when it was
-        re-read. Only token/mode/project maps change: the reload can add repos this profile
-        already holds tokens for in the config file, nothing else."""
+        re-read. Only token/mode/project maps and explicit roots change: the reload can add repos
+        this profile already holds tokens for in the config file, nothing else."""
         now = self._clock()
         if self._loader is None or now - self._loaded_at < RELOAD_EVERY_S:
             return False
@@ -2273,6 +2694,9 @@ class WeftRouter:
                 adapter.rec.set_mode(adapter.cfg.mode)
             return True
         # Shared with live adapters: update in place (single attribute stores, GIL-atomic).
+        # Explicit roots too: a project registered outside the project dirs (``roots`` entry)
+        # after this process started must resolve without a restart.
+        self.scope.roots = Scope.sort_roots(fresh.roots)
         self.scope.projects = dict(fresh.projects)
         self.scope.known_repos = set(fresh.known_repos())
         self.scope.project_dirs = list(fresh.project_dirs)
@@ -2406,20 +2830,82 @@ class WeftRouter:
         threading.Thread(target=adapter.close, kwargs={"close_analyzer": False}, name="weft-close",
                          daemon=True).start()
 
-    def _repos(self, name: str, args: dict, task_id: Any = "") -> List[str]:
+    def _repos(self, name: str, args: dict, task_id: Any = "", session: str = "") -> List[str]:
         if self.cfg.links is not None:
             self._reload()
         base = base_dir(task_id)
         repos: List[str] = []
         if name in EDIT_TOOLS:
-            for p in edit_paths(name, args):
+            paths = edit_paths(name, args)
+            missed = []
+            for p in paths:
                 t = self.scope.resolve(p, base)
-                if t and t.repo not in repos:
+                if not t:
+                    missed.append(p)
+                elif t.repo not in repos:
                     repos.append(t.repo)
-        elif name in TERMINAL_TOOLS:
-            for _, repo in self.scope.locate_terminal_all(args, base):
-                if repo not in repos:
-                    repos.append(repo)
+            # A path in no project may be in one registered since the last config read (an
+            # explicit root outside the project dirs): re-read (rate-limited) and retry.
+            if missed and self._reload_on_miss():
+                for p in missed:
+                    t = self.scope.resolve(p, base)
+                    if t and t.repo not in repos:
+                        self.log(f"config reloaded: {t.worktree} now resolves to project '{t.repo}'")
+                        repos.append(t.repo)
+        elif name in WATCH_TOOLS:
+            repos = self._terminal_repos(name, args, base, session)
+        return repos
+
+    def _reload_on_miss(self) -> bool:
+        """Multi-project mode: a path resolved to no project. Re-read the config (at most once
+        per ``RELOAD_EVERY_S``, shared with the unknown-repo re-check); True when re-read.
+        Standalone mode already re-reads on every call."""
+        if self.cfg.links is not None:
+            return False
+        with self.lock:
+            return self._reload()
+
+    def _terminal_repos(self, name: str, args: dict, base: str, session: str) -> List[str]:
+        """Repos a terminal / ``execute_code`` call is captured in. The ones its directories and
+        literal paths name; when the call is opaque (``CommandScan.opaque``: a variable, an
+        unparsed directory change, inline code, a bound hit, ``execute_code``), also every repo
+        this conversation works in and every project whose folder name the call mentions, with
+        every worktree of each (a standalone checkout's worktrees are repos of their own). Each
+        repo's adapter then snapshots all of that repo's worktrees (``_pre_terminal``)."""
+        dirs, scan = terminal_scan(name, args, base)
+        repos: List[str] = []
+        seeds: List[str] = []  # a checkout of each repo, for its worktree list
+        hits = [self.scope.locate_dir(d) for d in dirs]
+        if not all(hits) and self._reload_on_miss():  # see ``_repos``
+            before = hits
+            hits = [self.scope.locate_dir(d) for d in dirs]
+            for old, hit in zip(before, hits):
+                if hit and not old:
+                    self.log(f"config reloaded: {hit[0]} now resolves to project '{hit[1]}'")
+        for hit in hits:
+            if hit and hit[1] not in repos:
+                repos.append(hit[1])
+                seeds.append(hit[0])
+        if not scan.opaque:
+            return repos
+        for adapter in self._live(session):
+            route = adapter.cfg.route_key
+            if route not in repos:
+                git_dir = adapter._git_dir()
+                repos.append(route)
+                seeds.append(git_dir or "")
+        roots = list(self.scope.projects.items()) + [(r.path, self.scope.repo_of(r)) for r in self.scope.roots]
+        for path, _ in roots:
+            if os.path.basename(path) in scan.names:
+                hit = self.scope.locate_dir(path)
+                if hit and hit[1] not in repos:
+                    repos.append(hit[1])
+                    seeds.append(hit[0])
+        for seed in list(seeds):
+            for wt in worktree_list(seed) if seed else []:
+                hit = self.scope.locate_dir(wt)
+                if hit and hit[1] not in repos:
+                    repos.append(hit[1])
         return repos
 
     def _live(self, session: Optional[str] = None) -> List[WeftAdapter]:
@@ -2440,6 +2926,8 @@ class WeftRouter:
         if self.cfg.links is not None:
             self._reload()
         hit = self.scope.locate_dir(directory) if isinstance(directory, str) else None
+        if not hit and isinstance(directory, str) and directory and self._reload_on_miss():
+            hit = self.scope.locate_dir(directory)  # see ``_repos``
         return self.adapter_for(hit[1], self.session_key(kw or {})) if hit else None
 
     def pre_tool_call(self, tool_name: str = "", args: Optional[dict] = None, **kw: Any) -> Optional[dict]:
@@ -2451,13 +2939,19 @@ class WeftRouter:
                 targets = self._live(session)
             else:
                 targets = [a for a in (self.adapter_for(r, session)
-                                       for r in self._repos(name, args, kw.get("task_id"))) if a]
+                                       for r in self._repos(name, args, kw.get("task_id"), session)) if a]
+                if name in WATCH_TOOLS:
+                    # every repo this conversation works in snapshots its own worktrees around
+                    # every terminal call, whatever the command names (WeftAdapter._pre_terminal)
+                    targets += [a for a in self._live(session) if a not in targets]
         except Exception as err:  # fail open
             self.log(f"route {name} failed open: {err!r}")
             return None
-        for adapter in targets:
+        for i, adapter in enumerate(targets):
             block = adapter.pre_tool_call(tool_name=tool_name, args=args, **kw)
             if block:
+                for earlier in targets[:i]:  # the call will not run: drop their snapshots
+                    earlier.abandon(str(kw.get("tool_call_id") or ""))
                 return block
         if name in WATCH_TOOLS:
             # Every repo this conversation works in watches its worktrees and trunk around the

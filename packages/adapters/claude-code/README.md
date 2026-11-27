@@ -52,7 +52,10 @@ directory on the way is refused too). A file it cannot read that way is treated 
 text, so an edit to it is not coordinated rather than leaking the target's content into a diff.
 
 `.weft/bin/weft claim --keys path#symbol[,…] [--firm] [--ttl MS]` submits an explicit claim
-(spec §7.5); see docs/try-it.md.
+(spec §7.5); see docs/try-it.md. Without `--firm` it is soft: another agent's overlapping edit
+only gets a `claim_wait` warning. `--firm` sends `firm: true`, and a junior agent's overlapping
+edit is rejected (`claim_wait` error). The translators that share this core (Cursor, OpenCode,
+Gemini CLI, Copilot, Antigravity) get the same command from `src/host.ts`.
 
 Declared capabilities: `{level: 3, observe: sync, inject: immediate, deny_edit, refuse_stop, commit_gate: tool_interception}`.
 
@@ -88,21 +91,66 @@ edit was not coordinated) and is logged. Files outside the checkout, and under `
 `.claude`, `node_modules`, `dist`, are ignored. Edits whose analysis yields no writes
 (comment/import-only) are not submitted.
 
-## Subagents: `install-agent` and `hook --by-path`
+## Subagents: `install-agent`, `hook --root` and `hook --by-path`
 
-A subagent (for example `weft-worker`) runs in the parent session's cwd but edits inside its own
-joined worktree, and has no SessionStart of its own. In the orchestrating session's project:
+**Why subagents need their own hooks.** Claude Code loads project hooks from the session's own
+project directory (`.claude/settings*.json` there; per the Claude Code docs, edits to those files
+are picked up by its file watcher, and `/hooks` only lists them, it does not reload anything). A
+session started in the main checkout therefore never runs the hooks `install` wrote into a
+worktree's `.claude/`, restarted or not, and its subagents work in the session's cwd with the
+session's hooks. Two ways to coordinate a subagent's work in a joined worktree:
+
+- start a separate Claude Code session inside the worktree (its own hooks, nothing below needed); or
+- give the orchestrating session a weft-worker subagent per worktree, whose own frontmatter hooks
+  act for that worktree (below).
+
+A subagent has no SessionStart of its own. In the orchestrating session's project:
 
 ```sh
 # in each worktree the subagents will work in
-WEFT_TOKEN=... node …/weft-claude.mjs install --url … --repo my-repo --agent worker-1 --task T-1
-# once, in the orchestrating session's project (then start a new session so it loads)
-node …/weft-claude.mjs install-agent [--name weft-worker]
+WEFT_TOKEN=... node …/weft-claude.mjs install --dir /abs/wt-1 --url … --repo my-repo --agent worker-1 --task T-1
+# once per worktree, in the orchestrating session's project (no restart: Claude Code watches .claude/agents/)
+node …/weft-claude.mjs install-agent --worktree /abs/wt-1        # writes .claude/agents/weft-worker-wt-1.md
 ```
 
-`install-agent` writes `.claude/agents/weft-worker.md` (added to `.git/info/exclude`: it holds
-absolute paths), a subagent whose own frontmatter hooks run `hook --by-path` on Edit, Write,
-MultiEdit, Bash and on Bash failures. Plain `hook` is unchanged.
+**Per-worktree worker (`--worktree`, recommended).** `install-agent --worktree W` writes
+`.claude/agents/weft-worker-<dir name>.md` (or `--name N`) into the orchestrating checkout, where
+the session finds it, and adds it to `.git/info/exclude` (it holds absolute paths). Its
+frontmatter hooks run `hook --root W --url U --repo R --mode M` on Edit, Write, MultiEdit and Bash
+(PreToolUse, PostToolUse, PostToolUseFailure) and on `Stop`, which Claude Code runs as
+`SubagentStop` for a subagent. The worktree is given, not inferred, so calls without a file path
+act for it too:
+
+- the worker's Bash `git commit` is gated in-session against the worktree's session (the commit
+  gate denies it while that worktree's change has open errors);
+- its `SubagentStop` runs the stop gate (decision `block` with the open errors and owed
+  negotiations, up to the usual refusal cap) and, once it may stop, ends its WCP session like
+  `SessionEnd` (bye; kept for the git gate while errors are open);
+- an Edit/Write/MultiEdit in another git checkout is denied (a file in no checkout, say a scratch
+  file in `/tmp`, is left alone), and so is a Bash command that does not start with
+  `cd W && …` or `git -C W …`;
+- a Bash call is reconciled opaquely: whatever the command did anywhere in W (subshells, later
+  `cd`s, any quoting) is compared with the pre-call snapshot.
+
+Inside a subagent Claude Code passes the parent session's `session_id` plus the subagent's
+`agent_id`; worker hooks key their state on both, so each subagent has its own WCP session.
+
+**Workspace trust and `claude -p`.** Claude Code runs a project subagent's frontmatter hooks only
+after the folder holding the agent file was trusted in the workspace trust dialog, and a `-p`
+session does not count as trusted: the subagent still runs, without its hooks. For headless runs
+pass the definition with `claude --agents` instead: `install-agent --worktree W --print-json`
+prints it as `--agents` JSON (definitions passed that way run their hooks without the trust step).
+
+**By-path worker (no `--worktree`).** `install-agent` alone writes `.claude/agents/weft-worker.md`,
+whose hooks run `hook --by-path` on Edit, Write, MultiEdit, Bash and on Bash failures, and infer
+the worktree from each path (rules below). It has no Stop gate (a SubagentStop names no path), so
+prefer `--worktree`. Plain `hook` is unchanged.
+
+**A config that exists but does not load** (broken JSON, JSON `null`, a missing field, no token,
+a token file outside `.weft/`) is never replaced by another checkout's: worker hooks (`--root` and
+`--by-path`) log the reason to that checkout's `.weft/log/adapter.log` (`hook --root: <path>
+exists but does not load (<reason>)`, never the token), tell the agent on `PreToolUse` that the
+call is not coordinated, and coordinate nothing for that call.
 
 **Which checkout.** `--by-path` takes the checkout from the edited file (for Bash, from the
 `cd`/`git -C` target below): the nearest directory holding `.git`. That checkout is coordinated
@@ -161,16 +209,22 @@ refused, and so is a target that is in no joined checkout (`cd /tmp && …`): it
 while the rest of the command may write a worktree. The deny tells the agent to start the command
 with `cd <worktree> &&`. Plain `hook` does not deny Bash.
 
-**Limit:** only the leading target is checked. A later `cd` or path inside the same command
-(`cd /wt/a && cd /wt/b && sed -i … f`) is not attributed: the reconcile compares the named
-checkout only, so writes the command makes in another checkout are not coordinated. Like every
-hook, this constrains a cooperative agent's tool path and is not a sandbox (hooks-core-v0
-"Enforcement is advisory against a hostile agent"): a shell command can still rewrite or remove
-`.weft/` files.
+**Every named checkout is reconciled.** The leading target only decides whether the command may
+run. After it runs, worker hooks reconcile every joined checkout the command names, read
+opaquely: any absolute or `~/` path anywhere in the text (after a later `cd`, in a subshell, on
+another line, inside quotes) counts, whatever the shell makes of it, and each such checkout's
+changes are submitted as that checkout's agent (pinned like any other). The session's own checkout
+is left out: the session's settings hooks already reconcile it, inside subagents too. A path with a
+`..` segment is skipped. Like every hook, this constrains a cooperative agent's tool path and is
+not a sandbox (hooks-core-v0 "Enforcement is advisory against a hostile agent"): a shell command
+can still rewrite or remove `.weft/` files, or write through a relative path no hook can name.
 
-Not covered yet: the in-session commit and Stop gates still use the parent's checkout for a
-subagent's commands; the worktree's git `pre-commit` hook still refuses commits while that worktree
-has open errors.
+**Snapshots and parallel calls.** A Bash call's pre-call snapshot (the dirty files' text) is
+dropped when its PostToolUse never comes (after 15 minutes; Claude Code's Bash tool times out
+after at most 10), at most 8 Bash snapshots (8 MiB of text) are kept, and a Bash call without a
+`tool_use_id` is not snapshotted or reconciled. An Edit/Write that runs in parallel with a Bash
+call is submitted once, by its own PostToolUse: the Bash reconcile compares against the edited
+text, and leaves a file in exactly the state a still-running edit will leave it to that edit.
 
 ## Negotiation from the shell (spec §7.4, §7.6, §8.4)
 
@@ -188,9 +242,17 @@ weft inbox [--wait SECONDS]
 
 - Without `--to`/`--keys`, `propose` and `escalate` target the agent behind this session's newest
   open error, with the symbols it blocks. `--wait` blocks until the reply arrives (or times out).
-- Every loser-side error the adapter injects (`stale_assumption`, `claim_wait`, `claim_die`,
-  `claim_wounded`) ends with a `↳ Your options:` line naming retreat, wait, the exact
-  `negotiate propose` command and the `negotiate escalate` command.
+- Every loser-side error the adapter injects ends with a `↳ Your options:` line. For the claim
+  errors (`claim_wait`, `claim_die`, `claim_wounded`) it names retreat, wait, the exact
+  `negotiate propose` command and the `negotiate escalate` command. For `stale_assumption` it
+  defers to the error's suggestion (update the call site, or stop and report when the suggestion
+  says the other agent owns the conflict, under `conflicts: continue`) and names the exact
+  `negotiate propose overload` command, a request the owner decides on; retreat and escalate are
+  not offered, because under `continue` they would work around or absorb the owner's change.
+- The text the adapter adds around diagnostics (blocked edit, stop and commit refusals, the
+  SessionStart rule) is `@weft/protocol`'s `BLOCKED_EDIT_ADVICE` / `OPEN_ERROR_ADVICE` /
+  `ERROR_RULE`, shared by every harness: do what the suggestion says, and never adapt to, rebase
+  onto or work around another agent's change by the adapter's own say-so (issue #15).
 - Proposals addressed to this agent arrive as `[weft negotiation] #n …` lines (any hook that
   injects context) with the answer commands; the Stop hook refuses to finish while one is
   unanswered, or while an accepted `overload` has not been made (`[weft negotiation due]`).

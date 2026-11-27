@@ -262,6 +262,8 @@ export async function landChange(p: LandChangeParams, step: StepLike, deps: Deps
 
   // 1. Submit queue (the repo DO serializes landings): wait for our turn. A batch leader ahead
   //    of us may claim our entry (`batch` = its id): then we wait for its outcome instead.
+  //    The turn is the first entry the coordinator does not hold (`held_by`, spec §6.7): a change
+  //    that relies on an unlanded change waits, and the entries behind it are not blocked by it.
   const entry = await step.do("enqueue", () => coord.enqueue(p.change, p.requested_by, p.note ?? `workflow ${instance}`));
   const qp = deps.queuePoll ?? { interval: "10 seconds", max: 360 };
   for (let i = 0; ; i++) {
@@ -270,9 +272,15 @@ export async function landChange(p: LandChangeParams, step: StepLike, deps: Deps
       const mine = q.find((e) => e.id === entry.id);
       if (!mine) {
         const done = (await coord.queue(["landed", "failed", "cancelled"])).find((e) => e.id === entry.id) ?? null;
-        return { gone: true, first: null as number | null, claimed: null as number | null, done };
+        return { gone: true, first: null as number | null, claimed: null as number | null, held: [] as string[], done };
       }
-      return { gone: false, first: q[0]?.id ?? null, claimed: mine.batch !== undefined && mine.batch !== null && mine.batch !== entry.id ? mine.batch : null, done: null };
+      return {
+        gone: false,
+        first: q.find((e) => !e.held_by?.length)?.id ?? null,
+        claimed: mine.batch !== undefined && mine.batch !== null && mine.batch !== entry.id ? mine.batch : null,
+        held: mine.held_by ?? [],
+        done: null,
+      };
     });
     if (head.gone) {
       const d = head.done as QueueEntry | null;
@@ -283,8 +291,10 @@ export async function landChange(p: LandChangeParams, step: StepLike, deps: Deps
     if (i >= qp.max) {
       // A claimed entry belongs to its leader's workflow: leave its status alone.
       if (head.claimed !== null) return { status: "failed", reason: `timed out waiting for batch leader #${head.claimed}`, queue_id: entry.id, batch: { leader: head.claimed } };
-      await step.do("queue timeout", () => coord.setQueueStatus(entry.id, "failed", "timed out waiting for the queue"));
-      return { status: "failed", reason: "timed out waiting for the landing queue", queue_id: entry.id };
+      // Still held: say what it waited for (the dependency never landed; landing it, or abandoning it, releases the hold).
+      const why = head.held.length ? `timed out waiting for dependencies to land: ${head.held.join(", ")}` : "timed out waiting for the landing queue";
+      await step.do("queue timeout", () => coord.setQueueStatus(entry.id, "failed", head.held.length ? why : "timed out waiting for the queue"));
+      return { status: "failed", reason: why, queue_id: entry.id };
     }
     await step.sleep(`queue wait ${i}`, qp.interval);
   }
@@ -384,7 +394,7 @@ async function collectBatch(step: StepLike, deps: Deps, store: Store, p: LandCha
   for (let k = 0; ; k++) {
     cands = await step.do(`batch: collect ${k}`, async () =>
       (await coord.queue(["queued"]))
-        .filter((e) => e.id > leader && (e.batch ?? null) === null && e.change !== p.change)
+        .filter((e) => e.id > leader && (e.batch ?? null) === null && e.change !== p.change && !e.held_by?.length)
         .slice(0, cfg.max - 1)
         .map((e) => ({ id: e.id, change: e.change })),
     );

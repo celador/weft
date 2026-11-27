@@ -68,6 +68,12 @@ copy-paste configs for Zed, Claude Code, Codex, Cursor, VS Code, JetBrains and W
 the watcher in its checkout.
 Every known harness, its hook surface and Weft's plan for it: [harness-coverage.md](harness-coverage.md).
 
+Delegated work (subagents, child sessions, background agents) usually runs with the parent's
+directory and hooks. Claude Code gets per-worktree `weft-worker` subagents (`install-agent`).
+Codex, OpenCode, Cursor and Gemini have no per-subagent hook layer: `install --by-path` (opt-in)
+makes their one hook act as the agent of the joined checkout an edit's file is in. What is and is
+not covered per harness: [harness-coverage.md §1a](harness-coverage.md#1a-delegated-work-subagents-child-sessions-background-agents-issue-11).
+
 ## Advise vs enforce
 
 `install --mode enforce|advise` (or `WEFT_MODE` at run time):
@@ -98,7 +104,9 @@ appended with a `system`-scope token. It
 
 - makes the landed symbols *committed*: other agents whose base predates it get
   `stale_overwrite` if they edit those symbols, until their checkout contains the land sha
-  (`git merge-base --is-ancestor`), i.e. until they rebase or merge trunk;
+  (`git merge-base --is-ancestor`), i.e. until they rebase or merge trunk. Whether an agent should
+  do that is the error's suggestion: yes under the default `conflicts: hold`; under `continue` it
+  stops working on that code and reports the conflict to the owner instead (spec §8.4);
 - pushes a `trunk_advanced` notice (`requires_rebase`) to every live change that reads, writes
   or claims what landed;
 - releases the landed change's claims.
@@ -132,7 +140,7 @@ tests: [research/distribution-2026-10.md](research/distribution-2026-10.md).
 
 - `GET /v1/repos/{repo}/events` (an `observe` token): the ordered log, one record per edit,
   check, land, message; `GET /v1/feed` for all repos a token can see.
-- `.weft/bin/weft status | inbox | negotiate ...`, run inside the checkout: the agent's own view, also used by
+- `.weft/bin/weft status | inbox | negotiate ... | claim ...`, run inside the checkout: the agent's own view, also used by
   the model to negotiate with other agents (see the Claude Code adapter README).
 - The web UI (`apps/web`) renders the same log; the public demo is at
   [demo.weft.mx](https://demo.weft.mx).

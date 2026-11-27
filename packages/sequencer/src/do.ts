@@ -13,6 +13,8 @@ import {
   type ErrorCode,
   type EventRecord,
   type Gate,
+  type HistoryPage,
+  type HistoryQuery,
   type InboxBatch,
   type RepoSummary,
   type StreamFrame,
@@ -22,7 +24,7 @@ import {
 import { canAccessRepo, hasScope, type Grant, type TokenVerifier } from "./auth";
 import { SqlCoordinator, type CoordinatorConfig, type CoordinatorInit, type EventQuery } from "./coordinator";
 import { JournaledCoordinator, type JournalOp } from "./journal";
-import { redactRecord } from "./redact";
+import { redactHistory, redactRecord } from "./redact";
 import type { Sql } from "./sql";
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: WcpError };
@@ -156,6 +158,13 @@ export class RepoCoordinator extends DurableObject<SequencerEnv> {
   async event(seq: number): Promise<Result<EventRecord>> {
     return this.read(() => redactRecord(this.j.coord.event(seq)));
   }
+  /**
+   * Filtered history read (spec §9.7). The gateway lets agent tokens of this repo call it (not only
+   * observers), so the quoted text is redacted like an observer view.
+   */
+  async history(q: HistoryQuery): Promise<Result<HistoryPage>> {
+    return this.read(() => redactHistory(this.j.coord.history(q)));
+  }
   async summary(): Promise<Result<ReturnType<SqlCoordinator["summary"]>>> {
     return this.read(() => this.j.coord.summary());
   }
@@ -186,8 +195,16 @@ export class RepoCoordinator extends DurableObject<SequencerEnv> {
   private async flushSummary(): Promise<void> {
     if (this.inflight.size) await Promise.all([...this.inflight]);
   }
-  async queue(statuses?: string[]): Promise<Result<ReturnType<SqlCoordinator["queue"]>>> {
+  /**
+   * The landing queue. Not named `queue`: that is a reserved handler name, so a stub call to
+   * `queue()` failed with "The RPC receiver does not implement the method" (GET /system/queue was a 500).
+   */
+  async landingQueue(statuses?: string[]): Promise<Result<ReturnType<SqlCoordinator["queue"]>>> {
     return this.read(() => this.j.coord.queue(statuses));
+  }
+  /** A change's recorded dependencies and whether they hold its landing (spec §6.7, §9.8). */
+  async dependencies(change: string): Promise<Result<ReturnType<SqlCoordinator["dependencies"]>>> {
+    return this.read(() => this.j.coord.dependencies(change));
   }
   async ops(): Promise<Result<ReturnType<SqlCoordinator["ops"]>>> {
     return this.read(() => this.j.coord.ops());

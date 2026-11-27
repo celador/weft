@@ -18,7 +18,19 @@ WEFT_TOKEN=... node dist/weft-opencode.mjs install \
 | `.weft/opencode.json`, `.weft/token` (0600) | coordinator, repo, agent, task, `change` (Change-Id); the token never enters config, logs or git |
 | `.opencode/plugin/weft.js` | generated bridge (absolute node + bundle paths; excluded from git) |
 | git `commit-msg` / `pre-commit` | Change-Id/Task-Id/Agent-Id trailers; refuse commits while the session has open errors |
-| `.weft/bin/weft` | the agent's `negotiate` / `inbox` command |
+| `.weft/bin/weft` | the agent's `negotiate` / `inbox` / `claim` command |
+
+## Delegated work (`install --by-path`)
+
+OpenCode subagents run in child sessions of the same OpenCode instance. The plugin is instance-wide and gets the instance `directory`, so its hooks see child sessions' tool calls under each child's `sessionID` (OpenCode's plugin model; not yet run live with a child session). By default the hook finds the session's checkout from the
+session's directory, so an edit inside another joined worktree is reported as the session's agent,
+or not coordinated at all. Opt in with `install --by-path`. The hook command then becomes
+`weft-opencode.mjs hook --by-path --url U --repo R --mode M`, pinned to the coordinator this checkout
+joined. A call whose file lies in another checkout joined with the same url, repo and mode acts as
+that checkout's agent, using that checkout's own token. Anything else is handled exactly as
+without the flag. The rule is shared with the other adapters (`routeTargets` in
+`claude-code/src/config.ts`). With `--by-path` the generated plugin passes these flags to every `hook` call, and each file of an `apply_patch` is routed and stashed on its own. The stop gate (`session.idle`) and session end stay with the session's checkout. Per-harness detail:
+[harness-coverage.md §1a](../../../docs/harness-coverage.md#1a-delegated-work-subagents-child-sessions-background-agents-issue-11).
 
 ## Hook mapping
 

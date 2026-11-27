@@ -54,7 +54,10 @@ No login and no account. It runs locally by default: it starts a Weft gateway on
 (`127.0.0.1`), so your code and diffs never leave it. It adds Weft's hooks for the coding agents
 you have (Claude Code, Codex, Cursor, Copilot CLI, OpenCode, Gemini, Antigravity) to every
 checkout, offers a second worktree so two agents can work side by side, and opens your live feed.
-Agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode) use `npx @celador/weft mcp`. Local is
+Agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode) use `npx @celador/weft mcp` (tools
+`weft_check`, `weft_claim`, `weft_status`, `weft_inbox`, `weft_feed`, `weft_history`,
+`weft_negotiate`, `weft_gate`; `weft_history` says why earlier changes to a symbol were reverted
+or refused). Local is
 free for personal use; using it at work needs a [commercial license](docs/commercial-license.md)
 or Pro. The source is open (AGPL-3.0; the protocol and plugins are MIT). A hosted team space on Weft's Cloudflare gateway is an option
 (`--hosted`; 5,000 agent events a month free, Weft Pro per user for teams); `deploy` puts the gateway in your own Cloudflare

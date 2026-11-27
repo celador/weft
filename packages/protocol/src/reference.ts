@@ -4,13 +4,16 @@
 // scenarios in fixtures/scenarios are executable; packages/sequencer (the Durable Object)
 // MUST produce the same verdicts, diagnostics and inbox items for those scenarios.
 
-import { ownedElsewhere, ownerNotice, sameNotice, type ConflictMode } from "./ownership";
+import { ownedElsewhere, ownerNotice, type ConflictMode } from "./ownership";
+import { claimWaitSuggestion, conflictModeOf, enforcementModeOf, noticeKey, NOT_OPENED } from "./modes";
 import { renderContext, renderDue } from "./context";
 import { addresseeOf, agreementOf, answererOf, counterpartAway, negotiationDues } from "./negotiation";
-import { WcpProtocolError } from "./errors";
+import { changeOwnedError, WcpProtocolError } from "./errors";
 import { fileOf } from "./summary";
-import { contractError, RELEASABLE } from "./contract";
+import { contractError, NOT_IN_WORKSPACE } from "./contract";
+import { abandonedNotice, collectDependsOn, dependenciesOf, isAbandonment, mergeDependencies } from "./deps";
 import { summarize } from "./summary";
+import { DAY_MS, historyPageOf, historyQuery, historyRows, inScope, keyScope, NOTE_WINDOW_DAYS, revertNote, type HistoryRow } from "./history";
 import type {
   ActionResult,
   Actor,
@@ -18,6 +21,9 @@ import type {
   ArbitrationPolicy,
   Capabilities,
   ClaimsPolicy,
+  Dependencies,
+  DependencyRef,
+  DependencyState,
   Diagnostic,
   EnforcementMode,
   EscalationPolicy,
@@ -29,6 +35,8 @@ import type {
   GateResult,
   HeartbeatAck,
   Hello,
+  HistoryPage,
+  HistoryQuery,
   HumanAction,
   InboxBatch,
   InboxItem,
@@ -44,6 +52,7 @@ import type {
 } from "./types";
 import { claimsPolicyError, DEFAULT_CLAIMS_POLICY, WCP_VERSION } from "./types";
 import { validate } from "./validate";
+import { amendmentSuggestion, signatureChangeSuggestion } from "./contract";
 
 export type CoordinatorOptions = {
   repo: string;
@@ -91,6 +100,8 @@ type ChangeState = {
   open: Map<string, Diagnostic>;
   /** Where each open error came from and the record that opened it. */
   openMeta: Map<string, OpenMeta>;
+  /** Owner notices already sent to this change's sessions, by noticeKey (spec §8.4): each conflict is told once. */
+  noticed: Set<string>;
 };
 
 /**
@@ -124,6 +135,8 @@ type Session = {
   next_inbox_id: number;
   paused_by?: Seq;
   last_seen: number;
+  /** Keys this session was already given a `previously_reverted` note for (spec §6.6: once per key per session). */
+  noted: Set<SymbolKey>;
 };
 
 const AGENT_KINDS = new Set<EventKind>([
@@ -153,6 +166,8 @@ const TELLS = new Set(["stale_assumption", "stale_read"]);
 export const UNSEEN_NOTE = "and is not in your checkout: that change has not landed and was never delivered to you";
 
 const uniq = <T>(xs: Iterable<T>) => [...new Set(xs)];
+/** The keys a `negotiate.escalate` names (payload `keys`, optional). */
+const escalationKeys = (p: Record<string, unknown>): SymbolKey[] => (Array.isArray(p.keys) ? p.keys.filter((k): k is string => typeof k === "string") : []);
 
 export class ReferenceCoordinator {
   readonly repo: string;
@@ -166,9 +181,13 @@ export class ReferenceCoordinator {
   readonly heartbeatInterval: number;
   readonly limits: { max_diff_bytes: number; max_keys: number; max_page: number };
   private readonly now: () => number;
+  /** Cross-agent conflicts mode of the repo (spec §8.4). */
+  readonly conflicts: ConflictMode;
   private readonly continueMode: boolean;
 
   readonly log: EventRecord[] = [];
+  /** History index (spec §9.7): key -> history record, appended with the record (never a log scan per read). */
+  private readonly historyIdx: HistoryRow[] = [];
   private readonly sessions = new Map<string, Session>();
   private readonly changes = new Map<string, ChangeState>();
   private claims: Claim[] = [];
@@ -178,12 +197,13 @@ export class ReferenceCoordinator {
     this.repo = o.repo;
     this.policy = o.policy ?? "wound-wait";
     this.escalation = o.escalation ?? "auto";
-    this.enforcement = o.enforcement ?? "advise";
+    this.enforcement = enforcementModeOf(o.enforcement);
     this.claimTtl = o.claim_ttl_ms ?? 30 * 60_000;
     if (o.claims !== null && o.claims !== undefined && claimsPolicyError(o.claims)) throw new Error(claimsPolicyError(o.claims));
     this.claimsPolicy = o.claims === null ? undefined : { ...(o.claims ?? DEFAULT_CLAIMS_POLICY) };
     this.sessionTtl = o.session_ttl_ms ?? 5 * 60_000;
-    this.continueMode = o.conflicts === "continue";
+    this.conflicts = conflictModeOf(o.conflicts);
+    this.continueMode = this.conflicts === "continue";
     this.heartbeatInterval = o.heartbeat_interval_ms ?? 30_000;
     this.limits = { max_diff_bytes: o.max_diff_bytes ?? 1_048_576, max_keys: o.max_keys ?? 2000, max_page: o.max_page ?? 500 };
     this.now = o.now ?? (() => Date.now());
@@ -213,6 +233,9 @@ export class ReferenceCoordinator {
 
     const changeId = h.change ?? `${h.agent.id}/${h.task?.id ?? "adhoc"}`;
     let change = this.changes.get(changeId);
+    // A change belongs to the agent whose hello created it (spec §8.2, #17): change ids are
+    // guessable, and joining would hand another agent its open errors, dues and owner notices.
+    if (change && change.agent !== h.agent.id) throw changeOwnedError(changeId);
     if (!change) {
       change = {
         id: changeId,
@@ -225,6 +248,7 @@ export class ReferenceCoordinator {
         told: new Map(),
         open: new Map(),
         openMeta: new Map(),
+        noticed: new Set(),
         ...(h.task ? { task: h.task.id } : {}),
       };
       this.changes.set(changeId, change);
@@ -239,6 +263,7 @@ export class ReferenceCoordinator {
       inbox: [],
       next_inbox_id: 1,
       last_seen: now,
+      noted: new Set(),
       ...(change.task ? { task: change.task } : {}),
     };
     this.sessions.set(s.id, s);
@@ -322,15 +347,16 @@ export class ReferenceCoordinator {
   // ---------------------------------------------------------------- open errors (§6.5)
 
   /**
-   * A later error on the same key replaces the entry, but never turns an origin a release cannot
-   * clear (commit, contract) into one it can (check, push): the code is still in the workspace (§6.5).
+   * A later error on the same key replaces the entry, but never turns an origin whose code is in the
+   * workspace (commit, contract) into one whose code is not (check, push) (§6.5). Origins are
+   * informational: no release clears any of them (#17).
    */
   private openSet(changeId: string, d: Diagnostic, origin: OpenOrigin, seq: Seq): void {
     const c = this.changes.get(changeId);
     if (!c) return;
     const prev = c.openMeta.get(d.symbol)?.origin;
     c.open.set(d.symbol, d);
-    c.openMeta.set(d.symbol, { origin: prev && !RELEASABLE.includes(prev) && RELEASABLE.includes(origin) ? prev : origin, seq });
+    c.openMeta.set(d.symbol, { origin: prev && !NOT_IN_WORKSPACE.includes(prev) && NOT_IN_WORKSPACE.includes(origin) ? prev : origin, seq });
   }
 
   private openDelete(changeId: string | undefined, key: string): void {
@@ -415,20 +441,48 @@ export class ReferenceCoordinator {
     const diagnostics = this.evaluate(s, e);
     const reject = diagnostics.some((d) => d.severity === "error");
     const actor: Actor = { type: "agent", id: s.agent, harness: s.harness };
+    // §6.6: info notes on keys reverted lately. They ride on the verdict only: the record keeps the
+    // validation diagnostics, so nothing beyond the revert record itself is stored.
+    const notes = e.kind === "edit" && !diagnostics.some((d) => d.code === "agent_paused") ? this.revertNotes(s, e.writes ?? []) : [];
 
     if (msg.mode === "check" && !reject) {
-      return this.verdict(s, "accept", "check", null, diagnostics);
+      return this.verdict(s, "accept", "check", null, [...diagnostics, ...notes]);
     }
-    const rec = this.append({ kind: e.kind, actor, session: s, draft: e, diagnostics, status: reject ? "rejected" : "accepted", mode: msg.mode });
+    // An accepted edit records the unlanded neighbor changes it relies on (§6.7): an annotation, it decides nothing.
+    const depends_on = !reject && e.kind === "edit" ? this.dependsOn(s, e) : [];
+    const rec = this.append({ kind: e.kind, actor, session: s, draft: e, diagnostics, status: reject ? "rejected" : "accepted", mode: msg.mode, depends_on });
     const own = this.changes.get(s.change);
     if (own) for (const d of diagnostics) if (TELLS.has(d.code)) this.tell(own, d.symbol, d.caused_by_seq);
     if (reject) {
-      for (const d of diagnostics) if (d.severity === "error" && d.code !== "agent_paused") this.openSet(s.change, d, msg.mode, rec.seq);
-      if (this.continueMode) for (const d of diagnostics) if (ownedElsewhere(d, s.agent)) this.notifyOwner(d, s.agent, e.kind);
+      // A claim_wait is a wait for the holder, not an open error (§6.5, #18).
+      for (const d of diagnostics) if (d.severity === "error" && !NOT_OPENED.has(d.code)) this.openSet(s.change, d, msg.mode, rec.seq);
+      // A check only asks; the owner hears of a conflict when an edit is actually submitted (§8.4, #18).
+      if (this.continueMode && msg.mode === "commit") for (const d of diagnostics) if (ownedElsewhere(d, s.agent)) this.notifyOwner(d, s.agent, e.kind);
     } else {
       this.applyAccepted(rec, s);
     }
-    return this.verdict(s, reject ? "reject" : "accept", msg.mode, rec.seq, diagnostics, rec.summary);
+    return this.verdict(s, reject ? "reject" : "accept", msg.mode, rec.seq, [...diagnostics, ...notes], rec.summary);
+  }
+
+  /**
+   * `previously_reverted` notes (spec §6.6) for the keys an edit writes: the newest revert in the
+   * last 30 days whose keys cover the edited key, at most once per key per session. Read from the
+   * history index, inside the submit call (no extra call per edit).
+   */
+  private revertNotes(s: Session, writes: Write[]): Diagnostic[] {
+    const now = this.now();
+    const floor = now - NOTE_WINDOW_DAYS * DAY_MS;
+    const out: Diagnostic[] = [];
+    for (const key of uniq(writes.map((w) => w.key))) {
+      if (s.noted.has(key)) continue;
+      const scope = keyScope(key);
+      let hit: HistoryRow | undefined;
+      for (const r of this.historyIdx) if (r.kind === "revert" && r.at >= floor && inScope(r.key, scope) && (!hit || r.seq > hit.seq)) hit = r;
+      if (!hit) continue;
+      s.noted.add(key);
+      out.push(revertNote(key, this.record(hit.seq)!, now));
+    }
+    return out;
   }
 
   private verdict(s: Session, verdict: "accept" | "reject", mode: "check" | "commit", seq: Seq | null, diagnostics: Diagnostic[], summary?: string): Verdict {
@@ -505,8 +559,12 @@ export class ReferenceCoordinator {
     return cands.length ? cands[cands.length - 1]!.id : undefined;
   }
 
-  /** Two groups conflict: an open error of `s` cites the target group, or keys overlap. */
-  private groupsConflict(s: Session, target: string): boolean {
+  /**
+   * Two groups conflict: an open error of `s` cites the target group, or keys overlap — `s`'s
+   * reads/writes, or the keys the escalation names (a claim_wait is not an open error, #18, so
+   * the requester names the held key it waits for), against the target's writes and live claims.
+   */
+  private groupsConflict(s: Session, target: string, keys: SymbolKey[] = []): boolean {
     const lead = this.group(target);
     for (const d of this.openOf(s.change)) {
       const c = this.record(d.caused_by_seq)?.change;
@@ -516,6 +574,7 @@ export class ReferenceCoordinator {
     const theirs = new Set<SymbolKey>();
     for (const m of this.members(lead)) for (const k of m.writes.keys()) theirs.add(k);
     for (const c of this.claims) if (this.group(c.change) === lead && c.source !== "predicted" && c.expires_at > now) theirs.add(c.key);
+    if (keys.some((k) => theirs.has(k))) return true;
     for (const m of this.members(this.group(s.change))) {
       for (const k of m.reads) if (theirs.has(k)) return true;
       for (const k of m.writes.keys()) if (theirs.has(k)) return true;
@@ -523,14 +582,14 @@ export class ReferenceCoordinator {
     return false;
   }
 
-  private checkEscalation(s: Session, w: { agent?: string; change?: string }): string {
+  private checkEscalation(s: Session, w: { agent?: string; change?: string }, keys: SymbolKey[] = []): string {
     const own = this.changes.get(s.change)!;
     const target = this.escalationTarget(s.change, w);
     if (!target) throw new WcpProtocolError("invalid_reference", "unknown escalation target (no unlanded change of that agent)", { with: w });
     const t = this.changes.get(target)!;
     if (this.sameGroup(target, s.change)) throw new WcpProtocolError("invalid_reference", `${target} is already merged with ${s.change}`);
     if (t.landed || own.landed) throw new WcpProtocolError("invalid_reference", "a landed change cannot be merged");
-    if (!this.groupsConflict(s, target))
+    if (!this.groupsConflict(s, target, keys))
       throw new WcpProtocolError("invalid_reference", `nothing to escalate: ${s.change} and ${target} do not conflict`, { change: target });
     return target;
   }
@@ -546,7 +605,7 @@ export class ReferenceCoordinator {
       const to = p.to as { agent?: string; change?: string };
       if (!this.knownTarget(to)) throw new WcpProtocolError("invalid_reference", "unknown negotiation/message target", { to });
     }
-    if (e.kind === "negotiate.escalate") this.checkEscalation(s, (p.with as { agent?: string; change?: string }) ?? {});
+    if (e.kind === "negotiate.escalate") this.checkEscalation(s, (p.with as { agent?: string; change?: string }) ?? {}, escalationKeys(p));
     if (NEGOTIATION_REPLIES.has(e.kind)) {
       const parent = this.record(Number(p.reply_to));
       if (!parent || parent.status !== "accepted" || (parent.kind !== "negotiate.propose" && parent.kind !== "negotiate.counter"))
@@ -687,7 +746,7 @@ export class ReferenceCoordinator {
           message: strong
             ? `${who} ${strong.w.kind === "deleted" ? "removed" : "changed the signature of"} ${key} (#${strong.r.seq}) after your base #${e.base_seq}, and your change uses it.`
             : `${key} body changed in #${hit.r.seq} by ${who} after your base #${e.base_seq}; its contract is unchanged.`,
-          ...(strong ? { suggestion: `Re-read ${key} (event #${strong.r.seq}) and adapt your call sites, or negotiate with ${who}.` } : {}),
+          ...(strong ? { suggestion: amendmentSuggestion(key, strong.r.seq, who, this.continueMode) } : {}),
           ...cause(hit.r),
         });
       }
@@ -809,7 +868,7 @@ export class ReferenceCoordinator {
           severity: h.firm || (this.enforcement === "block" && e.kind === "edit") ? "error" : "warning",
           code: "claim_wait",
           message: `${w.key} is ${h.firm ? "firmly claimed" : "being edited"} by ${h.agent} (${h.change}), which has precedence.`,
-          suggestion: `Wait for ${h.agent} to land or release ${w.key}, work elsewhere, or negotiate (negotiate.propose to ${h.agent}).`,
+          suggestion: claimWaitSuggestion(w.key, h.agent, this.conflicts),
         });
       } else {
         out.push({
@@ -822,6 +881,107 @@ export class ReferenceCoordinator {
       }
     }
     return out;
+  }
+
+  // ---------------------------------------------------------------- dependencies (§6.7)
+
+  /** Latest accepted edit of `change` writing `key`, if any. */
+  private lastEditSeq(change: string, key: SymbolKey): Seq | undefined {
+    for (let i = this.log.length - 1; i >= 0; i--) {
+      const r = this.log[i]!;
+      if (r.change === change && r.status === "accepted" && r.kind === "edit" && r.writes.some((w) => w.key === key)) return r.seq;
+    }
+    return undefined;
+  }
+
+  /**
+   * The unlanded neighbor changes an accepted edit relies on (spec §6.7): for each key it reads or
+   * writes, every other change outside its merged group and its alternatives, neither landed nor
+   * abandoned, whose accepted edits wrote the key in a way the edit relies on (`reliesOn`).
+   */
+  private dependsOn(s: Session, e: EventDraft): DependencyRef[] {
+    return collectDependsOn(uniq(e.reads ?? []), e.writes ?? [], (key) => {
+      const out: Array<{ change: string; agent: string; task?: string; kind: WriteKind; seq: Seq }> = [];
+      for (const d of this.changes.values()) {
+        const kind = d.writes.get(key);
+        if (!kind || d.id === s.change || d.landed || this.sameGroup(d.id, s.change) || this.alternatives(d.id, s.change)) continue;
+        const seq = this.lastEditSeq(d.id, key);
+        if (seq === undefined || this.abandonedAt(d.id) !== undefined) continue;
+        out.push({ change: d.id, agent: d.agent, ...(d.task ? { task: d.task } : {}), kind, seq });
+      }
+      return out;
+    });
+  }
+
+  /**
+   * The record that abandoned change `id` (spec §6.7): a system `release` with reason `abandoned`
+   * and no keys, or the landing of one of its alternatives (it lost the selection, §7.7).
+   */
+  private abandonedAt(id: string): Seq | undefined {
+    const c = this.changes.get(id);
+    if (!c || c.landed) return undefined;
+    for (const r of this.log) {
+      if (r.status !== "accepted") continue;
+      if ((r.change === id && isAbandonment(r)) || (r.kind === "land" && this.alternatives(r.change, id))) return r.seq;
+    }
+    return undefined;
+  }
+
+  private depState(id: string): { status: DependencyState; status_seq?: Seq } {
+    if (this.changes.get(id)?.landed) {
+      const land = this.log.find((r) => r.change === id && r.kind === "land" && r.status === "accepted");
+      return { status: "landed", ...(land ? { status_seq: land.seq } : {}) };
+    }
+    const ab = this.abandonedAt(id);
+    return ab !== undefined ? { status: "abandoned", status_seq: ab } : { status: "pending" };
+  }
+
+  /** The accepted edits of `id` that recorded dependencies, ascending. */
+  private depRecords(id: string): EventRecord[] {
+    return this.log.filter((r) => r.change === id && r.status === "accepted" && r.kind === "edit" && r.depends_on !== undefined);
+  }
+
+  /** What `change` relies on and whether that holds its landing (spec §6.7, §9.8). Read-only. */
+  dependencies(change: string): Dependencies {
+    const c = this.changes.get(change);
+    if (!c) throw new WcpProtocolError("not_found", `unknown change ${change}`);
+    return dependenciesOf({
+      repo: this.repo,
+      change: { id: c.id, agent: c.agent, ...(c.task ? { task: c.task } : {}), landed: c.landed },
+      records: (x) => this.depRecords(x),
+      state: (x) => this.depState(x),
+      sameGroup: (a, b) => this.sameGroup(a, b),
+    });
+  }
+
+  /**
+   * A change abandoned by `rec` (a system release `abandoned`, or the landing of one of its
+   * alternatives) stops holding the changes that rely on it (spec §6.7); the owner of each is told
+   * by a system `message`, appended after `rec`'s own effects, in change order. Once per abandonment.
+   */
+  private dependencyNotices(rec: EventRecord): void {
+    const gone =
+      rec.kind === "release"
+        ? rec.change !== undefined && isAbandonment(rec)
+          ? [rec.change]
+          : []
+        : [...this.changes.values()].filter((x) => this.alternatives(x.id, rec.change)).map((x) => x.id);
+    for (const x of gone) {
+      if (!this.changes.has(x) || this.abandonedAt(x) !== rec.seq) continue;
+      for (const c of [...this.changes.values()]) {
+        if (c.id === x || c.landed || this.sameGroup(c.id, x) || this.abandonedAt(c.id) !== undefined) continue;
+        const entry = mergeDependencies(this.depRecords(c.id)).find((d) => d.change === x);
+        if (!entry) continue;
+        const msg = this.append({
+          kind: "message",
+          actor: { type: "system", id: "coordinator" },
+          draft: { kind: "message", base_seq: this.head, payload: { to: { change: c.id }, text: abandonedNotice(entry, c.id, entry.keys, rec), intent: "info" } },
+          diagnostics: [],
+          status: "accepted",
+        });
+        this.applyAccepted(msg);
+      }
+    }
   }
 
   // ---------------------------------------------------------------- append + effects
@@ -837,6 +997,8 @@ export class ReferenceCoordinator {
     agent?: string;
     change?: string;
     task?: string;
+    /** Accepted edits only: the unlanded changes it relies on (§6.7). Empty = the field is left out. */
+    depends_on?: DependencyRef[];
   }): EventRecord {
     const d = a.draft;
     const writes = d.writes ?? [];
@@ -879,8 +1041,18 @@ export class ReferenceCoordinator {
       ...(d.payload ? { payload: d.payload } : {}),
       ...(d.tool ? { tool: d.tool } : {}),
       ...(d.transcript ? { transcript: d.transcript } : {}),
+      // Stamped by the coordinator, never copied from the draft (a client cannot forge a dependency).
+      ...(a.depends_on?.length ? { depends_on: a.depends_on } : {}),
     };
     this.log.push(rec);
+    this.historyIdx.push(
+      ...historyRows(rec, {
+        record: (n) => this.record(n),
+        land: (seq, opId) =>
+          (seq !== undefined ? [this.record(seq)] : this.log.filter((r) => r.payload?.op_id === opId)).find((r) => r?.kind === "land" && r.status === "accepted"),
+        editKeys: (change, upTo) => this.log.filter((r) => r.seq <= upTo && r.change === change && r.kind === "edit" && r.status === "accepted").flatMap((r) => r.writes.map((w) => w.key)),
+      }),
+    );
     return rec;
   }
 
@@ -888,12 +1060,17 @@ export class ReferenceCoordinator {
   private notifyOwner(d: Diagnostic, editor: string, kind: string): void {
     const cause = this.record(d.caused_by_seq);
     if (!cause?.change) return;
+    const owner = this.changes.get(cause.change);
+    const key = noticeKey(editor, d.symbol, d.caused_by_seq);
+    // Once per (owner, editor, symbol, cause): resubmitting the same stale edit adds no rows (#18).
+    if (!owner || owner.noticed.has(key)) return;
     const notice = ownerNotice(d, editor, kind);
     // Matched on the cause's agent too (as the sequencer does): a change ID alone is not proof of ownership.
-    for (const os of this.sessionsOf({ change: cause.change }).filter((s) => s.agent === cause.agent)) {
-      if (os.inbox.some((i) => i.diagnostic !== undefined && sameNotice(i.diagnostic, notice))) continue;
-      this.push(os, { seq: d.caused_by_seq, kind: "diagnostic", diagnostic: notice });
-    }
+    // (A dependency notice, §6.7, is a logged system message instead: it stays in the feed for an owner who is offline.)
+    const live = this.sessionsOf({ change: cause.change }).filter((s) => s.agent === cause.agent);
+    for (const os of live) this.push(os, { seq: d.caused_by_seq, kind: "diagnostic", diagnostic: notice });
+    // Only a delivered notice counts: an owner with no live session is told on a later conflict.
+    if (live.length) owner.noticed.add(key);
   }
 
   /** `counterpart_away` when nobody live can answer a negotiation addressed to `to` (§7.4). */
@@ -916,7 +1093,10 @@ export class ReferenceCoordinator {
     return [...this.sessions.values()].filter((s) => (t.change ? s.change === t.change : s.agent === t.agent));
   }
 
-  /** Add an inbox item. Open errors are recorded on the change by the caller (§6.5). */
+  /**
+   * Add an inbox item. Open errors are recorded on the change by the caller (§6.5). A dependency
+   * notice (§6.7) is not an item of its own: it is a logged system `message`, routed here like any message.
+   */
   private push(s: Session, item: Omit<InboxItem, "id">): void {
     s.inbox.push({ id: s.next_inbox_id++, ...item });
   }
@@ -1038,12 +1218,10 @@ export class ReferenceCoordinator {
       }
       case "release": {
         const keys = p.keys as SymbolKey[] | undefined;
+        // A release gives up claims and nothing else: it never clears an open error, whatever its
+        // origin (§6.5, #17). The coordinator cannot tell a retreat from code written around a
+        // denied edit, so only an accepted edit, a landing, a transfer/share or a merge clears one.
         this.claims = this.claims.filter((c) => !(c.change === rec.change && (!keys || keys.includes(c.key))));
-        // An agent's release is a retreat: it clears only errors whose edit never reached the
-        // workspace (check) or wounds (push) on the released keys — never commit-mode or contract
-        // ones, whose code is in the workspace (§6.5).
-        if (s && change)
-          for (const [k, m] of [...change.openMeta]) if ((!keys || keys.includes(k)) && RELEASABLE.includes(m.origin)) this.openDelete(change.id, k);
         break;
       }
       case "land": {
@@ -1149,9 +1327,7 @@ export class ReferenceCoordinator {
                 file: fileOf(w.key),
                 symbol: w.key,
                 message: `${rec.agent ?? rec.actor.id} ${w.kind === "deleted" ? "removed" : "changed the signature of"} ${w.key} (#${rec.seq}), which your change uses.`,
-                suggestion: this.continueMode
-                  ? `Keep editing your other tasks instead of adapting your call sites to ${rec.agent ?? rec.actor.id}'s change; do not adopt their partial work. ${rec.agent ?? rec.actor.id} owns the change and is told about it if it has a live session.`
-                  : `Re-read ${w.key} and adapt your call sites before your next edit, or negotiate (e.g. keep the old signature as an overload).`,
+                suggestion: signatureChangeSuggestion(w.key, rec.agent ?? rec.actor.id, this.continueMode),
                 caused_by_seq: rec.seq,
                 caused_by_agent: rec.agent ?? rec.actor.id,
                 ...(rec.task ? { caused_by_task: rec.task } : {}),
@@ -1160,6 +1336,8 @@ export class ReferenceCoordinator {
         }
       }
     }
+    // A change this record abandoned no longer holds the changes relying on it; their owners are told (§6.7).
+    if (rec.kind === "release" || rec.kind === "land") this.dependencyNotices(rec);
   }
 
   /** negotiate.accept: apply transfer/share terms (spec §7.4). Returns the agreement. */
@@ -1425,6 +1603,18 @@ export class ReferenceCoordinator {
     const r = this.record(seq);
     if (!r) throw new WcpProtocolError("not_found", `no event #${seq}`);
     return r;
+  }
+
+  /**
+   * Filtered history of symbol keys (spec §9.7): reverts, refused edits/claims and finished
+   * negotiations that concern `keys`, newest first, from the history index.
+   */
+  history(q: HistoryQuery): HistoryPage {
+    const { keys, since, limit } = historyQuery(q, this.now());
+    const scopes = keys.map(keyScope);
+    const rows = this.historyIdx.filter((r) => r.at >= since && scopes.some((sc) => inScope(r.key, sc)));
+    const page = historyPageOf(rows, limit, (n) => this.record(n));
+    return { type: "history", repo: this.repo, keys, since: new Date(since).toISOString(), entries: page.entries, head_seq: this.head, has_more: page.has_more };
   }
 
   summary() {

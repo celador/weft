@@ -86,7 +86,10 @@ languages via tree-sitter (Python first). Support matrix: [languages.md](languag
 Arbitration: earlier seq keeps the area by default. Higher-priority task may wound a
 younger one (wound-wait). The losing agent may: retreat (rework), wait (until the other
 lands), or negotiate (`negotiate.propose` to the owner, e.g. "keep old signature as
-overload"), or escalate to coordinator (merge tasks).
+overload"), or escalate to coordinator (merge tasks). Under the opt-in repo policy
+`conflicts: continue` (spec §8.4) a cross-agent `stale_overwrite` / `stale_assumption` means stop
+and report to the change's owner; harness text defers to each error's suggestion and never tells
+an agent to adapt to, rebase onto or absorb a neighbor's change on its own (issue #15).
 
 ## 5. Injection points (per harness)
 
@@ -263,7 +266,7 @@ WCP v0.1 is specified in `docs/protocol/wcp-v0.md` (normative; implemented by `p
 - Pre-edit validation uses `submit mode:"check"` (spec §5.3), not an `intent` event: `intent` is never validated (§4.2).
 - **The squiggle must carry the other side's code.** In-flight edits live in the other agent's fork, so "read the new signature" is impossible from the receiver's checkout. The adapter fetches the causing event (`GET /events/{seq}`; agent tokens get `observe` scope) and quotes its hunks. Proposal: the coordinator could attach the relevant hunk to `stale_assumption`/`contract_changed` diagnostics itself (spec v0.2).
 - **base_seq advances only when coordinator text reaches the model**, to that response's `delivered_through`. Advancing on silent responses would let an agent that read a file before a signature change submit with a base past it, and R2 would miss the stale call (the demo collision). Remaining hole (protocol, not adapter): keys an agent starts using *after* a context injection that advanced its base past an unrelated-at-the-time signature change are not flagged; a per-key/per-file knowledge base would close it (proposal for v0.2).
-- Open errors are per WCP session: an adapter must not `bye` a session with open errors at harness exit, or they are silently forgiven. The Claude adapter keeps such sessions alive (detached heartbeat) so the pre-commit gate and resumed conversations still see them.
+- Open errors are per WCP session: an adapter must not `bye` a session with open errors at harness exit, or they are silently forgiven. The Claude adapter keeps such sessions alive (detached heartbeat) so the pre-commit gate and resumed conversations still see them. (Superseded: since 2026-10-09 open errors live on the change and `bye` forgives nothing, wcp-v0 §6.5; the session is still kept alive because the git pre-commit gate asks through it.)
 - Change id = the `Change-Id` trailer (`I` + 40 hex), generated per checkout+task at install.
 
 ## Update 2026-10-04 (B6, Artifacts integration)
@@ -574,3 +577,155 @@ WCP v0.1 is specified in `docs/protocol/wcp-v0.md` (normative; implemented by `p
   already has company; changes that arrive while the head is mid-presubmit join the next
   batch. A dead leader workflow leaves its claimed entries `landing` until their own
   workflows time out (1 h at the default poll); they are not re-queued automatically.
+
+## Update 2026-11-20 (t_959cd359, Hermes terminal capture by structure)
+- The Hermes adapter no longer relies on parsing a terminal command to find the worktrees it
+  can change. Around every `terminal` and `execute_code` call it snapshots the worktrees the call
+  names (leading `cd`/`git -C`, workdir, literal paths), every worktree the conversation worked
+  in before, and, when the call is opaque (any `$`/backquote expansion, an unparsed directory
+  change, `..`, an absolute glob, inline code, `eval`/`xargs`/`source`, an unbalanced quote, a
+  word or path bound hit, every `execute_code`), every worktree of every repo the conversation
+  works in plus every project whose folder name the call mentions. Bounds make a call opaque;
+  they never drop paths. A snapshot keeps a stat signature (ctime included) of every dirty file,
+  so a change is detected however many files are dirty; only the before text is bounded.
+- Exactly-once attribution: each session publishes capture windows (terminal: between its two
+  snapshots of a worktree; edit tools: between the before and after reads of a file) in its
+  status file. A change whose ctime falls inside another live session's window is left to that
+  session. Two concurrent opaque calls can still both report a change in a worktree neither
+  works in.
+- Residual: a program that writes into a repo the conversation never touched, without naming
+  that repo's folder anywhere in the command, is not captured. Cost: 4-12 worktrees snapshot in
+  about 35 ms before and 35 ms after an opaque call (parallel `git status`).
+
+## Update 2026-11-26 (issue #17, conflicts cannot be cleared or bypassed)
+- `release` never clears an open error (wcp-v0 §6.5). Before, an agent's release cleared
+  `check`- and `push`-origin entries on the released keys. A `check` origin only says the
+  coordinator denied the edit, not that the code stayed out of the workspace (an agent can
+  rewrite the file from the shell after a denied edit tool call), and a wounded change's
+  accepted code is in its workspace. Only an accepted edit touching the key, a landing, a
+  transfer/share or a merge clears an entry. A release still gives up the named claims.
+- `bye` stays allowed and clears nothing (already true since 2026-10-09); the next `hello`
+  of the change gets its open errors redelivered.
+- A change is bound to the agent whose `hello` created it: a `hello` naming another agent's
+  change is `403 forbidden` (`details.change`) and appends nothing (§3, §8.2). Change ids
+  default to `<agent>/<task>` and are guessable, and a joined session would receive the
+  change's open errors, owed negotiations and owner notices.
+- Adapter escape hatches stay local and visible: the Hermes adapter's retreat after repeated
+  gate refusals still records a `release` (reason `abandoned`) and lets the action through,
+  and the Claude Code / Codex stop gates still give up after their refusal limit, but the
+  errors stay open on the change, in the feed and in the coordinator's gates. The feed's
+  squiggles (`packages/feed` `openSquiggles`) follow the same rule: a release clears only
+  warnings/infos on accepted records, never an error.
+- Scenario `conflict-bypass` (both coordinators and the gateway DO) checks the commit gate
+  after each of the three submissions.
+
+## Update 2026-11-26 (t_bc837869, Claude Code subagents in worktrees: #8, #10, #18)
+- A Claude Code session runs the hooks of the checkout it was started in; a session in the main
+  checkout never runs a joined worktree's `.claude/` hooks, and its subagents work in its cwd.
+  Subagent work in a worktree is coordinated by a per-worktree worker: `install-agent --worktree W`
+  writes `.claude/agents/weft-worker-<dir>.md` into the orchestrating checkout, whose frontmatter
+  hooks run `hook --root W` pinned to the session's coordinator (url, repo, mode). The worktree is
+  explicit, so calls without a file path act for it: the worker's Bash `git commit` is gated
+  against W's session, and its frontmatter `Stop` (run by Claude Code as `SubagentStop`) is the
+  stop gate and then the worker's session end (bye). Each subagent gets its own state and WCP
+  session (`session_id` + `agent_id`). Edits in another checkout and Bash commands that do not
+  start in W are denied. `hook --by-path` stays for the path-inferred worker (no stop gate).
+- Worker hooks never fall back to another checkout's agent: a config that exists but does not
+  load is logged with its reason in that checkout's `.weft/log/adapter.log` and the call is not
+  coordinated (the agent is told on PreToolUse).
+- Bash reconcile is opaque, like the Hermes adapter's: after a worker's Bash call every joined
+  checkout the command names anywhere in its text is reconciled as its own agent, instead of
+  parsing the shell beyond the leading `cd`/`git -C` that decides whether the command may run.
+- Pre-call snapshots are bounded (dropped after 15 min without PostToolUse; at most 8 Bash
+  snapshots, 8 MiB), and an Edit running in parallel with a Bash call is submitted once.
+- No protocol or coordinator change: the events are the same `edit`/`leave` shapes as before.
+- Residual: project subagents' frontmatter hooks run only in a folder trusted in Claude Code's
+  trust dialog (`claude -p` is never trusted); headless runs pass the definition through
+  `claude --agents` (`install-agent --print-json`).
+
+## Update 2026-11-26 (t_7016c4d3, path routing for Codex, OpenCode, Cursor and Gemini: #11)
+- These harnesses have no per-subagent hook layer: one hook config serves a session and the work
+  it delegates, which runs in the session's directory. `install --by-path` (opt-in) writes the
+  hook command as `hook --by-path --url U --repo R --mode M`, pinned to the coordinator the
+  checkout joined. A call whose file lies in ANOTHER joined checkout then acts as that checkout's
+  agent. That covers the edited file (Cursor/Gemini/OpenCode edit tools, Cursor `afterFileEdit`),
+  each file of an `apply_patch` (Codex, and OpenCode after the fact), and a Bash command's leading
+  `cd <dir> &&` / `git -C <dir>`.
+- One shared rule: `routeTargets` in `adapters/claude-code/src/config.ts`, called from `Host.load`
+  (Cursor, OpenCode, Gemini) and from the Codex hook in place of its own `loadConfig`. It reuses
+  `configStarts`' rule (the target's own checkout is the nearest `.git`) and the worker's trust
+  rules (pin match, token confined to `.weft/`, parent env overrides dropped). Unlike a Claude
+  Code worker, a target outside every other joined checkout falls back to the plain hook rather
+  than being refused. The same hook also serves the parent session, so `--by-path` never
+  coordinates a call less than the plain hook did. The one exception is a joined checkout whose
+  config is broken or unpinned: it is logged there and not coordinated, never reported as the
+  parent's agent.
+- Codex refuses one patch that writes into two checkouts (each needs its own agent); the Host
+  harnesses' edit tools name one file per call. OpenCode routes each file of a patch on its own.
+- Not covered: the stop gate and session end stay with the session's checkout. Codex subagents
+  share the parent's session id and `SubagentStop` names no worktree. Cursor and Gemini agent
+  definitions carry no hooks. A routed worktree's session never gets a SessionStart, so no
+  heartbeat loop runs for it: like a Claude Code `--by-path` worker's, it lives while calls arrive
+  and the coordinator expires it when they stop (`session_expired`, spec §7.5). Its `pre-commit`
+  git hook still gates commits there. Per-harness detail:
+  [harness-coverage.md §1a](harness-coverage.md#1a-delegated-work-subagents-child-sessions-background-agents-issue-11).
+- No protocol or coordinator change: routed calls submit the same `edit` events, as the routed
+  checkout's agent.
+
+## Update 2026-11-26 (issues #5–#7, dependencies on unlanded changes)
+- An accepted commit-mode `edit` that relies on code only a neighbor's unlanded change has (it
+  calls a function the neighbor added, or the neighbor's new signature; or it writes a symbol
+  whose declaration exists only there) gets a coordinator-stamped `depends_on` (wcp-v0 §6.7):
+  one `{change, agent, task?, seq, keys}` per neighbor. It is an annotation, computed after the
+  verdict: it never accepts or rejects. Both changes writing one symbol is a conflict for claims,
+  not reliance; a body-only change is not relied on. The field is optional in the schema
+  (backward compatible) and never copied from a draft (a client cannot forge or drop it). The
+  events API returns it in list views and full records.
+- `weft deps` lists a change's dependencies and whether they hold its landing; `weft deps --pr`
+  (and the MCP tool `weft_deps` with `pr`) prints the pull request lines, `Relies on <change>
+  (<agent>, task <task>), not yet in main: <symbols>`, from the record only (no GitHub access),
+  read from `GET /v1/repos/{repo}/dependencies?change=` (§9.8; agent token of the repo or observe
+  scope, like history). The CLI uses the checkout's agent
+  token, else the space's viewer key, else the Hermes adapter's shared human token.
+- The landing queue holds a change while a recorded dependency is pending: queue entries carry
+  `held_by`, the turn goes to the first entry not held (a held change does not block the ones
+  behind it), and a batch never takes a held entry. It lands once its dependencies land.
+  Mutual dependencies (a cycle, or one merged group) do not hold each other: they would wait
+  forever; presubmit decides whether they build. A landing workflow that times out while held
+  fails naming the dependencies.
+- Abandonment: a system `release` with reason `abandoned` and no keys (the gateway appends one
+  on `DELETE /v1/repos/{repo}/changes/{id}`), or the landing of an alternative candidate,
+  abandons a change. Its dependents stop being held, and each dependent's owner gets one system
+  `message` (logged, so an offline owner sees it on the next hello) naming the change, the
+  record and the symbols. An agent's own release is a retreat, not an abandonment.
+- One shared module (`packages/protocol/src/deps.ts`) holds the rules for both coordinators;
+  scenario `dependencies-hold-landing` runs against the reference, the SqlCoordinator and the
+  gateway DO. The DO's RPC method `queue()` is now `landingQueue()`: `queue` is a reserved
+  handler name, so `GET /v1/repos/{repo}/system/queue` failed on the DO stub.
+## Update 2026-11-26 (issue #18, block mode, claims and conflicts follow-ups)
+- A `claim_wait` is a wait, not a conflict: it never opens an error (wcp-v0 §6.5), so a
+  requester denied by a firm claim or by `enforcement: block` keeps its stop and commit gates
+  open; it works elsewhere, negotiates, or escalates naming the held key (`negotiate.escalate`
+  `keys` now count as the conflict, §7.6). Block mode is never weaker than advise this way:
+  under advise the same edit is accepted with a warning.
+- Under `block` an agent's own claim (its other task's change) never denies its edit; advise
+  output is unchanged. Block never refuses a claim: an overlapping claim is accepted with a
+  `claim_wait` warning naming the holder (only a firm holder refuses a claim).
+- Claim renewal: kept as the claims policy (2026-10-09) defines it, rather than capping every
+  claim at its requested `--ttl`: firm claims already have a hard deadline
+  (`min(ttl, firm_max_ms)`, never renewed), and soft claims have no requested deadline by
+  design (leases of `lease_ms`, renewed only while the agent is active, released at once when
+  the change's last session ends, so `bye` releases them). Capping soft leases would drop the
+  holds of an agent in the middle of its work. Repos created before the policy keep the old
+  renewable TTL until the operator applies it, so old journals replay unchanged.
+- `conflicts: continue` owner notices: once per (owner change, editor, symbol, causing record)
+  and never for a check (SqlCoordinator table `owner_notices`); the `claim_wait` suggestion no
+  longer says to wait under continue. Defaults and parsing of `conflicts`/`enforcement` live in
+  one module (`@weft/protocol` `modes.ts`), used by both coordinators, the gateway registry and
+  the local demo coordinator. Both modes are stored with the repo config at init, so a journal
+  replayed against the stored config reproduces them.
+- `.weft/bin/weft negotiate | claim | inbox` act as the agent the checkout's config names (its
+  token is that agent's): state files now record the agent and change of their WCP session, the
+  command uses this agent's newest session, and refuses (pointing at `--session <id>|new`) when
+  the checkout's sessions are another agent's (adapters installed for different agents in one
+  checkout). `npx @celador/weft init` installs every harness with one agent id, so it is unchanged.

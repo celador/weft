@@ -1,0 +1,40 @@
+{
+  "schema": "Dependencies",
+  "expect_issue_path": "/depends_on/0/status",
+  "value": {
+    "type": "dependencies",
+    "repo": "weft-demo",
+    "change": "I9c01",
+    "agent": "codex-b",
+    "task": "T-2",
+    "landed": false,
+    "held": true,
+    "held_by": [
+      "I4f2a"
+    ],
+    "depends_on": [
+      {
+        "change": "I4f2a",
+        "agent": "claude-a",
+        "task": "T-1",
+        "seq": 4,
+        "keys": [
+          "src/auth/session.ts#createSession"
+        ],
+        "status": "maybe",
+        "holds": true
+      },
+      {
+        "change": "I77aa",
+        "agent": "gemini-c",
+        "seq": 7,
+        "keys": [
+          "src/billing/plan.ts#Plan"
+        ],
+        "status": "abandoned",
+        "status_seq": 9,
+        "holds": false
+      }
+    ]
+  }
+}

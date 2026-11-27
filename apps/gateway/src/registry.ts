@@ -3,7 +3,7 @@
 // are stored as SHA-256 hashes; the plaintext is returned exactly once at issuance.
 
 import { DurableObject } from "cloudflare:workers";
-import { claimsPolicyError, type RepoSummary, type Scope } from "@weft/protocol";
+import { claimsPolicyError, conflictModeOf, enforcementModeOf, parseConflictMode, parseEnforcementMode, type RepoSummary, type Scope } from "@weft/protocol";
 import type { CoordinatorConfig, CoordinatorInit, Grant, RepoCoordinator, Result } from "@weft/sequencer";
 import { cancelCustomerSubscriptions, StripeError, stripeConfig, stripeRequest, type StripeEnv } from "./stripe";
 import { fairUsePerSeat, freeEvents, isInterval, monthKey, type Interval, type Plan, type UsageState } from "./usage";
@@ -112,17 +112,20 @@ export class Registry extends DurableObject<RegistryEnv> {
     if (init.escalation && init.escalation !== "auto" && init.escalation !== "human") return { error: "escalation must be auto or human" };
     // claims: omitted = the defaults (spec §7.5); null = a legacy repo (tests and migrations).
     if (init.claims !== undefined && init.claims !== null && claimsPolicyError(init.claims)) return { error: claimsPolicyError(init.claims)! };
-    if (init.enforcement !== undefined && init.enforcement !== "advise" && init.enforcement !== "block") return { error: "enforcement must be advise or block" };
-    if (init.conflicts !== undefined && init.conflicts !== "hold" && init.conflicts !== "continue") return { error: "conflicts must be hold or continue" };
+    // One parser for the repo modes (@weft/protocol modes.ts): "" or "Continue" is an error, not the default.
+    const enforcement = parseEnforcementMode(init.enforcement);
+    if (!enforcement.ok) return { error: enforcement.error };
+    const conflicts = parseConflictMode(init.conflicts);
+    if (!conflicts.ok) return { error: conflicts.error };
     const stub = this.env.WEFT_REPO.get(this.env.WEFT_REPO.idFromName(init.repo));
     const r = (await stub.init(init)) as unknown as Result<{ created: boolean; config: CoordinatorConfig }>;
     if (!r.ok) return { error: r.error.error.message };
     // An existing repo keeps its stored config. Asking for a different conflicts or enforcement mode must fail, not be ignored.
-    if (!r.value.created && (init.conflicts ?? "hold") !== (r.value.config.conflicts ?? "hold")) {
-      return { error: `repo ${init.repo} already exists with conflicts=${r.value.config.conflicts ?? "hold"}; create it with the mode you want` };
+    if (!r.value.created && conflictModeOf(conflicts.mode) !== conflictModeOf(r.value.config.conflicts)) {
+      return { error: `repo ${init.repo} already exists with conflicts=${conflictModeOf(r.value.config.conflicts)}; create it with the mode you want` };
     }
-    if (!r.value.created && (init.enforcement ?? "advise") !== (r.value.config.enforcement ?? "advise")) {
-      return { error: `repo ${init.repo} already exists with enforcement=${r.value.config.enforcement ?? "advise"}; create it with the mode you want` };
+    if (!r.value.created && enforcementModeOf(enforcement.mode) !== enforcementModeOf(r.value.config.enforcement)) {
+      return { error: `repo ${init.repo} already exists with enforcement=${enforcementModeOf(r.value.config.enforcement)}; create it with the mode you want` };
     }
     const now = new Date().toISOString();
     this.sql.exec(`INSERT OR IGNORE INTO repos (repo, config, created_at) VALUES (?, ?, ?)`, init.repo, JSON.stringify(init), now);

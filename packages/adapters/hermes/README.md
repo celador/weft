@@ -19,7 +19,7 @@ Declared capability: **L3** (`observe: sync`, `inject: immediate`, `deny_edit`, 
 | Hermes hook | Tool / condition | WCP |
 |---|---|---|
 | `pre_tool_call` | `write_file`, `patch` (replace mode) | analyze proposed before/after → `submit mode:"check"`; `reject` → `{"action":"block","message": verdict.context}` (L2) |
-| `pre_tool_call` | `terminal` in scope | snapshot dirty files + HEAD; a `git commit` command first asks `gate commit` |
+| `pre_tool_call` | `terminal`, `execute_code` in scope | snapshot dirty files + HEAD of every worktree the call can change (see below); a `git commit` command first asks `gate commit` |
 | `pre_tool_call` / `post_tool_call` | `terminal`, `execute_code` (any workdir) | HEAD of every worktree the session works in + trunk tips; HEAD moved → `checkpoint {sha, x_work}`; trunk moved → auto-land (`land.py`, detached) |
 | `pre_tool_call` | `kanban_complete`, `kanban_request_review` | auto-land check (detached); `gate stop`; refused → block with the rendered open errors (L3) |
 | `post_tool_call` | any edit above, `patch` V4A mode, terminal-made changes | real before/after → `submit mode:"commit"` (diff, reads, writes) |
@@ -41,6 +41,14 @@ declaration and at most 30 lines of that event's diff for the symbol's file (nev
 paths). It also says whether this checkout already has the change. An unchanged retry of an edit
 just blocked for `stale_assumption`/`stale_overwrite` is blocked once more, locally, with the same
 quote; a second unchanged retry goes to the coordinator (the agent's deliberate call, §5.2).
+
+Advice text (issue #15): the block, gate-refusal and `pre_verify` messages end with
+`BLOCKED_EDIT_ADVICE` / `OPEN_ERROR_ADVICE`, byte-identical to `@weft/protocol`'s (pinned by
+`src/advice-text.test.ts`). They defer to each error's suggestion, which carries the repo's
+`conflicts` mode: update the code under `hold`, stop and report to the owner when the suggestion
+says the other agent owns the conflict (`continue`). The plugin never tells an agent by itself to
+re-read and adapt to another agent's change; re-editing is what the suggestion asks for, or what
+the agent's own earlier edit needs.
 
 Identity: agent `hermes-<profile>` (one repo-scoped token per profile and repo), change
 `hermes-<profile>/<kanban task id>` (`adhoc-<session>` outside kanban), task title/priority read
@@ -98,10 +106,27 @@ process; `install.py --sync` adds it.
 Terminal calls are located by their leading `cd <abs path> &&` or `git [opts] -C <abs path>
 [opts] <subcommand>` target (the Claude Code adapter's Bash forms, plus `'\''` quoting, git
 global options and leading blank lines) and by `workdir` (else the session's cwd): `cd
-~/github/x/.worktrees/t && rm f` run from another worktree's session edits `t`. Fail closed: a
-command that changes directory in any other spelling (`cd x;`, a second `cd` or `-C`, `pushd`,
-`--git-dir`, `sh -c`, ...) also has every in-scope worktree named by an absolute or `~` path in it
-snapshotted around the call, and each of those runs the commit gate for `git commit`.
+~/github/x/.worktrees/t && rm f` run from another worktree's session edits `t`. Capture does
+not depend on that parse being complete. Around every `terminal` and `execute_code` call the
+adapter snapshots (`git status` plus a stat signature of every dirty file, in parallel):
+
+- **named**: those directories, plus every directory a literal path in the command names
+  (absolute, `~`, `$HOME`, or relative to its cwd);
+- **own**: every worktree the conversation worked in before, whatever the command says (a
+  script or a build can write there without naming it);
+- **wide**, when the call is *opaque*: every worktree of every repo the conversation works in,
+  plus every project whose folder name the call mentions. A call is opaque when the parse cannot
+  vouch for it: a `$`/backquote expansion (`${HOME:-/x}`, `$WT`, `$(...)`), a directory change
+  other than the leading one, `..`, an absolute glob, `~user`, inline code (`python3 -c`,
+  `node -e`, `eval`, `xargs`, `source`), an unbalanced quote, more than 4096 words or 256
+  directories (a bound makes the call opaque; it never drops paths), and every `execute_code`.
+
+An opaque call that mentions `commit` runs the commit gate in every repo it is captured in. A
+change in a worktree another live session worked in during the call (same process, or another
+Hermes process's status file) is left to that session's own capture, so no change is reported
+twice. Measured cost of the wide capture on 4–12 worktrees: about 35 ms before and 35 ms after
+the call. What stays out of reach: a program that writes into a repo the conversation never
+touched without naming its folder (for example a script that builds the path from data).
 
 Kanban worktrees join the Claude Code adapter: on `on_kanban_worker_spawned` the plugin checks
 whether the worker's workspace is a linked git worktree of a checkout with `.weft/claude.json`
@@ -157,8 +182,12 @@ tailnet URL the Otto relay hands to phones; `''` removes it). Both are saved (`u
 `public_url`) and kept by later runs. With no `--url` and none configured, a running local
 gateway (`npx @celador/weft`) is preferred over the hosted preview, and a loopback `--url` on its
 port uses that gateway's admin token. An admin token is sent to a loopback URL only when every
-process listening on that port runs as you (`/proc/net/tcp` or `lsof`): a `/v1/health` answer
-alone proves nothing, since any local user can bind the port while the gateway is down. URLs
+process listening on that port runs as you: a `/v1/health` answer alone proves nothing, since
+any local user can bind the port while the gateway is down. Linux reads `/proc/net/tcp`. macOS
+reads its own processes' sockets through libproc in-process (no `lsof`: on a hung mount it never
+returns, even with `-b`) and connects to each address the URL resolves to; a connection whose
+accepted end none of your processes holds is another user's listener, and the token is refused.
+Elsewhere `lsof` runs with a timeout and is abandoned, never waited for, when it hangs. URLs
 compare with scheme and host case ignored. Moving between the two addresses of one gateway keeps every token
 and re-keys the shared human token (`otto-human-token.json`) to `public_url or url`, the key
 clients look it up under. A config whose `url` is the public address while `WEFT_HERMES_URL`
@@ -182,7 +211,10 @@ created after install is skipped until someone runs `install.py --sync` (John, o
 Kanban workers are fresh processes and read the config at start. Every `hermes` / `hermes chat`
 turn (`-q`/`-Q` one-shots included) runs inside the long-lived gateway process, not the CLI
 process: there the plugin re-reads the config for an unknown project at most once a minute
-(`RELOAD_EVERY_S`), so a synced project starts reporting within a minute, no restart. New plugin
+(`RELOAD_EVERY_S`), so a synced project starts reporting within a minute, no restart. That
+includes a project outside the project dirs (an explicit `roots` entry or a `projects.repos`
+path anywhere on disk): an edit in no known project triggers the same rate-limited re-read, which
+refreshes `roots` too. A `projects.repos` path resolves wherever it lives. New plugin
 *code* reaches the gateway through `install.py` (when the code changed it runs `plugins disable`
 + `enable`, which makes the gateway force-reload plugins; the old router closes its sessions on
 unload) or a gateway restart.

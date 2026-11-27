@@ -1,5 +1,5 @@
 import { describe, expect, it, afterAll } from "vitest";
-import { ReferenceCoordinator, parseNegotiate } from "@weft/protocol";
+import { BLOCKED_EDIT_ADVICE, ERROR_RULE, OPEN_ERROR_ADVICE, ReferenceCoordinator, parseNegotiate } from "@weft/protocol";
 import { analyzeDiff } from "@weft/analyzer";
 import { execFileSync, execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { analyzeChanges, unifiedDiff, importReads } from "../src/analysis";
 import { ADVISORY_CAPABILITIES, CAPABILITIES, ClaudeAdapter, type HookInput } from "../src/hooks";
 import { proposedText, isGitCommit } from "../src/edits";
-import { locateUse, locateDeclaration, optionsHint, quoteDiff } from "../src/render";
+import { locateUse, locateDeclaration, optionsHint, quoteDiff, staleOptionsHint } from "../src/render";
 import { mergeSettings, weftAllowRules } from "../src/cli";
 import type { Loaded } from "../src/config";
 import { CART_V1, PRICING_V1, PRICING_V2, checkout, refTransport, serve } from "./helpers";
@@ -454,11 +454,13 @@ export function calcTotal(items: Item[], opts: PriceOptions = { taxRate: 0 }): n
     const { coord, rootA, rootB, A, B, b2 } = await setup();
     const deny = (b2.pre as { hookSpecificOutput: { permissionDecisionReason: string } }).hookSpecificOutput.permissionDecisionReason;
     expect(deny).toContain("stale_assumption");
-    expect(deny).toContain("Your options: retreat");
+    // a stale_assumption's options defer to its suggestion (#15): no retreat/escalate around the owner
+    expect(deny).toContain("Your options: do what the suggestion says");
+    expect(deny).not.toContain("retreat (rework without that code)");
+    expect(deny).not.toContain("negotiate escalate");
     expect(deny).toContain('/w/b/.weft/bin/weft negotiate propose overload');
     // the hint names the counterpart and the symbol, so it works even with no open error to default from
     expect(deny).toContain('"<what claude-a should keep working for you>" --to claude-a --keys src/pricing.ts#calcTotal --wait 240');
-    expect(deny).toContain('negotiate escalate "<why>" --to claude-a --keys src/pricing.ts#calcTotal');
 
     // B proposes without naming the target: it defaults to the agent behind its open error.
     const sent = await B.negotiate("sb", parseNegotiate(["propose", "overload", "Keep calcTotal(items) compiling as an overload"]));
@@ -576,5 +578,79 @@ describe("optionsHint", () => {
     expect(optionsHint("weft", "a b", [])).toContain('for you>" --wait 240');
     // the printed command parses
     expect(parseNegotiate(["propose", "overload", "x", "--to", "claude-a", "--keys", "src/a.ts#f,src/b.py#Cart.total"])).toMatchObject({ cmd: "propose", keys: ["src/a.ts#f", "src/b.py#Cart.total"] });
+  });
+
+  it("stale_assumption options: follow the suggestion, or ask the owner; same target rules (#15)", () => {
+    const h = staleOptionsHint("weft", "claude-a", ["src/a.ts#f", "src/a.ts#f", "src/$(x).ts#g"]);
+    expect(h).toBe(
+      "  ↳ Your options: do what the suggestion says (update this call site if it tells you to; if it says claude-a owns the conflict, stop working on that code and report it — do not adapt to their change) | " +
+        'negotiate: `weft negotiate propose overload "<what claude-a should keep working for you>" --to claude-a --keys src/a.ts#f --wait 240` (it asks claude-a to keep your call working; claude-a decides and you get the reply; other terms: transfer | share | sequence | merge_tasks | other).',
+    );
+  });
+});
+
+describe("harness text agrees with the coordinator's suggestion in both conflicts modes (#15)", () => {
+  for (const conflicts of ["hold", "continue"] as const) {
+    it(`${conflicts}: deny, stop, commit and preamble text defer to the suggestion and never tell B to adapt by themselves`, async () => {
+      const coord = new ReferenceCoordinator({ repo: "demo", conflicts, now: () => 1_790_000_000_000 });
+      const t = refTransport(coord);
+      const rootA = checkout(`m15a-${conflicts}`);
+      const rootB = checkout(`m15b-${conflicts}`);
+      const A = adapter(rootA, "claude-a", "T-1", t, 1, { cli: "/w/a/.weft/bin/weft" });
+      const B = adapter(rootB, "claude-b", "T-2", t, 0, { cli: "/w/b/.weft/bin/weft" });
+      const start = (await B.handle(hook("sb", rootB, { hook_event_name: "SessionStart", source: "startup" }))) as { hookSpecificOutput: { additionalContext: string } };
+      expect(start.hookSpecificOutput.additionalContext).toContain(ERROR_RULE);
+      await A.handle(hook("sa", rootA, { hook_event_name: "SessionStart", source: "startup" }));
+      expect((await edit(A, "sa", rootA, "a1", "src/pricing.ts", PRICING_V1, PRICING_V2)).applied).toBe(true);
+      const b1 = await edit(B, "sb", rootB, "b1", "src/cart.ts", "return `${items.length} items`;", "return `total ${calcTotal(items)}`;");
+      expect(b1.applied).toBe(false);
+      const deny = (b1.pre as { hookSpecificOutput: { permissionDecisionReason: string } }).hookSpecificOutput.permissionDecisionReason;
+      // the coordinator's own mode-specific suggestion is there, and the adapter's text defers to it
+      expect(deny).toContain(conflicts === "continue" ? "claude-a owns the conflict" : "update this call site, or negotiate with claude-a");
+      expect(deny).toContain(BLOCKED_EDIT_ADVICE);
+      expect(deny).toContain("Your options: do what the suggestion says");
+      for (const adopt of ["Adapt your code", "retreat (rework without that code)", "negotiate escalate"]) expect(deny).not.toContain(adopt);
+
+      // the denied use leaves an open error (as in the stop-cap test): stop, Bash git commit and the git pre-commit hook all refuse with the same advice
+      const stop = (await B.handle(hook("sb", rootB, { hook_event_name: "Stop" }))) as { decision: string; reason: string };
+      expect(stop.decision).toBe("block");
+      expect(stop.reason).toContain(OPEN_ERROR_ADVICE);
+      const commit = (await B.handle(hook("sb", rootB, { tool_name: "Bash", tool_use_id: "c1", tool_input: { command: "git commit -m x" } }))) as { hookSpecificOutput: { permissionDecisionReason: string } };
+      expect(commit.hookSpecificOutput.permissionDecisionReason).toContain(OPEN_ERROR_ADVICE);
+      expect(await B.commitGate("sb")).toContain(OPEN_ERROR_ADVICE);
+      for (const text of [stop.reason, commit.hookSpecificOutput.permissionDecisionReason]) expect(text).not.toContain("re-editing the cited code against the change it names");
+    });
+  }
+});
+
+describe("previously_reverted note (spec §6.6)", () => {
+  it("a pre-edit check of a symbol reverted 5 days ago injects one info note and never blocks", async () => {
+    const DAY = 86_400_000;
+    let now = 1_790_000_000_000;
+    const coord = new ReferenceCoordinator({ repo: "demo", now: () => now });
+    // Agent A's change to calcTotal lands and is reverted with a reason.
+    const a = coord.hello({ type: "hello", protocol: "wcp/0.1", agent: { id: "claude-a", harness: "claude-code" }, capabilities: CAPABILITIES, task: { id: "T-1" }, change: "I-a" });
+    coord.submit(a.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: a.delivered_through, writes: [{ key: "src/pricing.ts#calcTotal", kind: "body" }] } });
+    const land = coord.system({ kind: "land", base_seq: coord.head, change: "I-a", payload: { sha: "1a2b3c4d", op_id: "op_1" } });
+    const rev = coord.system({ kind: "revert", base_seq: coord.head, change: "I-a", payload: { op_id: "op_2", reverts_seq: land.seq, reason: "totals wrong for EU carts", requested_by: { type: "human", id: "john" } } });
+    coord.bye(a.session);
+    now += 5 * DAY;
+
+    // Agent B, a new session days later, edits calcTotal through Claude Code's hooks.
+    const root = checkout("reverted");
+    const B = adapter(root, "claude-b", "T-2", refTransport(coord));
+    await B.handle(hook("sb", root, { hook_event_name: "SessionStart", source: "startup" }));
+    const oldLine = "return items.reduce((sum, i) => sum + i.price * i.qty, 0);";
+    const r1 = await edit(B, "sb", root, "e1", "src/pricing.ts", oldLine, "return Math.round(items.reduce((sum, i) => sum + i.price * i.qty, 0));");
+    expect(r1.applied).toBe(true);
+    const pre = (r1.pre as { hookSpecificOutput: { permissionDecision?: string; additionalContext: string } }).hookSpecificOutput;
+    expect(pre.permissionDecision).toBeUndefined();
+    expect(pre.additionalContext).toMatch(new RegExp(`^\\[weft diagnostics\\]\\n\\[weft info\\] previously_reverted src/pricing\\.ts:3:\\d+: previously reverted 5d ago: totals wrong for EU carts \\(by john, #${rev.seq}\\) \\(caused by john · event #${rev.seq}\\)\\.$`));
+    // Once per key per session: the commit (PostToolUse) and the next edit say nothing more about it.
+    expect(JSON.stringify(r1.post ?? {})).not.toContain("previously_reverted");
+    const r2 = await edit(B, "sb", root, "e2", "src/pricing.ts", "Math.round(", "Math.floor(");
+    expect(JSON.stringify(r2.pre ?? {}) + JSON.stringify(r2.post ?? {})).not.toContain("previously_reverted");
+    // The stored edit records carry no note.
+    expect(coord.log.filter((r) => r.agent === "claude-b" && r.kind === "edit").flatMap((r) => r.diagnostics)).toEqual([]);
   });
 });

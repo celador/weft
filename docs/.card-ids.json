@@ -25,5 +25,13 @@
  "r3": "t_d9b03cbb",
  "r4": "t_49aadeb8",
  "i1": "t_2a75f3c4",
- "b16": "t_573911b1"
+ "b16": "t_573911b1",
+ "issue-17-conflict-bypass": "t_1f6e94b5",
+ "issue-8-10-subagent-gates": "t_bc837869",
+ "issue-3-firm-claim": "t_dba80921",
+ "issue-15-no-adapt-text": "t_38695084",
+ "issue-18-coordinator-followups": "t_66780d00",
+ "issue-5-7-dependencies": "t_fc67c5fc",
+ "issue-11-adapter-routing": "t_7016c4d3",
+ "revert-history": "t_f8bc12a1"
 }

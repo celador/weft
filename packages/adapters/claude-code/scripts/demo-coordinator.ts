@@ -2,10 +2,11 @@
 // the spec §8.2/§9.3 HTTP routes, no auth. Bundled by the demo with esbuild; prints `listening <url>`.
 //   DEMO_REPO (default demo), DEMO_CONFLICTS (hold | continue, default hold)
 import { createServer } from "node:http";
-import { ReferenceCoordinator, WcpProtocolError, type Hello, type Submit } from "@weft/protocol";
+import { conflictModeFromEnv, ReferenceCoordinator, WcpProtocolError, type Hello, type Submit } from "@weft/protocol";
 
 const repo = process.env.DEMO_REPO ?? "demo";
-const conflicts = process.env.DEMO_CONFLICTS === "continue" ? "continue" : "hold";
+// One parser for the repo modes (#18): unset/empty = the default, a typo fails instead of running `hold`.
+const conflicts = conflictModeFromEnv(process.env.DEMO_CONFLICTS, "DEMO_CONFLICTS");
 const coord = new ReferenceCoordinator({ repo, conflicts });
 
 const server = createServer(async (req, res) => {

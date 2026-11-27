@@ -3,7 +3,7 @@
 // traffic to its RepoCoordinator Durable Object (THE ordered log). Repos and tokens live
 // in the Registry Durable Object, managed through /v1/admin with WEFT_ADMIN_TOKEN.
 
-import { decodeCursor, mergeFeed, validate, WCP_VERSION, WcpProtocolError, type ErrorCode, type EventPage, type EventRecord, type RepoSummary } from "@weft/protocol";
+import { decodeCursor, mergeFeed, validate, WCP_VERSION, WcpProtocolError, type ErrorCode, type EventPage, type EventRecord, type HistoryQuery, type RepoSummary } from "@weft/protocol";
 import {
   canAccessRepo,
   hasScope,
@@ -245,6 +245,14 @@ function eventQuery(u: URL): EventQuery {
   };
 }
 
+/** `GET /history` query (spec §9.7): `keys` (comma-separated and/or repeated), `since` (ISO), `limit`. Validated by the coordinator. */
+function historyQueryOf(u: URL): HistoryQuery {
+  const keys = u.searchParams.getAll("keys").flatMap((v) => list(v) ?? []);
+  const since = u.searchParams.get("since");
+  const limit = int(u.searchParams.get("limit"), "limit");
+  return { keys, ...(since ? { since } : {}), ...(limit !== undefined ? { limit } : {}) };
+}
+
 /** Helpers handed to feature modules (./artifacts) so they share auth and error mapping. */
 function kit(env: Env): Kit {
   return {
@@ -396,6 +404,15 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
     throw new HttpError("not_found", `no route ${m} ${path}`);
   }
 
+  // ----- history (spec §9.7): reverts, refused edits and finished negotiations of symbol keys.
+  // An agent token reads its own repo's history (no observe scope needed); observers read it too.
+  // A repo outside the token's list is 404, as everywhere.
+  if (rest === "/history" && m === "GET") {
+    if (!canAccessRepo(g, repo)) throw new HttpError("repo_not_found", `repo ${repo} not found`);
+    if (!((hasScope(g, "agent") && g.agent) || hasScope(g, "observe"))) throw new HttpError("forbidden", "history needs an agent token of this repo or the observe scope");
+    return json(unwrap(await stub.history(historyQueryOf(u))));
+  }
+
   // ----- observer (spec §9.3)
   if (rest === "/events" && m === "GET") {
     authorize(g, "observe", repo);
@@ -405,6 +422,16 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   if (em && m === "GET") {
     authorize(g, "observe", repo);
     return json(unwrap(await stub.event(Number(em[1]))));
+  }
+  // Recorded dependencies of a change and whether they hold its landing (spec §6.7, §9.8). A query
+  // parameter, since change ids contain `/` (default `<agent>/<task>`). Open to the repo's agents as
+  // history is (§9.7): `weft deps --pr` and MCP `weft_deps` read it with the checkout's agent token.
+  if (rest === "/dependencies" && m === "GET") {
+    if (!canAccessRepo(g, repo)) throw new HttpError("repo_not_found", `repo ${repo} not found`);
+    if (!((hasScope(g, "agent") && g.agent) || hasScope(g, "observe"))) throw new HttpError("forbidden", "dependencies needs an agent token of this repo or the observe scope");
+    const change = u.searchParams.get("change");
+    if (!change) throw new HttpError("invalid_message", "change required", { issues: [{ path: "/change", message: "query parameter change=<change id>" }] });
+    return json(unwrap(await stub.dependencies(change)));
   }
   if (rest === "/stream") throw new HttpError("invalid_message", "stream requires a WebSocket upgrade", { issues: [{ path: "", message: "upgrade: websocket" }] });
 
@@ -432,7 +459,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   }
   if (rest === "/system/queue" && m === "GET") {
     authorize(g, "system", repo);
-    return json({ type: "queue", repo, entries: unwrap(await stub.queue(list(u.searchParams.get("status")))) });
+    return json({ type: "queue", repo, entries: unwrap(await stub.landingQueue(list(u.searchParams.get("status")))) });
   }
   if (rest === "/system/queue" && m === "POST") {
     authorize(g, "system", repo);

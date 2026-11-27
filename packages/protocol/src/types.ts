@@ -30,6 +30,7 @@ export const DIAGNOSTIC_CODES = [
   "trunk_advanced",
   "agent_paused",
   "counterpart_away",
+  "previously_reverted",
 ] as const;
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number];
 
@@ -171,6 +172,52 @@ export type EventRecord = {
   payload?: Record<string, unknown>;
   tool?: ToolRef;
   transcript?: TranscriptRef;
+  /**
+   * Accepted `edit` only (spec §6.7): the unlanded neighbor changes this edit relies on, stamped by
+   * the coordinator. An annotation: it never accepts or rejects anything. Absent when there are none.
+   */
+  depends_on?: DependencyRef[];
+};
+
+/**
+ * One unlanded neighbor change an accepted edit relies on (spec §6.7): it reads a symbol that
+ * change added or whose signature it changed, or edits a symbol that exists only in that change.
+ */
+export type DependencyRef = {
+  change: string;
+  agent: string;
+  task?: string;
+  /** The neighbor's latest accepted edit writing one of `keys` when this was recorded. */
+  seq: Seq;
+  keys: SymbolKey[];
+};
+
+/** Where a recorded dependency stands now (spec §6.7). */
+export type DependencyState = "pending" | "landed" | "abandoned";
+
+export type Dependency = DependencyRef & {
+  status: DependencyState;
+  /** The record that landed or abandoned the dependency. */
+  status_seq?: Seq;
+  /** Whether it holds the dependent's landing (spec §6.7): pending, not mutual. */
+  holds: boolean;
+  /** Pending, but it relies on the dependent too (directly or through other pending changes), or the two are merged: it does not hold. */
+  mutual?: boolean;
+};
+
+/** `GET /v1/repos/{repo}/dependencies?change=` (spec §6.7, §9.8): what a change relies on, from the log. */
+export type Dependencies = {
+  type: "dependencies";
+  repo: string;
+  change: string;
+  agent: string;
+  task?: string;
+  landed: boolean;
+  /** The landing queue holds the change: it is unlanded and some dependency holds it. */
+  held: boolean;
+  held_by: string[];
+  /** One entry per neighbor change, keys merged over every accepted edit of the change, in first-recorded order. */
+  depends_on: Dependency[];
 };
 
 export type CapabilityLevel = 0 | 1 | 2 | 3;
@@ -337,6 +384,59 @@ export type FeedPage = {
   has_more: boolean;
 };
 
+/**
+ * Filtered history read (spec §9.7): `GET /v1/repos/{repo}/history?keys=…&since=…&limit=…`.
+ * `keys`: symbol keys `path#symbol` (also matches its members `path#symbol.*` and whole-file
+ * `path#*` records), or `path#*` / a bare `path` for every key of the file. `since`: ISO
+ * timestamp (default: 90 days before the coordinator's clock). `limit`: 1..100 (default 20).
+ */
+export type HistoryQuery = { keys: string[]; since?: string; limit?: number };
+
+export type HistoryKind = "revert" | "rejected" | "negotiation";
+
+/** One history entry, newest first in a HistoryPage. Built only from what the log holds. */
+export type HistoryEntry = {
+  /** The record cited (#seq): the revert, the rejected edit/claim, or the reply/escalation that ended a negotiation. */
+  seq: Seq;
+  ts: string;
+  kind: HistoryKind;
+  /** The queried keys this entry concerns (sorted). */
+  keys: SymbolKey[];
+  actor: Actor;
+  agent?: string;
+  change?: string;
+  task?: string;
+  /** revert: why it was reverted; negotiation: the reject or escalate reason. */
+  reason?: string;
+  /** revert: who asked for it. */
+  requested_by?: Actor;
+  /** revert: the op it reverts and its land record, and the revert's own op id. */
+  reverts_seq?: Seq;
+  reverts_op_id?: string;
+  op_id?: string;
+  /** revert: the first stack frame found in the reason text, if any. */
+  evidence?: string;
+  /** rejected: what was refused and why (its error diagnostics). */
+  event_kind?: EventKind;
+  mode?: SubmitMode;
+  causes?: Diagnostic[];
+  /** negotiation: how it ended, the terms answered, the record answered, and the other party. */
+  outcome?: "accepted" | "rejected" | "escalated";
+  terms?: NegotiationTerms;
+  reply_to?: Seq;
+  with?: string;
+};
+
+export type HistoryPage = {
+  type: "history";
+  repo: string;
+  keys: string[];
+  since: string;
+  entries: HistoryEntry[];
+  head_seq: Seq;
+  has_more: boolean;
+};
+
 export type StreamFrame =
   | { type: "event"; event: EventRecord }
   | { type: "replay.done"; head_seq: Seq }
@@ -396,9 +496,11 @@ export const MESSAGE_TYPES = [
   "RepoList",
   "EventPage",
   "FeedPage",
+  "HistoryPage",
   "StreamFrame",
   "HumanAction",
   "ActionResult",
+  "Dependencies",
   "WcpError",
   "EventRecord",
   "EventDraft",

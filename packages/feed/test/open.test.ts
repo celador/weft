@@ -28,11 +28,12 @@ const rec = (seq: number, o: Record<string, unknown>) =>
   normalize({ repo: "r", seq, ts: new Date(1_800_000_000_000 + seq * 1000).toISOString(), actor: { type: "agent", id: "b" }, agent: "b", change: "Cb", ...o });
 const diag = (o: Record<string, unknown> = {}) => ({ severity: "error", code: "stale_overwrite", file: "src/a.ts", symbol: "src/a.ts#f", message: "m", caused_by_seq: 1, caused_by_agent: "a", ...o });
 
-it("a land clears everything; a release clears check-origin errors but never commit-origin ones", () => {
+it("a land clears everything; a release clears no error, whatever its origin (#17)", () => {
   const commitDenied = rec(2, { kind: "edit", status: "rejected", mode: "commit", diagnostics: [diag()] });
   const checkDenied = rec(3, { kind: "edit", status: "rejected", mode: "check", diagnostics: [diag({ symbol: "src/a.ts#g" })] });
   const release = rec(4, { kind: "release", status: "accepted", payload: {} });
-  expect(openSquiggles([commitDenied, checkDenied, release]).map((q) => q.seq)).toEqual([2]);
+  expect(openSquiggles([commitDenied, checkDenied, release]).map((q) => q.seq)).toEqual([3, 2]);
+  expect(openSquiggles([checkDenied, rec(4, { kind: "release", status: "accepted", payload: { keys: ["src/a.ts#g"], reason: "abandoned" } })]).map((q) => q.seq)).toEqual([3]);
   expect(openSquiggles([commitDenied, checkDenied, release, rec(5, { kind: "land", status: "accepted" })])).toEqual([]);
   // A release of other keys leaves g open.
   expect(openSquiggles([checkDenied, rec(4, { kind: "release", status: "accepted", payload: { keys: ["src/a.ts#h"] } })]).map((q) => q.seq)).toEqual([3]);
@@ -49,7 +50,18 @@ it("an edit by a different change does not clear; agent_paused is never a squigg
 it("an accepted record's warning stays until the change touches the key again", () => {
   const warned = rec(2, { kind: "edit", status: "accepted", writes: [{ key: "src/a.ts#x", kind: "body" }], diagnostics: [diag({ severity: "warning" })] });
   expect(openSquiggles([warned])).toHaveLength(1);
+  // ... or releases it: advice, not an open error.
+  expect(openSquiggles([warned, rec(3, { kind: "release", status: "accepted", payload: { keys: ["src/a.ts#f"] } })])).toEqual([]);
   expect(openSquiggles([warned, rec(3, { kind: "edit", status: "accepted", writes: [{ key: "src/a.ts#f", kind: "body" }] })])).toEqual([]);
+});
+
+it("a rejected claim_wait is a wait, not an open error: a release clears it like advice (#18)", () => {
+  const waited = rec(2, { kind: "edit", status: "rejected", mode: "commit", diagnostics: [diag({ code: "claim_wait" })] });
+  expect(openSquiggles([waited])).toHaveLength(1);
+  expect(openSquiggles([waited, rec(3, { kind: "release", status: "accepted", payload: { keys: ["src/a.ts#f"] } })])).toEqual([]);
+  // Any other error on a rejected record still survives the release (#17).
+  const denied = rec(2, { kind: "edit", status: "rejected", mode: "commit", diagnostics: [diag()] });
+  expect(openSquiggles([denied, rec(3, { kind: "release", status: "accepted", payload: { keys: ["src/a.ts#f"] } })])).toHaveLength(1);
 });
 
 it("diffSides keeps real line numbers on both sides", () => {
