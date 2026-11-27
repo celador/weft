@@ -59,3 +59,4 @@ export {
   type StepResult,
 } from "./conformance";
 export { parseClaim, claimKeyError, maxClaimTtl, CLAIM_USAGE, type ClaimCommand } from "./claim-cli";
+export { amendmentSuggestion, signatureChangeSuggestion } from "./contract";

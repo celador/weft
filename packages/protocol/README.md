@@ -40,4 +40,7 @@ expect(results.filter((r) => !r.ok)).toEqual([]);
 ```
 
 The coordinator under test must take its clock from `clock.now` (claims/sessions expire
-on `tick`) and use the scenario's `policy`, `claim_ttl_ms` and `session_ttl_ms`.
+on `tick`) and use the coordinator options the scenario asks for: `scenarioInit(scenario)`
+returns them (`policy`, `escalation`, `claim_ttl_ms`, `session_ttl_ms`, `conflicts` (absent:
+`hold`, spec §8.4) and `claims`). A coordinator that ignores `conflicts` fails
+`reads-amendment-suggestion-continue`.

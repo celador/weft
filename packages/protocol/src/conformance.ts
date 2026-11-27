@@ -73,6 +73,8 @@ export type Scenario = {
   escalation?: "auto" | "human";
   claim_ttl_ms?: number;
   session_ttl_ms?: number;
+  /** Cross-agent conflict mode (spec §8.4). Absent: `hold`. */
+  conflicts?: "hold" | "continue";
   /**
    * Claims policy (spec §7.5). Absent: the defaults of a new repo. `null`: a repo created
    * before the claims policy existed (legacy rules until a `policy` step applies one).
@@ -91,6 +93,7 @@ export function scenarioInit(sc: Scenario): {
   escalation?: "auto" | "human";
   claim_ttl_ms?: number;
   session_ttl_ms?: number;
+  conflicts?: "hold" | "continue";
   claims?: ClaimsPolicy | null;
 } {
   return {
@@ -100,6 +103,7 @@ export function scenarioInit(sc: Scenario): {
     ...(sc.escalation ? { escalation: sc.escalation } : {}),
     ...(sc.claim_ttl_ms ? { claim_ttl_ms: sc.claim_ttl_ms } : {}),
     ...(sc.session_ttl_ms ? { session_ttl_ms: sc.session_ttl_ms } : {}),
+    ...(sc.conflicts ? { conflicts: sc.conflicts } : {}),
     ...(sc.claims !== undefined ? { claims: sc.claims } : {}),
   };
 }

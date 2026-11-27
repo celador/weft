@@ -7,7 +7,7 @@ src/conformance.ts for the matcher: partial objects, exact array length, "$any",
 "$absent", {"$len": n}, {"$contains": [...]}). The expectations are hand-derived from the
 normative rules in docs/protocol/wcp-v0.md, not snapshotted from an implementation.
 """
-import json, os
+import json, os, sys
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "fixtures", "scenarios")
 START = "2026-10-05T14:00:00.000Z"
@@ -491,6 +491,63 @@ scenarios.append({
     ],
 })
 
+# ------------------------------------------------------------------ R2a suggestion per conflicts mode
+P_CALC = "shop/pricing.py#calc_total"
+P_QUOTE = "shop/pricing.py#Pricer.quote"
+
+
+def reads_amendment_text(cont):
+    """codex-b's reads amendment uses calc_total, whose signature claude-a changed after codex-b's base.
+
+    The contract_changed warning on the verdict (§6.2 R2a) and the one pushed for a later signature
+    change of an amended key (§6.3) say to adapt under hold, and to keep editing other tasks instead
+    under continue (§8.4). Warnings never gate, and the owner is not told about them in either mode.
+    """
+    if cont:
+        amended = (f"Keep editing your other tasks instead of adapting your call sites to claude-a's new {P_CALC} (event #4); "
+                   f"do not adopt their partial work. claude-a owns the change; negotiate with claude-a if you need the old contract.")
+        pushed = ("Keep editing your other tasks instead of adapting your call sites to claude-a's change; do not adopt their partial work. "
+                  "claude-a owns the change; negotiate with claude-a if you need the old contract.")
+    else:
+        amended = f"Re-read {P_CALC} (event #4) and adapt your call sites, or negotiate with claude-a."
+        pushed = f"Re-read {P_QUOTE} and adapt your call sites before your next edit, or negotiate (e.g. keep the old signature as an overload)."
+    return [
+        step_hello("A", A(), "s1", 1),
+        step_hello("B", B(), "s2", 2),
+        # B's edit read the re-export; A then changes the real declaration, which B is not told about.
+        {"op": "submit", "as": "B", "submit": edit(2, [("shop/cart.py#Cart.total", "body")], reads=["shop/__init__.py#calc_total"]),
+         "expect": {"verdict": "accept", "seq": 3, "diagnostics": []}},
+        {"op": "submit", "as": "A", "submit": edit(1, [(P_CALC, "signature")]), "expect": {"verdict": "accept", "seq": 4, "diagnostics": []}},
+        {"op": "submit", "as": "B", "submit": {"type": "submit", "mode": "commit", "event": {
+            "kind": "intent", "base_seq": 3, "reads": [P_CALC, P_QUOTE], "intent": "lsp reads amendment for #3"}},
+         "expect": {"verdict": "accept", "seq": 5, "diagnostics": [diag("warning", "contract_changed", P_CALC, 4, "claude-a",
+             caused_by_task="T-1", file="shop/pricing.py",
+             message=f"claude-a changed the signature of {P_CALC} (#4) after your base #3, and your change uses it.",
+             suggestion=amended)]}},
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": True, "open_errors": []}},
+        {"op": "drain", "as": "A", "ack": "last", "expect": {"items": [], "open_errors": []}},
+        {"op": "submit", "as": "A", "submit": edit(5, [(P_QUOTE, "signature")]), "expect": {"verdict": "accept", "seq": 6, "diagnostics": []}},
+        {"op": "drain", "as": "B", "ack": "last", "expect": {"items": [{"seq": 6, "kind": "diagnostic", "diagnostic": diag(
+            "warning", "contract_changed", P_QUOTE, 6, "claude-a", suggestion=pushed)}], "open_errors": []}},
+        {"op": "drain", "as": "A", "ack": "last", "expect": {"items": [], "open_errors": []}},
+    ]
+
+
+scenarios.append({
+    "name": "reads-amendment-suggestion-hold",
+    "description": "§6.2 R2a under the default conflicts mode (hold): the contract_changed warning on a reads amendment, and the one pushed for a later signature change of an amended key, tell the agent to re-read the symbol and adapt its call sites (or negotiate).",
+    "covers": ["6.2 R2a", "6.3", "8.4"],
+    "steps": reads_amendment_text(cont=False),
+})
+
+scenarios.append({
+    "name": "reads-amendment-suggestion-continue",
+    "description": "§6.2 R2a under conflicts: continue (§8.4): the same two contract_changed warnings tell the agent to keep editing its other tasks instead of adapting its call sites to the other agent's change; neither gates, and the owner is not told about warnings.",
+    "covers": ["6.2 R2a", "6.3", "8.4"],
+    "conflicts": "continue",
+    "steps": reads_amendment_text(cont=True),
+})
+
 # ------------------------------------------------------------------ L1 claim leases
 # Defaults are pinned here on purpose: these scenarios run with no `claims` field, so they
 # fail if the default lease (2 min) or firm limit (10 min) ever changes silently.
@@ -844,8 +901,13 @@ scenarios.append({
 
 os.makedirs(OUT, exist_ok=True)
 # Only (re)write the generated scenarios; hand-written ones (alternatives-best-of-n.json)
-# live in the same directory and must survive a regeneration.
-for sc in scenarios:
+# live in the same directory and must survive a regeneration. Names on the command line limit the
+# run to those scenarios (python3 scripts/gen-scenarios.py reads-amendment-suggestion-continue).
+only = set(sys.argv[1:])
+unknown = only - {sc["name"] for sc in scenarios}
+if unknown:
+    sys.exit(f"unknown scenario(s): {', '.join(sorted(unknown))}")
+for sc in [s for s in scenarios if not only or s["name"] in only]:
     sc = {"name": sc["name"], "description": sc["description"], "covers": sc["covers"], "repo": "demo", "start": START,
           **{k: v for k, v in sc.items() if k not in ("name", "description", "covers")}}
     with open(os.path.join(OUT, f"{sc['name']}.json"), "w") as fh:

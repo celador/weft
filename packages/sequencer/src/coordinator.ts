@@ -11,12 +11,14 @@
 import {
   addresseeOf,
   agreementOf,
+  amendmentSuggestion,
   answererOf,
   counterpartAway,
   contractError,
   NOT_IN_WORKSPACE,
   ownedElsewhere,
   ownerNotice,
+  signatureChangeSuggestion,
   sameNotice,
   type ConflictMode,
   negotiationDues,
@@ -1029,7 +1031,7 @@ export class SqlCoordinator {
           message: strong
             ? `${who} ${strong.w.kind === "deleted" ? "removed" : "changed the signature of"} ${key} (#${strong.r.seq}) after your base #${e.base_seq}, and your change uses it.`
             : `${key} body changed in #${hit.r.seq} by ${who} after your base #${e.base_seq}; its contract is unchanged.`,
-          ...(strong ? { suggestion: `Re-read ${key} (event #${strong.r.seq}) and adapt your call sites, or negotiate with ${who}.` } : {}),
+          ...(strong ? { suggestion: amendmentSuggestion(key, strong.r.seq, who, this.conflicts === "continue") } : {}),
           ...cause(hit.r),
         });
       }
@@ -1555,9 +1557,7 @@ export class SqlCoordinator {
                 file: fileOf(w.key),
                 symbol: w.key,
                 message: `${rec.agent ?? rec.actor.id} ${w.kind === "deleted" ? "removed" : "changed the signature of"} ${w.key} (#${rec.seq}), which your change uses.`,
-                suggestion: this.conflicts === "continue"
-                  ? `Keep editing your other tasks instead of adapting your call sites to ${rec.agent ?? rec.actor.id}'s change; do not adopt their partial work. ${rec.agent ?? rec.actor.id} owns the change and is told about it if it has a live session.`
-                  : `Re-read ${w.key} and adapt your call sites before your next edit, or negotiate (e.g. keep the old signature as an overload).`,
+                suggestion: signatureChangeSuggestion(w.key, rec.agent ?? rec.actor.id, this.conflicts === "continue"),
                 caused_by_seq: rec.seq,
                 caused_by_agent: rec.agent ?? rec.actor.id,
                 ...(rec.task ? { caused_by_task: rec.task } : {}),
