@@ -4,7 +4,8 @@
 // scenarios in fixtures/scenarios are executable; packages/sequencer (the Durable Object)
 // MUST produce the same verdicts, diagnostics and inbox items for those scenarios.
 
-import { ownedElsewhere, ownerNotice, sameNotice, type ConflictMode } from "./ownership";
+import { ownedElsewhere, ownerNotice, type ConflictMode } from "./ownership";
+import { claimWaitSuggestion, conflictModeOf, enforcementModeOf, noticeKey, NOT_OPENED } from "./modes";
 import { renderContext, renderDue } from "./context";
 import { addresseeOf, agreementOf, answererOf, counterpartAway, negotiationDues } from "./negotiation";
 import { changeOwnedError, WcpProtocolError } from "./errors";
@@ -99,6 +100,8 @@ type ChangeState = {
   open: Map<string, Diagnostic>;
   /** Where each open error came from and the record that opened it. */
   openMeta: Map<string, OpenMeta>;
+  /** Owner notices already sent to this change's sessions, by noticeKey (spec §8.4): each conflict is told once. */
+  noticed: Set<string>;
 };
 
 /**
@@ -163,6 +166,8 @@ const TELLS = new Set(["stale_assumption", "stale_read"]);
 export const UNSEEN_NOTE = "and is not in your checkout: that change has not landed and was never delivered to you";
 
 const uniq = <T>(xs: Iterable<T>) => [...new Set(xs)];
+/** The keys a `negotiate.escalate` names (payload `keys`, optional). */
+const escalationKeys = (p: Record<string, unknown>): SymbolKey[] => (Array.isArray(p.keys) ? p.keys.filter((k): k is string => typeof k === "string") : []);
 
 export class ReferenceCoordinator {
   readonly repo: string;
@@ -176,6 +181,8 @@ export class ReferenceCoordinator {
   readonly heartbeatInterval: number;
   readonly limits: { max_diff_bytes: number; max_keys: number; max_page: number };
   private readonly now: () => number;
+  /** Cross-agent conflicts mode of the repo (spec §8.4). */
+  readonly conflicts: ConflictMode;
   private readonly continueMode: boolean;
 
   readonly log: EventRecord[] = [];
@@ -190,12 +197,13 @@ export class ReferenceCoordinator {
     this.repo = o.repo;
     this.policy = o.policy ?? "wound-wait";
     this.escalation = o.escalation ?? "auto";
-    this.enforcement = o.enforcement ?? "advise";
+    this.enforcement = enforcementModeOf(o.enforcement);
     this.claimTtl = o.claim_ttl_ms ?? 30 * 60_000;
     if (o.claims !== null && o.claims !== undefined && claimsPolicyError(o.claims)) throw new Error(claimsPolicyError(o.claims));
     this.claimsPolicy = o.claims === null ? undefined : { ...(o.claims ?? DEFAULT_CLAIMS_POLICY) };
     this.sessionTtl = o.session_ttl_ms ?? 5 * 60_000;
-    this.continueMode = o.conflicts === "continue";
+    this.conflicts = conflictModeOf(o.conflicts);
+    this.continueMode = this.conflicts === "continue";
     this.heartbeatInterval = o.heartbeat_interval_ms ?? 30_000;
     this.limits = { max_diff_bytes: o.max_diff_bytes ?? 1_048_576, max_keys: o.max_keys ?? 2000, max_page: o.max_page ?? 500 };
     this.now = o.now ?? (() => Date.now());
@@ -240,6 +248,7 @@ export class ReferenceCoordinator {
         told: new Map(),
         open: new Map(),
         openMeta: new Map(),
+        noticed: new Set(),
         ...(h.task ? { task: h.task.id } : {}),
       };
       this.changes.set(changeId, change);
@@ -445,8 +454,10 @@ export class ReferenceCoordinator {
     const own = this.changes.get(s.change);
     if (own) for (const d of diagnostics) if (TELLS.has(d.code)) this.tell(own, d.symbol, d.caused_by_seq);
     if (reject) {
-      for (const d of diagnostics) if (d.severity === "error" && d.code !== "agent_paused") this.openSet(s.change, d, msg.mode, rec.seq);
-      if (this.continueMode) for (const d of diagnostics) if (ownedElsewhere(d, s.agent)) this.notifyOwner(d, s.agent, e.kind);
+      // A claim_wait is a wait for the holder, not an open error (§6.5, #18).
+      for (const d of diagnostics) if (d.severity === "error" && !NOT_OPENED.has(d.code)) this.openSet(s.change, d, msg.mode, rec.seq);
+      // A check only asks; the owner hears of a conflict when an edit is actually submitted (§8.4, #18).
+      if (this.continueMode && msg.mode === "commit") for (const d of diagnostics) if (ownedElsewhere(d, s.agent)) this.notifyOwner(d, s.agent, e.kind);
     } else {
       this.applyAccepted(rec, s);
     }
@@ -548,8 +559,12 @@ export class ReferenceCoordinator {
     return cands.length ? cands[cands.length - 1]!.id : undefined;
   }
 
-  /** Two groups conflict: an open error of `s` cites the target group, or keys overlap. */
-  private groupsConflict(s: Session, target: string): boolean {
+  /**
+   * Two groups conflict: an open error of `s` cites the target group, or keys overlap — `s`'s
+   * reads/writes, or the keys the escalation names (a claim_wait is not an open error, #18, so
+   * the requester names the held key it waits for), against the target's writes and live claims.
+   */
+  private groupsConflict(s: Session, target: string, keys: SymbolKey[] = []): boolean {
     const lead = this.group(target);
     for (const d of this.openOf(s.change)) {
       const c = this.record(d.caused_by_seq)?.change;
@@ -559,6 +574,7 @@ export class ReferenceCoordinator {
     const theirs = new Set<SymbolKey>();
     for (const m of this.members(lead)) for (const k of m.writes.keys()) theirs.add(k);
     for (const c of this.claims) if (this.group(c.change) === lead && c.source !== "predicted" && c.expires_at > now) theirs.add(c.key);
+    if (keys.some((k) => theirs.has(k))) return true;
     for (const m of this.members(this.group(s.change))) {
       for (const k of m.reads) if (theirs.has(k)) return true;
       for (const k of m.writes.keys()) if (theirs.has(k)) return true;
@@ -566,14 +582,14 @@ export class ReferenceCoordinator {
     return false;
   }
 
-  private checkEscalation(s: Session, w: { agent?: string; change?: string }): string {
+  private checkEscalation(s: Session, w: { agent?: string; change?: string }, keys: SymbolKey[] = []): string {
     const own = this.changes.get(s.change)!;
     const target = this.escalationTarget(s.change, w);
     if (!target) throw new WcpProtocolError("invalid_reference", "unknown escalation target (no unlanded change of that agent)", { with: w });
     const t = this.changes.get(target)!;
     if (this.sameGroup(target, s.change)) throw new WcpProtocolError("invalid_reference", `${target} is already merged with ${s.change}`);
     if (t.landed || own.landed) throw new WcpProtocolError("invalid_reference", "a landed change cannot be merged");
-    if (!this.groupsConflict(s, target))
+    if (!this.groupsConflict(s, target, keys))
       throw new WcpProtocolError("invalid_reference", `nothing to escalate: ${s.change} and ${target} do not conflict`, { change: target });
     return target;
   }
@@ -589,7 +605,7 @@ export class ReferenceCoordinator {
       const to = p.to as { agent?: string; change?: string };
       if (!this.knownTarget(to)) throw new WcpProtocolError("invalid_reference", "unknown negotiation/message target", { to });
     }
-    if (e.kind === "negotiate.escalate") this.checkEscalation(s, (p.with as { agent?: string; change?: string }) ?? {});
+    if (e.kind === "negotiate.escalate") this.checkEscalation(s, (p.with as { agent?: string; change?: string }) ?? {}, escalationKeys(p));
     if (NEGOTIATION_REPLIES.has(e.kind)) {
       const parent = this.record(Number(p.reply_to));
       if (!parent || parent.status !== "accepted" || (parent.kind !== "negotiate.propose" && parent.kind !== "negotiate.counter"))
@@ -852,7 +868,7 @@ export class ReferenceCoordinator {
           severity: h.firm || (this.enforcement === "block" && e.kind === "edit") ? "error" : "warning",
           code: "claim_wait",
           message: `${w.key} is ${h.firm ? "firmly claimed" : "being edited"} by ${h.agent} (${h.change}), which has precedence.`,
-          suggestion: `Wait for ${h.agent} to land or release ${w.key}, work elsewhere, or negotiate (negotiate.propose to ${h.agent}).`,
+          suggestion: claimWaitSuggestion(w.key, h.agent, this.conflicts),
         });
       } else {
         out.push({
@@ -1044,13 +1060,17 @@ export class ReferenceCoordinator {
   private notifyOwner(d: Diagnostic, editor: string, kind: string): void {
     const cause = this.record(d.caused_by_seq);
     if (!cause?.change) return;
+    const owner = this.changes.get(cause.change);
+    const key = noticeKey(editor, d.symbol, d.caused_by_seq);
+    // Once per (owner, editor, symbol, cause): resubmitting the same stale edit adds no rows (#18).
+    if (!owner || owner.noticed.has(key)) return;
     const notice = ownerNotice(d, editor, kind);
     // Matched on the cause's agent too (as the sequencer does): a change ID alone is not proof of ownership.
     // (A dependency notice, §6.7, is a logged system message instead: it stays in the feed for an owner who is offline.)
-    for (const os of this.sessionsOf({ change: cause.change }).filter((s) => s.agent === cause.agent)) {
-      if (os.inbox.some((i) => i.diagnostic !== undefined && sameNotice(i.diagnostic, notice))) continue;
-      this.push(os, { seq: d.caused_by_seq, kind: "diagnostic", diagnostic: notice });
-    }
+    const live = this.sessionsOf({ change: cause.change }).filter((s) => s.agent === cause.agent);
+    for (const os of live) this.push(os, { seq: d.caused_by_seq, kind: "diagnostic", diagnostic: notice });
+    // Only a delivered notice counts: an owner with no live session is told on a later conflict.
+    if (live.length) owner.noticed.add(key);
   }
 
   /** `counterpart_away` when nobody live can answer a negotiation addressed to `to` (§7.4). */

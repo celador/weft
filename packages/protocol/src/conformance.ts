@@ -74,11 +74,11 @@ export type Scenario = {
   policy?: "wound-wait" | "wait-die";
   /** Repo enforcement mode (spec §7.2). Absent: `advise`. */
   enforcement?: "advise" | "block";
+  /** Repo cross-agent conflicts mode (spec §8.4). Absent: `hold`. */
+  conflicts?: "hold" | "continue";
   escalation?: "auto" | "human";
   claim_ttl_ms?: number;
   session_ttl_ms?: number;
-  /** Cross-agent conflict mode (spec §8.4). Absent: `hold`. */
-  conflicts?: "hold" | "continue";
   /**
    * Claims policy (spec §7.5). Absent: the defaults of a new repo. `null`: a repo created
    * before the claims policy existed (legacy rules until a `policy` step applies one).
@@ -94,20 +94,20 @@ export function scenarioInit(sc: Scenario): {
   repo: string;
   policy?: "wound-wait" | "wait-die";
   enforcement?: "advise" | "block";
+  conflicts?: "hold" | "continue";
   escalation?: "auto" | "human";
   claim_ttl_ms?: number;
   session_ttl_ms?: number;
-  conflicts?: "hold" | "continue";
   claims?: ClaimsPolicy | null;
 } {
   return {
     repo: sc.repo,
     ...(sc.policy ? { policy: sc.policy } : {}),
     ...(sc.enforcement ? { enforcement: sc.enforcement } : {}),
+    ...(sc.conflicts ? { conflicts: sc.conflicts } : {}),
     ...(sc.escalation ? { escalation: sc.escalation } : {}),
     ...(sc.claim_ttl_ms ? { claim_ttl_ms: sc.claim_ttl_ms } : {}),
     ...(sc.session_ttl_ms ? { session_ttl_ms: sc.session_ttl_ms } : {}),
-    ...(sc.conflicts ? { conflicts: sc.conflicts } : {}),
     ...(sc.claims !== undefined ? { claims: sc.claims } : {}),
   };
 }

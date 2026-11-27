@@ -176,7 +176,8 @@ scenarios.append({
         {"op": "submit", "as": "B", "submit": edit(5, [(Z, "body")]),
          "expect": {"verdict": "reject", "seq": 7, "diagnostics": [diag("error", "claim_wait", Z, 6, "claude-a")]}},
         {"op": "drain", "as": "A", "ack": "last", "expect": {"items": [], "open_errors": []}},
-        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": False}},
+        # A claim_wait is a wait, not an open error (§6.5): the rejected edit leaves B's stop open.
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": True, "open_errors": []}},
         {"op": "submit", "as": "C", "submit": edit(3, [(X, "signature")]),
          "expect": {"verdict": "accept", "seq": 8, "diagnostics": [diag("info", "claim_contended", X, 4, "claude-a", arbitration={
              "outcome": "wound", "winner": {"agent": "gemini-c", "change": "I-c"}, "loser": {"agent": "claude-a", "change": "I-a"}})]}},
@@ -788,7 +789,8 @@ def firm_vs_soft(block):
          "expect": {"verdict": "accept", "seq": 7, "diagnostics": [diag("warning", "claim_wait", X, 3, "claude-a")]}},
         {"op": "submit", "as": "B", "submit": submit("claim", 2, {"firm": True, "source": "explicit"}, writes=[(Z, "body")]),
          "expect": {"verdict": "reject", "seq": 8, "diagnostics": [diag("error", "claim_wait", Z, 4, "claude-a")]}},
-        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": False}},
+        # Every claim_wait above is a wait for the holder, not an open error (§6.5): B may stop.
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": True, "open_errors": []}},
     ]
 
 
@@ -896,6 +898,73 @@ scenarios.append({
             {"seq": 10, "kind": "negotiation", "outcome": "escalated", "reason": "stuck on f", "with": "claude-a", "agent": "codex-b"}, {"seq": 9}]}},
         # Nothing here was reverted: no note on B's next edit of f.
         {"op": "submit", "as": "B", "submit": edit(11, [(F, "body")], mode="check"), "expect": {"diagnostics": {"$len": 0}}},
+    ],
+})
+
+# ------------------------------------------------------------------ #18 block mode, claims, continue notices
+A2 = lambda: hello("claude-a", "claude-code", "T-4", "I-a2")
+CW_HOLD = "Wait for claude-a to land or release " + X + ", work elsewhere, or negotiate (negotiate.propose to claude-a)."
+CW_CONTINUE = "Leave " + Z + " to claude-a and keep working on your other tasks; negotiate (negotiate.propose to claude-a) if your task needs " + Z + "."
+
+scenarios.append({
+    "name": "enforcement-block-waits",
+    "description": "§7.2/§6.5 under enforcement block (#18): an agent's own claim never denies its other task's edit; a neighbor's edit into the hold is rejected with claim_wait, which is a wait and not an open error (its stop stays open); a claim into the hold is accepted with a warning naming the holder.",
+    "covers": ["6.2 R3", "6.5", "7.2", "7.5"],
+    "enforcement": "block",
+    "steps": [
+        step_hello("A", A(), "s1", 1),
+        step_hello("A2", A2(), "s2", 2),
+        step_hello("B", B(), "s3", 3),
+        {"op": "submit", "as": "A", "submit": edit(1, [(X, "body")]), "expect": {"verdict": "accept", "seq": 4, "diagnostics": []}},
+        # claude-a's second task edits the key its first task holds: not a neighbor, nothing to wait for.
+        {"op": "submit", "as": "A2", "submit": edit(2, [(X, "body")]), "expect": {"verdict": "accept", "seq": 5, "diagnostics": []}},
+        # A neighbor's edit into the soft hold is denied under block ...
+        {"op": "submit", "as": "B", "submit": edit(3, [(X, "body")]),
+         "expect": {"verdict": "reject", "seq": 6, "diagnostics": [diag("error", "claim_wait", X, 4, "claude-a", suggestion=CW_HOLD, arbitration={
+             "outcome": "wait", "winner": {"agent": "claude-a", "change": "I-a"}, "loser": {"agent": "codex-b", "change": "I-b"}})]}},
+        # ... but the wait does not hold its stop or its commits (no open error).
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": True, "open_errors": []}},
+        {"op": "gate", "as": "B", "gate": "commit", "expect": {"allow": True, "open_errors": []}},
+        # Block never refuses a claim: accepted, with a warning that names the holder.
+        {"op": "submit", "as": "B", "submit": submit("claim", 3, {"firm": False, "source": "explicit"}, writes=[(X, "body")]),
+         "expect": {"verdict": "accept", "seq": 7, "diagnostics": [diag("warning", "claim_wait", X, 4, "claude-a",
+                    message="src/auth/session.ts#refreshToken is being edited by claude-a (I-a), which has precedence.")]}},
+        {"op": "drain", "as": "B", "expect": {"items": [], "open_errors": []}},
+    ],
+})
+
+scenarios.append({
+    "name": "continue-owner-notices",
+    "description": "§8.4 under conflicts: continue (#18): the owner of the change that caused a conflict is told once per (editor, symbol, cause), not on every resubmission and not for a check; a claim_wait's suggestion does not tell the requester to wait, and the wait never holds its stop.",
+    "covers": ["6.5", "7.2", "8.4"],
+    "conflicts": "continue",
+    "steps": [
+        step_hello("A", A(), "s1", 1),
+        step_hello("B", B(), "s2", 2),
+        {"op": "submit", "as": "A", "submit": edit(1, [(X, "signature")]), "expect": {"verdict": "accept", "seq": 3, "diagnostics": []}},
+        # A check only asks: logged and rejected, but the owner is not told.
+        {"op": "submit", "as": "B", "submit": edit(2, [(Y, "body")], reads=[X], mode="check"),
+         "expect": {"verdict": "reject", "mode": "check", "seq": 4, "diagnostics": [diag("error", "stale_assumption", X, 3, "claude-a")]}},
+        {"op": "drain", "as": "A", "expect": {"items": [], "open_errors": []}},
+        {"op": "submit", "as": "B", "submit": edit(2, [(Y, "body")], reads=[X]),
+         "expect": {"verdict": "reject", "seq": 5, "diagnostics": [diag("error", "stale_assumption", X, 3, "claude-a")]}},
+        {"op": "drain", "as": "A", "ack": "last", "expect": {"items": [{"seq": 3, "kind": "diagnostic", "diagnostic": {
+            "severity": "warning", "code": "stale_assumption", "symbol": X, "caused_by_seq": 3, "caused_by_agent": "codex-b",
+            "message": "codex-b's edit to " + X + " conflicts with your change #3."}}], "open_errors": []}},
+        # A acks the notice; then the same stale edit again: the owner already knows, so nothing new.
+        {"op": "drain", "as": "A", "ack": "last", "expect": {"items": [], "open_errors": []}},
+        {"op": "submit", "as": "B", "submit": edit(2, [(Y, "body")], reads=[X]), "expect": {"verdict": "reject", "seq": 6}},
+        {"op": "drain", "as": "A", "expect": {"items": [], "open_errors": []}},
+        {"op": "submit", "as": "A", "submit": submit("claim", 6, {"firm": True, "source": "explicit"}, writes=[(Z, "body")]),
+         "expect": {"verdict": "accept", "seq": 7, "diagnostics": []}},
+        # Under continue the claim_wait suggestion says to work elsewhere, never to wait.
+        {"op": "submit", "as": "B", "submit": edit(2, [(Z, "body")]),
+         "expect": {"verdict": "reject", "seq": 8, "diagnostics": [diag("error", "claim_wait", Z, 7, "claude-a", suggestion=CW_CONTINUE)]}},
+        # Only the stale_assumption holds B's stop; the wait does not.
+        {"op": "gate", "as": "B", "gate": "stop", "expect": {"allow": False, "open_errors": [{"code": "stale_assumption", "symbol": X}]}},
+        {"op": "drain", "as": "A", "ack": "last", "expect": {"items": [{"seq": 7, "kind": "diagnostic", "diagnostic": {
+            "severity": "warning", "code": "claim_wait", "symbol": Z, "caused_by_seq": 7, "caused_by_agent": "codex-b",
+            "message": "codex-b's edit to " + Z + " conflicts with your change #7."}}], "open_errors": []}},
     ],
 })
 

@@ -21,6 +21,22 @@ export {
 } from "./negotiation";
 export { WcpProtocolError, ERROR_STATUS, closeCode, changeOwnedError } from "./errors";
 export { ownedElsewhere, ownerNotice, sameNotice, OPEN_ERROR_ADVICE, BLOCKED_EDIT_ADVICE, ERROR_RULE, type ConflictMode } from "./ownership";
+export {
+  DEFAULT_CONFLICT_MODE,
+  DEFAULT_ENFORCEMENT_MODE,
+  CONFLICT_MODES,
+  ENFORCEMENT_MODES,
+  parseConflictMode,
+  parseEnforcementMode,
+  conflictModeOf,
+  enforcementModeOf,
+  conflictModeFromEnv,
+  enforcementModeFromEnv,
+  claimWaitSuggestion,
+  NOT_OPENED,
+  noticeKey,
+  type ModeParse,
+} from "./modes";
 export { contractError, NOT_IN_WORKSPACE } from "./contract";
 export { encodeCursor, decodeCursor, mergeFeed, compareFeed, type FeedCursor } from "./feed";
 export { reliesOn, collectDependsOn, mergeDependencies, isAbandonment, dependenciesOf, abandonedNotice, dependencyText, type DependencyLookup } from "./deps";
@@ -61,3 +77,4 @@ export {
 } from "./conformance";
 export { parseClaim, claimKeyError, maxClaimTtl, CLAIM_USAGE, type ClaimCommand } from "./claim-cli";
 export { amendmentSuggestion, signatureChangeSuggestion } from "./contract";
+export { pickCliSession, takeSessionFlag, NEW_CLI_SESSION, cliSessionId, type CliSessionState, type CliSessionPick } from "./cli-session";

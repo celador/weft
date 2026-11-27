@@ -27,7 +27,11 @@ import {
   ownedElsewhere,
   ownerNotice,
   signatureChangeSuggestion,
-  sameNotice,
+  claimWaitSuggestion,
+  conflictModeOf,
+  enforcementModeOf,
+  noticeKey,
+  NOT_OPENED,
   type ConflictMode,
   negotiationDues,
   renderDue,
@@ -356,14 +360,14 @@ export class SqlCoordinator {
   }
   /** Per-repo, recorded in the config at init (so replay is exact): `hold` unless the repo opted in. */
   get conflicts(): ConflictMode {
-    return this.config.conflicts ?? "hold";
+    return conflictModeOf(this.config.conflicts);
   }
   get escalation(): EscalationPolicy {
     return this.config.escalation ?? "auto";
   }
   /** Repo enforcement from the journaled config; absent means advise. */
   get enforcement(): EnforcementMode {
-    return this.config.enforcement ?? "advise";
+    return enforcementModeOf(this.config.enforcement);
   }
   private get claimTtl(): number {
     return this.config.claim_ttl_ms;
@@ -734,8 +738,10 @@ export class SqlCoordinator {
       const rec = this.append({ kind: e.kind, actor, session: s, draft: e, diagnostics, status: reject ? "rejected" : "accepted", mode: msg.mode, depends_on });
       for (const d of diagnostics) if (TELLS.has(d.code) && d.symbol) this.tell(s.change, d.symbol, d.caused_by_seq);
       if (reject) {
-        for (const d of diagnostics) if (d.severity === "error" && d.code !== "agent_paused") this.openSet(s.change, d, msg.mode, rec.seq);
-        if (this.conflicts === "continue") for (const d of diagnostics) if (ownedElsewhere(d, s.agent)) this.notifyOwner(d, s.agent, e.kind);
+        // A claim_wait is a wait for the holder, not an open error (§6.5, #18).
+        for (const d of diagnostics) if (d.severity === "error" && !NOT_OPENED.has(d.code)) this.openSet(s.change, d, msg.mode, rec.seq);
+        // A check only asks; the owner hears of a conflict when an edit is actually submitted (§8.4, #18).
+        if (this.conflicts === "continue" && msg.mode !== "check") for (const d of diagnostics) if (ownedElsewhere(d, s.agent)) this.notifyOwner(d, s.agent, e.kind);
       } else {
         this.applyAccepted(rec, s);
       }
@@ -837,7 +843,8 @@ export class SqlCoordinator {
   }
 
   /** Two groups conflict: an open error of `s` cites the target group, or keys overlap. */
-  private groupsConflict(s: Session, target: string): boolean {
+  /** Mirrors ReferenceCoordinator.groupsConflict (escalation keys count too, #18). */
+  private groupsConflict(s: Session, target: string, keys: SymbolKey[] = []): boolean {
     const lead = this.group(target);
     for (const d of this.openOf(s.change)) {
       const c = this.record(d.caused_by_seq)?.change;
@@ -849,6 +856,7 @@ export class SqlCoordinator {
       for (const r of all<{ key: string }>(this.sql, `SELECT key FROM change_writes WHERE change_id = ?`, m.id)) theirs.add(r.key);
       for (const r of all<{ key: string }>(this.sql, `SELECT key FROM claims WHERE change_id = ? AND source != 'predicted' AND expires_at > ?`, m.id, now)) theirs.add(r.key);
     }
+    if (keys.some((k) => theirs.has(k))) return true;
     for (const m of this.members(this.group(s.change))) {
       for (const r of all<{ key: string }>(this.sql, `SELECT key FROM change_reads WHERE change_id = ?`, m.id)) if (theirs.has(r.key)) return true;
       for (const r of all<{ key: string }>(this.sql, `SELECT key FROM change_writes WHERE change_id = ?`, m.id)) if (theirs.has(r.key)) return true;
@@ -856,14 +864,14 @@ export class SqlCoordinator {
     return false;
   }
 
-  private checkEscalation(s: Session, w: { agent?: string; change?: string }): string {
+  private checkEscalation(s: Session, w: { agent?: string; change?: string }, keys: SymbolKey[] = []): string {
     const own = this.getChange(s.change)!;
     const target = this.escalationTarget(s.change, w);
     if (!target) throw new WcpProtocolError("invalid_reference", "unknown escalation target (no unlanded change of that agent)", { with: w });
     const t = this.getChange(target)!;
     if (this.sameGroup(target, s.change)) throw new WcpProtocolError("invalid_reference", `${target} is already merged with ${s.change}`);
     if (t.landed || own.landed) throw new WcpProtocolError("invalid_reference", "a landed change cannot be merged");
-    if (!this.groupsConflict(s, target))
+    if (!this.groupsConflict(s, target, keys))
       throw new WcpProtocolError("invalid_reference", `nothing to escalate: ${s.change} and ${target} do not conflict`, { change: target });
     return target;
   }
@@ -880,7 +888,8 @@ export class SqlCoordinator {
       const to = p.to as { agent?: string; change?: string };
       if (!this.knownTarget(to)) throw new WcpProtocolError("invalid_reference", "unknown negotiation/message target", { to });
     }
-    if (e.kind === "negotiate.escalate") this.checkEscalation(s, (p.with as { agent?: string; change?: string }) ?? {});
+    if (e.kind === "negotiate.escalate")
+      this.checkEscalation(s, (p.with as { agent?: string; change?: string }) ?? {}, Array.isArray(p.keys) ? p.keys.filter((k): k is string => typeof k === "string") : []);
     if (NEGOTIATION_REPLIES.has(e.kind)) {
       const parent = this.record(Number(p.reply_to));
       if (!parent || parent.status !== "accepted" || (parent.kind !== "negotiate.propose" && parent.kind !== "negotiate.counter"))
@@ -1163,7 +1172,7 @@ export class SqlCoordinator {
           severity: h.firm || (this.enforcement === "block" && e.kind === "edit") ? "error" : "warning",
           code: "claim_wait",
           message: `${w.key} is ${h.firm ? "firmly claimed" : "being edited"} by ${h.agent} (${h.change}), which has precedence.`,
-          suggestion: `Wait for ${h.agent} to land or release ${w.key}, work elsewhere, or negotiate (negotiate.propose to ${h.agent}).`,
+          suggestion: claimWaitSuggestion(w.key, h.agent, this.conflicts),
         });
       } else {
         out.push({
@@ -1377,13 +1386,15 @@ export class SqlCoordinator {
   private notifyOwner(d: Diagnostic, editor: string, kind: string): void {
     const cause = this.record(d.caused_by_seq);
     if (!cause?.change) return;
+    // Once per (owner, editor, symbol, cause): resubmitting the same stale edit adds no rows (#18).
+    const key = noticeKey(editor, d.symbol, d.caused_by_seq);
+    if (one(this.sql, `SELECT 1 AS x FROM owner_notices WHERE change_id = ? AND notice = ?`, cause.change, key)) return;
     const notice = ownerNotice(d, editor, kind);
     // Matched on the cause's agent too: a session can name any change in hello, so the change ID alone is not proof of ownership.
-    for (const os of this.sessionsOf({ change: cause.change }).filter((s) => s.agent === cause.agent)) {
-      const seen = all<{ item: string }>(this.sql, `SELECT item FROM inbox WHERE session = ? AND seq = ?`, os.id, d.caused_by_seq);
-      if (seen.some((r) => (JSON.parse(r.item) as InboxItem).diagnostic !== undefined && sameNotice((JSON.parse(r.item) as InboxItem).diagnostic!, notice))) continue;
-      this.push(os, { seq: d.caused_by_seq, kind: "diagnostic", diagnostic: notice });
-    }
+    const live = this.sessionsOf({ change: cause.change }).filter((s) => s.agent === cause.agent);
+    for (const os of live) this.push(os, { seq: d.caused_by_seq, kind: "diagnostic", diagnostic: notice });
+    // Only a delivered notice counts: an owner with no live session is told on a later conflict.
+    if (live.length) run(this.sql, `INSERT OR IGNORE INTO owner_notices (change_id, notice) VALUES (?, ?)`, cause.change, key);
   }
 
   /** `counterpart_away` when nobody live can answer a negotiation addressed to `to` (§7.4). */
@@ -2167,7 +2178,7 @@ export class SqlCoordinator {
 
   /** Complete dump of coordinator state (for replay-determinism checks). */
   dump(): Record<string, unknown[]> {
-    const tables = ["events", "event_writes", "sessions", "changes", "change_reads", "change_writes", "claims", "inbox", "change_errors", "change_told", "ops", "submit_queue", "key_history", "session_noted"];
+    const tables = ["events", "event_writes", "sessions", "changes", "change_reads", "change_writes", "claims", "inbox", "change_errors", "change_told", "owner_notices", "ops", "submit_queue", "key_history", "session_noted"];
     const out: Record<string, unknown[]> = {};
     for (const t of tables) out[t] = all(this.sql, `SELECT * FROM ${t} ORDER BY rowid`);
     out.meta = all(this.sql, `SELECT * FROM meta WHERE k != 'schema_version' ORDER BY k`);

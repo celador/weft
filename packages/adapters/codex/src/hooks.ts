@@ -275,6 +275,8 @@ export class CodexAdapter {
     st.base = st.wcpSession === undefined && st.base === 0 ? welcome.delivered_through : Math.min(st.base || welcome.delivered_through, welcome.delivered_through);
     st.wcpSession = welcome.session;
     this.noteLimits(st, welcome);
+    st.agent = config.agent;
+    st.change = config.change;
     st.acked = 0;
     st.lastContact = this.now();
     this.log(`hello ${config.agent} change ${config.change} -> ${welcome.session} head #${welcome.head_seq} base #${st.base}`);

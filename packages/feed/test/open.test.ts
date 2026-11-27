@@ -55,6 +55,15 @@ it("an accepted record's warning stays until the change touches the key again", 
   expect(openSquiggles([warned, rec(3, { kind: "edit", status: "accepted", writes: [{ key: "src/a.ts#f", kind: "body" }] })])).toEqual([]);
 });
 
+it("a rejected claim_wait is a wait, not an open error: a release clears it like advice (#18)", () => {
+  const waited = rec(2, { kind: "edit", status: "rejected", mode: "commit", diagnostics: [diag({ code: "claim_wait" })] });
+  expect(openSquiggles([waited])).toHaveLength(1);
+  expect(openSquiggles([waited, rec(3, { kind: "release", status: "accepted", payload: { keys: ["src/a.ts#f"] } })])).toEqual([]);
+  // Any other error on a rejected record still survives the release (#17).
+  const denied = rec(2, { kind: "edit", status: "rejected", mode: "commit", diagnostics: [diag()] });
+  expect(openSquiggles([denied, rec(3, { kind: "release", status: "accepted", payload: { keys: ["src/a.ts#f"] } })])).toHaveLength(1);
+});
+
 it("diffSides keeps real line numbers on both sides", () => {
   const diff = ["--- a/src/p.ts", "+++ b/src/p.ts", "@@ -3,3 +3,4 @@", " a", "-b", "+B", "+B2", " c", ""].join("\n");
   const [s, ...more] = diffSides(diff);
