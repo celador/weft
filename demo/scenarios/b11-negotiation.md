@@ -35,7 +35,8 @@ gateway used by other cards is not touched. `WEFT_URL` points the driver at any 
 2. A starts as soon as B has joined, and changes the signature (accepted, e.g. log #3).
 3. B turn 2 implements. Its edit with `createSession(user.id)` is **denied at PreToolUse**
    (`stale_assumption`, A's diff quoted, plus a `↳ Your options:` line with the exact
-   `negotiate propose` / `negotiate escalate` commands).
+   `negotiate propose overload` command; since #15 a `stale_assumption` no longer offers
+   retreat or `negotiate escalate`, which claim conflicts still do).
 4. B runs `.weft/bin/weft negotiate propose overload "…" --wait 100` → `negotiate.propose`
    addressed to A's change.
 5. The proposal reaches A as injected context, either **live** (next hook of the running

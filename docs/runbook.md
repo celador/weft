@@ -171,6 +171,16 @@ python3 packages/adapters/hermes/scripts/weft_land.py --branch wt/x --sha <sha> 
 - A rejected land (R1 trunk CAS, `stale_overwrite`) is logged and retried up to 3 times against a
   fresh head: git already holds the merge, so the rebase is re-reading Weft's trunk view.
   Exit status 1 if any land still failed.
+- Why this retry is not adoption (issue #15): under `conflicts: continue` the coordinator tells an
+  agent not to rebase onto, redo its work on top of, or absorb a neighbor's change to clear a
+  cross-agent error. The PM landing tool does none of that. It runs only after `git merge` has
+  put the card on main, so the merge already contains every earlier landing (that work is on
+  trunk, not in flight), and the retry changes only the land record's `base_seq` to the head
+  Weft now has. No code is edited to fit anyone's change, landed or unlanded; a merge conflict is
+  the PM's to resolve in the merge itself, before this tool runs. Without the land record Weft's
+  trunk view would disagree with git (the card's claims and open errors would outlive the merge).
+  The plugin's auto-land (`land.py`, next section) retries the same way, for the same reason: it
+  only records work that is already on trunk.
 - Token: system token `weft-pm-land` (scopes `system`+`observe`, repos `[weft]`), minted on first
   use from `~/.config/weft/preview-admin-token` and stored under `land` in
   `~/.config/weft/hermes-adapter.json` (mode 600). `install.py --uninstall` revokes it with the
@@ -180,8 +190,12 @@ python3 packages/adapters/hermes/scripts/weft_land.py --branch wt/x --sha <sha> 
   `python3 packages/adapters/hermes/scripts/verify_land_live.py` — claim_wait before the land,
   `land` accepted, `trunk_advanced` to the other card, and after it rebases its edit of the same
   symbol carries no `claim_wait`/`stale_overwrite`; rerun is a no-op.
-- Agents still have to rebase after a land: their next edit of a landed symbol is
-  `stale_overwrite` until their worktree gets a new commit that includes main (`git merge main`).
+- After a land, another card whose base predates it and that edits a landed symbol gets
+  `stale_overwrite` until its worktree has a new commit that includes main. That is a
+  cross-agent error: the card does what the error's suggestion says (under the default
+  `conflicts: hold`, rebase onto trunk and redo the edit; under `continue`, stop working on
+  that code and report it to the owner). Nothing in this setup tells a card to `git merge main`
+  just to clear it.
 
 ## Auto-land: every repo, no PM step (adapter 0.3, t_c736b10e)
 

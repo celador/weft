@@ -55,6 +55,11 @@ export async function serve(c: ReferenceCoordinator): Promise<{ url: string; ser
         }
       }
       if (req.method === "GET" && (m = /^\/repos\/[^/]+\/events\/(\d+)$/.exec(path))) return send(200, c.event(Number(m[1])));
+      if (req.method === "GET" && /^\/repos\/[^/]+\/history(\?|$)/.test(path)) {
+        const q = new URL(path, "http://x").searchParams;
+        const limit = q.get("limit");
+        return send(200, c.history({ keys: q.getAll("keys").flatMap((v) => v.split(",")).filter(Boolean), ...(q.get("since") ? { since: q.get("since")! } : {}), ...(limit ? { limit: Number(limit) } : {}) }));
+      }
       if (req.method === "GET" && /^\/repos\/[^/]+\/events(\?|$)/.test(path)) {
         const q = new URL(path, "http://x").searchParams;
         return send(200, c.events(Number(q.get("after") ?? 0), Number(q.get("limit") ?? 100), { tail: q.get("tail") === "1" }));

@@ -185,6 +185,7 @@ const BY_TYPE: Record<string, MessageType> = {
   repos: "RepoList",
   events: "EventPage",
   feed: "FeedPage",
+  history: "HistoryPage",
   event: "StreamFrame",
   "replay.done": "StreamFrame",
   ping: "StreamFrame",

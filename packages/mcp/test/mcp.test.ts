@@ -7,7 +7,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { analyzeChanges, unifiedDiff } from "../../adapters/claude-code/src/analysis";
-import { CART_LINE, NEW_CALL, OLD_CALL, PRICING_V2, checkout, coordinator } from "../../adapters/claude-code/test/translator-kit";
+import { CART_LINE, NEW_CALL, OLD_CALL, PRICING_V1, PRICING_V2, checkout, coordinator } from "../../adapters/claude-code/test/translator-kit";
+import { serve as serveCoordinator } from "../../adapters/claude-code/test/helpers";
+import { ReferenceCoordinator, validate, type Verdict } from "@weft/protocol";
 import { serve } from "../src/cli";
 import { CONFIG_REL, resolveConfig, userToken } from "../src/config";
 import { makeHost } from "../src/cli";
@@ -30,7 +32,7 @@ describe("declared surface", () => {
     expect(CAPABILITIES).toEqual({ level: 0, observe: "async", inject: "delayed", deny_edit: false, refuse_stop: false, commit_gate: "native" });
   });
   it("exposes exactly the tools named in harness-coverage §2b", () => {
-    expect(TOOLS.map((t) => t.name)).toEqual(["weft_check", "weft_claim", "weft_status", "weft_inbox", "weft_feed", "weft_deps", "weft_negotiate", "weft_gate"]);
+    expect(TOOLS.map((t) => t.name)).toEqual(["weft_check", "weft_claim", "weft_status", "weft_inbox", "weft_feed", "weft_history", "weft_deps", "weft_negotiate", "weft_gate"]);
   });
   it("keeps the server instructions short and names weft_check + weft_gate", () => {
     expect(Buffer.byteLength(INSTRUCTIONS)).toBeLessThan(2000);
@@ -235,7 +237,13 @@ describe("MCP server against a coordinator (in-process MCP transport, real HTTP 
     // claims: valid keys go to the log, invalid keys are refused before they reach it
     const c = text(await client.callTool({ name: "weft_claim", arguments: { keys: ["src/cart.ts#cartSummary"] } }));
     expect(c).toContain("[weft] sent #");
-    expect(coord.log.some((r) => r.kind === "claim" && r.agent === "zed-a")).toBe(true);
+    expect(coord.log.filter((r) => r.kind === "claim" && r.agent === "zed-a").at(-1)).toMatchObject({ status: "accepted", payload: { firm: false, source: "explicit" } });
+    // firm: true reaches the log as a firm claim with its ttl
+    const f = text(await client.callTool({ name: "weft_claim", arguments: { keys: ["src/cart.ts#cartLines"], firm: true, ttl_ms: 60_000 } }));
+    expect(f).toContain("zed-a firmly claimed cartLines");
+    expect(coord.log.filter((r) => r.kind === "claim" && r.agent === "zed-a").at(-1)).toMatchObject({ status: "accepted", writes: [{ key: "src/cart.ts#cartLines" }], payload: { firm: true, source: "explicit", ttl_ms: 60_000 } });
+    const softTtl = (await client.callTool({ name: "weft_claim", arguments: { keys: ["src/cart.ts#cartLines"], ttl_ms: 60_000 } })) as Text;
+    expect(softTtl.isError).toBe(true);
     const bad = (await client.callTool({ name: "weft_claim", arguments: { keys: ["/etc/passwd#x"] } })) as Text;
     expect(bad.isError).toBe(true);
 
@@ -278,6 +286,63 @@ describe("MCP server against a coordinator (in-process MCP transport, real HTTP 
     expect(coord.log.some((x) => x.kind === "negotiate.propose" && x.agent === "zed-a" && x.status === "accepted")).toBe(true);
   }, 60_000);
 
+  it("weft_history returns why f was reverted, and the next weft_check of f carries the note once", async () => {
+    // Agent A's change to calcTotal lands and is reverted with a reason, 3 days ago (fake clock).
+    const DAY = 86_400_000;
+    let offset = 3 * DAY;
+    const coord = new ReferenceCoordinator({ repo: "demo", now: () => Date.now() - offset });
+    const { url, server: http } = await serveCoordinator(coord);
+    closers.push(() => http.close());
+    const a = coord.hello({ type: "hello", protocol: "wcp/0.1", agent: { id: "claude-a", harness: "claude-code" }, capabilities: { level: 3, observe: "sync", inject: "immediate", deny_edit: true, refuse_stop: true, commit_gate: "tool_interception" }, task: { id: "T-1" } });
+    const sets = analyzeChanges([{ rel: "src/pricing.ts", before: PRICING_V1, after: PRICING_V2 }]);
+    coord.submit(a.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: a.delivered_through, files: ["src/pricing.ts"], ...sets } });
+    const land = coord.system({ kind: "land", base_seq: coord.head, change: "claude-a/T-1", payload: { sha: "1a2b3c4d", op_id: "op_1" } });
+    const rev = coord.system(
+      { kind: "revert", base_seq: coord.head, change: "claude-a/T-1", payload: { op_id: "op_2", reverts_seq: land.seq, sha: "5e6f7a8b", reason: "totals off by tax for EU carts\n    at calcTotal (src/pricing.ts:5:10)", requested_by: { type: "human", id: "john" } } },
+      { type: "system", id: "revert-workflow" },
+    );
+    coord.bye(a.session);
+    offset = 0;
+
+    // Agent B (zed-a, a new session) on the MCP server.
+    const root = checkout("mcp-history");
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    const s = await serve({
+      args: ["--dir", root, "--url", url, "--repo", "demo", "--agent", "zed-a", "--task", "T-2", "--title", "tax", "--debounce", "100", "--tick", "600000"],
+      env: { WEFT_TOKEN: "local-test-token" },
+      transport: serverT,
+      log: () => undefined,
+    });
+    closers.push(() => s.close());
+    const client = new Client({ name: "zed", version: "0.209.0" });
+    await client.connect(clientT);
+    closers.push(() => client.close());
+    await s.ready;
+
+    const KEY = "src/pricing.ts#calcTotal";
+    const h = text(await client.callTool({ name: "weft_history", arguments: { keys: [KEY] } }));
+    console.log(`sample weft_history output:\n${h}`);
+    expect(h).toContain(`[weft] history of ${KEY} in demo since`);
+    expect(h).toContain(`#${rev.seq} 3d ago REVERT of land #${land.seq} (change claude-a/T-1 by claude-a) by john: totals off by tax for EU carts — evidence: at calcTotal (src/pricing.ts:5:10) [${KEY}, ${KEY}.net]`); // the change's edit keys, members included
+    // A key with no history: an empty answer.
+    expect(text(await client.callTool({ name: "weft_history", arguments: { keys: ["src/cart.ts#cartSummary"] } }))).toContain("nothing — no reverts, refused edits or finished negotiations");
+    // Bad input never reaches the coordinator.
+    expect(((await client.callTool({ name: "weft_history", arguments: { keys: ["src/x.ts f"] } })) as Text).isError).toBe(true);
+    expect(((await client.callTool({ name: "weft_history", arguments: {} })) as Text).isError).toBe(true);
+
+    // zed-a checks an edit of calcTotal: accepted, with the info note (once per session).
+    const body = PRICING_V1.replace("return items.reduce((sum, i) => sum + i.price * i.qty, 0);", "return Math.round(items.reduce((sum, i) => sum + i.price * i.qty, 0));");
+    const c1 = text(await client.callTool({ name: "weft_check", arguments: { path: "src/pricing.ts", new_content: body } }));
+    expect(c1).toContain("check src/pricing.ts: accept, with diagnostics:");
+    expect(c1).toMatch(new RegExp(`\\[weft info\\] previously_reverted src/pricing\\.ts:\\d+:\\d+: previously reverted 3d ago: totals off by tax for EU carts \\(by john, #${rev.seq}\\)`));
+    const c2 = text(await client.callTool({ name: "weft_check", arguments: { path: "src/pricing.ts", new_content: body } }));
+    expect(c2).not.toContain("previously_reverted");
+    // The verdict the coordinator sent is schema-valid (the new code is in wcp-v0.schema.json).
+    const zed = [...coord.log].reverse().find((r) => r.kind === "join" && r.agent === "zed-a")!;
+    const again = coord.submit(zed.session!, { type: "submit", mode: "check", event: { kind: "edit", base_seq: coord.head, writes: [{ key: KEY, kind: "body" }] } }) as Verdict;
+    expect(validate("Verdict", again)).toMatchObject({ ok: true });
+  }, 60_000);
+
   it("the bundled stdio server starts, lists the tools and answers weft_status", async () => {
     const { url, server: http } = await coordinator();
     closers.push(() => http.close());
@@ -292,7 +357,7 @@ describe("MCP server against a coordinator (in-process MCP transport, real HTTP 
     const client = new Client({ name: "warp", version: "1" });
     await client.connect(transport);
     closers.push(() => client.close());
-    expect((await client.listTools()).tools).toHaveLength(8);
+    expect((await client.listTools()).tools).toHaveLength(9);
     const st = text(await client.callTool({ name: "weft_status", arguments: {} }));
     expect(st).toContain("[weft] status for warp-a");
     expect(st).toContain("Open errors: none.");

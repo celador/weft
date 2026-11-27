@@ -184,6 +184,21 @@ describe("--by-path coordinates only the pinned checkout (issue #8c, real bundle
     const edits = (coord.events(0, 1000).events as Array<{ kind: string; agent?: string; files: string[] }>).filter((e) => e.kind === "edit" && e.agent === "worker-first");
     expect(edits.map((e) => e.files)).toEqual([["src/new.ts"]]);
   }, 30_000);
+
+  it("a Bash command is reconciled in every joined checkout it names, not only its leading target (#18: subshell, newline, quotes)", async () => {
+    const { coord, url } = await coordinator();
+    const a = await joined(url, "multi-a", "worker-ma");
+    const b = await joined(url, "multi-b", "worker-mb");
+    const parent = checkout("multi-parent");
+    const command = `cd ${a} && printf 'export const ina = 1;\\n' > src/ina.ts\n(cd "${b}" && printf 'export const inb = 1;\\n' > src/inb.ts)`;
+    const input = { hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: "m1", tool_input: { command } };
+    expect((await hook(pinned(url), parent, input))?.hookSpecificOutput?.permissionDecision).toBeUndefined();
+    await run("sh", ["-c", command]);
+    await hook(pinned(url), parent, { ...input, hook_event_name: "PostToolUse", tool_response: {} });
+    const edits = (coord.events(0, 1000).events as Array<{ kind: string; agent?: string; files: string[] }>).filter((e) => e.kind === "edit").map((e) => [e.agent, e.files]);
+    expect(edits).toEqual(expect.arrayContaining([["worker-ma", ["src/ina.ts"]], ["worker-mb", ["src/inb.ts"]]]));
+    expect(edits).toHaveLength(2);
+  }, 30_000);
 });
 
 describe("token file location under --by-path (issue #8c, review)", () => {
@@ -252,7 +267,7 @@ describe("review: quoted tilde, no fallback, .weft must be a real directory (#21
     expect(bashTargetDir(`cd ~/wt && sed -i s/a/b/ f`, "/repo")).toBe(join(homedir(), "wt"));
   });
 
-  it("a checkout whose config is broken or JSON null is not coordinated, and the parent cwd's config is not used instead", async () => {
+  it("a checkout whose config is broken or JSON null is not coordinated, and the parent cwd's config is not used instead; the failure is logged there (#10, #18)", async () => {
     const { url } = await coordinator();
     const parent = await joined(url, "nf-parent", "parent-agent");
     for (const [name, text] of [["nf-broken", "{ not json"], ["nf-null", "null"]] as const) {
@@ -260,7 +275,9 @@ describe("review: quoted tilde, no fallback, .weft must be a real directory (#21
       mkdirSync(join(wt, ".weft"), { recursive: true });
       writeFileSync(join(wt, ".weft", "claude.json"), text);
       const out = await hook(pinned(url), parent, { hook_event_name: "PreToolUse", tool_name: "Write", tool_use_id: `w-${name}`, tool_input: { file_path: join(wt, "src/x.ts"), content: "export const x = 1;\n" } });
-      expect(out, name).toBeUndefined();
+      expect(out?.hookSpecificOutput?.permissionDecision, name).toBeUndefined();
+      expect(out?.hookSpecificOutput?.additionalContext, name).toContain("exists but does not load");
+      expect(logOf(wt), name).toMatch(/hook --by-path: .*claude\.json exists but does not load \(.*(invalid JSON|not a JSON object)\)/);
       expect(configStarts({ hook_event_name: "PreToolUse", session_id: "s", cwd: parent, tool_name: "Write", tool_input: { file_path: join(wt, "src/x.ts") } } as HookInput, true)).toEqual([wt]);
     }
     expect(logOf(parent)).not.toMatch(/ hello | check /);

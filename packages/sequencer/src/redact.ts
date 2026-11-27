@@ -2,7 +2,7 @@
 // agent read; observers (phones, dashboards) see them with matches replaced. The log
 // itself keeps the original text so agents and replay are unaffected.
 
-import type { EventRecord } from "@weft/protocol";
+import type { EventRecord, HistoryPage } from "@weft/protocol";
 
 const PATTERNS: Array<[string, RegExp]> = [
   ["private-key", /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g],
@@ -45,4 +45,23 @@ export function redactRecord(r: EventRecord): EventRecord {
     if (i.hits) out = { ...out, intent: i.text };
   }
   return out;
+}
+
+/**
+ * History view (spec §9.7, §13): the free text an entry quotes from the log (revert reasons and
+ * evidence, negotiation terms and reasons, diagnostic messages) with secrets replaced, as for
+ * observer reads. Agent tokens read history too, so it gets the same treatment.
+ */
+export function redactHistory(p: HistoryPage): HistoryPage {
+  const t = (s: string) => redactText(s).text;
+  return {
+    ...p,
+    entries: p.entries.map((e) => ({
+      ...e,
+      ...(e.reason !== undefined ? { reason: t(e.reason) } : {}),
+      ...(e.evidence !== undefined ? { evidence: t(e.evidence) } : {}),
+      ...(e.terms ? { terms: { ...e.terms, text: t(e.terms.text) } } : {}),
+      ...(e.causes ? { causes: e.causes.map((d) => ({ ...d, message: t(d.message), ...(d.suggestion !== undefined ? { suggestion: t(d.suggestion) } : {}) })) } : {}),
+    })),
+  };
 }

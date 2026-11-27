@@ -3,7 +3,7 @@
 //   install   .weft/watcher.json (+ token), git hooks (commit-msg trailers + pre-commit gate)
 //   run       watch the checkout until SIGINT/SIGTERM (fs.watch, debounced)
 //   scan      one pass: report files that differ from git HEAD (no long-running process)
-//   (+ the shared commit-msg, pre-commit, heartbeat-loop, status, negotiate, inbox)
+//   (+ the shared commit-msg, pre-commit, heartbeat-loop, status, negotiate, inbox, claim)
 import { watch } from "node:fs";
 import { resolve } from "node:path";
 import { execFileSync } from "node:child_process";

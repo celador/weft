@@ -4,9 +4,10 @@
 
 import { createExecutionContext, env, runInDurableObject, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import type { FeedPage, RepoList, Verdict, Welcome } from "@weft/protocol";
+import { validate, type FeedPage, type HistoryPage, type RepoList, type Verdict, type Welcome } from "@weft/protocol";
+import type { RepoCoordinator } from "@weft/sequencer";
 import worker, { type Env } from "../src/index";
-import { ADMIN, BASE, agentToken, call, createRepo, hello, observerToken, uniqueRepo, wcp } from "./helpers";
+import { ADMIN, BASE, agentToken, call, createRepo, hello, observerToken, systemToken, uniqueRepo, wcp } from "./helpers";
 
 const KEY = "src/util/parse.ts#parseJson";
 
@@ -25,6 +26,7 @@ function counted() {
       return {
         summary: rec("summary", () => stub.summary()),
         events: rec("events", (q: Parameters<typeof stub.events>[0]) => stub.events(q)),
+        history: rec("history", (q: Parameters<typeof stub.history>[0]) => stub.history(q)),
         op: rec("op", (o: Parameters<typeof stub.op>[0], args: unknown[]) => stub.op(o, args)),
         landingQueue: rec("landingQueue", (s?: string[]) => stub.landingQueue(s)),
         ops: rec("ops", () => stub.ops()),
@@ -35,10 +37,10 @@ function counted() {
   return { calls, env: { ...env, WEFT_REPO: wrapped } as unknown as Env };
 }
 
-async function poll(path: string, tok: string, headers: Record<string, string> = {}) {
+async function poll(path: string, tok: string, headers: Record<string, string> = {}, init: RequestInit = {}) {
   const c = counted();
   const ctx = createExecutionContext();
-  const res = await worker.fetch(new Request(`${BASE}${path}`, { headers: { "wcp-version": "0.1", authorization: `Bearer ${tok}`, ...headers } }), c.env, ctx);
+  const res = await worker.fetch(new Request(`${BASE}${path}`, { ...init, headers: { "wcp-version": "0.1", authorization: `Bearer ${tok}`, ...headers } }), c.env, ctx);
   await waitOnExecutionContext(ctx);
   return { res, calls: c.calls };
 }
@@ -179,5 +181,79 @@ describe("DELETE /v1/admin/repos/{repo}", () => {
     expect((await call("GET", `/v1/repos/${a.repo}/events`, wide)).status).toBe(404);
     // Again: unknown now.
     expect((await call("DELETE", `/v1/admin/repos/${a.repo}?confirm=${a.repo}`, ADMIN)).status).toBe(404);
+  });
+});
+
+describe("revert history (spec §6.6, §9.7)", () => {
+  const F = "src/x.ts#f";
+  const DAY = 86_400_000;
+
+  it("B's pre-edit check of a reverted symbol carries the note with zero extra repo calls; agent tokens read their repo's history only", async () => {
+    const repo = uniqueRepo("hist");
+    await createRepo(repo);
+    const stub = env.WEFT_REPO.get(env.WEFT_REPO.idFromName(repo));
+    let now = Date.parse("2026-11-20T09:00:00.000Z");
+    await runInDurableObject(stub, (inst: RepoCoordinator) => inst.setClock(() => now));
+
+    // Agent A's change to f lands and is reverted with a reason (the revert names the op, not keys).
+    const ta = await agentToken(repo, "claude-a");
+    const sys = await systemToken([repo], "revert-workflow");
+    const a = await wcp<Welcome>("POST", `/v1/repos/${repo}/sessions`, ta, hello("claude-a", "I-a"));
+    await wcp<Verdict>("POST", `/v1/repos/${repo}/sessions/${a.session}/events`, ta, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: a.delivered_through, writes: [{ key: F, kind: "body" }] } });
+    const land = await wcp<{ seq: number }>("POST", `/v1/repos/${repo}/system/events`, sys, { kind: "land", base_seq: 2, change: "I-a", payload: { sha: "1a2b3c4d", op_id: "op_1" } });
+    const rev = await wcp<{ seq: number }>("POST", `/v1/repos/${repo}/system/events`, sys, {
+      kind: "revert",
+      base_seq: land.seq,
+      change: "I-a",
+      payload: { op_id: "op_2", reverts_seq: land.seq, reverts_op_id: "op_1", sha: "5e6f7a8b", reason: "login broke after landing\n    at f (src/x.ts:3:7)", requested_by: { type: "human", id: "john" } },
+    });
+    await call("DELETE", `/v1/repos/${repo}/sessions/${a.session}`, ta, { type: "bye" });
+
+    // Days later, agent B (a new session) edits f.
+    now += 4 * DAY;
+    const tb = await agentToken(repo, "codex-b");
+    const b = await wcp<Welcome>("POST", `/v1/repos/${repo}/sessions`, tb, hello("codex-b", "I-b"));
+    const submit = (mode: "check" | "commit") =>
+      poll(`/v1/repos/${repo}/sessions/${b.session}/events`, tb, { "content-type": "application/json" }, {
+        method: "POST",
+        body: JSON.stringify({ type: "submit", mode, event: { kind: "edit", base_seq: b.delivered_through, writes: [{ key: F, kind: "body" }] } }),
+      });
+    const check = await submit("check");
+    expect(check.calls).toEqual(["op"]); // the note is computed inside the one coordinator call the check makes
+    const v = (await check.res.json()) as Verdict;
+    expect(validate("Verdict", v)).toMatchObject({ ok: true });
+    expect(v).toMatchObject({ verdict: "accept", seq: null });
+    expect(v.diagnostics).toEqual([
+      { severity: "info", code: "previously_reverted", file: "src/x.ts", symbol: F, message: `previously reverted 4d ago: login broke after landing (by john, #${rev.seq})`, caused_by_seq: rev.seq, caused_by_agent: "john" },
+    ]);
+    const commit = await submit("commit");
+    expect(commit.calls).toEqual(["op"]);
+    expect(((await commit.res.json()) as Verdict).diagnostics).toEqual([]); // once per key per session
+
+    // weft_history's read: B's agent token (no observe scope), one repo call.
+    const h = await poll(`/v1/repos/${repo}/history?keys=${encodeURIComponent(F)}`, tb);
+    expect(h.res.status).toBe(200);
+    expect(h.calls).toEqual(["history"]);
+    const page = (await h.res.json()) as HistoryPage;
+    expect(validate("HistoryPage", page)).toMatchObject({ ok: true });
+    expect(page.entries).toEqual([
+      expect.objectContaining({ seq: rev.seq, kind: "revert", keys: [F], reason: "login broke after landing", requested_by: { type: "human", id: "john" }, reverts_seq: land.seq, evidence: "at f (src/x.ts:3:7)" }),
+    ]);
+    // A key with no history: an empty answer.
+    expect((await wcp<HistoryPage>("GET", `/v1/repos/${repo}/history?keys=${encodeURIComponent("src/other.ts#h")}`, tb)).entries).toEqual([]);
+    // Observers read it too.
+    expect((await wcp<HistoryPage>("GET", `/v1/repos/${repo}/history?keys=src/x.ts`, await observerToken([repo]))).entries).toHaveLength(1);
+    // A token for another repo is refused (404, like every repo route), and no repo object is woken.
+    const other = uniqueRepo("hist-other");
+    await createRepo(other);
+    const foreign = await poll(`/v1/repos/${repo}/history?keys=${encodeURIComponent(F)}`, await agentToken(other, "codex-b"));
+    expect(foreign.res.status).toBe(404);
+    expect(((await foreign.res.json()) as { error: { code: string } }).error.code).toBe("repo_not_found");
+    expect(foreign.calls).toEqual([]);
+    // A system-only token has neither agent nor observe scope.
+    expect((await call("GET", `/v1/repos/${repo}/history?keys=${encodeURIComponent(F)}`, sys)).status).toBe(403);
+    // Bad queries are 400.
+    expect((await call("GET", `/v1/repos/${repo}/history`, tb)).status).toBe(400);
+    expect((await call("GET", `/v1/repos/${repo}/history?keys=${encodeURIComponent(F)}&since=nope`, tb)).status).toBe(400);
   });
 });

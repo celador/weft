@@ -11,6 +11,7 @@
 //   weft open               open the live feed in the browser (prints a pairing code)
 //   weft watch              report edits from this checkout (for tools without hooks)
 //   weft mcp                stdio MCP server for this checkout (harnesses with MCP but no hooks)
+//   weft claim --keys path#sym[,…] [--firm] [--ttl MS]   claim symbols for this checkout's agent
 //   weft uninstall [--space] remove Weft from this repo's checkouts (--space also erases the space)
 //   weft deploy [--name N] [--domain HOST]   your own gateway on your Cloudflare account
 //   weft local stop          stop the local gateway
@@ -171,6 +172,9 @@ ${c.bold("npx @celador/weft")}            in a git repo: a gateway on this machi
   watch                       report edits made here by tools without hooks (file watcher)
   mcp                         MCP server for this checkout, for agents with MCP but no hooks
                               (Zed, Warp, JetBrains, Xcode, ...): {"command":"npx","args":["-y","@celador/weft","mcp","--dir","<checkout>"]}
+  claim --keys path#sym[,…] [--firm] [--ttl MS] [--dir D]
+                              claim symbols for this checkout's agent before it changes them: others'
+                              overlapping edits are warned, or refused with --firm (runs .weft/bin/weft claim)
   uninstall [--space]         remove Weft from this repo (--space also erases your space: every stored
                               event, diff and key on the gateway; asks first, --yes skips; irreversible)
   deploy [--name N] [--domain HOST]
@@ -293,7 +297,7 @@ export function nextNotes(order: Array<{ id: string; name: string; run: string; 
     `When one agent changes code another agent depends on, the second one gets a red ${c.squiggle("squiggle")}`,
     `(a diagnostic with the other agent's diff) before it writes a conflicting edit.`,
     c.dim(`Agents with MCP but no hooks (Zed, Warp, JetBrains, Xcode, ...): add the MCP server ${MCP.run} --dir ${roots.length > 1 ? "<checkout>" : tilde(roots[0] ?? ".")}`),
-    c.dim(`Agents already running must be restarted to load the hooks. More: npx @celador/weft status · feed · add · uninstall`),
+    c.dim(`Restart agents that were already running, each in its own checkout: a session runs the hooks of the checkout it started in. More: npx @celador/weft status · feed · add · uninstall`),
     "",
   );
   return lines.join("\n");
@@ -1041,6 +1045,29 @@ export function mcpArgs(args: string[], cwd: string): string[] {
   return out;
 }
 
+/**
+ * `weft claim --keys path#sym[,…] [--firm] [--ttl MS] [--dir D]` (WCP §7.5): an explicit claim by the
+ * agent set up in this checkout (or in D). It runs that checkout's agent CLI, `.weft/bin/weft claim`,
+ * which the adapter install wrote: the claim goes out in the agent's own session with its own key,
+ * and the key checks and the --ttl bound are the adapter's. `--firm` sends `firm: true`.
+ */
+export function claimCli(args: string[], cwd: string): { cli: string; root: string; argv: string[] } {
+  const at = args.indexOf("--dir");
+  const dir = resolve(at >= 0 && args[at + 1] ? args[at + 1]! : (process.env.WEFT_ROOT ?? cwd));
+  const rest = at >= 0 ? [...args.slice(0, at), ...args.slice(at + 2)] : args;
+  const root = tryGit(dir, ["rev-parse", "--show-toplevel"]);
+  const cli = root ? join(root, ".weft", "bin", "weft") : undefined;
+  if (!root || !cli || !existsSync(cli))
+    throw new WeftError(`Weft is not set up in ${tilde(root ?? dir)}`, "Run npx @celador/weft in the repo first (it sets up every checkout), then claim from the agent's checkout.");
+  return { cli, root, argv: ["claim", ...rest] };
+}
+
+function claim(args: string[]): number {
+  const { cli, root, argv } = claimCli(args, process.cwd());
+  const r = spawnSync(cli, argv, { cwd: root, stdio: "inherit" });
+  return r.status ?? 1;
+}
+
 function mcp(args: string[]): void {
   const argv = mcpArgs(args, process.cwd());
   const rt = ensureRuntime();
@@ -1084,6 +1111,8 @@ export async function main(argv: string[]): Promise<number> {
     mcp(argv.slice(1));
     return 0;
   }
+  // `claim` passes its flags to the checkout's agent CLI untouched (see claimCli)
+  if (argv[0] === "claim") return claim(argv.slice(1));
   const { cmd, o } = parseArgs(argv);
   switch (cmd) {
     case "help":

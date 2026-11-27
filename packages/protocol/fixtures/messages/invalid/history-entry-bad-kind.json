@@ -1,0 +1,28 @@
+{
+  "schema": "HistoryPage",
+  "expect_issue_path": "/entries/0/kind",
+  "value": {
+    "type": "history",
+    "repo": "weft-demo",
+    "keys": [
+      "src/x.ts#f"
+    ],
+    "since": "2026-07-07T14:00:00.000Z",
+    "head_seq": 1,
+    "has_more": false,
+    "entries": [
+      {
+        "seq": 1,
+        "ts": "2026-10-05T14:00:00.000Z",
+        "kind": "land",
+        "keys": [
+          "src/x.ts#f"
+        ],
+        "actor": {
+          "type": "system",
+          "id": "c"
+        }
+      }
+    ]
+  }
+}

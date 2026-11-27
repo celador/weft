@@ -232,7 +232,8 @@
             "contract_changed",
             "trunk_advanced",
             "agent_paused",
-            "counterpart_away"
+            "counterpart_away",
+            "previously_reverted"
           ]
         },
         "file": {
@@ -2270,6 +2271,169 @@
         "type",
         "events",
         "cursor",
+        "has_more"
+      ]
+    },
+    "HistoryEntry": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ts": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "kind": {
+          "enum": [
+            "revert",
+            "rejected",
+            "negotiation"
+          ]
+        },
+        "keys": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SymbolKey"
+          },
+          "minItems": 1
+        },
+        "actor": {
+          "$ref": "#/$defs/Actor"
+        },
+        "agent": {
+          "type": "string",
+          "minLength": 1
+        },
+        "change": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string"
+        },
+        "requested_by": {
+          "$ref": "#/$defs/Actor"
+        },
+        "reverts_seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reverts_op_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "op_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "string"
+        },
+        "event_kind": {
+          "enum": [
+            "intent",
+            "edit",
+            "checkpoint",
+            "claim",
+            "release",
+            "negotiate.propose",
+            "negotiate.accept",
+            "negotiate.reject",
+            "negotiate.counter",
+            "negotiate.escalate",
+            "land",
+            "revert",
+            "message",
+            "control",
+            "join",
+            "leave"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "check",
+            "commit"
+          ]
+        },
+        "causes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Diagnostic"
+          }
+        },
+        "outcome": {
+          "enum": [
+            "accepted",
+            "rejected",
+            "escalated"
+          ]
+        },
+        "terms": {
+          "$ref": "#/$defs/NegotiationTerms"
+        },
+        "reply_to": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "with": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "seq",
+        "ts",
+        "kind",
+        "keys",
+        "actor"
+      ]
+    },
+    "HistoryPage": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "history"
+        },
+        "repo": {
+          "$ref": "#/$defs/RepoId"
+        },
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "since": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HistoryEntry"
+          }
+        },
+        "head_seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "has_more": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "repo",
+        "keys",
+        "since",
+        "entries",
+        "head_seq",
         "has_more"
       ]
     },

@@ -2,7 +2,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { CART_LINE, NEW_CALL, OLD_CALL, PRICING_V1, coordinator, gitCommit, gitLog, installed } from "../../claude-code/test/translator-kit";
+import { CART_LINE, NEW_CALL, OLD_CALL, PRICING_V1, adapterLog, checkout, coordinator, gitCommit, gitLog, installed, joinedAgents } from "../../claude-code/test/translator-kit";
+import { byPathHookArgs } from "../../claude-code/src/config";
+import { pluginSource } from "../src/plugin";
 import { fromCore, patchFiles, toCore } from "../src/translate";
 import { CAPABILITIES, PLUGIN_REL } from "../src/cli";
 
@@ -114,5 +116,65 @@ describe("OpenCode plugin end to end (generated plugin loaded as OpenCode would,
     const ev = coord.log.find((r) => r.kind === "edit" && r.agent === "opencode-d")!;
     expect(ev.writes).toContainEqual({ key: "src/pricing.ts#calcTotal", kind: "signature" });
     expect(ev.tool).toMatchObject({ name: "Write", harness_event: "PostToolUse" });
+  }, 30_000);
+});
+
+describe("OpenCode --by-path routing (issue #11: a child session edits its own joined worktree)", () => {
+  const servers: Array<{ close: () => void }> = [];
+  afterAll(() => servers.forEach((s) => s.close()));
+
+  /** The generated plugin, loaded as OpenCode would with `directory` = the session's directory. */
+  async function plugin(dir: string, hookArgs: string[], name: string) {
+    const p = join(dir, `${name}.mjs`);
+    writeFileSync(p, pluginSource(process.execPath, BUNDLE, "weft-opencode", hookArgs));
+    const mod = (await import(pathToFileURL(p).href)) as { WeftPlugin: Plugin };
+    return mod.WeftPlugin({ client: { session: { prompt: async () => {} } }, directory: dir });
+  }
+
+  it("from a non-joined parent dir, an edit inside a joined worktree is checked as that worktree's agent; plain routing stays a no-op", async () => {
+    const { coord, url, server, changeSignature } = await coordinator();
+    servers.push(server);
+    const routed = installed(BUNDLE, "opencode-bp", url, "opencode-q", ["--by-path"]);
+    expect(readFileSync(join(routed.root, PLUGIN_REL), "utf8")).toContain(JSON.stringify(["hook", "--by-path", "--url", url, "--repo", "demo", "--mode", "enforce"]));
+
+    const parent = checkout("opencode-parent");
+    const wt = installed(BUNDLE, "opencode-wt", url, "worker-w").root;
+    changeSignature();
+    const cart = join(wt, "src/cart.ts");
+    const args = (newString: string) => ({ args: { filePath: cart, oldString: CART_LINE, newString } });
+
+    const plainHooks = await plugin(parent, [], "plain");
+    await expect(plainHooks["tool.execute.before"]!({ sessionID: "ses_child", callID: "c1", tool: "edit" }, args(OLD_CALL))).resolves.toBeUndefined();
+    expect(joinedAgents(coord)).not.toContain("worker-w");
+
+    const hooks = await plugin(parent, byPathHookArgs({ url, repo: "demo" }), "routed");
+    await expect(hooks["tool.execute.before"]!({ sessionID: "ses_child", callID: "c2", tool: "edit" }, args(OLD_CALL))).rejects.toThrow(/stale_assumption src\/cart\.ts:4:19/);
+    expect(joinedAgents(coord)).toContain("worker-w");
+
+    await hooks["tool.execute.before"]!({ sessionID: "ses_child", callID: "c3", tool: "edit" }, args(NEW_CALL));
+    writeFileSync(cart, readFileSync(cart, "utf8").replace(CART_LINE, NEW_CALL));
+    await hooks["tool.execute.after"]!({ sessionID: "ses_child", callID: "c3", tool: "edit", args: args(NEW_CALL).args }, { title: "", output: "ok", metadata: {} });
+    expect(coord.log.filter((r) => r.kind === "edit" && r.mode === "commit").pop()).toMatchObject({ agent: "worker-w", status: "accepted", files: ["src/cart.ts"] });
+
+    const other = await plugin(parent, byPathHookArgs({ url, repo: "other-repo" }), "other");
+    await expect(other["tool.execute.before"]!({ sessionID: "ses_child", callID: "c4", tool: "edit" }, args(OLD_CALL))).resolves.toBeUndefined();
+    expect(adapterLog(wt)).toContain("do not match the pinned coordinator");
+  }, 60_000);
+
+  it("apply_patch on a worktree file is stashed and accounted in that worktree, as its agent", async () => {
+    const { coord, url, server } = await coordinator();
+    servers.push(server);
+    const parent = checkout("opencode-patch-parent");
+    const wt = installed(BUNDLE, "opencode-patch-wt", url, "worker-p").root;
+    const hooks = await plugin(parent, byPathHookArgs({ url, repo: "demo" }), "patch");
+    const p = join(wt, "src/pricing.ts");
+    const patch = `*** Begin Patch\n*** Update File: ${p}\n@@\n-export function calcTotal(items: Item[]): number {\n+export function calcTotal(items: Item[], scale = 1): number {\n*** End Patch\n`;
+    await hooks["tool.execute.before"]!({ tool: "apply_patch", sessionID: "ses_c", callID: "p1" }, { args: { patchText: patch } });
+    writeFileSync(p, PRICING_V1.replace("calcTotal(items: Item[]): number", "calcTotal(items: Item[], scale = 1): number"));
+    await hooks["tool.execute.after"]!({ tool: "apply_patch", sessionID: "ses_c", callID: "p1", args: { patchText: patch } }, { title: "", output: "Success", metadata: {} });
+    const ev = coord.log.find((r) => r.kind === "edit" && r.agent === "worker-p")!;
+    expect(ev.writes).toContainEqual({ key: "src/pricing.ts#calcTotal", kind: "signature" });
+    // diffed against the stashed before-text: exactly the one changed line
+    expect(ev.diff!.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++"))).toEqual(["+export function calcTotal(items: Item[], scale = 1): number {"]);
   }, 30_000);
 });

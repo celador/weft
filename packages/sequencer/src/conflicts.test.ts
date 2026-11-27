@@ -1,7 +1,7 @@
 // Cross-agent conflict policy (spec §8.4) is per-repo: `conflicts` in the repo config, recorded at
 // init, so the journal replays it exactly. Default (no field) is `hold` and must not change.
 import { describe, expect, it } from "vitest";
-import { ReferenceCoordinator, type Hello, type Submit } from "@weft/protocol";
+import { BLOCKED_EDIT_ADVICE, OPEN_ERROR_ADVICE, ReferenceCoordinator, type Hello, type Submit } from "@weft/protocol";
 import { configFrom, SqlCoordinator, type CoordinatorInit } from "./coordinator";
 import { JournaledCoordinator, replay } from "./journal";
 import { nodeSql } from "./node-sqlite";
@@ -267,5 +267,33 @@ describe("conflicts: continue (repo config)", () => {
     // The policy is in the config: replaying the same journal under hold is a different repo.
     const holdReplay = replay(nodeSql(), { repo: "r" }, entries);
     expect(JSON.stringify(holdReplay.coord.dump())).not.toBe(JSON.stringify(live.j.coord.dump()));
+  });
+});
+
+// Adapters do not know the repo's mode: their text (OPEN_ERROR_ADVICE / BLOCKED_EDIT_ADVICE) says
+// "if the suggestion says another agent owns the conflict, stop and report it". That only works
+// while every continue-mode cross-agent error says exactly that, and no hold-mode one does (#15).
+describe("the phrase the harness advice keys on (#15)", () => {
+  const KEY = "owns the conflict";
+  it("the advice text conditions on it", () => {
+    expect(OPEN_ERROR_ADVICE).toContain(`another agent ${KEY}`);
+    expect(BLOCKED_EDIT_ADVICE).toContain(`another agent ${KEY}`);
+  });
+
+  it("every continue-mode stale_assumption / stale_overwrite suggestion carries it; no hold suggestion does (sequencer and reference)", () => {
+    for (const conflicts of ["hold", "continue"] as const) {
+      const init: CoordinatorInit = conflicts === "continue" ? { repo: "r", conflicts } : { repo: "r" };
+      const stale = staleCall(repo(init).j).r.diagnostics.find((d) => d.code === "stale_assumption")!;
+      const over = overwriteCall(repo(init).j).diagnostics.find((d) => d.code === "stale_overwrite")!;
+      const ref = new ReferenceCoordinator({ repo: "r", conflicts, now: () => Date.parse("2026-10-05T12:00:00.000Z") });
+      const ra = ref.hello(hello("claude-a", "I-a"));
+      const rb = ref.hello(hello("claude-b", "I-b"));
+      ref.submit(ra.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: 1, files: ["src/pricing.ts"], reads: [], writes: [{ key: "src/pricing.ts#calcTotal", kind: "signature" }] } });
+      const refStale = ref.submit(rb.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: 1, files: ["src/cart.ts"], reads: ["src/pricing.ts#calcTotal"], writes: [{ key: "src/cart.ts#cartSummary", kind: "body" }] } }).diagnostics.find((d) => d.code === "stale_assumption")!;
+      for (const d of [stale, over, refStale]) {
+        if (conflicts === "continue") expect(d.suggestion, d.code).toContain(`claude-a ${KEY}`);
+        else expect(d.suggestion, d.code).not.toContain(KEY);
+      }
+    }
   });
 });

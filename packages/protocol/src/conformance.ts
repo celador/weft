@@ -15,6 +15,8 @@ import type {
   GateResult,
   HeartbeatAck,
   Hello,
+  HistoryPage,
+  HistoryQuery,
   HumanAction,
   InboxBatch,
   RepoPolicy,
@@ -42,6 +44,8 @@ export interface ConformanceTarget {
   setPolicy?(p: { claims: ClaimsPolicy }): MaybePromise<RepoPolicy>;
   /** Observer: a change's recorded dependencies and whether they hold its landing (spec §6.7, §9.8; Weft: GET /v1/repos/{repo}/dependencies?change=). */
   dependencies?(change: string): MaybePromise<Dependencies>;
+  /** Filtered history read (spec §9.7). */
+  history?(q: HistoryQuery): MaybePromise<HistoryPage>;
 }
 
 export type ScenarioStep =
@@ -58,7 +62,8 @@ export type ScenarioStep =
   | { op: "events"; after?: number; limit?: number; include_diff?: boolean; tail?: boolean; before?: number; expect?: unknown }
   | { op: "event"; seq: number; expect?: unknown }
   | { op: "policy"; policy: { claims: ClaimsPolicy }; expect?: unknown }
-  | { op: "dependencies"; change: string; expect?: unknown };
+  | { op: "dependencies"; change: string; expect?: unknown }
+  | { op: "history"; keys: string[]; since?: string; limit?: number; expect?: unknown };
 
 export type Scenario = {
   name: string;
@@ -67,9 +72,13 @@ export type Scenario = {
   covers: string[];
   repo: string;
   policy?: "wound-wait" | "wait-die";
+  /** Repo enforcement mode (spec §7.2). Absent: `advise`. */
+  enforcement?: "advise" | "block";
   escalation?: "auto" | "human";
   claim_ttl_ms?: number;
   session_ttl_ms?: number;
+  /** Cross-agent conflict mode (spec §8.4). Absent: `hold`. */
+  conflicts?: "hold" | "continue";
   /**
    * Claims policy (spec §7.5). Absent: the defaults of a new repo. `null`: a repo created
    * before the claims policy existed (legacy rules until a `policy` step applies one).
@@ -84,17 +93,21 @@ export type Scenario = {
 export function scenarioInit(sc: Scenario): {
   repo: string;
   policy?: "wound-wait" | "wait-die";
+  enforcement?: "advise" | "block";
   escalation?: "auto" | "human";
   claim_ttl_ms?: number;
   session_ttl_ms?: number;
+  conflicts?: "hold" | "continue";
   claims?: ClaimsPolicy | null;
 } {
   return {
     repo: sc.repo,
     ...(sc.policy ? { policy: sc.policy } : {}),
+    ...(sc.enforcement ? { enforcement: sc.enforcement } : {}),
     ...(sc.escalation ? { escalation: sc.escalation } : {}),
     ...(sc.claim_ttl_ms ? { claim_ttl_ms: sc.claim_ttl_ms } : {}),
     ...(sc.session_ttl_ms ? { session_ttl_ms: sc.session_ttl_ms } : {}),
+    ...(sc.conflicts ? { conflicts: sc.conflicts } : {}),
     ...(sc.claims !== undefined ? { claims: sc.claims } : {}),
   };
 }
@@ -221,6 +234,10 @@ export async function runScenario(sc: Scenario, target: ConformanceTarget, clock
         case "dependencies":
           if (!target.dependencies) throw new Error(`scenario ${sc.name}: target cannot report dependencies`);
           actual = await target.dependencies(step.change);
+          break;
+        case "history":
+          if (!target.history) throw new Error(`scenario ${sc.name}: target cannot read history`);
+          actual = await target.history({ keys: step.keys, ...(step.since !== undefined ? { since: step.since } : {}), ...(step.limit !== undefined ? { limit: step.limit } : {}) });
           break;
       }
     } catch (e) {

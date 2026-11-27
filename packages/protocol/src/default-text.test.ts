@@ -84,6 +84,29 @@ describe("default (hold) wording", () => {
     });
   });
 
+  it("reads amendment (§6.2 R2a) after a signature change: contract_changed says 'adapt your call sites'", () => {
+    const c = new ReferenceCoordinator({ repo: "demo" });
+    const a = hello(c, "claude-a", "I-a");
+    const b = hello(c, "claude-b", "I-b");
+    const eb = c.submit(b.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: b.delivered_through, files: ["src/cart.ts"], reads: [], writes: [{ key: "src/cart.ts#cartSummary", kind: "body" }] } });
+    c.submit(a.session, { type: "submit", mode: "commit", event: { kind: "edit", base_seq: a.delivered_through, files: ["src/pricing.ts"], reads: [], writes: [{ key: "src/pricing.ts#calcTotal", kind: "signature" }] } });
+    const r = c.submit(b.session, { type: "submit", mode: "commit", event: { kind: "intent", base_seq: eb.seq!, reads: ["src/pricing.ts#calcTotal"] } });
+    expect(r.verdict).toBe("accept");
+    expect(r.diagnostics).toEqual([
+      {
+        severity: "warning",
+        code: "contract_changed",
+        file: "src/pricing.ts",
+        symbol: "src/pricing.ts#calcTotal",
+        message: "claude-a changed the signature of src/pricing.ts#calcTotal (#4) after your base #3, and your change uses it.",
+        suggestion: "Re-read src/pricing.ts#calcTotal (event #4) and adapt your call sites, or negotiate with claude-a.",
+        caused_by_seq: 4,
+        caused_by_agent: "claude-a",
+        caused_by_task: "T-claude-a",
+      },
+    ]);
+  });
+
   it("hold gate result for a stale stop: the full object, reason and open_errors", () => {
     const c = new ReferenceCoordinator({ repo: "demo" });
     const a = hello(c, "claude-a", "I-a");

@@ -101,7 +101,7 @@ The setup prints the same notes under "First run" for the agents it found.
 
 **Agents with MCP but no hooks** (Zed, Warp, JetBrains, Xcode, Trae, Continue): add Weft's MCP
 server to the agent's MCP settings, once per checkout. It reports every file the agent changes
-and gives the model `weft_check`, `weft_status` and the other Weft tools:
+and gives the model `weft_check`, `weft_status`, `weft_history` and the other Weft tools:
 
 ```json
 { "command": "npx", "args": ["-y", "@celador/weft", "mcp", "--dir", "/path/to/checkout"] }
@@ -126,8 +126,11 @@ The per-harness config files are in [packages/mcp/README.md](../packages/mcp/REA
 | `npx @celador/weft use local\|hosted\|URL` | choose the default gateway; local is the default (`--local` is still accepted and does nothing extra) |
 | `npx @celador/weft deploy [--domain HOST]` | your own gateway in your Cloudflare account |
 
-Agents that were already running when you ran the command must be restarted: hooks load when a
-session starts. If you used the hosted space before, `npx @celador/weft` keeps using it and tells
+Restart agents that were already running when you ran the command, each in its own checkout: not
+every harness reloads hook files mid-session, and a session only ever runs the hooks of the
+checkout it was started in. A Claude Code session started in the main checkout does not run a
+worktree's hooks, so its subagents' edits in that worktree are not coordinated unless you give it a
+per-worktree `weft-worker` subagent (see [Subagents](../packages/adapters/claude-code/README.md#subagents-install-agent-hook---root-and-hook---by-path)). If you used the hosted space before, `npx @celador/weft` keeps using it and tells
 you how to switch (`npx @celador/weft use local`). How the hosted gateway keeps spaces apart, its
 limits, and how to run your own are in [hosted.md](hosted.md).
 
@@ -256,8 +259,20 @@ node scripts/local-quickstart.mjs ~/code/myapp ~/code/myapp-b      # [--repo NAM
 It prints what it did and the next steps. Agent tokens go to `<checkout>/.weft/token` (mode 0600;
 `.weft/` is added to `.git/info/exclude`), the system token to
 `apps/gateway/.wrangler/weft-local/<repo>.system-token`; no token is printed. Then start `claude`
-in each checkout. **Claude Code reads hooks when a session starts**: restart any session that was
-already open.
+in each checkout. **A Claude Code session runs the hooks of the checkout it was started in**, from
+its `.claude/settings.local.json` (Claude Code's docs say its file watcher picks up edits to that
+file; restart a session that was already open if the hooks do not fire). A session started in
+another checkout never runs them. To coordinate subagents that one session sends into several
+worktrees, join each worktree and write one worker per worktree into the orchestrating checkout:
+
+```sh
+node packages/adapters/claude-code/dist/weft-claude.mjs install-agent --dir ~/code/myapp --worktree ~/code/myapp-b
+```
+
+That writes `.claude/agents/weft-worker-myapp-b.md`, whose own hooks act for `~/code/myapp-b`:
+edits, Bash commands, `git commit` (gated) and its stop (gated, then the session ends). Project
+subagents' hooks run only once the folder is trusted in Claude Code's trust dialog (a `claude -p`
+run is not trusted: pass `--print-json` output to `claude --agents` instead).
 
 While it runs:
 
@@ -282,13 +297,24 @@ cd <checkout>
 - Keys are `path#symbol` exactly as they appear in Weft diagnostics: a repo-relative POSIX path
   (no leading `/`, no `.` or `..` segments, no spaces), `#`, then a dotted declaration name
   (`SessionStore.get`) or `*` for the whole file. Anything else is refused before it is sent.
-- A plain claim is a **lease** (2 minutes by default): it stays while the agent keeps working
+- A plain claim is **soft**, a **lease** (2 minutes by default): it stays while the agent keeps working
   (every edit and the adapter's 30 s heartbeat renew it) and is released within 2 minutes after
   the agent dies, or at once when its session ends.
-- `--firm` makes others' overlapping edits fail instead of warn. A firm claim has a hard limit
-  counted from the claim: `--ttl MS` (firm claims only), at most the repo's firm limit (10 minutes
-  by default; the CLI refuses more). Heartbeats do not extend it; run `weft claim` again to extend
-  it, which shows up in the log.
+- Soft also means another agent's overlapping edit only gets a `claim_wait` warning and goes
+  through. `--firm` sends `firm: true`, which turns that warning into an error: the
+  coordinator rejects the edit and the other agent's adapter denies it (in its default `enforce`
+  mode; an `--mode advise` install only shows "this edit would be blocked"), and its stop gate
+  stays shut until the error clears. A firm claim also refuses others' claims on the keys; a
+  soft one never does. On a repo created with `enforcement: "block"` a soft claim already
+  rejects overlapping edits (not claims).
+- Firm protects against agents that are *junior* to the claimer (under the default `wound-wait`
+  policy): the same or lower task priority, started after it. A higher-priority (or older) agent
+  still overrides it, and the claimer gets `claim_wounded` (protocol §7.1, §7.5).
+- A firm claim has a hard limit counted from the claim: `--ttl MS` (firm claims only), at most the
+  repo's firm limit (10 minutes by default; the CLI refuses more). Heartbeats do not extend it;
+  run `weft claim` again to extend it, which shows up in the log.
+- The same command works as `npx @celador/weft claim …` from anywhere in the checkout, and
+  agents on the MCP server use `weft_claim` with `{"keys": […], "firm": true}`.
 
 Repos created before claim leases existed keep the old 30-minute claim TTL until the operator
 switches them over (this is recorded in the repo's journal, so its history replays unchanged):
@@ -297,6 +323,32 @@ switches them over (this is recorded in the repo's journal, so its history repla
 curl -sX POST $U/v1/admin/repos/<repo>/policy -H "$AD" \
   -d '{"claims":{"lease_ms":120000,"firm_max_ms":600000}}'
 ```
+
+#### Why was this reverted before?
+
+When a landed change is reverted (`undo` in the feed, or the revert workflow), the revert's reason
+reaches the agent that made the change. Other agents get it too, from Weft's own log:
+
+- **At edit time.** An agent whose edit touches a symbol reverted in the last 30 days sees one
+  info line (once per symbol per session; it never blocks):
+
+  ```text
+  [weft info] previously_reverted src/auth/session.ts:12:17: previously reverted 3d ago: login loop on expired tokens (by john, #41) (caused by john · event #41).
+  ```
+
+- **On demand.** The history of any symbol: reverts (reason, who asked, the first stack frame in
+  the reason), refused edits and their cause, finished negotiations and their terms. An agent
+  token of the repo can read it; MCP agents call `weft_history` with `{"keys": ["src/auth/session.ts#refreshToken"]}`.
+
+  ```sh
+  curl -s -H "authorization: Bearer $(cat <agent-token-file>)" \
+    "http://localhost:8787/v1/repos/<repo>/history?keys=src/auth/session.ts%23refreshToken&since=2026-10-01T00:00:00Z" \
+    | jq -r '.entries[] | "#\(.seq) \(.kind) \(.reason // .outcome // (.causes[0].code)) [\(.keys | join(", "))]"'
+  # #41 revert login loop on expired tokens [src/auth/session.ts#refreshToken]
+  ```
+
+  `keys` takes `path#symbol`, `path#*` or a bare path (whole file), comma-separated, with `#`
+  written `%23`; `since` defaults to 90 days, `limit` to 20 (protocol §9.7).
 
 #### 4c. Landing
 
@@ -361,8 +413,11 @@ Found while walking this guide on a clean Mac without a Cloudflare account.
   runaway guard lets it stop after five refusals).
 - **Fail open.** If the gateway is down or slow (5 s timeout), edits run uncoordinated and the
   agent is told so; nothing is blocked.
-- **Hooks load at session start**, so an install into a running Claude Code session has no effect
-  until that session restarts.
+- **Hooks come from the session's own checkout.** A session runs the hooks of the checkout it was
+  started in; an install into another checkout (a worktree joined later) never reaches it, and its
+  subagents work with its hooks. Use per-worktree `weft-worker` subagents (`install-agent
+  --worktree`) or a session per worktree. Restart a session that was open before the install if its
+  hooks do not fire.
 - **Local state lives in `apps/gateway/.wrangler/`** (event logs, registry, system-token files).
   Deleting it resets everything; agent installs then hold tokens the gateway no longer knows, so
   re-run the quickstart.

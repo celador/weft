@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CART_LINE, NEW_CALL, OLD_CALL, coordinator, gitCommit, gitLog, installed, runBundle } from "../../claude-code/test/translator-kit";
+import { CART_LINE, NEW_CALL, OLD_CALL, adapterLog, byPathArgs, checkout, coordinator, gitCommit, gitLog, installed, joinedAgents, runBundle } from "../../claude-code/test/translator-kit";
 import { beforeFromEdits, fromCore, toCore, toCoreTool } from "../src/translate";
 import { CAPABILITIES, mergeHooks } from "../src/cli";
 
@@ -122,4 +122,52 @@ describe("Cursor adapter end to end (real bundle, real git, local coordinator)",
     expect(ev.diff).toContain(`+  ${NEW_CALL}`);
     expect(ev.diff!.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).length).toBe(1);
   }, 30_000);
+});
+
+describe("Cursor --by-path routing (issue #11: a subagent edits its own joined worktree)", () => {
+  const servers: Array<{ close: () => void }> = [];
+  afterAll(() => servers.forEach((s) => s.close()));
+
+  it("install --by-path pins the hook to this checkout's coordinator; a plain install is unchanged", async () => {
+    const { url, server } = await coordinator();
+    servers.push(server);
+    const plain = installed(BUNDLE, "cursor-bp-plain", url, "cursor-p");
+    expect(JSON.parse(readFileSync(join(plain.root, ".cursor/hooks.json"), "utf8")).hooks.preToolUse[0].command).toMatch(/weft-cursor\.mjs hook # weft-cursor$/);
+    const routed = installed(BUNDLE, "cursor-bp", url, "cursor-q", ["--by-path"]);
+    expect(routed.out).toContain("routing: by path");
+    expect(JSON.parse(readFileSync(join(routed.root, ".cursor/hooks.json"), "utf8")).hooks.preToolUse[0].command).toContain(`weft-cursor.mjs hook --by-path --url ${url} --repo demo --mode enforce # weft-cursor`);
+  }, 30_000);
+
+  it("from a non-joined parent dir, an edit inside a joined worktree is checked as that worktree's agent; plain routing stays a no-op", async () => {
+    const { coord, url, server, changeSignature } = await coordinator();
+    servers.push(server);
+    const parent = checkout("cursor-parent"); // the session's directory: never joined
+    const wt = installed(BUNDLE, "cursor-wt", url, "worker-w").root;
+    const sigSeq = changeSignature();
+    const cart = join(wt, "src/cart.ts");
+    const payload = (id: string, newString: string) => ({ hook_event_name: "preToolUse", conversation_id: "conv-p", workspace_roots: [parent], cwd: parent, tool_name: "StrReplace", tool_use_id: id, tool_input: { path: cart, old_string: CART_LINE, new_string: newString } });
+    const run = async (p: object, args?: string[]) => JSON.parse((await runBundle(BUNDLE, parent, p, args)) || "{}");
+
+    // plain: the parent dir has no config, so nothing is coordinated (as before)
+    expect(await run(payload("t1", OLD_CALL))).toEqual({ permission: "allow" });
+    expect(joinedAgents(coord)).not.toContain("worker-w");
+
+    // --by-path: the worktree's own agent checks the edit and refuses the stale call
+    const pre = await run(payload("t2", OLD_CALL), byPathArgs(url));
+    expect(pre.permission).toBe("deny");
+    expect(pre.agent_message).toContain("[weft error] stale_assumption src/cart.ts:4:19");
+    expect(pre.agent_message).toContain(`event #${sigSeq}`);
+    expect(joinedAgents(coord)).toContain("worker-w");
+
+    // the fixed edit is committed as worker-w (pre + post land in the worktree's state)
+    expect(await run(payload("t3", NEW_CALL), byPathArgs(url))).toEqual({ permission: "allow" });
+    writeFileSync(cart, readFileSync(cart, "utf8").replace(CART_LINE, NEW_CALL));
+    await run({ ...payload("t3", NEW_CALL), hook_event_name: "postToolUse", tool_output: "{}" }, byPathArgs(url));
+    const accepted = coord.log.filter((r) => r.kind === "edit" && r.mode === "commit").pop()!;
+    expect(accepted).toMatchObject({ agent: "worker-w", status: "accepted", files: ["src/cart.ts"] });
+
+    // a worktree joined to another coordinator than the pin is not coordinated, and says why in its own log
+    expect(await run(payload("t4", OLD_CALL), byPathArgs(url, "other-repo"))).toEqual({ permission: "allow" });
+    expect(adapterLog(wt)).toContain("do not match the pinned coordinator");
+  }, 60_000);
 });

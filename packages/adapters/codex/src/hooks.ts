@@ -30,9 +30,10 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, renameSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { AgentRef, Capabilities, Diagnostic, EventDraft, EventRecord, InboxItem, NegotiateCommand, NegotiationDue, Verdict } from "@weft/protocol";
-import { notWaiting } from "@weft/protocol";
+import { BLOCKED_EDIT_ADVICE, ERROR_RULE, notWaiting, OPEN_ERROR_ADVICE } from "@weft/protocol";
 import { WcpError, PROTOCOL, type Transport } from "./client";
 import { readState, stateDir, withLock, writeState, type Loaded, type SessionState } from "./config";
+import { maxClaimTtl, type ClaimCommand, type Welcome } from "@weft/protocol";
 import type { BeatResult } from "../../claude-code/src/heartbeat";
 import { readCheckoutFile } from "../../claude-code/src/safe-read";
 import { EDIT_TOOLS, isGitCommit, patchPaths, proposedFiles, shellPatch } from "./edits";
@@ -273,10 +274,15 @@ export class CodexAdapter {
     // Codex conversation actually saw) is kept so stale knowledge stays visible to R1/R2.
     st.base = st.wcpSession === undefined && st.base === 0 ? welcome.delivered_through : Math.min(st.base || welcome.delivered_through, welcome.delivered_through);
     st.wcpSession = welcome.session;
+    this.noteLimits(st, welcome);
     st.acked = 0;
     st.lastContact = this.now();
     this.log(`hello ${config.agent} change ${config.change} -> ${welcome.session} head #${welcome.head_seq} base #${st.base}`);
     return welcome.session;
+  }
+
+  private noteLimits(st: SessionState, w: Welcome): void {
+    st.claimLimits = { claim_ttl_ms: w.claim_ttl_ms, ...(w.policy.claims ? { claims: { ...w.policy.claims } } : {}) };
   }
 
   private async ensure(st: SessionState): Promise<string> {
@@ -472,7 +478,7 @@ export class CodexAdapter {
     const lines = [
       `[weft] This checkout is coordinated by Weft (repo ${config.repo}; you are agent ${config.agent}, task ${config.task.id}${config.task.title ? ` "${config.task.title}"` : ""}, change ${config.change}). ` +
         `Other agents edit the same codebase concurrently in their own checkouts. Every edit you make is checked against their work: ` +
-        `lines like "[weft error] <code> <file>:<line>: …" are multi-agent compiler diagnostics. An edit with errors is blocked, and you cannot finish while errors are open — fix the cited code (or retreat from it) instead of retrying the same edit.` +
+        `lines like "[weft error] <code> <file>:<line>: …" are multi-agent compiler diagnostics. ${ERROR_RULE}` +
         (this.deps.cli
           ? ` When another agent's change is in your way you may also negotiate with it (\`${this.deps.cli} negotiate propose|accept|reject|counter|escalate …\`, see \`${this.deps.cli} negotiate --help\`); proposals addressed to you arrive as "[weft negotiation]" lines and must be answered before you finish. \`${this.deps.cli} inbox\` shows what is waiting for you.`
           : ""),
@@ -543,7 +549,7 @@ export class CodexAdapter {
       this.delivered(st, text, verdict.delivered_through, verdict.inbox);
       const reason =
         `[weft] Edit to ${shownPaths} blocked: it conflicts with another agent's change (Weft edit-time coordination, log #${verdict.seq}).\n${text}\n` +
-        `Do not retry the same edit. Adapt your code to the change described above (or work around it), then edit again — your next attempt is checked against the current log.`;
+        BLOCKED_EDIT_ADVICE;
       return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } };
     }
     if (!text) return undefined;
@@ -574,7 +580,7 @@ export class CodexAdapter {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "deny",
-        permissionDecisionReason: `[weft] git commit refused by the Weft commit gate: ${result.open_errors.length} open error(s).\n${errors}\nResolve them (an accepted edit that touches the cited symbol clears it), then commit.`,
+        permissionDecisionReason: `[weft] git commit refused by the Weft commit gate: ${result.open_errors.length} open error(s).\n${errors}\n${OPEN_ERROR_ADVICE} Commit once they are clear.`,
       },
     };
   }
@@ -736,7 +742,7 @@ export class CodexAdapter {
         ]
           .filter(Boolean)
           .join(", ")}.\n${text}\n` +
-        (result.open_errors.length ? `Resolve each error by re-editing the cited code against the change it names (an accepted edit touching the symbol clears it), or retreat from that code.` : "") +
+        (result.open_errors.length ? OPEN_ERROR_ADVICE : "") +
         (dues.length ? `${result.open_errors.length ? " " : ""}Answer each proposal and make every edit you agreed to.` : ""),
     };
   }
@@ -860,6 +866,69 @@ export class CodexAdapter {
     return { text: `${out.text}\n${reply.text}`, code: reply.code };
   }
 
+  /**
+   * `weft claim --keys … [--firm] [--ttl MS]` run by the model (or a human) in the checkout:
+   * an explicit claim (spec §7.5). The ttl is checked against the repo policy announced in
+   * the welcome before anything is sent. Never throws; exit code 1 when the claim is refused,
+   * 2 when the ttl is over the repo's limit.
+   */
+  async claim(codexSession: string, cmd: ClaimCommand): Promise<CliResult> {
+    try {
+      return await withLock(this.root, codexSession, async () => {
+        const st = readState(this.root, codexSession);
+        try {
+          await this.ensure(st);
+          if (!st.claimLimits && st.wcpSession) {
+            // State written by an older adapter (or another adapter sharing .weft/state/):
+            // ask for the welcome again without opening a new session.
+            const w = await this.deps.transport.hello({
+              type: "hello",
+              protocol: PROTOCOL,
+              agent: { id: this.loaded.config.agent, harness: "codex-code" },
+              capabilities: this.enforce ? CAPABILITIES : ADVISORY_CAPABILITIES,
+              resume_session: st.wcpSession,
+            });
+            this.noteLimits(st, w);
+          }
+          const limits = st.claimLimits!;
+          const max = maxClaimTtl({ claim_ttl_ms: limits.claim_ttl_ms, policy: limits.claims ? { claims: limits.claims } : {} });
+          if (cmd.ttl_ms !== undefined && cmd.ttl_ms > max)
+            return { text: `weft: --ttl ${cmd.ttl_ms} exceeds this repo's limit for firm claims (${max} ms)`, code: 2 };
+          const batch = await this.call(st, (s) => this.deps.transport.drain(s, this.ack(st)));
+          const pre = this.delivered(st, await renderForModel([], batch.items, this.ctx()), batch.delivered_through, batch.items);
+          const event: EventDraft = {
+            kind: "claim",
+            base_seq: this.effectiveBase(st),
+            writes: cmd.keys.map((key) => ({ key, kind: "body" as const })),
+            payload: { firm: cmd.firm, source: "explicit", ...(cmd.ttl_ms !== undefined ? { ttl_ms: cmd.ttl_ms } : {}) },
+            tool: { name: "weft-cli", harness_event: "Bash" },
+          };
+          const verdict = await this.submit(st, "commit", event, `claim-${this.now()}`);
+          this.log(`claim ${cmd.keys.join(",")}${cmd.firm ? " firm" : ""} -> #${verdict.seq} ${verdict.verdict}`);
+          const after = this.delivered(st, await renderForModel(verdict.diagnostics, verdict.inbox, this.ctx()), verdict.delivered_through, verdict.inbox);
+          const lease = limits.claims
+            ? cmd.firm
+              ? `held until ${Math.min(cmd.ttl_ms ?? limits.claims.firm_max_ms, limits.claims.firm_max_ms) / 1000}s after #${verdict.seq}; heartbeats do not extend it, claim again to extend`
+              : `a ${limits.claims.lease_ms / 1000}s lease, renewed while you keep working`
+            : "";
+          const head =
+            verdict.verdict === "accept"
+              ? `[weft] sent #${verdict.seq}: ${verdict.summary ?? "claim"}${lease ? ` (${lease})` : ""}`
+              : `[weft] claim refused (#${verdict.seq}):`;
+          return { text: [pre, head, after].filter(Boolean).join("\n"), code: verdict.verdict === "accept" ? 0 : 1 };
+        } catch (err) {
+          if (err instanceof WcpError) return { text: `weft: ${err.code}: ${err.message}`, code: 1 };
+          throw err;
+        } finally {
+          writeState(this.root, st);
+        }
+      });
+    } catch (err) {
+      this.log(`claim failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+      return { text: `weft: coordinator unavailable (${err instanceof Error ? err.message : String(err)})`, code: 1 };
+    }
+  }
+
   /** Poll the inbox (lock released between polls) until `match` or the deadline. */
   private async waitFor(codexSession: string, seconds: number, match: (i: InboxItem) => boolean): Promise<CliResult> {
     const sleep = this.deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -921,7 +990,7 @@ export class CodexAdapter {
       try {
         const result = await this.call(st, (s) => this.deps.transport.gate(s, "commit"));
         if (result.allow) return undefined;
-        return `weft: commit refused — ${result.open_errors.length} open error(s):\n${await renderForModel(result.open_errors, [], this.ctx())}`;
+        return `weft: commit refused — ${result.open_errors.length} open error(s):\n${await renderForModel(result.open_errors, [], this.ctx())}\n${OPEN_ERROR_ADVICE}`;
       } catch (err) {
         this.log(`pre-commit gate failed open: ${String(err)}`);
         return undefined;

@@ -65,8 +65,10 @@ describe("recorded dependencies over HTTP", () => {
       held_by: ["I-a"],
       depends_on: [{ change: "I-a", keys: [NEW], status: "pending", holds: true }],
     });
-    // Observe scope: an agent token is refused; a missing or unknown change is an error.
-    expect((await call("GET", q, w.toks.b)).status).toBe(403);
+    // An agent token of the repo reads it too (as history, §9.7); a system-only token, or another repo's agent, does not.
+    expect((await call("GET", q, w.toks.b)).status).toBe(200);
+    expect((await call("GET", q, w.system)).status).toBe(403);
+    expect((await call("GET", q, await agentToken("elsewhere", "codex-b"))).status).toBe(404);
     expect((await call("GET", `${w.base}/dependencies`, w.observer)).status).toBe(400);
     expect((await call("GET", `${w.base}/dependencies?change=nobody`, w.observer)).status).toBe(404);
     const entry = await wcp<{ id: number; held_by?: string[] }>("POST", `${w.base}/system/queue`, w.system, { change: "I-b" });

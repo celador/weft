@@ -3,21 +3,27 @@
 //   install        configure a checkout: .weft/codex.json (+ token file), .codex/settings.json
 //                  hooks, git commit-msg (Change-Id/Task-Id/Agent-Id trailers) + pre-commit gate
 //   hook           Codex hook entry: JSON on stdin -> JSON on stdout (always exit 0)
+//                  (`hook --by-path --url U --repo R`, from `install --by-path`: a patch or Bash
+//                  command inside another joined checkout, e.g. a subagent's worktree, acts as
+//                  that checkout's agent)
 //   commit-msg F   git commit-msg hook
 //   pre-commit     git pre-commit hook (last gate: refuses while the session has open errors)
 //   heartbeat-loop keep a WCP session alive between hooks (spawned detached by SessionStart)
 //   status         print config (never the token) and session state
 //   negotiate …    the agent's shell command for WCP negotiation (propose/accept/reject/counter/escalate)
 //   inbox          print what is waiting for this agent (inbox, open errors, negotiations owed)
+//   claim          explicit claim on symbols: claim --keys path#sym[,…] [--firm] [--ttl MS]
 import { execFileSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync, readdirSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NEGOTIATE_USAGE, parseNegotiate } from "@weft/protocol";
+import { CLAIM_USAGE, NEGOTIATE_USAGE, parseClaim, parseNegotiate } from "@weft/protocol";
 import { HttpTransport, type Transport } from "./client";
 import { CONFIG_REL, currentSession, loadConfig, readState, stateDir, type AdapterConfig, type Loaded } from "./config";
 import { CodexAdapter, type HookInput } from "./hooks";
+import { EDIT_TOOLS, patchPaths, shellPatch } from "./edits";
+import { bashTargetDir, byPathHookArgs, pinFromArgs, routeTargets } from "../../claude-code/src/config";
 import { stableNodePath } from "../../claude-code/src/node-path";
 import { loopArgs, runHeartbeatLoop, spawnHeartbeat } from "../../claude-code/src/heartbeat";
 
@@ -75,7 +81,51 @@ export function injectedText(out: unknown): string {
   return [o.reason, o.hookSpecificOutput?.additionalContext, o.hookSpecificOutput?.permissionDecisionReason].filter((x): x is string => typeof x === "string").join("\n");
 }
 
-async function hook(): Promise<void> {
+/**
+ * What a Codex call writes or works in, for `--by-path`: every file an apply_patch touches; for
+ * Bash, the files of an apply_patch run through the shell (relative to its leading `cd`), else the
+ * command's leading `cd <dir> &&` / `git -C <dir>` target. A shell patch whose `cd` is not an
+ * accepted target (relative, `$VAR`) names nothing: its files cannot be placed.
+ */
+export function codexTargets(input: HookInput, cwd: string): string[] {
+  const ti = input.tool_input ?? {};
+  const command = typeof ti.command === "string" ? ti.command : "";
+  if (EDIT_TOOLS.has(input.tool_name ?? "")) return patchPaths(ti);
+  if (input.tool_name !== "Bash" || !command) return [];
+  const dir = bashTargetDir(command, cwd);
+  const sp = shellPatch(command);
+  if (!sp) return dir ? [dir] : [];
+  if (sp.cd && !dir) return [];
+  return patchPaths({ command: sp.patch }).map((p) => resolve(dir ?? cwd, p));
+}
+
+/** `--by-path` denial for one patch that writes into more than one checkout. */
+export function splitDenial(roots: string[]): string {
+  return `[weft] This call writes into more than one checkout (${roots.join(", ")}). Weft checks each checkout as its own agent, so split it: one apply_patch (or command) per checkout.`;
+}
+
+/** `--by-path` note: the call's checkout has a config that does not load or does not match the pinned coordinator. */
+export const BY_PATH_NOT_COORDINATED =
+  "[weft] This checkout is not coordinated: its .weft/codex.json does not load or does not match the coordinator this session is pinned to (see its .weft/log/adapter.log). This call was not checked.";
+
+/**
+ * The checkout a call acts in. Plain: the session's (from `cwd`). `hook --by-path --url U --repo R
+ * [--mode M]`: a call whose files lie in another joined checkout acts as that checkout's agent,
+ * trusted only through the pin (shared rule: claude-code config.ts `routeTargets`). Subagents run
+ * in the parent's cwd and their hooks carry the parent's session id, so this is what tells their
+ * worktree apart. `out` is a refusal to send instead of running the core.
+ */
+export function codexRoute(input: HookInput, args: string[], cwd: string): { loaded?: Loaded; out?: unknown } {
+  if (!args.includes("--by-path")) return { loaded: loadConfig(cwd) };
+  const r = routeTargets(codexTargets(input, cwd), cwd, pinFromArgs(args), CONFIG_REL);
+  const pre = input.hook_event_name === "PreToolUse";
+  if (r.kind === "routed") return { loaded: r.loaded };
+  if (r.kind === "split") return pre ? { out: { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: splitDenial(r.roots) } } } : { loaded: loadConfig(cwd) };
+  if (r.kind === "refused") return pre ? { out: { hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: BY_PATH_NOT_COORDINATED } } } : {};
+  return { loaded: loadConfig(cwd) };
+}
+
+async function hook(args: string[] = []): Promise<void> {
   let out: unknown;
   let input: HookInput | undefined;
   let loaded: Loaded | undefined;
@@ -83,7 +133,9 @@ async function hook(): Promise<void> {
   const handleStart = performance.now();
   try {
     input = JSON.parse(await readStdin()) as HookInput;
-    loaded = loadConfig(input.cwd ?? process.cwd());
+    const route = codexRoute(input, args, input.cwd ?? process.cwd());
+    loaded = route.loaded;
+    out = route.out;
     if (loaded) out = await adapterFor(loaded, calls).handle(input);
   } catch {
     out = undefined; // fail open: malformed input or a bug must not block the harness
@@ -240,7 +292,9 @@ async function install(args: string[]): Promise<void> {
   // Codex hooks: `.codex/hooks.json` in the checkout (Codex's project hook layer; run Codex
   // with `--dangerously-bypass-hook-trust` or trust the hooks once). The file holds
   // machine-specific absolute paths, so it is git-excluded unless --shared.
-  const command = `${shellQuote(stableNodePath())} ${shellQuote(SELF)} hook`;
+  // `--by-path` (opt-in): a call inside another joined checkout acts as that checkout's agent, pinned to this coordinator.
+  const hookArgs = args.includes("--by-path") ? byPathHookArgs(config) : [];
+  const command = [stableNodePath(), SELF, "hook", ...hookArgs].map(shellQuote).join(" ");
   const settingsPath = join(root, ".codex", "hooks.json");
   const hookFiles = [settingsPath];
   // Codex resolves the project config layer of a linked git worktree at the MAIN worktree
@@ -268,16 +322,17 @@ async function install(args: string[]): Promise<void> {
     writeFileSync(p, body, { mode: 0o755 });
     chmodSync(p, 0o755);
   }
-  // The agent's own Weft command (negotiate / inbox), run through its shell tool.
+  // The agent's own Weft command (negotiate / inbox / claim), run through its shell tool.
   const cliPath = join(root, CLI_REL);
   mkdirSync(dirname(cliPath), { recursive: true });
-  writeFileSync(cliPath, `#!/bin/sh\n# ${HOOK_MARK}: Weft CLI for the agent in this checkout (negotiate, inbox)\nexec ${shellQuote(stableNodePath())} ${shellQuote(SELF)} "$@"\n`, { mode: 0o755 });
+  writeFileSync(cliPath, `#!/bin/sh\n# ${HOOK_MARK}: Weft CLI for the agent in this checkout (negotiate, inbox, claim)\nexec ${shellQuote(stableNodePath())} ${shellQuote(SELF)} "$@"\n`, { mode: 0o755 });
   chmodSync(cliPath, 0o755);
   const hasToken = existsSync(resolve(root, config.tokenFile!)) || !!process.env.WEFT_TOKEN;
   process.stdout.write(
     `weft: installed Codex adapter in ${root}\n` +
       `  coordinator ${config.url} repo ${config.repo} agent ${config.agent} task ${config.task.id} change ${config.change}\n` +
       `  hooks: ${hookFiles.join(", ")}\n  git hooks: ${hooksDir}/commit-msg, pre-commit\n  agent cli: ${cliPath}\n` +
+      (hookArgs.length ? `  routing: by path (a call inside another checkout joined to ${config.url} repo ${config.repo} acts as that checkout's agent)\n` : "") +
       (hasToken ? "" : `  NOTE: no token yet — write it to ${config.tokenFile} (mode 600) or export WEFT_TOKEN\n`),
   );
 }
@@ -336,6 +391,28 @@ async function negotiateCmd(args: string[]): Promise<number> {
   return r.code;
 }
 
+async function claimCmd(args: string[]): Promise<number> {
+  if (!args.length || args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(`${CLAIM_USAGE}\n`);
+    return args.length ? 0 : 2;
+  }
+  let cmd;
+  try {
+    cmd = parseClaim(args);
+  } catch (err) {
+    process.stderr.write(`weft: ${err instanceof Error ? err.message : String(err)}\n`);
+    return 2;
+  }
+  const loaded = loadConfig(process.cwd());
+  if (!loaded) {
+    process.stderr.write("weft: not configured here (no .weft/codex.json or no token)\n");
+    return 2;
+  }
+  const r = await adapterFor(loaded).claim(currentSession(loaded.root) ?? "cli", cmd);
+  (r.code === 2 ? process.stderr : process.stdout).write(`${r.text}\n`);
+  return r.code;
+}
+
 async function inboxCmd(args: string[]): Promise<number> {
   const loaded = loadConfig(process.cwd());
   if (!loaded) {
@@ -370,7 +447,7 @@ async function main(): Promise<void> {
   const [cmd, ...args] = process.argv.slice(2);
   switch (cmd) {
     case "hook":
-      return hook();
+      return hook(args);
     case "install":
       return install(args);
     case "commit-msg":
@@ -388,8 +465,11 @@ async function main(): Promise<void> {
     case "inbox":
       process.exitCode = await inboxCmd(args);
       return;
+    case "claim":
+      process.exitCode = await claimCmd(args);
+      return;
     default:
-      process.stderr.write("usage: weft-adapter-codex install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--shared]\n       weft-adapter-codex hook|commit-msg FILE|pre-commit|status\n       weft-adapter-codex negotiate …|inbox (see negotiate --help)\n");
+      process.stderr.write("usage: weft-adapter-codex install --url URL --repo REPO --agent ID --task ID [--title T] [--priority N] [--prefix P] [--mode enforce|advise] [--shared]\n       weft-adapter-codex hook|commit-msg FILE|pre-commit|status\n       weft-adapter-codex negotiate …|inbox (see negotiate --help)\n       weft-adapter-codex claim --keys path#symbol[,…] [--firm] [--ttl MS]\n");
       process.exitCode = cmd ? 2 : 0;
   }
 }

@@ -102,6 +102,22 @@ valid = {
   "events-page": ("EventPage", {"type": "events", "repo": "weft-demo", "events": [record_list, record_reject], "head_seq": 20, "next_after": 13, "has_more": True}),
   "event-detail": ("EventRecord", record_edit),
   "feed-page": ("FeedPage", {"type": "feed", "events": [record_list], "cursor": "v0.eyJ3ZWZ0LWRlbW8iOjEyfQ", "has_more": False}),
+  # §6.6: an accepted check of a symbol reverted lately carries an info note (it never blocks).
+  "verdict-check-previously-reverted": ("Verdict", {"type": "verdict", "verdict": "accept", "mode": "check", "seq": None, "head_seq": 21,
+      "diagnostics": [{"severity": "info", "code": "previously_reverted", "file": "src/x.ts", "symbol": "src/x.ts#f",
+                       "message": "previously reverted 3d ago: error spike after landing (by john, #17)", "caused_by_seq": 17, "caused_by_agent": "john"}],
+      "inbox": [], "delivered_through": 21,
+      "context": "[weft info] previously_reverted src/x.ts#f: previously reverted 3d ago: error spike after landing (by john, #17) (caused by john · event #17)."}),
+  # §9.7: GET /v1/repos/{repo}/history?keys=src/x.ts#f
+  "history-page": ("HistoryPage", {"type": "history", "repo": "weft-demo", "keys": ["src/x.ts#f"], "since": "2026-07-07T14:00:00.000Z", "head_seq": 21, "has_more": False, "entries": [
+      {"seq": 19, "ts": "2026-10-05T14:09:00.000Z", "kind": "negotiation", "keys": ["src/x.ts#f"], "actor": {"type": "agent", "id": "codex-b", "harness": "codex"},
+       "agent": "codex-b", "change": "I-b", "outcome": "accepted", "terms": {"kind": "overload", "text": "keep f(a) working"}, "reply_to": 18, "with": "claude-a"},
+      {"seq": 17, "ts": "2026-10-05T14:05:00.000Z", "kind": "revert", "keys": ["src/x.ts#f"], "actor": {"type": "system", "id": "revert-workflow"},
+       "agent": "claude-a", "change": "I-a", "task": "T-1", "reason": "error spike after landing", "requested_by": {"type": "human", "id": "john"},
+       "reverts_seq": 15, "reverts_op_id": "op_1", "op_id": "op_2", "evidence": "at f (src/x.ts:3:7)"},
+      {"seq": 12, "ts": "2026-10-05T14:03:11.204Z", "kind": "rejected", "keys": ["src/x.ts#f"], "actor": {"type": "agent", "id": "codex-b", "harness": "codex"},
+       "agent": "codex-b", "change": "I-b", "event_kind": "edit", "mode": "check",
+       "causes": [{"severity": "error", "code": "claim_wait", "file": "src/x.ts", "symbol": "src/x.ts#f", "message": "src/x.ts#f is firmly claimed by claude-a (I-a), which has precedence.", "caused_by_seq": 11, "caused_by_agent": "claude-a"}]}]}),
   "stream-event": ("StreamFrame", {"type": "event", "event": record_reject}),
   "stream-replay-done": ("StreamFrame", {"type": "replay.done", "head_seq": 20}),
   "stream-ping": ("StreamFrame", {"type": "ping", "head_seq": 20}),
@@ -158,6 +174,10 @@ invalid = {
   "stream-unknown-frame": ("StreamFrame", {"type": "event"}, "/event"),
   "error-unknown-code": ("WcpError", {"type": "error", "error": {"code": "teapot", "message": "x", "retryable": False}}, "/error/code"),
   "revert-no-target": ("EventRecord", dict(record_edit, kind="revert", payload={"op_id": "op_1", "reason": "x"}), "/payload/reverts_seq"),
+  "history-entry-bad-kind": ("HistoryPage", {"type": "history", "repo": "weft-demo", "keys": ["src/x.ts#f"], "since": "2026-07-07T14:00:00.000Z", "head_seq": 1, "has_more": False,
+      "entries": [{"seq": 1, "ts": "2026-10-05T14:00:00.000Z", "kind": "land", "keys": ["src/x.ts#f"], "actor": {"type": "system", "id": "c"}}]}, "/entries/0/kind"),
+  "history-entry-no-keys": ("HistoryPage", {"type": "history", "repo": "weft-demo", "keys": ["src/x.ts#f"], "since": "2026-07-07T14:00:00.000Z", "head_seq": 1, "has_more": False,
+      "entries": [{"seq": 1, "ts": "2026-10-05T14:00:00.000Z", "kind": "revert", "keys": [], "actor": {"type": "system", "id": "c"}}]}, "/entries/0/keys"),
 }
 
 for d in ("valid", "invalid"):
