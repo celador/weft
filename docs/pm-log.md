@@ -408,3 +408,7 @@ Append-only. One dated entry per heartbeat that changed something.
 ## 2026-11-26 23:59 — Gate red on pm-log commit 908790b (CI flake), test timeout raised
 - GitHub Gate failed on a docs-only commit whose tree passed at 682943a: gateway conformance `open-errors-persist` journal replay hit the 20 s timeout after vitest "Timeout calling resolveId" stalls on the runner. Decision: fix the assumption, not rerun — conformance describe now has a 60 s per-case timeout (scenario count keeps growing; each case runs the scenario 2–3 times). Local: gateway typecheck clean, conformance.test.ts 73/73.
 - t_be804fb4 (finalist recon) stays unmerged by design (rival weak spots; public repo). Go-live t_52c6e0ad still paused on John (already reported).
+
+## 2026-11-27 12:50 — Go-live resumed on John's yes
+- John said yes to the live prices (approved 2026-11-17: Pro $12/$98, License $29/$58) and to shipping now, npm publish included. Recreated wt/launch-go-live at 9e29a14 (ref was lost in cleanup; commits d791219, 134a027, 9e29a14 intact) and its worktree; unblocked + dispatched t_52c6e0ad with a resume note: merge main, gate, land, publish @celador/weft 0.5.0, recheck site, live verification without payment, record.
+- Security impact: none (board ops).
