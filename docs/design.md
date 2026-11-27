@@ -615,3 +615,33 @@ WCP v0.1 is specified in `docs/protocol/wcp-v0.md` (normative; implemented by `p
   warnings/infos on accepted records, never an error.
 - Scenario `conflict-bypass` (both coordinators and the gateway DO) checks the commit gate
   after each of the three submissions.
+
+## Update 2026-11-26 (issues #5–#7, dependencies on unlanded changes)
+- An accepted commit-mode `edit` that relies on code only a neighbor's unlanded change has (it
+  calls a function the neighbor added, or the neighbor's new signature; or it writes a symbol
+  whose declaration exists only there) gets a coordinator-stamped `depends_on` (wcp-v0 §6.7):
+  one `{change, agent, task?, seq, keys}` per neighbor. It is an annotation, computed after the
+  verdict: it never accepts or rejects. Both changes writing one symbol is a conflict for claims,
+  not reliance; a body-only change is not relied on. The field is optional in the schema
+  (backward compatible) and never copied from a draft (a client cannot forge or drop it). The
+  events API returns it in list views and full records.
+- `weft deps` lists a change's dependencies and whether they hold its landing; `weft deps --pr`
+  (and the MCP tool `weft_deps` with `pr`) prints the pull request lines, `Relies on <change>
+  (<agent>, task <task>), not yet in main: <symbols>`, from the record only (no GitHub access),
+  read from `GET /v1/repos/{repo}/dependencies?change=` (§9.8). The CLI uses the checkout's agent
+  token, else the space's viewer key, else the Hermes adapter's shared human token.
+- The landing queue holds a change while a recorded dependency is pending: queue entries carry
+  `held_by`, the turn goes to the first entry not held (a held change does not block the ones
+  behind it), and a batch never takes a held entry. It lands once its dependencies land.
+  Mutual dependencies (a cycle, or one merged group) do not hold each other: they would wait
+  forever; presubmit decides whether they build. A landing workflow that times out while held
+  fails naming the dependencies.
+- Abandonment: a system `release` with reason `abandoned` and no keys (the gateway appends one
+  on `DELETE /v1/repos/{repo}/changes/{id}`), or the landing of an alternative candidate,
+  abandons a change. Its dependents stop being held, and each dependent's owner gets one system
+  `message` (logged, so an offline owner sees it on the next hello) naming the change, the
+  record and the symbols. An agent's own release is a retreat, not an abandonment.
+- One shared module (`packages/protocol/src/deps.ts`) holds the rules for both coordinators;
+  scenario `dependencies-hold-landing` runs against the reference, the SqlCoordinator and the
+  gateway DO. The DO's RPC method `queue()` is now `landingQueue()`: `queue` is a reserved
+  handler name, so `GET /v1/repos/{repo}/system/queue` failed on the DO stub.

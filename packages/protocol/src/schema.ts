@@ -209,6 +209,10 @@ export const schema: JsonSchema = {
       ["action", "target"],
     ),
     PresencePayload: obj({ harness: str, level: { enum: [0, 1, 2, 3] } }, ["harness", "level"]),
+    DependencyRef: obj(
+      { change: str, agent: str, task: str, seq: posSeq, keys: arr(ref("SymbolKey"), { minItems: 1 }) },
+      ["change", "agent", "seq", "keys"],
+    ),
     EventDraft: {
       ...obj({ ...eventCore, summary_hint: { type: "string", maxLength: 140 } }, ["kind", "base_seq"]),
       allOf: [editRule, ...payloadRules],
@@ -228,6 +232,8 @@ export const schema: JsonSchema = {
           has_diff: { type: "boolean" },
           summary: { type: "string", minLength: 1, maxLength: 140 },
           diagnostics: arr(ref("Diagnostic")),
+          // Spec §6.7: stamped by the coordinator on accepted edits; optional (absent = none).
+          depends_on: arr(ref("DependencyRef")),
         },
         ["seq", "repo", "status", "kind", "ts", "actor", "files", "reads", "writes", "summary", "diagnostics"],
       ),
@@ -448,6 +454,28 @@ export const schema: JsonSchema = {
       ],
     },
     ActionResult: typed("action.result", { seq: posSeq, record: ref("EventRecord") }, ["seq", "record"]),
+    Dependencies: typed(
+      "dependencies",
+      {
+        repo: ref("RepoId"),
+        change: str,
+        agent: str,
+        task: str,
+        landed: { type: "boolean" },
+        held: { type: "boolean" },
+        held_by: arr(str),
+        depends_on: arr({
+          allOf: [
+            ref("DependencyRef"),
+            obj(
+              { status: enumOf("pending", "landed", "abandoned"), status_seq: posSeq, holds: { type: "boolean" }, mutual: { type: "boolean" } },
+              ["status", "holds"],
+            ),
+          ],
+        }),
+      },
+      ["repo", "change", "agent", "landed", "held", "held_by", "depends_on"],
+    ),
     WcpError: typed(
       "error",
       {

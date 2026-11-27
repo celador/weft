@@ -171,6 +171,52 @@ export type EventRecord = {
   payload?: Record<string, unknown>;
   tool?: ToolRef;
   transcript?: TranscriptRef;
+  /**
+   * Accepted `edit` only (spec §6.7): the unlanded neighbor changes this edit relies on, stamped by
+   * the coordinator. An annotation: it never accepts or rejects anything. Absent when there are none.
+   */
+  depends_on?: DependencyRef[];
+};
+
+/**
+ * One unlanded neighbor change an accepted edit relies on (spec §6.7): it reads a symbol that
+ * change added or whose signature it changed, or edits a symbol that exists only in that change.
+ */
+export type DependencyRef = {
+  change: string;
+  agent: string;
+  task?: string;
+  /** The neighbor's latest accepted edit writing one of `keys` when this was recorded. */
+  seq: Seq;
+  keys: SymbolKey[];
+};
+
+/** Where a recorded dependency stands now (spec §6.7). */
+export type DependencyState = "pending" | "landed" | "abandoned";
+
+export type Dependency = DependencyRef & {
+  status: DependencyState;
+  /** The record that landed or abandoned the dependency. */
+  status_seq?: Seq;
+  /** Whether it holds the dependent's landing (spec §6.7): pending, not mutual. */
+  holds: boolean;
+  /** Pending, but it relies on the dependent too (directly or through other pending changes), or the two are merged: it does not hold. */
+  mutual?: boolean;
+};
+
+/** `GET /v1/repos/{repo}/dependencies?change=` (spec §6.7, §9.8): what a change relies on, from the log. */
+export type Dependencies = {
+  type: "dependencies";
+  repo: string;
+  change: string;
+  agent: string;
+  task?: string;
+  landed: boolean;
+  /** The landing queue holds the change: it is unlanded and some dependency holds it. */
+  held: boolean;
+  held_by: string[];
+  /** One entry per neighbor change, keys merged over every accepted edit of the change, in first-recorded order. */
+  depends_on: Dependency[];
 };
 
 export type CapabilityLevel = 0 | 1 | 2 | 3;
@@ -399,6 +445,7 @@ export const MESSAGE_TYPES = [
   "StreamFrame",
   "HumanAction",
   "ActionResult",
+  "Dependencies",
   "WcpError",
   "EventRecord",
   "EventDraft",

@@ -7,6 +7,7 @@ import { WcpProtocolError } from "./errors";
 import type {
   ActionResult,
   Actor,
+  Dependencies,
   EventDraft,
   EventPage,
   EventRecord,
@@ -39,6 +40,8 @@ export interface ConformanceTarget {
   event(seq: number): MaybePromise<EventRecord>;
   /** Operator: apply repo policy (spec §7.5 claims policy; Weft journal op `policy`). */
   setPolicy?(p: { claims: ClaimsPolicy }): MaybePromise<RepoPolicy>;
+  /** Observer: a change's recorded dependencies and whether they hold its landing (spec §6.7, §9.8; Weft: GET /v1/repos/{repo}/dependencies?change=). */
+  dependencies?(change: string): MaybePromise<Dependencies>;
 }
 
 export type ScenarioStep =
@@ -54,7 +57,8 @@ export type ScenarioStep =
   | { op: "tick"; expect?: unknown }
   | { op: "events"; after?: number; limit?: number; include_diff?: boolean; tail?: boolean; before?: number; expect?: unknown }
   | { op: "event"; seq: number; expect?: unknown }
-  | { op: "policy"; policy: { claims: ClaimsPolicy }; expect?: unknown };
+  | { op: "policy"; policy: { claims: ClaimsPolicy }; expect?: unknown }
+  | { op: "dependencies"; change: string; expect?: unknown };
 
 export type Scenario = {
   name: string;
@@ -213,6 +217,10 @@ export async function runScenario(sc: Scenario, target: ConformanceTarget, clock
         case "policy":
           if (!target.setPolicy) throw new Error(`scenario ${sc.name}: target cannot apply policy`);
           actual = await target.setPolicy(step.policy);
+          break;
+        case "dependencies":
+          if (!target.dependencies) throw new Error(`scenario ${sc.name}: target cannot report dependencies`);
+          actual = await target.dependencies(step.change);
           break;
       }
     } catch (e) {

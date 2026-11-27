@@ -40,6 +40,7 @@ function sqlTarget(j: JournaledCoordinator): ConformanceTarget {
     events: (after, limit, o) => j.coord.events({ ...(after !== undefined ? { after } : {}), ...(limit !== undefined ? { limit } : {}), ...o }),
     event: (seq) => j.coord.event(seq),
     setPolicy: (p) => j.call("policy", p),
+    dependencies: (c) => j.coord.dependencies(c),
   };
 }
 

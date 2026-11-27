@@ -82,6 +82,7 @@ async function httpTarget(repo: string): Promise<ConformanceTarget> {
     },
     event: (seq) => wcp<EventRecord>("GET", `${base}/events/${seq}`, observer),
     setPolicy: (p) => wcp("POST", `/v1/admin/repos/${repo}/policy`, ADMIN, p),
+    dependencies: (change) => wcp("GET", `${base}/dependencies?change=${encodeURIComponent(change)}`, observer),
   };
 }
 

@@ -10,6 +10,7 @@ import { addresseeOf, agreementOf, answererOf, counterpartAway, negotiationDues 
 import { changeOwnedError, WcpProtocolError } from "./errors";
 import { fileOf } from "./summary";
 import { contractError, NOT_IN_WORKSPACE } from "./contract";
+import { abandonedNotice, collectDependsOn, dependenciesOf, isAbandonment, mergeDependencies } from "./deps";
 import { summarize } from "./summary";
 import type {
   ActionResult,
@@ -18,6 +19,9 @@ import type {
   ArbitrationPolicy,
   Capabilities,
   ClaimsPolicy,
+  Dependencies,
+  DependencyRef,
+  DependencyState,
   Diagnostic,
   EnforcementMode,
   EscalationPolicy,
@@ -423,7 +427,9 @@ export class ReferenceCoordinator {
     if (msg.mode === "check" && !reject) {
       return this.verdict(s, "accept", "check", null, diagnostics);
     }
-    const rec = this.append({ kind: e.kind, actor, session: s, draft: e, diagnostics, status: reject ? "rejected" : "accepted", mode: msg.mode });
+    // An accepted edit records the unlanded neighbor changes it relies on (§6.7): an annotation, it decides nothing.
+    const depends_on = !reject && e.kind === "edit" ? this.dependsOn(s, e) : [];
+    const rec = this.append({ kind: e.kind, actor, session: s, draft: e, diagnostics, status: reject ? "rejected" : "accepted", mode: msg.mode, depends_on });
     const own = this.changes.get(s.change);
     if (own) for (const d of diagnostics) if (TELLS.has(d.code)) this.tell(own, d.symbol, d.caused_by_seq);
     if (reject) {
@@ -828,6 +834,107 @@ export class ReferenceCoordinator {
     return out;
   }
 
+  // ---------------------------------------------------------------- dependencies (§6.7)
+
+  /** Latest accepted edit of `change` writing `key`, if any. */
+  private lastEditSeq(change: string, key: SymbolKey): Seq | undefined {
+    for (let i = this.log.length - 1; i >= 0; i--) {
+      const r = this.log[i]!;
+      if (r.change === change && r.status === "accepted" && r.kind === "edit" && r.writes.some((w) => w.key === key)) return r.seq;
+    }
+    return undefined;
+  }
+
+  /**
+   * The unlanded neighbor changes an accepted edit relies on (spec §6.7): for each key it reads or
+   * writes, every other change outside its merged group and its alternatives, neither landed nor
+   * abandoned, whose accepted edits wrote the key in a way the edit relies on (`reliesOn`).
+   */
+  private dependsOn(s: Session, e: EventDraft): DependencyRef[] {
+    return collectDependsOn(uniq(e.reads ?? []), e.writes ?? [], (key) => {
+      const out: Array<{ change: string; agent: string; task?: string; kind: WriteKind; seq: Seq }> = [];
+      for (const d of this.changes.values()) {
+        const kind = d.writes.get(key);
+        if (!kind || d.id === s.change || d.landed || this.sameGroup(d.id, s.change) || this.alternatives(d.id, s.change)) continue;
+        const seq = this.lastEditSeq(d.id, key);
+        if (seq === undefined || this.abandonedAt(d.id) !== undefined) continue;
+        out.push({ change: d.id, agent: d.agent, ...(d.task ? { task: d.task } : {}), kind, seq });
+      }
+      return out;
+    });
+  }
+
+  /**
+   * The record that abandoned change `id` (spec §6.7): a system `release` with reason `abandoned`
+   * and no keys, or the landing of one of its alternatives (it lost the selection, §7.7).
+   */
+  private abandonedAt(id: string): Seq | undefined {
+    const c = this.changes.get(id);
+    if (!c || c.landed) return undefined;
+    for (const r of this.log) {
+      if (r.status !== "accepted") continue;
+      if ((r.change === id && isAbandonment(r)) || (r.kind === "land" && this.alternatives(r.change, id))) return r.seq;
+    }
+    return undefined;
+  }
+
+  private depState(id: string): { status: DependencyState; status_seq?: Seq } {
+    if (this.changes.get(id)?.landed) {
+      const land = this.log.find((r) => r.change === id && r.kind === "land" && r.status === "accepted");
+      return { status: "landed", ...(land ? { status_seq: land.seq } : {}) };
+    }
+    const ab = this.abandonedAt(id);
+    return ab !== undefined ? { status: "abandoned", status_seq: ab } : { status: "pending" };
+  }
+
+  /** The accepted edits of `id` that recorded dependencies, ascending. */
+  private depRecords(id: string): EventRecord[] {
+    return this.log.filter((r) => r.change === id && r.status === "accepted" && r.kind === "edit" && r.depends_on !== undefined);
+  }
+
+  /** What `change` relies on and whether that holds its landing (spec §6.7, §9.8). Read-only. */
+  dependencies(change: string): Dependencies {
+    const c = this.changes.get(change);
+    if (!c) throw new WcpProtocolError("not_found", `unknown change ${change}`);
+    return dependenciesOf({
+      repo: this.repo,
+      change: { id: c.id, agent: c.agent, ...(c.task ? { task: c.task } : {}), landed: c.landed },
+      records: (x) => this.depRecords(x),
+      state: (x) => this.depState(x),
+      sameGroup: (a, b) => this.sameGroup(a, b),
+    });
+  }
+
+  /**
+   * A change abandoned by `rec` (a system release `abandoned`, or the landing of one of its
+   * alternatives) stops holding the changes that rely on it (spec §6.7); the owner of each is told
+   * by a system `message`, appended after `rec`'s own effects, in change order. Once per abandonment.
+   */
+  private dependencyNotices(rec: EventRecord): void {
+    const gone =
+      rec.kind === "release"
+        ? rec.change !== undefined && isAbandonment(rec)
+          ? [rec.change]
+          : []
+        : [...this.changes.values()].filter((x) => this.alternatives(x.id, rec.change)).map((x) => x.id);
+    for (const x of gone) {
+      if (!this.changes.has(x) || this.abandonedAt(x) !== rec.seq) continue;
+      for (const c of [...this.changes.values()]) {
+        if (c.id === x || c.landed || this.sameGroup(c.id, x) || this.abandonedAt(c.id) !== undefined) continue;
+        const entry = mergeDependencies(this.depRecords(c.id)).find((d) => d.change === x);
+        if (!entry) continue;
+        const msg = this.append({
+          kind: "message",
+          actor: { type: "system", id: "coordinator" },
+          draft: { kind: "message", base_seq: this.head, payload: { to: { change: c.id }, text: abandonedNotice(entry, c.id, entry.keys, rec), intent: "info" } },
+          diagnostics: [],
+          status: "accepted",
+        });
+        this.applyAccepted(msg);
+      }
+    }
+  }
+
   // ---------------------------------------------------------------- append + effects
 
   private append(a: {
@@ -841,6 +948,8 @@ export class ReferenceCoordinator {
     agent?: string;
     change?: string;
     task?: string;
+    /** Accepted edits only: the unlanded changes it relies on (§6.7). Empty = the field is left out. */
+    depends_on?: DependencyRef[];
   }): EventRecord {
     const d = a.draft;
     const writes = d.writes ?? [];
@@ -883,6 +992,8 @@ export class ReferenceCoordinator {
       ...(d.payload ? { payload: d.payload } : {}),
       ...(d.tool ? { tool: d.tool } : {}),
       ...(d.transcript ? { transcript: d.transcript } : {}),
+      // Stamped by the coordinator, never copied from the draft (a client cannot forge a dependency).
+      ...(a.depends_on?.length ? { depends_on: a.depends_on } : {}),
     };
     this.log.push(rec);
     return rec;
@@ -894,6 +1005,7 @@ export class ReferenceCoordinator {
     if (!cause?.change) return;
     const notice = ownerNotice(d, editor, kind);
     // Matched on the cause's agent too (as the sequencer does): a change ID alone is not proof of ownership.
+    // (A dependency notice, §6.7, is a logged system message instead: it stays in the feed for an owner who is offline.)
     for (const os of this.sessionsOf({ change: cause.change }).filter((s) => s.agent === cause.agent)) {
       if (os.inbox.some((i) => i.diagnostic !== undefined && sameNotice(i.diagnostic, notice))) continue;
       this.push(os, { seq: d.caused_by_seq, kind: "diagnostic", diagnostic: notice });
@@ -920,7 +1032,10 @@ export class ReferenceCoordinator {
     return [...this.sessions.values()].filter((s) => (t.change ? s.change === t.change : s.agent === t.agent));
   }
 
-  /** Add an inbox item. Open errors are recorded on the change by the caller (§6.5). */
+  /**
+   * Add an inbox item. Open errors are recorded on the change by the caller (§6.5). A dependency
+   * notice (§6.7) is not an item of its own: it is a logged system `message`, routed here like any message.
+   */
   private push(s: Session, item: Omit<InboxItem, "id">): void {
     s.inbox.push({ id: s.next_inbox_id++, ...item });
   }
@@ -1162,6 +1277,8 @@ export class ReferenceCoordinator {
         }
       }
     }
+    // A change this record abandoned no longer holds the changes relying on it; their owners are told (§6.7).
+    if (rec.kind === "release" || rec.kind === "land") this.dependencyNotices(rec);
   }
 
   /** negotiate.accept: apply transfer/share terms (spec §7.4). Returns the agreement. */

@@ -33,7 +33,9 @@ export interface D1Like {
 
 // ------------------------------------------------------------------ coordinator
 
-export type QueueEntry = { id: number; change: string; status: "queued" | "landing" | "landed" | "failed" | "cancelled"; requested_by: string; enqueued_seq: number | null; landed_seq: number | null; note: string | null; batch?: number | null; created_at: string; updated_at: string };
+export type QueueEntry = { id: number; change: string; status: "queued" | "landing" | "landed" | "failed" | "cancelled"; requested_by: string; enqueued_seq: number | null; landed_seq: number | null; note: string | null; batch?: number | null; created_at: string; updated_at: string;
+  /** Queued entries only, when non-empty: the recorded dependencies that hold the change (spec §6.7). The head skips it; no batch takes it. */
+  held_by?: string[] };
 export type OpRow = { op_id: string; seq: number; kind: string; change_id: string | null; sha: string | null; trunk_ref: string | null; reverts_seq: number | null; reverts_op_id: string | null; at: string };
 
 /** One repo's coordinator (THE ordered log), as the workflows need it. */

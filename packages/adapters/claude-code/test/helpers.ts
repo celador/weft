@@ -59,6 +59,7 @@ export async function serve(c: ReferenceCoordinator): Promise<{ url: string; ser
         const q = new URL(path, "http://x").searchParams;
         return send(200, c.events(Number(q.get("after") ?? 0), Number(q.get("limit") ?? 100), { tail: q.get("tail") === "1" }));
       }
+      if (req.method === "GET" && /^\/repos\/[^/]+\/dependencies\?/.test(path)) return send(200, c.dependencies(new URL(path, "http://x").searchParams.get("change") ?? ""));
       return send(404, { type: "error", error: { code: "not_found", message: `no route ${req.method} ${path}` } });
     } catch (err) {
       if (err instanceof WcpProtocolError) return send(err.status, err.toJSON());
