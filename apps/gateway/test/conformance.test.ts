@@ -108,7 +108,9 @@ async function runViaGateway(sc0: Scenario) {
   return { repo, sc, results, refResults, ref };
 }
 
-describe("WCP conformance through gateway + RepoCoordinator DO", () => {
+// Each case runs a whole scenario twice (DO + reference), and replay runs it a third time. On a loaded GitHub runner
+// the module resolver alone can stall past the 20 s file default (vitest "Timeout calling resolveId"), so these get 60 s.
+describe("WCP conformance through gateway + RepoCoordinator DO", { timeout: 60_000 }, () => {
   it("found every scenario fixture", () => expect(scenarios.length).toBeGreaterThanOrEqual(11));
 
   it.each(scenarios)("$name: passes and matches the reference step by step", async ({ data }) => {
