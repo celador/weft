@@ -422,3 +422,8 @@ Append-only. One dated entry per heartbeat that changed something.
 - Live verification on the 6a4fe01b gateway: `weft login` (0.5.0, clean HOME) attached the account space; live Checkouts for Pro 2x$12 and License 3x$58 open (not paid, expired by hand); the leftover 11-20 test account deleted on /account/ (Clerk 404, 0 users, space erased, CLI key rejected); unsigned webhook 400. weft.mx = site/ on main (hashes match), greps OK. docs/pricing.md go-live record completed.
 - Security impact: test-only change in the analyzer; the package now ships with npm provenance; the only stored test account and its space were erased.
 
+
+## 2026-11-27 15:45 — Go-live card closed and verified
+- t_52c6e0ad done. Checked: npm `@celador/weft` latest = 0.5.0; weft.mx/pricing shows $12/$98 + $29/$58; main = origin/main 13227f9, CI Gate green; Weft lands up to date (#3591). Removed the wt/launch-go-live worktree + branch (merged, clean).
+- t_be804fb4 stays unmerged by design; t_619cbda1 stays in triage (needs Weft's own Google/Apple OAuth credentials).
+- Security impact: none (board ops).
