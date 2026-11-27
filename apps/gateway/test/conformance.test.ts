@@ -13,6 +13,7 @@ import {
   type ConformanceTarget,
   type EventPage,
   type EventRecord,
+  type HistoryPage,
   type Scenario,
   type Welcome,
 } from "@weft/protocol";
@@ -82,6 +83,13 @@ async function httpTarget(repo: string): Promise<ConformanceTarget> {
     },
     event: (seq) => wcp<EventRecord>("GET", `${base}/events/${seq}`, observer),
     setPolicy: (p) => wcp("POST", `/v1/admin/repos/${repo}/policy`, ADMIN, p),
+    // Read with an agent token (no observe scope): history is open to the repo's agents (spec §9.7).
+    history: async (q) => {
+      const p = new URLSearchParams({ keys: q.keys.join(",") });
+      if (q.since !== undefined) p.set("since", q.since);
+      if (q.limit !== undefined) p.set("limit", String(q.limit));
+      return wcp<HistoryPage>("GET", `${base}/history?${p}`, await agentTok("history-reader"));
+    },
   };
 }
 

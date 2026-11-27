@@ -34,7 +34,7 @@ export function run(sql: Sql, q: string, ...args: Array<string | number | boolea
  * Schema of one repo's coordinator. Every table is owned by exactly one Durable Object
  * (one repo), so no table carries a repo column.
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export const DDL: string[] = [
   `CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)`,
@@ -110,6 +110,16 @@ export const DDL: string[] = [
   `CREATE TABLE IF NOT EXISTS change_told (
      change_id TEXT NOT NULL, key TEXT NOT NULL, seq INTEGER NOT NULL,
      PRIMARY KEY (change_id, key))`,
+  // v6: history index (spec §9.7): which history record (accepted revert, rejected edit/claim,
+  // finished negotiation) concerns which key; `at` = the record's ts in ms. Derived from the log
+  // when the record is appended (a revert's keys via its land op -> change -> accepted edits), so
+  // a history read or a pre-edit note never scans the log. Holds nothing the log does not.
+  `CREATE TABLE IF NOT EXISTS key_history (
+     key TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, at INTEGER NOT NULL,
+     PRIMARY KEY (key, seq))`,
+  `CREATE INDEX IF NOT EXISTS key_history_kind ON key_history(kind, at)`,
+  // v6: keys a session already got a previously_reverted note for (spec §6.6: once per key per session).
+  `CREATE TABLE IF NOT EXISTS session_noted (session TEXT NOT NULL, key TEXT NOT NULL, PRIMARY KEY (session, key))`,
 ];
 
 /** Columns added after a table first shipped (CREATE TABLE IF NOT EXISTS never adds them). */
@@ -128,6 +138,9 @@ export function migrate(sql: Sql): void {
   // U only considers records after this floor. Fresh databases have no floor.
   if (prior && Number(prior.v) < 4)
     run(sql, `INSERT OR IGNORE INTO meta (k, v) SELECT 'told_floor', CAST(COALESCE(MAX(seq), 0) AS TEXT) FROM events`);
+  // v6: a database from before the history index has history records in its log but no index
+  // rows; SqlCoordinator builds them once from the log (deriving keys needs the protocol rules).
+  if (prior && Number(prior.v) < 6) run(sql, `INSERT OR IGNORE INTO meta (k, v) VALUES ('history_backfill', '1')`);
   for (const c of ADDED_COLUMNS) {
     const cols = all<{ name: string }>(sql, `PRAGMA table_info(${c.table})`).map((r) => r.name);
     if (!cols.includes(c.column)) run(sql, c.ddl);

@@ -101,7 +101,7 @@ The setup prints the same notes under "First run" for the agents it found.
 
 **Agents with MCP but no hooks** (Zed, Warp, JetBrains, Xcode, Trae, Continue): add Weft's MCP
 server to the agent's MCP settings, once per checkout. It reports every file the agent changes
-and gives the model `weft_check`, `weft_status` and the other Weft tools:
+and gives the model `weft_check`, `weft_status`, `weft_history` and the other Weft tools:
 
 ```json
 { "command": "npx", "args": ["-y", "@celador/weft", "mcp", "--dir", "/path/to/checkout"] }
@@ -308,6 +308,32 @@ switches them over (this is recorded in the repo's journal, so its history repla
 curl -sX POST $U/v1/admin/repos/<repo>/policy -H "$AD" \
   -d '{"claims":{"lease_ms":120000,"firm_max_ms":600000}}'
 ```
+
+#### Why was this reverted before?
+
+When a landed change is reverted (`undo` in the feed, or the revert workflow), the revert's reason
+reaches the agent that made the change. Other agents get it too, from Weft's own log:
+
+- **At edit time.** An agent whose edit touches a symbol reverted in the last 30 days sees one
+  info line (once per symbol per session; it never blocks):
+
+  ```text
+  [weft info] previously_reverted src/auth/session.ts:12:17: previously reverted 3d ago: login loop on expired tokens (by john, #41) (caused by john · event #41).
+  ```
+
+- **On demand.** The history of any symbol: reverts (reason, who asked, the first stack frame in
+  the reason), refused edits and their cause, finished negotiations and their terms. An agent
+  token of the repo can read it; MCP agents call `weft_history` with `{"keys": ["src/auth/session.ts#refreshToken"]}`.
+
+  ```sh
+  curl -s -H "authorization: Bearer $(cat <agent-token-file>)" \
+    "http://localhost:8787/v1/repos/<repo>/history?keys=src/auth/session.ts%23refreshToken&since=2026-10-01T00:00:00Z" \
+    | jq -r '.entries[] | "#\(.seq) \(.kind) \(.reason // .outcome // (.causes[0].code)) [\(.keys | join(", "))]"'
+  # #41 revert login loop on expired tokens [src/auth/session.ts#refreshToken]
+  ```
+
+  `keys` takes `path#symbol`, `path#*` or a bare path (whole file), comma-separated, with `#`
+  written `%23`; `since` defaults to 90 days, `limit` to 20 (protocol §9.7).
 
 #### 4c. Landing
 

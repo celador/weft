@@ -1,0 +1,24 @@
+{
+  "schema": "Verdict",
+  "value": {
+    "type": "verdict",
+    "verdict": "accept",
+    "mode": "check",
+    "seq": null,
+    "head_seq": 21,
+    "diagnostics": [
+      {
+        "severity": "info",
+        "code": "previously_reverted",
+        "file": "src/x.ts",
+        "symbol": "src/x.ts#f",
+        "message": "previously reverted 3d ago: error spike after landing (by john, #17)",
+        "caused_by_seq": 17,
+        "caused_by_agent": "john"
+      }
+    ],
+    "inbox": [],
+    "delivered_through": 21,
+    "context": "[weft info] previously_reverted src/x.ts#f: previously reverted 3d ago: error spike after landing (by john, #17) (caused by john · event #17)."
+  }
+}

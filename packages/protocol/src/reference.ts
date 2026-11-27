@@ -11,6 +11,7 @@ import { WcpProtocolError } from "./errors";
 import { fileOf } from "./summary";
 import { contractError, RELEASABLE } from "./contract";
 import { summarize } from "./summary";
+import { DAY_MS, historyPageOf, historyQuery, historyRows, inScope, keyScope, NOTE_WINDOW_DAYS, revertNote, type HistoryRow } from "./history";
 import type {
   ActionResult,
   Actor,
@@ -29,6 +30,8 @@ import type {
   GateResult,
   HeartbeatAck,
   Hello,
+  HistoryPage,
+  HistoryQuery,
   HumanAction,
   InboxBatch,
   InboxItem,
@@ -124,6 +127,8 @@ type Session = {
   next_inbox_id: number;
   paused_by?: Seq;
   last_seen: number;
+  /** Keys this session was already given a `previously_reverted` note for (spec §6.6: once per key per session). */
+  noted: Set<SymbolKey>;
 };
 
 const AGENT_KINDS = new Set<EventKind>([
@@ -169,6 +174,8 @@ export class ReferenceCoordinator {
   private readonly continueMode: boolean;
 
   readonly log: EventRecord[] = [];
+  /** History index (spec §9.7): key -> history record, appended with the record (never a log scan per read). */
+  private readonly historyIdx: HistoryRow[] = [];
   private readonly sessions = new Map<string, Session>();
   private readonly changes = new Map<string, ChangeState>();
   private claims: Claim[] = [];
@@ -239,6 +246,7 @@ export class ReferenceCoordinator {
       inbox: [],
       next_inbox_id: 1,
       last_seen: now,
+      noted: new Set(),
       ...(change.task ? { task: change.task } : {}),
     };
     this.sessions.set(s.id, s);
@@ -415,9 +423,12 @@ export class ReferenceCoordinator {
     const diagnostics = this.evaluate(s, e);
     const reject = diagnostics.some((d) => d.severity === "error");
     const actor: Actor = { type: "agent", id: s.agent, harness: s.harness };
+    // §6.6: info notes on keys reverted lately. They ride on the verdict only: the record keeps the
+    // validation diagnostics, so nothing beyond the revert record itself is stored.
+    const notes = e.kind === "edit" && !diagnostics.some((d) => d.code === "agent_paused") ? this.revertNotes(s, e.writes ?? []) : [];
 
     if (msg.mode === "check" && !reject) {
-      return this.verdict(s, "accept", "check", null, diagnostics);
+      return this.verdict(s, "accept", "check", null, [...diagnostics, ...notes]);
     }
     const rec = this.append({ kind: e.kind, actor, session: s, draft: e, diagnostics, status: reject ? "rejected" : "accepted", mode: msg.mode });
     const own = this.changes.get(s.change);
@@ -428,7 +439,28 @@ export class ReferenceCoordinator {
     } else {
       this.applyAccepted(rec, s);
     }
-    return this.verdict(s, reject ? "reject" : "accept", msg.mode, rec.seq, diagnostics, rec.summary);
+    return this.verdict(s, reject ? "reject" : "accept", msg.mode, rec.seq, [...diagnostics, ...notes], rec.summary);
+  }
+
+  /**
+   * `previously_reverted` notes (spec §6.6) for the keys an edit writes: the newest revert in the
+   * last 30 days whose keys cover the edited key, at most once per key per session. Read from the
+   * history index, inside the submit call (no extra call per edit).
+   */
+  private revertNotes(s: Session, writes: Write[]): Diagnostic[] {
+    const now = this.now();
+    const floor = now - NOTE_WINDOW_DAYS * DAY_MS;
+    const out: Diagnostic[] = [];
+    for (const key of uniq(writes.map((w) => w.key))) {
+      if (s.noted.has(key)) continue;
+      const scope = keyScope(key);
+      let hit: HistoryRow | undefined;
+      for (const r of this.historyIdx) if (r.kind === "revert" && r.at >= floor && inScope(r.key, scope) && (!hit || r.seq > hit.seq)) hit = r;
+      if (!hit) continue;
+      s.noted.add(key);
+      out.push(revertNote(key, this.record(hit.seq)!, now));
+    }
+    return out;
   }
 
   private verdict(s: Session, verdict: "accept" | "reject", mode: "check" | "commit", seq: Seq | null, diagnostics: Diagnostic[], summary?: string): Verdict {
@@ -881,6 +913,14 @@ export class ReferenceCoordinator {
       ...(d.transcript ? { transcript: d.transcript } : {}),
     };
     this.log.push(rec);
+    this.historyIdx.push(
+      ...historyRows(rec, {
+        record: (n) => this.record(n),
+        land: (seq, opId) =>
+          (seq !== undefined ? [this.record(seq)] : this.log.filter((r) => r.payload?.op_id === opId)).find((r) => r?.kind === "land" && r.status === "accepted"),
+        editKeys: (change, upTo) => this.log.filter((r) => r.seq <= upTo && r.change === change && r.kind === "edit" && r.status === "accepted").flatMap((r) => r.writes.map((w) => w.key)),
+      }),
+    );
     return rec;
   }
 
@@ -1425,6 +1465,18 @@ export class ReferenceCoordinator {
     const r = this.record(seq);
     if (!r) throw new WcpProtocolError("not_found", `no event #${seq}`);
     return r;
+  }
+
+  /**
+   * Filtered history of symbol keys (spec §9.7): reverts, refused edits/claims and finished
+   * negotiations that concern `keys`, newest first, from the history index.
+   */
+  history(q: HistoryQuery): HistoryPage {
+    const { keys, since, limit } = historyQuery(q, this.now());
+    const scopes = keys.map(keyScope);
+    const rows = this.historyIdx.filter((r) => r.at >= since && scopes.some((sc) => inScope(r.key, sc)));
+    const page = historyPageOf(rows, limit, (n) => this.record(n));
+    return { type: "history", repo: this.repo, keys, since: new Date(since).toISOString(), entries: page.entries, head_seq: this.head, has_more: page.has_more };
   }
 
   summary() {

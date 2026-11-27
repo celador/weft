@@ -101,6 +101,9 @@ useful even when the model ignores it:
   - `weft_status`: open errors, owed negotiations, and who else is editing what.
   - `weft_inbox`: drain and ack.
   - `weft_feed {repo?, limit?}`: recent records, the same rows the feed UIs show.
+  - `weft_history {keys[], repo?, since?, limit?}`: why earlier changes to these symbols were
+    reverted or refused (WCP §9.7), from the coordinator's history index; agent tokens may read
+    their own repo's history.
   - `weft_negotiate {action, ...}`: §7.4.
   - `weft_gate {gate:"stop"|"commit"}`: lets an agent check whether it may finish.
 - **Every tool result carries the pending inbox.** Whatever the model calls, it also receives the

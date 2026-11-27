@@ -1,0 +1,491 @@
+{
+  "name": "revert-history",
+  "description": "§6.6/§9.7: A's change to f lands and is reverted with a reason. Days later B (a new session) edits f: its check carries one info note `previously reverted <n>d ago: <reason> (by <actor>, #<seq>)`, never again in that session, again in a new session, and not after 30 days. The record stores no note. The history read derives f from the revert (revert -> land op -> change -> accepted edits) and filters by key, file and window.",
+  "covers": [
+    "6.6",
+    "9.7"
+  ],
+  "repo": "demo",
+  "start": "2026-10-05T14:00:00.000Z",
+  "steps": [
+    {
+      "op": "hello",
+      "as": "A",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "claude-a",
+          "harness": "claude-code"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-1"
+        },
+        "change": "I-a"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s1",
+        "head_seq": 1,
+        "delivered_through": 1
+      }
+    },
+    {
+      "op": "submit",
+      "as": "A",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 1,
+          "writes": [
+            {
+              "key": "src/x.ts#f",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 2,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "system",
+      "draft": {
+        "kind": "land",
+        "base_seq": 2,
+        "change": "I-a",
+        "payload": {
+          "sha": "1a2b3c4d",
+          "op_id": "op_1"
+        }
+      },
+      "expect": {
+        "seq": 3,
+        "kind": "land",
+        "status": "accepted",
+        "writes": [
+          {
+            "key": "src/x.ts#f",
+            "kind": "body"
+          }
+        ]
+      }
+    },
+    {
+      "op": "system",
+      "actor": {
+        "type": "system",
+        "id": "revert-workflow"
+      },
+      "draft": {
+        "kind": "revert",
+        "base_seq": 3,
+        "change": "I-a",
+        "payload": {
+          "op_id": "op_2",
+          "reverts_seq": 3,
+          "reverts_op_id": "op_1",
+          "sha": "5e6f7a8b",
+          "reason": "error spike after landing: TypeError: Cannot read properties of undefined (reading 'id')\n    at f (src/x.ts:3:7)\n    at main (src/main.ts:10:3)",
+          "requested_by": {
+            "type": "human",
+            "id": "john"
+          }
+        }
+      },
+      "expect": {
+        "seq": 4,
+        "kind": "revert",
+        "status": "accepted",
+        "writes": []
+      }
+    },
+    {
+      "op": "bye",
+      "as": "A"
+    },
+    {
+      "op": "advance",
+      "ms": 259200000
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "codex-b",
+          "harness": "codex"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s2",
+        "head_seq": 6,
+        "delivered_through": 6
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "check",
+        "event": {
+          "kind": "edit",
+          "base_seq": 6,
+          "writes": [
+            {
+              "key": "src/x.ts#f",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "mode": "check",
+        "seq": null,
+        "diagnostics": [
+          {
+            "severity": "info",
+            "code": "previously_reverted",
+            "file": "src/x.ts",
+            "symbol": "src/x.ts#f",
+            "message": "previously reverted 3d ago: error spike after landing: TypeError: Cannot read properties of undefined (reading 'id') (by john, #4)",
+            "caused_by_seq": 4,
+            "caused_by_agent": "john"
+          }
+        ]
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "commit",
+        "event": {
+          "kind": "edit",
+          "base_seq": 6,
+          "writes": [
+            {
+              "key": "src/x.ts#f",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "seq": 7,
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "event",
+      "seq": 7,
+      "expect": {
+        "seq": 7,
+        "status": "accepted",
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "check",
+        "event": {
+          "kind": "edit",
+          "base_seq": 7,
+          "writes": [
+            {
+              "key": "src/x.ts#g",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "history",
+      "keys": [
+        "src/x.ts#f"
+      ],
+      "expect": {
+        "type": "history",
+        "repo": "demo",
+        "keys": [
+          "src/x.ts#f"
+        ],
+        "since": "2026-07-10T14:00:00.012Z",
+        "head_seq": 7,
+        "has_more": false,
+        "entries": [
+          {
+            "seq": 4,
+            "kind": "revert",
+            "keys": [
+              "src/x.ts#f"
+            ],
+            "actor": {
+              "type": "system",
+              "id": "revert-workflow"
+            },
+            "agent": "claude-a",
+            "change": "I-a",
+            "task": "T-1",
+            "reason": "error spike after landing: TypeError: Cannot read properties of undefined (reading 'id')",
+            "requested_by": {
+              "type": "human",
+              "id": "john"
+            },
+            "reverts_seq": 3,
+            "reverts_op_id": "op_1",
+            "op_id": "op_2",
+            "evidence": "at f (src/x.ts:3:7)"
+          }
+        ]
+      }
+    },
+    {
+      "op": "history",
+      "keys": [
+        "src/other.ts#h"
+      ],
+      "expect": {
+        "type": "history",
+        "keys": [
+          "src/other.ts#h"
+        ],
+        "entries": [],
+        "has_more": false
+      }
+    },
+    {
+      "op": "history",
+      "keys": [
+        "src/x.ts#*"
+      ],
+      "expect": {
+        "entries": [
+          {
+            "seq": 4,
+            "kind": "revert",
+            "keys": [
+              "src/x.ts#f"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "op": "history",
+      "keys": [
+        "src/x.ts"
+      ],
+      "expect": {
+        "entries": [
+          {
+            "seq": 4,
+            "kind": "revert",
+            "keys": [
+              "src/x.ts#f"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "op": "history",
+      "keys": [
+        "src/x.ts#f"
+      ],
+      "since": "2026-10-06T00:00:00.000Z",
+      "expect": {
+        "since": "2026-10-06T00:00:00.000Z",
+        "entries": []
+      }
+    },
+    {
+      "op": "history",
+      "keys": [
+        "src/x.ts f"
+      ],
+      "expect": {
+        "type": "error",
+        "error": {
+          "code": "invalid_message"
+        }
+      }
+    },
+    {
+      "op": "bye",
+      "as": "B"
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "codex-b",
+          "harness": "codex"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s3"
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "check",
+        "event": {
+          "kind": "edit",
+          "base_seq": 10,
+          "writes": [
+            {
+              "key": "src/x.ts#f",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "diagnostics": [
+          {
+            "severity": "info",
+            "code": "previously_reverted",
+            "file": "src/x.ts",
+            "symbol": "src/x.ts#f",
+            "message": "previously reverted 3d ago: error spike after landing: TypeError: Cannot read properties of undefined (reading 'id') (by john, #4)",
+            "caused_by_seq": 4,
+            "caused_by_agent": "john"
+          }
+        ]
+      }
+    },
+    {
+      "op": "bye",
+      "as": "B"
+    },
+    {
+      "op": "advance",
+      "ms": 2419200000
+    },
+    {
+      "op": "hello",
+      "as": "B",
+      "hello": {
+        "type": "hello",
+        "protocol": "wcp/0.1",
+        "agent": {
+          "id": "codex-b",
+          "harness": "codex"
+        },
+        "capabilities": {
+          "level": 3,
+          "observe": "sync",
+          "inject": "immediate",
+          "deny_edit": true,
+          "refuse_stop": true,
+          "commit_gate": "tool_interception"
+        },
+        "task": {
+          "id": "T-2"
+        },
+        "change": "I-b"
+      },
+      "expect": {
+        "type": "welcome",
+        "session": "s4"
+      }
+    },
+    {
+      "op": "submit",
+      "as": "B",
+      "submit": {
+        "type": "submit",
+        "mode": "check",
+        "event": {
+          "kind": "edit",
+          "base_seq": 12,
+          "writes": [
+            {
+              "key": "src/x.ts#f",
+              "kind": "body"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "verdict": "accept",
+        "diagnostics": []
+      }
+    },
+    {
+      "op": "history",
+      "keys": [
+        "src/x.ts#f"
+      ],
+      "expect": {
+        "entries": [
+          {
+            "seq": 4,
+            "kind": "revert"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -127,6 +127,8 @@ message per frame.
   agent tokens and MUST NOT be accepted on agent or human endpoints.
 - `human` tokens imply `observe`. Human actions are attributed to the token's principal
   (`actor: {type:"human", id}`), never to a client-supplied name.
+- `agent` tokens may also read the history of their own repo (§9.7); no other observer
+  endpoint accepts them.
 - A request for a repo outside the token's list is `404 repo_not_found` (do not leak
   existence). A missing/invalid token is `401 unauthorized`; a valid token lacking the
   scope is `403 forbidden`.
@@ -217,6 +219,7 @@ event) that produced the diagnostic — every squiggle is traceable.
 | `trunk_advanced` | info (pushed) | a landing/revert touched symbols your change reads, writes or claims; `requires_rebase` | §6.3 |
 | `agent_paused` | error | a human paused this agent; edits/claims/checkpoints are refused | R0 |
 | `counterpart_away` | warning | your `negotiate.propose`/`negotiate.counter` was recorded, but its addressee has no live session, so nobody can answer until it starts again; `caused_by_seq` is its latest `leave` (or latest record) | §7.4 |
+| `previously_reverted` | info (verdict only, never blocks) | your edit writes a symbol that an accepted `revert` undid in the last 30 days; `caused_by_seq` is the revert, `caused_by_agent` who asked for it; at most once per key per session | §6.6 |
 
 Receivers MUST treat an unknown code by its `severity` (§10).
 
@@ -451,6 +454,40 @@ Open errors drive the L3 gates (§8.4). Why per change: the change is what lands
 the workspace's edits belong to; a session is only a connection. (Before 2026-10-09
 open errors were per session, and `release`, `bye` + `hello`, or letting the session
 expire cleared them — see the changelog.)
+
+### 6.6 Previously reverted
+
+A `revert` record names the operation it undoes (`reverts_seq` / `reverts_op_id`), not
+keys. Its keys are derived when it is appended: the accepted `land` record of that op
+(`reverts_seq`, else the land whose `payload.op_id` is `reverts_op_id`), then that land's
+change, then the keys written by the change's accepted `edit` records up to the landing,
+plus the land's and the revert's own `writes`. A coordinator keeps these keys in an index
+(key → record), together with the other history records of §9.7, so neither a history
+read nor a check ever scans the log.
+
+When a session submits an `edit` (`check` or `commit`) that writes a key covered by an
+accepted revert whose `ts` is at most 30 days before the coordinator's clock, the verdict
+carries one diagnostic per such key:
+
+```json
+{"severity": "info", "code": "previously_reverted", "file": "src/x.ts", "symbol": "src/x.ts#f",
+ "message": "previously reverted 3d ago: error spike after landing (by john, #4)",
+ "caused_by_seq": 4, "caused_by_agent": "john"}
+```
+
+- The message is `previously reverted <n>d ago: <reason> (by <actor>, #<seq>)`: `n` = whole
+  days since the revert, `reason` = the first non-empty line of `payload.reason` (clipped to
+  200 characters), `actor` = `payload.requested_by.id`, else the revert record's `actor.id`.
+- A written key `path#name` is covered by a revert key equal to it, by a revert key of its
+  members (`path#name.*`), and by the whole-file key `path#*`; a written `path#*` is covered
+  by every key of the file. The newest covering revert is cited.
+- At most once per key per session: the coordinator remembers the keys it noted for the
+  session (dropped with the session), so the commit after a check, or a second edit, says
+  nothing more. A new session is told again.
+- It is `info`: it never rejects, never opens an error, never closes a gate. It is computed
+  inside the submit (no extra call) and is part of the **verdict only**: the appended record's
+  `diagnostics` are the validation diagnostics, so the log stores nothing new.
+- An agent-paused submit (R0) gets no note.
 
 ## 7. Arbitration (normative)
 
@@ -800,6 +837,7 @@ HTTP only; the socket serves long-lived adapters and delayed-L1 injection.
 | `GET /v1/repos/{repo}/events/{seq}` | observe | `EventRecord` (full detail) |
 | `GET /v1/repos/{repo}/stream?after={seq}` (WS) | observe | `StreamFrame`s |
 | `GET /v1/feed` | observe | `FeedPage` |
+| `GET /v1/repos/{repo}/history?keys=&since=&limit=` | agent (own repo) or observe | `HistoryPage` (§9.7) |
 | `GET /v1/feed/stream?after={cursor}` (WS, SHOULD) | observe | `StreamFrame`s across repos |
 | `POST /v1/repos/{repo}/actions` | human | `HumanAction` → `ActionResult` |
 | `POST /v1/repos/{repo}/system/events` | system | `EventDraft` → `EventRecord` |
@@ -874,6 +912,50 @@ received. Repos absent from the cursor start at 0.
 Unknown targets are `422 invalid_reference`. Every action is a log record with
 `actor:{type:"human", id}` and a summary, so the feed shows who touched what.
 
+### 9.7 History of symbol keys
+
+`GET /v1/repos/{repo}/history?keys=src/x.ts%23f,src/y.ts&since=2026-09-01T00:00:00Z&limit=20`
+
+Why earlier changes to some code were reverted or refused, so an agent about to edit it can
+read what happened to the agent before it. Read by an `agent` token of the repo (no
+`observe` scope needed) or by an observer; a token for another repo gets `404
+repo_not_found`, a token with neither scope `403 forbidden`.
+
+- `keys` (required, 1–50; comma-separated and/or repeated; `#` percent-encoded): a symbol
+  key `path#name` (it also matches the members `path#name.*` and whole-file `path#*`
+  records), or `path#*` / a bare `path` for every key of the file.
+- `since`: ISO 8601 timestamp; default 90 days before the coordinator's clock.
+- `limit`: 1–100, default 20 (larger values are capped).
+- Malformed: `400 invalid_message`.
+
+The answer lists, newest first, the history records that concern those keys (§6.6 index):
+
+| `kind` | record | fields |
+|---|---|---|
+| `revert` | an accepted `revert` (keys derived as in §6.6) | `reason` (first line), `requested_by`, `reverts_seq`, `reverts_op_id`, `op_id`, `evidence` (the first stack frame found in the reason text, if any) |
+| `rejected` | a rejected `edit` or `claim`, `check` or `commit` mode (keys: its writes and the symbols of its errors) | `event_kind`, `mode`, `causes` (its error diagnostics) |
+| `negotiation` | the accepted `negotiate.accept` / `negotiate.reject` that answered a thread (keys: the root proposal's), or a `negotiate.escalate` with keys | `outcome` (`accepted` \| `rejected` \| `escalated`), `terms` (of the answered proposal/counter), `reply_to`, `reason`, `with` (the other party) |
+
+```json
+{"type": "history", "repo": "demo", "keys": ["src/x.ts#f"], "since": "2026-07-10T14:00:00.012Z",
+ "head_seq": 7, "has_more": false,
+ "entries": [{"seq": 4, "ts": "2026-10-05T14:00:00.004Z", "kind": "revert", "keys": ["src/x.ts#f"],
+              "actor": {"type": "system", "id": "revert-workflow"}, "agent": "claude-a", "change": "I-a", "task": "T-1",
+              "reason": "error spike after landing: TypeError: Cannot read properties of undefined (reading 'id')",
+              "requested_by": {"type": "human", "id": "john"}, "reverts_seq": 3, "reverts_op_id": "op_1", "op_id": "op_2",
+              "evidence": "at f (src/x.ts:3:7)"}]}
+```
+
+Every entry cites its record's `seq` and every field is read from records already in the
+log; a history read stores nothing. Free text (`reason`, `evidence`, `terms.text`, cause
+messages) is secret-redacted like observer views (§13). An entry's `keys` are the queried
+keys it matched, sorted. Clients render one line per entry (`renderHistoryEntry`, as the
+MCP tool `weft_history` does):
+
+```text
+#4 3d ago REVERT of land #3 (change I-a by claude-a) by john: error spike after landing: TypeError: … — evidence: at f (src/x.ts:3:7) [src/x.ts#f]
+```
+
 ## 10. Versioning and extensibility
 
 - Protocol version `wcp/MAJOR.MINOR`, currently `wcp/0.1`. The HTTP binding prefix
@@ -919,7 +1001,8 @@ An implementation conforms to WCP v0.1 if:
    fixture in `fixtures/messages/valid` is accepted / every one in `invalid` is rejected
    (at the listed JSON Pointer);
 2. driven through `runScenario()` (`ConformanceTarget`: `hello`, `submit`, `drain`,
-   `gate`, `heartbeat`, `bye`, `action`, `system`, `tick`, `events`, `event`), it
+   `gate`, `heartbeat`, `bye`, `action`, `system`, `tick`, `events`, `event`, and
+   `history` for the history scenarios), it
    passes all `fixtures/scenarios/*.json`. Scenarios use a deterministic clock: each
    step advances 1 ms from `start`, `advance` steps add more; `tick` runs expiry (claims,
    sessions) and returns appended records. A scenario's repo config (`policy`,
@@ -944,8 +1027,10 @@ session expiry (`claim-ttl-and-session-expiry`), trunk notification + predicted 
 (`lease-soft-claim`, `lease-firm-hard-limit`), release on exit (`release-on-exit`), open
 errors that survive release/bye/hello/expiry (`open-errors-persist`), a session that joins
 after a peer's unlanded signature change (`join-after-unmerged-change`), and repos created
-before the claims policy plus the policy migration (`claims-legacy-and-migration`). The
-reference coordinator passes all of them and its log replays deterministically.
+before the claims policy plus the policy migration (`claims-legacy-and-migration`), the
+`previously_reverted` note and the history read of a reverted symbol (`revert-history`), and
+refused edits and finished negotiations in the history (`history-refused-and-negotiated`).
+The reference coordinator passes all of them and its log replays deterministically.
 
 ## 13. Security considerations
 
@@ -956,6 +1041,12 @@ reference coordinator passes all of them and its log replays deterministically.
   repos, and make them revocable.
 - Human actions are powerful (undo lands a revert on trunk). Gateways SHOULD require a
   recent interactive login (Cloudflare Access) for `human` tokens.
+- The history read (§9.7) opens one repo's reverts, refused edits and finished negotiations
+  on the requested keys to that repo's `agent` tokens, as summaries of records they could
+  already be told about through diagnostics and inbox items; never diffs or intents. It
+  stores nothing beyond the log: the key index is derived from it, and the
+  `previously_reverted` note rides on the verdict only. Its free text is redacted like
+  observer views.
 - Rate-limit `check` submissions per session; they are cheap to send and expensive to
   evaluate on large W sets.
 - One agent's state must not be resettable by that agent alone. Open errors live on the
@@ -1100,3 +1191,10 @@ Proposed for `docs/design.md` (rule 7 of agent-rules):
   (only the severity of a `claim_wait`, by enforcement mode, for edits and for claims) and
   what it does not (seniority, wound, die). Scenarios may set `enforcement`; new scenarios
   `claim-firm-vs-soft` and `claim-firm-vs-soft-block` pin the table in both coordinators.
+- 0.1 additions (2026-11-26, t_f8bc12a1; additive, no version bump): the history read
+  `GET /v1/repos/{repo}/history` (§9.7, `HistoryPage`, `HistoryEntry`; open to the repo's
+  agent tokens) and the `previously_reverted` info diagnostic on edit verdicts (§6.6), both
+  served from a key → record index the coordinator derives from the log. Verdicts may now
+  carry diagnostics that the appended record does not (only `previously_reverted`). Scenarios
+  `revert-history`, `history-refused-and-negotiated`; `ConformanceTarget.history` and the
+  `history` scenario step.
